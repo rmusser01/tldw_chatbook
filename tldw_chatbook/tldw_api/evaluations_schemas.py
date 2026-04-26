@@ -150,6 +150,150 @@ class EvaluationRunListResponse(BaseModel):
     total: Optional[int] = None
 
 
+class GEvalRequest(BaseModel):
+    source_text: str = Field(..., min_length=10, max_length=100000)
+    summary: str = Field(..., min_length=10, max_length=50000)
+    metrics: list[Literal["fluency", "consistency", "relevance", "coherence"]] = Field(
+        default_factory=lambda: ["fluency", "consistency", "relevance", "coherence"]
+    )
+    api_name: str | None = "openai"
+    api_key: str | None = None
+    save_results: bool = False
+
+
+class GEvalResponse(BaseModel):
+    metrics: dict[str, Any]
+    average_score: float = Field(..., ge=0.0, le=1.0)
+    summary_assessment: str
+    evaluation_time: float
+    metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(extra="allow", from_attributes=True)
+
+
+class RAGEvaluationRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=10000)
+    retrieved_contexts: list[str] = Field(..., min_length=1, max_length=20)
+    generated_response: str = Field(..., min_length=1, max_length=50000)
+    ground_truth: str | None = Field(default=None, max_length=50000)
+    metrics: list[str] = Field(
+        default_factory=lambda: ["relevance", "faithfulness", "answer_similarity", "context_precision"]
+    )
+    api_name: str | None = "openai"
+
+
+class RAGEvaluationResponse(BaseModel):
+    metrics: dict[str, Any]
+    overall_score: float = Field(..., ge=0.0, le=1.0)
+    retrieval_quality: float = Field(..., ge=0.0, le=1.0)
+    generation_quality: float = Field(..., ge=0.0, le=1.0)
+    suggestions: list[str] | None = None
+    metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(extra="allow", from_attributes=True)
+
+
+class ResponseQualityRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=50000)
+    response: str = Field(..., min_length=1, max_length=50000)
+    expected_format: str | None = Field(default=None, max_length=1000)
+    evaluation_criteria: dict[str, str] | None = None
+    api_name: str | None = "openai"
+
+
+class ResponseQualityResponse(BaseModel):
+    metrics: dict[str, Any]
+    overall_quality: float = Field(..., ge=0.0, le=1.0)
+    format_compliance: dict[str, bool] | None = None
+    issues: list[str] | None = None
+    improvements: list[str] | None = None
+
+    model_config = ConfigDict(extra="allow", from_attributes=True)
+
+
+class PropositionEvaluationRequest(BaseModel):
+    extracted: list[str] = Field(..., min_length=1)
+    reference: list[str] = Field(..., min_length=1)
+    method: Literal["semantic", "jaccard"] = "semantic"
+    threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+
+
+class PropositionEvaluationResponse(BaseModel):
+    precision: float = Field(..., ge=0.0, le=1.0)
+    recall: float = Field(..., ge=0.0, le=1.0)
+    f1: float = Field(..., ge=0.0, le=1.0)
+    matched: int
+    total_extracted: int
+    total_reference: int
+    claim_density_per_100_tokens: float
+    avg_prop_len_tokens: float
+    dedup_rate: float
+    details: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(extra="allow", from_attributes=True)
+
+
+class BatchEvaluationRequest(BaseModel):
+    evaluation_type: Literal["geval", "rag", "response_quality", "ocr", "propositions"]
+    items: list[dict[str, Any]] = Field(..., min_length=1, max_length=1000)
+    parallel_workers: int = Field(default=4, ge=1, le=20)
+    continue_on_error: bool = True
+
+
+class BatchEvaluationResponse(BaseModel):
+    total_items: int
+    successful: int
+    failed: int
+    results: list[dict[str, Any]]
+    aggregate_metrics: dict[str, float] | None = None
+    processing_time: float
+
+    model_config = ConfigDict(extra="allow", from_attributes=True)
+
+
+class OCREvaluationItem(BaseModel):
+    id: str
+    extracted_text: str | None = None
+    ground_truth_text: str
+    ground_truth_pages: list[str] | None = None
+    metadata: dict[str, Any] | None = Field(default_factory=dict)
+
+
+class OCREvaluationRequest(BaseModel):
+    items: list[OCREvaluationItem]
+    metrics: list[Literal["cer", "wer", "coverage", "page_coverage"]] = Field(
+        default_factory=lambda: ["cer", "wer", "coverage", "page_coverage"]
+    )
+    ocr_options: dict[str, Any] | None = None
+    thresholds: dict[str, float] | None = None
+
+
+class OCREvaluationResponse(BaseModel):
+    evaluation_id: str
+    results: dict[str, Any]
+    evaluation_time: float
+
+    model_config = ConfigDict(extra="allow", from_attributes=True)
+
+
+class EvaluationHistoryRequest(BaseModel):
+    user_id: str | None = None
+    evaluation_type: str | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    limit: int = Field(default=20, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+
+
+class EvaluationHistoryResponse(BaseModel):
+    total_count: int
+    items: list[dict[str, Any]]
+    aggregations: dict[str, Any] | None = None
+
+    model_config = ConfigDict(extra="allow", from_attributes=True)
+
+
 class EvaluationDatasetListResponse(BaseModel):
     object: str = Field(default="list")
     data: list[EvaluationDatasetResponse]

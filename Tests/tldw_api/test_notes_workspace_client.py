@@ -17,6 +17,9 @@ from tldw_chatbook.tldw_api.notes_workspace_schemas import (
     NoteGraphRequest,
     NoteLinkCreate,
     NoteCreateRequest,
+    NoteGraphRequest,
+    NoteGraphResponse,
+    NoteLinkCreateRequest,
     NoteListResponse,
     NoteUpdateRequest,
     WorkspaceArtifactCreateRequest,
@@ -190,6 +193,71 @@ class TestNotesWorkspaceClient:
         assert len(mocked.await_args_list) == len(expected_calls)
         for call_args, expected in zip(mocked.await_args_list, expected_calls):
             _assert_request_call(call_args, *expected)
+
+    @pytest.mark.parametrize(
+        "method_name, call_args, expected_method, expected_endpoint, expected_kwargs",
+        [
+            (
+                "get_notes_graph",
+                (NoteGraphRequest(center_note_id="note:123", edge_types=["manual", "backlink"], max_nodes=50),),
+                "GET",
+                "/api/v1/notes/graph",
+                {"params": {"center_note_id": "note:123", "edge_types": "manual,backlink", "max_nodes": 50}},
+            ),
+            (
+                "get_note_neighbors",
+                ("note:123", NoteGraphRequest(edge_types=["manual"], max_nodes=20)),
+                "GET",
+                "/api/v1/notes/note:123/neighbors",
+                {"params": {"edge_types": "manual", "max_nodes": 20}},
+            ),
+            (
+                "create_note_link",
+                (
+                    "note:123",
+                    NoteLinkCreateRequest(
+                        to_note_id="note:456",
+                        directed=True,
+                        weight=2.5,
+                        metadata={"label": "related"},
+                    ),
+                ),
+                "POST",
+                "/api/v1/notes/note:123/links",
+                {
+                    "json_data": {
+                        "to_note_id": "note:456",
+                        "directed": True,
+                        "weight": 2.5,
+                        "metadata": {"label": "related"},
+                    }
+                },
+            ),
+            (
+                "delete_note_link",
+                ("e:1",),
+                "DELETE",
+                "/api/v1/notes/links/e:1",
+                {},
+            ),
+        ],
+    )
+    async def test_notes_graph_endpoint_wiring(
+        self,
+        monkeypatch,
+        method_name,
+        call_args,
+        expected_method,
+        expected_endpoint,
+        expected_kwargs,
+    ):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await getattr(client, method_name)(*call_args)
+
+        _assert_request_call(mocked.await_args, expected_method, expected_endpoint, expected_kwargs)
 
     @pytest.mark.parametrize(
         "method_name, call_args, call_kwargs, expected_method, expected_endpoint, expected_kwargs",
@@ -565,3 +633,25 @@ class TestNotesWorkspaceClient:
 
         assert model.title is None
         assert model.normalized_keywords == ["alpha", "beta"]
+
+    async def test_note_graph_response_validates_server_payload(self):
+        payload = {
+            "nodes": [{"id": "note:123", "type": "note", "label": "Alpha", "degree": 1}],
+            "edges": [
+                {
+                    "id": "e:1",
+                    "source": "note:123",
+                    "target": "note:456",
+                    "type": "manual",
+                    "directed": False,
+                    "weight": 1.0,
+                }
+            ],
+            "limits": {"max_nodes": 300, "max_edges": 1200, "max_degree": 40},
+        }
+
+        model = NoteGraphResponse.model_validate(payload)
+
+        assert model.nodes[0].id == "note:123"
+        assert model.edges[0].type == "manual"
+        assert model.limits.max_nodes == 300

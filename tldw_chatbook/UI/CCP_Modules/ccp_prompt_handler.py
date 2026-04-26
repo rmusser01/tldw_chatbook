@@ -24,11 +24,113 @@ class CCPPromptHandler:
         """
         self.window = window
         self.app_instance = window.app_instance
-        self.current_prompt_id: Optional[int] = None
+        self.current_prompt_id: Optional[Any] = None
         self.current_prompt_data: Dict[str, Any] = {}
         self.search_results: List[Dict[str, Any]] = []
+        self._prompt_result_ids: Dict[str, Any] = {}
         
         logger.debug("CCPPromptHandler initialized")
+
+    def _prompt_scope_service(self) -> Any:
+        """Return the app-level prompt scope service when this build has one wired."""
+        return getattr(self.app_instance, "prompt_scope_service", None)
+
+    def _current_prompt_backend(self) -> str:
+        backend = (
+            getattr(self.app_instance, "current_runtime_backend", None)
+            or getattr(self.app_instance, "runtime_backend", None)
+            or "local"
+        )
+        normalized_backend = str(backend).strip().lower()
+        if normalized_backend not in {"local", "server"}:
+            return "local"
+        return normalized_backend
+
+    def _source_prompt_identifier(self, prompt_identifier: Any) -> Any:
+        if isinstance(prompt_identifier, str) and ":prompt:" in prompt_identifier:
+            return prompt_identifier.rsplit(":prompt:", 1)[1]
+        return prompt_identifier
+
+    def _notify(self, message: str, severity: str = "info") -> None:
+        notify = getattr(self.app_instance, "notify", None) or getattr(self.window, "notify", None)
+        if callable(notify):
+            notify(message, severity=severity)
+
+    def _set_static_value(self, selector: str, value: str) -> None:
+        try:
+            widget = self.window.query_one(selector, Static)
+            widget.update(value)
+        except Exception as e:
+            logger.debug(f"Could not set static {selector}: {e}")
+
+    def _current_source_prompt_identifier(self) -> Any:
+        if not self.current_prompt_id:
+            self._notify("Load a prompt before using prompt actions.", severity="warning")
+            return None
+        return self._source_prompt_identifier(self.current_prompt_id)
+
+    def _update_prompt_usage_display(self, prompt_data: Dict[str, Any]) -> None:
+        usage_count = prompt_data.get("usage_count", prompt_data.get("use_count"))
+        usage_text = "Usage: -" if usage_count is None else f"Usage: {usage_count}"
+        self._set_static_value("#ccp-editor-prompt-usage-display", usage_text)
+
+    def _format_prompt_versions(self, versions: List[Dict[str, Any]]) -> str:
+        if not versions:
+            return "No server versions found."
+        version_labels = []
+        for version in versions:
+            raw_version = version.get("version", version.get("version_number", "?"))
+            name = version.get("name")
+            label = f"v{raw_version}"
+            if name:
+                label = f"{label} {name}"
+            version_labels.append(label)
+        return "Versions: " + ", ".join(version_labels)
+
+    def _filter_prompt_results(self, prompts: List[Dict[str, Any]], search_term: str) -> List[Dict[str, Any]]:
+        if not search_term:
+            return prompts
+
+        search_lower = search_term.lower()
+
+        def matches(prompt: Dict[str, Any]) -> bool:
+            keywords = prompt.get("keywords", "")
+            if isinstance(keywords, list):
+                keywords_text = ", ".join(str(keyword) for keyword in keywords)
+            else:
+                keywords_text = str(keywords or "")
+
+            haystack = " ".join(
+                str(prompt.get(field, "") or "")
+                for field in (
+                    "name",
+                    "author",
+                    "details",
+                    "system",
+                    "user",
+                    "system_prompt",
+                    "user_prompt",
+                )
+            )
+            return search_lower in haystack.lower() or search_lower in keywords_text.lower()
+
+        return [prompt for prompt in prompts if matches(prompt)]
+
+    def _legacy_prompt_list(self) -> List[Dict[str, Any]]:
+        prompt_db = getattr(self.app_instance, "prompts_db", None)
+        if prompt_db is not None and hasattr(prompt_db, "list_prompts"):
+            result = prompt_db.list_prompts(page=1, per_page=100, include_deleted=False)
+            if isinstance(result, tuple):
+                return list(result[0] or [])
+            if isinstance(result, dict):
+                return list(result.get("items", []) or [])
+
+        from ...Prompt_Management.Prompts_Interop import list_prompts
+
+        result = list_prompts(page=1, per_page=100, include_deleted=False)
+        if isinstance(result, tuple):
+            return list(result[0] or [])
+        return list(result.get("items", []) or [])
     
     async def handle_search(self, search_term: str) -> None:
         """Search for prompts.
@@ -39,23 +141,19 @@ class CCPPromptHandler:
         logger.debug(f"Searching prompts for: '{search_term}'")
         
         try:
-            from ...DB.Prompts_DB import fetch_all_prompts
-            
-            # Get all prompts
-            all_prompts = fetch_all_prompts()
-            
-            if search_term:
-                # Filter by search term
-                search_lower = search_term.lower()
-                self.search_results = [
-                    prompt for prompt in all_prompts
-                    if (search_lower in prompt.get('name', '').lower() or
-                        search_lower in prompt.get('details', '').lower() or
-                        search_lower in prompt.get('keywords', '').lower())
-                ]
+            scope_service = self._prompt_scope_service()
+            if scope_service is not None:
+                response = await scope_service.list_prompts(
+                    mode=self._current_prompt_backend(),
+                    page=1,
+                    per_page=100,
+                    include_deleted=False,
+                )
+                all_prompts = list(response.get("items", []) or [])
             else:
-                # Show all prompts if no search term
-                self.search_results = all_prompts
+                all_prompts = self._legacy_prompt_list()
+
+            self.search_results = self._filter_prompt_results(all_prompts, search_term)
             
             # Update the UI
             await self._update_search_results_ui()
@@ -70,15 +168,21 @@ class CCPPromptHandler:
         try:
             results_list = self.window.query_one("#ccp-prompts-listview", ListView)
             results_list.clear()
+            self._prompt_result_ids = {}
             
-            for prompt in self.search_results:
+            for index, prompt in enumerate(self.search_results):
                 name = prompt.get('name', 'Untitled')
                 prompt_id = prompt.get('id')
                 author = prompt.get('author', 'Unknown')
+                backend = prompt.get("backend")
                 
                 # Create a formatted list item
-                item_text = f"{name} (by {author})"
-                list_item = ListItem(Static(item_text), id=f"prompt-result-{prompt_id}")
+                source_prefix = f"[{backend}] " if backend else ""
+                item_text = f"{source_prefix}{name} (by {author})"
+                item_id = f"prompt-result-{index}"
+                self._prompt_result_ids[item_id] = prompt_id
+                list_item = ListItem(Static(item_text), id=item_id)
+                setattr(list_item, "prompt_identifier", prompt_id)
                 results_list.append(list_item)
                 
         except Exception as e:
@@ -93,7 +197,11 @@ class CCPPromptHandler:
                 # Extract prompt ID from the list item ID
                 item_id = results_list.highlighted_child.id
                 if item_id and item_id.startswith("prompt-result-"):
-                    prompt_id = int(item_id.replace("prompt-result-", ""))
+                    prompt_id = getattr(results_list.highlighted_child, "prompt_identifier", None)
+                    if prompt_id is None:
+                        prompt_id = self._prompt_result_ids.get(item_id)
+                    if prompt_id is None:
+                        prompt_id = int(item_id.replace("prompt-result-", ""))
                     await self.load_prompt(prompt_id)
             else:
                 logger.warning("No prompt selected to load")
@@ -101,13 +209,18 @@ class CCPPromptHandler:
         except Exception as e:
             logger.error(f"Error loading selected prompt: {e}", exc_info=True)
     
-    async def load_prompt(self, prompt_id: int) -> None:
+    async def load_prompt(self, prompt_id: Any) -> None:
         """Load a prompt and display it in the editor (async wrapper).
         
         Args:
             prompt_id: The ID of the prompt to load
         """
         logger.info(f"Starting prompt load for {prompt_id}")
+
+        scope_service = self._prompt_scope_service()
+        if scope_service is not None:
+            await self._load_prompt_scoped(prompt_id)
+            return
         
         # Run the sync database operation in a worker thread
         self.window.run_worker(
@@ -117,6 +230,23 @@ class CCPPromptHandler:
             exclusive=True,
             name=f"load_prompt_{prompt_id}"
         )
+
+    async def _load_prompt_scoped(self, prompt_id: Any) -> None:
+        """Load a prompt through the source-aware prompt service."""
+        prompt_identifier = self._source_prompt_identifier(prompt_id)
+        prompt_data = await self._prompt_scope_service().get_prompt(
+            mode=self._current_prompt_backend(),
+            prompt_identifier=prompt_identifier,
+            include_deleted=False,
+        )
+        self.current_prompt_id = prompt_data.get("id", prompt_id)
+        self.current_prompt_data = prompt_data
+        self.window.post_message(PromptMessage.Loaded(self.current_prompt_id, prompt_data))
+        self.window.post_message(
+            ViewChangeMessage.Requested("prompt_editor", {"prompt_id": self.current_prompt_id})
+        )
+        self._display_prompt_in_editor()
+        logger.info(f"Prompt {self.current_prompt_id} loaded successfully")
     
     @work(thread=True)
     def _load_prompt_sync(self, prompt_id: int) -> None:
@@ -171,9 +301,13 @@ class CCPPromptHandler:
             self._set_input_value("#ccp-editor-prompt-name-input", data.get("name", ""))
             self._set_input_value("#ccp-editor-prompt-author-input", data.get("author", ""))
             self._set_textarea_value("#ccp-editor-prompt-description-textarea", data.get("details", ""))
-            self._set_textarea_value("#ccp-editor-prompt-system-textarea", data.get("system", ""))
-            self._set_textarea_value("#ccp-editor-prompt-user-textarea", data.get("user", ""))
-            self._set_textarea_value("#ccp-editor-prompt-keywords-textarea", data.get("keywords", ""))
+            self._set_textarea_value("#ccp-editor-prompt-system-textarea", data.get("system_prompt", data.get("system", "")))
+            self._set_textarea_value("#ccp-editor-prompt-user-textarea", data.get("user_prompt", data.get("user", "")))
+            keywords = data.get("keywords", "")
+            if isinstance(keywords, list):
+                keywords = ", ".join(str(keyword) for keyword in keywords)
+            self._set_textarea_value("#ccp-editor-prompt-keywords-textarea", str(keywords or ""))
+            self._update_prompt_usage_display(data)
             
             logger.debug(f"Displayed prompt '{data.get('name', 'Unknown')}' in editor")
             
@@ -240,10 +374,16 @@ class CCPPromptHandler:
             
             if self.current_prompt_id:
                 # Update existing prompt
-                await self._update_prompt(self.current_prompt_id, prompt_data)
+                if self._prompt_scope_service() is not None:
+                    await self._save_prompt_scoped(prompt_data, self.current_prompt_id)
+                else:
+                    await self._update_prompt(self.current_prompt_id, prompt_data)
             else:
                 # Create new prompt
-                await self._create_prompt(prompt_data)
+                if self._prompt_scope_service() is not None:
+                    await self._save_prompt_scoped(prompt_data, None)
+                else:
+                    await self._create_prompt(prompt_data)
                 
         except Exception as e:
             logger.error(f"Error saving prompt: {e}", exc_info=True)
@@ -264,6 +404,45 @@ class CCPPromptHandler:
             logger.error(f"Error gathering editor data: {e}", exc_info=True)
         
         return data
+
+    def _keywords_from_editor_value(self, value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            raw_keywords = value
+        else:
+            raw_keywords = str(value).split(",")
+        return [str(keyword).strip() for keyword in raw_keywords if str(keyword).strip()]
+
+    async def _save_prompt_scoped(self, data: Dict[str, Any], prompt_id: Any = None) -> None:
+        """Create or update a prompt through the active prompt backend."""
+        prompt_identifier = self._source_prompt_identifier(prompt_id) if prompt_id else None
+        saved_prompt = await self._prompt_scope_service().save_prompt(
+            mode=self._current_prompt_backend(),
+            prompt_identifier=prompt_identifier,
+            name=data["name"],
+            author=data.get("author", ""),
+            details=data.get("details", ""),
+            system_prompt=data.get("system", ""),
+            user_prompt=data.get("user", ""),
+            keywords=self._keywords_from_editor_value(data.get("keywords", "")),
+        )
+
+        saved_prompt_id = saved_prompt.get("id", prompt_id)
+        was_update = prompt_id not in (None, "")
+        self.current_prompt_id = saved_prompt_id
+        self.current_prompt_data = saved_prompt
+
+        if was_update:
+            self.window.post_message(PromptMessage.Updated(saved_prompt_id, saved_prompt))
+        else:
+            self.window.post_message(PromptMessage.Created(saved_prompt_id, saved_prompt.get("name", data["name"]), saved_prompt))
+
+        try:
+            search_input = self.window.query_one("#ccp-prompt-search-input", Input)
+            await self.handle_search(search_input.value)
+        except Exception:
+            logger.debug("Prompt search refresh skipped after scoped save", exc_info=True)
     
     @work(thread=True)
     def _create_prompt(self, data: Dict[str, Any]) -> None:
@@ -386,6 +565,28 @@ class CCPPromptHandler:
             return
         
         try:
+            if self._prompt_scope_service() is not None:
+                deleted_prompt_id = self.current_prompt_id
+                success = await self._prompt_scope_service().delete_prompt(
+                    mode=self._current_prompt_backend(),
+                    prompt_identifier=self._source_prompt_identifier(self.current_prompt_id),
+                )
+
+                if success:
+                    logger.info(f"Deleted prompt {deleted_prompt_id}")
+                    self.window.post_message(PromptMessage.Deleted(deleted_prompt_id))
+                    self.current_prompt_id = None
+                    self.current_prompt_data = {}
+                    self._clear_editor_fields()
+                    try:
+                        search_input = self.window.query_one("#ccp-prompt-search-input", Input)
+                        await self.handle_search(search_input.value)
+                    except Exception:
+                        logger.debug("Prompt search refresh skipped after scoped delete", exc_info=True)
+                else:
+                    logger.error(f"Failed to delete prompt {deleted_prompt_id}")
+                return
+
             from ...DB.Prompts_DB import delete_prompt
             
             success = delete_prompt(self.current_prompt_id)
@@ -413,6 +614,81 @@ class CCPPromptHandler:
                 
         except Exception as e:
             logger.error(f"Error deleting prompt: {e}", exc_info=True)
+
+    async def handle_record_prompt_usage(self) -> None:
+        """Record usage for the current prompt through the active prompt backend."""
+        scope_service = self._prompt_scope_service()
+        prompt_identifier = self._current_source_prompt_identifier()
+        if scope_service is None or prompt_identifier is None:
+            self._notify("Prompt usage recording is unavailable in this context.", severity="warning")
+            return
+
+        try:
+            prompt_data = await scope_service.record_prompt_usage(
+                mode=self._current_prompt_backend(),
+                prompt_identifier=prompt_identifier,
+            )
+            self.current_prompt_id = prompt_data.get("id", self.current_prompt_id)
+            self.current_prompt_data = prompt_data
+            self.window.post_message(PromptMessage.Updated(self.current_prompt_id, prompt_data))
+            self._update_prompt_usage_display(prompt_data)
+            self._notify("Prompt usage recorded.", severity="success")
+        except Exception as e:
+            logger.error(f"Error recording prompt usage: {e}", exc_info=True)
+            self._set_static_value("#ccp-editor-prompt-version-status", f"Usage update failed: {e}")
+            self._notify(f"Prompt usage update failed: {e}", severity="error")
+
+    async def handle_list_prompt_versions(self) -> None:
+        """List server prompt versions for the current prompt."""
+        scope_service = self._prompt_scope_service()
+        prompt_identifier = self._current_source_prompt_identifier()
+        if scope_service is None or prompt_identifier is None:
+            self._set_static_value("#ccp-editor-prompt-version-status", "Prompt versions are unavailable.")
+            return
+
+        try:
+            versions = await scope_service.list_prompt_versions(
+                mode=self._current_prompt_backend(),
+                prompt_identifier=prompt_identifier,
+            )
+            self._set_static_value("#ccp-editor-prompt-version-status", self._format_prompt_versions(versions))
+        except Exception as e:
+            logger.error(f"Error listing prompt versions: {e}", exc_info=True)
+            self._set_static_value("#ccp-editor-prompt-version-status", f"Version history unavailable: {e}")
+            self._notify(f"Prompt version history unavailable: {e}", severity="warning")
+
+    async def handle_restore_prompt_version(self) -> None:
+        """Restore a selected server prompt version into the current prompt working state."""
+        scope_service = self._prompt_scope_service()
+        prompt_identifier = self._current_source_prompt_identifier()
+        if scope_service is None or prompt_identifier is None:
+            self._set_static_value("#ccp-editor-prompt-version-status", "Prompt version restore is unavailable.")
+            return
+
+        try:
+            version_text = self.window.query_one("#ccp-editor-prompt-version-input", Input).value.strip()
+            version = int(version_text)
+        except Exception:
+            self._set_static_value("#ccp-editor-prompt-version-status", "Enter a numeric version to restore.")
+            self._notify("Enter a numeric prompt version to restore.", severity="warning")
+            return
+
+        try:
+            prompt_data = await scope_service.restore_prompt_version(
+                mode=self._current_prompt_backend(),
+                prompt_identifier=prompt_identifier,
+                version=version,
+            )
+            self.current_prompt_id = prompt_data.get("id", self.current_prompt_id)
+            self.current_prompt_data = prompt_data
+            self.window.post_message(PromptMessage.Updated(self.current_prompt_id, prompt_data))
+            self._display_prompt_in_editor()
+            self._set_static_value("#ccp-editor-prompt-version-status", f"Prompt restored v{version}.")
+            self._notify(f"Prompt restored to version {version}.", severity="success")
+        except Exception as e:
+            logger.error(f"Error restoring prompt version: {e}", exc_info=True)
+            self._set_static_value("#ccp-editor-prompt-version-status", f"Version restore failed: {e}")
+            self._notify(f"Prompt version restore failed: {e}", severity="error")
     
     async def handle_import(self) -> None:
         """Handle import request - prompts for file selection."""

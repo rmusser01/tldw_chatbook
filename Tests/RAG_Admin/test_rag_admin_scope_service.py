@@ -4,6 +4,14 @@ from tldw_chatbook.RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
+class FakePolicyEnforcer:
+    def __init__(self):
+        self.actions = []
+
+    def require_allowed(self, *, action_id):
+        self.actions.append(action_id)
+
+
 class FakeLocalService:
     def __init__(self, templates=None, collection_detail=None):
         self.templates = templates or []

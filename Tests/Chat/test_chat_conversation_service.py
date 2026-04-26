@@ -489,6 +489,17 @@ def test_update_conversation_metadata_rejects_workspace_id_clears_without_explic
         service.update_conversation_metadata("conv-1", {"workspace_id": None}, expected_version=3)
 
 
+def test_delete_conversation_metadata_routes_soft_delete():
+    db = FakeDB()
+    service = ChatConversationService(db)
+
+    result = service.delete_conversation("conv-1", expected_version=4)
+
+    assert result is True
+    assert db.deletes == [("conv-1", 4)]
+    assert db.calls[-1] == ("soft_delete_conversation", ("conv-1",), {"expected_version": 4})
+
+
 def test_get_conversation_metadata_uses_real_message_count_when_missing_from_row():
     db = FakeDB(
         conversations_by_id={

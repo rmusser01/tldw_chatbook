@@ -173,11 +173,19 @@ class MediaAnalysisOverwriteEvent(Message):
 class MediaAnalysisDeleteEvent(Message):
     """Event fired when deleting an analysis version."""
     
-    def __init__(self, media_id: Any, version_uuid: str, type_slug: str, record_id: Any = None) -> None:
+    def __init__(
+        self,
+        media_id: Any,
+        version_uuid: str,
+        type_slug: str,
+        record_id: Any = None,
+        version_number: Any = None,
+    ) -> None:
         super().__init__()
         self.media_id = media_id
         self.record_id = record_id if record_id is not None else media_id
         self.version_uuid = version_uuid
+        self.version_number = version_number
         self.type_slug = type_slug
 
 

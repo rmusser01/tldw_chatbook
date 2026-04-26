@@ -5,9 +5,14 @@ import pytest
 from tldw_chatbook.RAG_Admin.server_rag_admin_service import ServerRAGAdminService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api import (
+    BatchMediaEmbeddingsRequest,
+    BatchMediaEmbeddingsResponse,
     ChunkingTemplateCreateRequest,
     ChunkingTemplateDiagnosticsResponse,
+    ChunkingTemplateLearnRequest,
+    ChunkingTemplateLearnResponse,
     ChunkingTemplateListResponse,
+    ChunkingTemplateMatchResponse,
     ChunkingTemplateResponse,
     ChunkingTemplateUpdateRequest,
     EmbeddingCollectionCreateRequest,
@@ -91,6 +96,23 @@ class FakeClient:
             capability="native",
             fallback_enabled=True,
             hint="hint",
+        )
+
+    async def validate_chunking_template(self, template_config):
+        self.calls.append(("validate_chunking_template", template_config))
+        return ChunkingTemplateValidationResponse(valid=True)
+
+    async def match_chunking_templates(self, **kwargs):
+        self.calls.append(("match_chunking_templates", kwargs))
+        return ChunkingTemplateMatchResponse(
+            matches=[{"name": "article-template", "score": 0.85, "priority": 3}]
+        )
+
+    async def learn_chunking_template(self, request_data):
+        self.calls.append(("learn_chunking_template", request_data))
+        return ChunkingTemplateLearnResponse(
+            template={"name": "learned", "chunking": {"method": "sentences"}},
+            saved=True,
         )
 
     async def list_embedding_collections(self):

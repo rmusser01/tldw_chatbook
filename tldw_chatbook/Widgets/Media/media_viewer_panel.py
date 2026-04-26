@@ -487,6 +487,26 @@ class MediaViewerPanel(Container):
                                     disabled=True,
                                 )
                                 yield Button("Delete", id="delete-button", variant="error")
+
+                        with Collapsible(title="Reading Highlights", collapsed=True, id="reading-highlights-editor"):
+                            yield Static("No reading highlights loaded.", id="reading-highlights-status")
+                            yield Select(
+                                [],
+                                prompt="Select highlight",
+                                allow_blank=True,
+                                id="reading-highlight-select",
+                                disabled=True,
+                            )
+                            yield Label("Quote:", classes="edit-label")
+                            yield TextArea("", id="reading-highlight-quote")
+                            yield Label("Note:", classes="edit-label")
+                            yield TextArea("", id="reading-highlight-note")
+                            yield Label("Color:", classes="edit-label")
+                            yield Input("yellow", id="reading-highlight-color")
+                            with Horizontal(classes="edit-actions"):
+                                yield Button("Add Highlight", id="add-reading-highlight-btn", variant="success")
+                                yield Button("Update Highlight", id="update-reading-highlight-btn", variant="primary", disabled=True)
+                                yield Button("Delete Highlight", id="delete-reading-highlight-btn", variant="error", disabled=True)
                     
                     # Edit mode (hidden by default)
                     with Container(id="metadata-edit", classes="edit-section hidden"):
@@ -732,6 +752,26 @@ class MediaViewerPanel(Container):
                     if percent_complete is not None:
                         progress_text = f"{progress_text} ({float(percent_complete):.1f}%)"
                     lines.append(f"[bold]Reading Progress:[/bold] {progress_text}")
+
+            highlights = self.media_data.get("reading_highlights") or []
+            if isinstance(highlights, list) and highlights:
+                lines.append(f"[bold]Highlights: {len(highlights)}[/bold]")
+                for highlight in highlights[:3]:
+                    if not isinstance(highlight, dict):
+                        continue
+                    quote = str(highlight.get("quote") or "").strip()
+                    if len(quote) > 80:
+                        quote = f"{quote[:77]}..."
+                    note = str(highlight.get("note") or "").strip()
+                    color = str(highlight.get("color") or "").strip()
+                    summary = f"- {quote}" if quote else "- Highlight"
+                    if color:
+                        summary = f"{summary} ({color})"
+                    if note:
+                        summary = f"{summary}: {note}"
+                    lines.append(summary)
+                if len(highlights) > 3:
+                    lines.append(f"- ... and {len(highlights) - 3} more")
             
             display.update("\n".join(lines))
         except Exception as e:
@@ -1774,6 +1814,7 @@ class MediaViewerPanel(Container):
                     version_uuid=analysis_uuid,
                     type_slug="",  # Will be set by MediaWindow
                     record_id=self.media_data.get("id"),
+                    version_number=analysis_version,
                 ))
             else:
                 # For unsaved analyses or legacy analyses without UUID

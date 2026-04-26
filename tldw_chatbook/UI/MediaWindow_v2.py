@@ -5,6 +5,7 @@ This is a refactored version that uses the new component-based architecture.
 """
 
 import inspect
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, List, Optional, Dict, Any
 from textual import on
 from textual.app import ComposeResult
@@ -39,7 +40,10 @@ from ..Event_Handlers.media_events import (
     MediaAnalysisSaveEvent,
     MediaAnalysisSaveAsNoteEvent,
     MediaAnalysisOverwriteEvent,
-    MediaAnalysisDeleteEvent
+    MediaAnalysisDeleteEvent,
+    MediaReadingHighlightCreateEvent,
+    MediaReadingHighlightUpdateEvent,
+    MediaReadingHighlightDeleteEvent,
 )
 
 if TYPE_CHECKING:
@@ -528,6 +532,147 @@ class MediaWindow(Container):
             self.runtime_state.reading_progress_by_record_id[record_id] = progress
         return progress
 
+    @staticmethod
+    def _explicit_scope_callable(scope_service: Any, method_name: str) -> Optional[Any]:
+        """Return a real scope method without accidentally accepting auto-created mocks."""
+        if scope_service is None:
+            return None
+        class_method = getattr(type(scope_service), method_name, None)
+        if callable(class_method):
+            return getattr(scope_service, method_name)
+        instance_method = getattr(scope_service, "__dict__", {}).get(method_name)
+        return instance_method if callable(instance_method) else None
+
+    async def load_reading_highlights(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Load reading highlights for a normalized media or reading item record."""
+        scope_service = self._scope_service()
+        list_highlights = self._explicit_scope_callable(scope_service, "list_reading_highlights")
+        if list_highlights is None:
+            return []
+
+        try:
+            highlights = await self._maybe_await(
+                list_highlights(
+                    mode=self._record_backend(record),
+                    record=record,
+                )
+            )
+        except ValueError as exc:
+            logger.debug(f"Reading highlights unavailable for record {record.get('id')}: {exc}")
+            return []
+        except Exception as exc:
+            logger.error(f"Failed to load reading highlights for record {record.get('id')}: {exc}")
+            return []
+
+        if not isinstance(highlights, (list, tuple)):
+            return []
+        return [dict(highlight) for highlight in highlights if isinstance(highlight, dict)]
+
+    async def _refresh_reading_highlights_for_record(
+        self,
+        record: Dict[str, Any],
+        *,
+        fallback_highlight: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Reload highlight state after a create/update/delete mutation."""
+        updated_record = dict(record or {})
+        record_id = self._record_id(updated_record)
+        try:
+            highlights = await self.load_reading_highlights(updated_record)
+        except Exception as exc:
+            logger.error(f"Failed to refresh reading highlights for {record_id}: {exc}", exc_info=True)
+            highlights = []
+        if not highlights and fallback_highlight:
+            highlights = [dict(fallback_highlight)]
+        updated_record["reading_highlights"] = highlights
+        if record_id and self.runtime_state is not None:
+            self.runtime_state.detail_by_record_id[record_id] = updated_record
+        self.viewer_panel.load_media(updated_record)
+        await self._load_document_versions(updated_record)
+        return updated_record
+
+    @on(MediaReadingHighlightCreateEvent)
+    def handle_reading_highlight_create(self, event: MediaReadingHighlightCreateEvent) -> None:
+        """Handle reading highlight creation from the viewer panel."""
+        self.run_worker(self._handle_reading_highlight_create_async(event))
+
+    async def _handle_reading_highlight_create_async(self, event: MediaReadingHighlightCreateEvent) -> None:
+        record = self._record_for_event(event)
+        record_id = self._record_id(record, getattr(event, "record_id", None))
+        if not record_id:
+            self.app_instance.notify("Unable to determine media record for highlight", severity="error")
+            return
+        try:
+            created = await self._maybe_await(
+                self._scope_service().create_reading_highlight(
+                    mode=self._record_backend(record),
+                    record=record,
+                    quote=event.quote,
+                    start_offset=event.start_offset,
+                    end_offset=event.end_offset,
+                    color=event.color,
+                    note=event.note,
+                    anchor_strategy=event.anchor_strategy,
+                )
+            )
+            await self._refresh_reading_highlights_for_record(record, fallback_highlight=created)
+            self.app_instance.notify("Reading highlight created", severity="information")
+        except Exception as exc:
+            logger.error(f"Error creating reading highlight for {record_id}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
+
+    @on(MediaReadingHighlightUpdateEvent)
+    def handle_reading_highlight_update(self, event: MediaReadingHighlightUpdateEvent) -> None:
+        """Handle reading highlight updates from the viewer panel."""
+        self.run_worker(self._handle_reading_highlight_update_async(event))
+
+    async def _handle_reading_highlight_update_async(self, event: MediaReadingHighlightUpdateEvent) -> None:
+        record = self._record_for_event(event)
+        record_id = self._record_id(record, getattr(event, "record_id", None))
+        if not record_id:
+            self.app_instance.notify("Unable to determine media record for highlight", severity="error")
+            return
+        try:
+            updated = await self._maybe_await(
+                self._scope_service().update_reading_highlight(
+                    mode=self._record_backend(record),
+                    highlight_id=event.highlight_id,
+                    quote=event.quote,
+                    color=event.color,
+                    note=event.note,
+                    state=event.state,
+                )
+            )
+            await self._refresh_reading_highlights_for_record(record, fallback_highlight=updated)
+            self.app_instance.notify("Reading highlight updated", severity="information")
+        except Exception as exc:
+            logger.error(f"Error updating reading highlight for {record_id}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
+
+    @on(MediaReadingHighlightDeleteEvent)
+    def handle_reading_highlight_delete(self, event: MediaReadingHighlightDeleteEvent) -> None:
+        """Handle reading highlight deletion from the viewer panel."""
+        self.run_worker(self._handle_reading_highlight_delete_async(event))
+
+    async def _handle_reading_highlight_delete_async(self, event: MediaReadingHighlightDeleteEvent) -> None:
+        record = self._record_for_event(event)
+        record_id = self._record_id(record, getattr(event, "record_id", None))
+        if not record_id:
+            self.app_instance.notify("Unable to determine media record for highlight", severity="error")
+            return
+        try:
+            await self._maybe_await(
+                self._scope_service().delete_reading_highlight(
+                    mode=self._record_backend(record),
+                    highlight_id=event.highlight_id,
+                )
+            )
+            await self._refresh_reading_highlights_for_record(record)
+            self.app_instance.notify("Reading highlight deleted", severity="information")
+        except Exception as exc:
+            logger.error(f"Error deleting reading highlight for {record_id}: {exc}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
+
     async def _load_document_versions(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Load analysis/document versions through the scope seam."""
         scope_service = self._scope_service()
@@ -605,6 +750,7 @@ class MediaWindow(Container):
         # Don't activate initial view here - let activate_initial_view handle it
         self._reset_invalid_saved_view_for_context()
         
+        self.call_after_refresh(self._sync_saved_view_context_on_entry)
         # Check initial size for responsiveness
         self.call_after_refresh(self.check_responsive_layout)
 
@@ -731,6 +877,9 @@ class MediaWindow(Container):
                 detail["reading_progress"] = progress
         elif self.runtime_state is not None:
             self.runtime_state.reading_progress_by_record_id[record_id] = detail["reading_progress"]
+
+        if "reading_highlights" not in detail:
+            detail["reading_highlights"] = await self.load_reading_highlights(detail)
 
         if self.runtime_state is not None:
             self.runtime_state.detail_by_record_id[record_id] = detail
@@ -1313,6 +1462,8 @@ class MediaWindow(Container):
             success = await self._scope_service().delete_analysis_version(
                 mode=self._record_backend(record),
                 version_uuid=event.version_uuid,
+                media_id=self._source_media_id(record, fallback=getattr(event, "media_id", None)),
+                version_number=getattr(event, "version_number", None),
             )
         except ValueError as exc:
             self.app_instance.notify(str(exc), severity="warning")
@@ -1421,8 +1572,12 @@ class MediaWindow(Container):
                 if type_slug in ["collections-tags", "multi-item-review"]:
                     logger.info(f"Skipping search for special window: {type_slug}")
                     return
-                
-                # Set loading state
+
+                if not self._normalize_saved_view_context():
+                    self._sync_saved_view_controls()
+
+                # Set loading state after any stale-state cleanup so the corrected
+                # context becomes authoritative before fresh results are loaded.
                 self.list_panel.set_loading(True)
                 if self._reset_invalid_saved_view_for_context():
                     self._sync_saved_view_controls()

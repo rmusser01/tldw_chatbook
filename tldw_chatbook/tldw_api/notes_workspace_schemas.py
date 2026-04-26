@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field, field_validator
 
 
 WorkspaceStudyMaterialsPolicy = Literal["general", "workspace"]
+NoteGraphEdgeType = Literal["manual", "wikilink", "backlink", "tag_membership", "source_membership"]
+NoteGraphFormat = Literal["default", "cytoscape"]
 
 
 def _split_keywords(value: Any) -> list[str] | None:

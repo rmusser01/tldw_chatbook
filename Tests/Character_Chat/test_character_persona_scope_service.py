@@ -2,6 +2,9 @@ from unittest.mock import Mock
 
 import pytest
 
+from tldw_chatbook.Character_Chat.local_character_persona_service import (
+    LocalCharacterPersonaService,
+)
 from tldw_chatbook.Character_Chat.character_persona_scope_service import (
     CharacterPersonaScopeService,
 )
@@ -624,6 +627,14 @@ class FakePolicyEnforcer:
         )
 
 
+class FakePolicyEnforcer:
+    def __init__(self):
+        self.actions = []
+
+    def require_allowed(self, *, action_id):
+        self.actions.append(action_id)
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_to_server_backend_when_mode_is_server():
     local_service = Mock()
@@ -798,9 +809,48 @@ async def test_scope_service_routes_character_crud_to_selected_backend():
 async def test_scope_service_routes_persona_profile_crud_to_server_backend():
     scope_service = CharacterPersonaScopeService(
         local_service=FakeLocalCharacterBackend(),
-        server_service=FakeCharacterPersonaClient(),
+        server_service=server_service,
+        policy_enforcer=policy,
     )
 
+    detail = await scope_service.get_character(12, mode="server")
+    created = await scope_service.create_character({"name": "Ada"}, mode="server")
+    updated = await scope_service.update_character(12, {"name": "Ada v2"}, expected_version=3, mode="server")
+    deleted = await scope_service.delete_character(12, expected_version=4, mode="server")
+    restored = await scope_service.restore_character(12, expected_version=5, mode="server")
+
+    assert detail["id"] == 12
+    assert created["id"] == 42
+    assert updated["version"] == 4
+    assert deleted["deleted"] is True
+    assert restored["deleted"] is False
+    assert policy.actions == [
+        "character.persona.detail.server",
+        "character.persona.create.server",
+        "character.persona.update.server",
+        "character.persona.delete.server",
+        "character.persona.update.server",
+    ]
+    assert server_service.character_calls == [
+        ("detail", 12),
+        ("create", {"name": "Ada"}),
+        ("update", 12, {"name": "Ada v2"}, 3),
+        ("delete", 12, 4),
+        ("restore", 12, 5),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_persona_profile_crud_to_server_backend():
+    policy = FakePolicyEnforcer()
+    server_service = FakeCharacterPersonaClient()
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterBackend(),
+        server_service=server_service,
+        policy_enforcer=policy,
+    )
+
+    profiles = await scope_service.list_persona_profiles(mode="server")
     persona = await scope_service.get_persona_profile("persona-1", mode="server")
     created = await scope_service.create_persona_profile(
         Mock(model_dump=lambda mode="json": {"name": "Guide", "mode": "session_scoped"}),
@@ -815,6 +865,7 @@ async def test_scope_service_routes_persona_profile_crud_to_server_backend():
     deleted = await scope_service.delete_persona_profile("persona-1", expected_version=8, mode="server")
     restored = await scope_service.restore_persona_profile("persona-1", expected_version=9, mode="server")
 
+    assert profiles[0]["id"] == "persona-1"
     assert persona["id"] == "persona-1"
     assert created["name"] == "Guide"
     assert updated["id"] == "persona-1"
@@ -1106,9 +1157,11 @@ async def test_scope_service_routes_chat_execution_support_to_local_backend():
 @pytest.mark.asyncio
 async def test_scope_service_routes_chat_execution_support_to_server_backend():
     server_service = FakeCharacterPersonaClient()
+    policy = FakePolicyEnforcer()
     scope_service = CharacterPersonaScopeService(
         local_service=FakeLocalCharacterBackend(),
         server_service=server_service,
+        policy_enforcer=policy,
     )
 
     greetings = await scope_service.list_chat_greetings("chat.server.alice", mode="server")
@@ -1138,6 +1191,338 @@ async def test_scope_service_routes_chat_execution_support_to_server_backend():
     assert created["preset_id"] == "custom-alpha"
     assert updated["name"] == "Custom Beta"
     assert deleted["status"] == "deleted"
+    assert policy.actions == [
+        "character.greetings.list.server",
+        "character.greetings.update.server",
+        "character.presets.list.server",
+        "character.presets.create.server",
+        "character.presets.update.server",
+        "character.presets.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_ccp_sessions_messages_and_memory_with_policy():
+    server_service = FakeCharacterPersonaClient()
+    policy = FakePolicyEnforcer()
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterBackend(),
+        server_service=server_service,
+        policy_enforcer=policy,
+    )
+
+    await scope_service.create_character_chat_session(
+        {"character_id": 12, "title": "Ada"},
+        mode="server",
+        seed_first_message=True,
+    )
+    await scope_service.list_character_chat_sessions(mode="server", character_id=12)
+    await scope_service.get_character_chat_session("chat-1", mode="server")
+    await scope_service.update_character_chat_session(
+        "chat-1",
+        {"title": "Ada v2"},
+        expected_version=4,
+        mode="server",
+    )
+    await scope_service.delete_character_chat_session("chat-1", expected_version=5, mode="server")
+    await scope_service.restore_character_chat_session("chat-1", expected_version=6, mode="server")
+    await scope_service.get_character_chat_settings("chat-1", mode="server")
+    await scope_service.update_character_chat_settings("chat-1", {"settings": {"presetScope": "chat"}}, mode="server")
+    await scope_service.create_character_chat_message("chat-1", {"role": "user", "content": "Hello"}, mode="server")
+    await scope_service.list_character_chat_messages("chat-1", mode="server")
+    await scope_service.get_character_chat_message("msg-1", mode="server")
+    await scope_service.update_character_chat_message("msg-1", {"content": "Updated"}, expected_version=7, mode="server")
+    await scope_service.delete_character_chat_message("msg-1", expected_version=8, mode="server")
+    await scope_service.search_character_chat_messages("chat-1", "hello", mode="server")
+    await scope_service.list_character_memories("12", mode="server", include_archived=True)
+    await scope_service.create_character_memory("12", {"content": "likes tea"}, mode="server")
+    await scope_service.update_character_memory("12", "mem-1", {"content": "likes coffee"}, mode="server")
+    await scope_service.archive_character_memory("12", "mem-1", {"archived": True}, mode="server")
+    await scope_service.delete_character_memory("12", "mem-1", mode="server")
+    await scope_service.extract_character_memories("12", {"chat_id": "chat-1"}, mode="server")
+
+    assert policy.actions == [
+        "character.sessions.create.server",
+        "character.sessions.list.server",
+        "character.sessions.detail.server",
+        "character.sessions.update.server",
+        "character.sessions.delete.server",
+        "character.sessions.update.server",
+        "character.sessions.detail.server",
+        "character.sessions.update.server",
+        "character.messages.create.server",
+        "character.messages.list.server",
+        "character.messages.detail.server",
+        "character.messages.update.server",
+        "character.messages.delete.server",
+        "character.messages.list.server",
+        "character.memory.list.server",
+        "character.memory.create.server",
+        "character.memory.update.server",
+        "character.memory.update.server",
+        "character.memory.delete.server",
+        "character.memory.launch.server",
+    ]
+    assert server_service.session_calls[0][0] == "create"
+    assert server_service.message_calls[0][0] == "create"
+    assert server_service.memory_calls[0][0] == "list"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_ccp_sessions_messages_and_memory_with_policy():
+    policy = FakePolicyEnforcer()
+    local_service = FakeCharacterPersonaClient()
+    scope_service = CharacterPersonaScopeService(
+        local_service=local_service,
+        server_service=FakeCharacterPersonaClient(),
+        policy_enforcer=policy,
+    )
+
+    await scope_service.create_character_chat_session({"character_id": 12, "title": "Ada"}, mode="local")
+    await scope_service.create_character_chat_message("chat-1", {"role": "user", "content": "Hi"}, mode="local")
+    await scope_service.list_character_memories("12", mode="local")
+
+    assert policy.actions == [
+        "character.sessions.create.local",
+        "character.messages.create.local",
+        "character.memory.list.local",
+    ]
+    assert local_service.session_calls[0][0] == "create"
+    assert local_service.message_calls[0][0] == "create"
+    assert local_service.memory_calls[0][0] == "list"
+
+
+def test_local_character_persona_service_persists_sessions_messages_settings_and_memory(tmp_path):
+    db = CharactersRAGDB(tmp_path / "ccp.sqlite", "test_client")
+    character_id = db.add_character_card(
+        {
+            "name": "Local Ada",
+            "description": "Offline character",
+            "first_message": "Hello.",
+        }
+    )
+    service = LocalCharacterPersonaService(db)
+
+    session = service.create_character_chat_session(
+        {
+            "character_id": character_id,
+            "title": "Local Ada Chat",
+        }
+    )
+    listed_sessions = service.list_character_chat_sessions(character_id=character_id)
+    updated_settings = service.update_character_chat_settings(
+        session["id"],
+        {"settings": {"temperature": 0.4}},
+    )
+    fetched_settings = service.get_character_chat_settings(session["id"])
+    message = service.create_character_chat_message(
+        session["id"],
+        {"role": "user", "content": "Hello"},
+    )
+    listed_messages = service.list_character_chat_messages(session["id"])
+    updated_message = service.update_character_chat_message(
+        message["id"],
+        {"content": "Updated"},
+        expected_version=message["version"],
+    )
+    memory = service.create_character_memory(str(character_id), {"content": "likes tea"})
+    listed_memories = service.list_character_memories(str(character_id))
+    archived_memory = service.archive_character_memory(
+        str(character_id),
+        memory["id"],
+        {"archived": True},
+    )
+
+    assert session["id"]
+    assert session["character_id"] == character_id
+    assert session["runtime_backend"] == "local"
+    assert session["discovery_owner"] == "ccp_character"
+    assert listed_sessions["total"] == 1
+    assert updated_settings["settings"] == {"temperature": 0.4}
+    assert fetched_settings["settings"] == {"temperature": 0.4}
+    assert message["conversation_id"] == session["id"]
+    assert listed_messages["total"] == 1
+    assert updated_message["content"] == "Updated"
+    assert memory["content"] == "likes tea"
+    assert listed_memories["total"] == 1
+    assert archived_memory["archived"] is True
+
+    service.create_character_chat_message(
+        session["id"],
+        {"role": "user", "content": "Remember that I keep a travel notebook."},
+    )
+    extracted = service.extract_character_memories(str(character_id), {"chat_id": session["id"], "message_limit": 5})
+    duplicate_extract = service.extract_character_memories(str(character_id), {"chat_id": session["id"], "message_limit": 5})
+
+    assert extracted["extracted"] == 1
+    assert extracted["skipped_duplicates"] == 0
+    assert extracted["memories"][0]["memory_type"] == "extracted"
+    assert extracted["memories"][0]["content"] == "I keep a travel notebook."
+    assert duplicate_extract["extracted"] == 0
+    assert duplicate_extract["skipped_duplicates"] == 1
+
+    assert service.delete_character_memory(str(character_id), memory["id"]) == {"deleted": True}
+
+
+def test_local_character_persona_service_persists_character_catalog_crud_and_restore(tmp_path):
+    db = CharactersRAGDB(tmp_path / "ccp-character-catalog.sqlite", "test_client")
+    service = LocalCharacterPersonaService(db)
+
+    created = service.create_character({"name": "Local Ada", "first_message": "Hello."})
+    fetched = service.get_character(created["id"])
+    updated = service.update_character(
+        created["id"],
+        {"name": "Local Ada v2", "tags": ["offline"]},
+        expected_version=created["version"],
+    )
+    deleted = service.delete_character(created["id"], expected_version=updated["version"])
+
+    with pytest.raises(ValueError, match="Local character '.*' not found"):
+        service.get_character(created["id"])
+
+    restored = service.restore_character(created["id"], expected_version=updated["version"] + 1)
+
+    assert created["name"] == "Local Ada"
+    assert fetched["id"] == created["id"]
+    assert updated["name"] == "Local Ada v2"
+    assert updated["tags"] == ["offline"]
+    assert deleted == {"deleted": True, "id": str(created["id"])}
+    assert restored["name"] == "Local Ada v2"
+    assert restored["version"] == updated["version"] + 2
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_world_book_crud_with_policy(tmp_path):
+    db = CharactersRAGDB(tmp_path / "ccp-world-books.sqlite", "test_client")
+    policy = FakePolicyEnforcer()
+    scope_service = CharacterPersonaScopeService(
+        local_service=LocalCharacterPersonaService(db),
+        server_service=FakeCharacterPersonaClient(),
+        policy_enforcer=policy,
+    )
+
+    created = await scope_service.create_character_world_book(
+        {
+            "name": "Shared Lore",
+            "description": "Reusable context",
+            "scan_depth": 4,
+            "token_budget": 900,
+            "recursive_scanning": True,
+        },
+        mode="local",
+    )
+    listed = await scope_service.list_character_world_books(mode="local", include_disabled=True)
+    fetched = await scope_service.get_character_world_book(created["id"], mode="local")
+    updated = await scope_service.update_character_world_book(
+        created["id"],
+        {"description": "Updated context", "enabled": False},
+        expected_version=created["version"],
+        mode="local",
+    )
+    deleted = await scope_service.delete_character_world_book(
+        created["id"],
+        expected_version=updated["version"],
+        mode="local",
+    )
+
+    assert created["name"] == "Shared Lore"
+    assert created["recursive_scanning"] is True
+    assert listed["world_books"][0]["id"] == created["id"]
+    assert fetched["description"] == "Reusable context"
+    assert updated["description"] == "Updated context"
+    assert updated["enabled"] is False
+    assert deleted == {"deleted": True, "id": str(created["id"])}
+    assert policy.actions == [
+        "character.world_books.create.local",
+        "character.world_books.list.local",
+        "character.world_books.detail.local",
+        "character.world_books.update.local",
+        "character.world_books.delete.local",
+    ]
+    db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_world_book_entries_with_policy(tmp_path):
+    db = CharactersRAGDB(tmp_path / "ccp-world-book-entries.sqlite", "test_client")
+    policy = FakePolicyEnforcer()
+    scope_service = CharacterPersonaScopeService(
+        local_service=LocalCharacterPersonaService(db),
+        server_service=FakeCharacterPersonaClient(),
+        policy_enforcer=policy,
+    )
+    world_book = await scope_service.create_character_world_book({"name": "Entry Lore"}, mode="local")
+    policy.actions.clear()
+
+    entry = await scope_service.create_character_world_book_entry(
+        world_book["id"],
+        {"keys": ["gate"], "content": "The old gate is sealed."},
+        mode="local",
+    )
+    listed = await scope_service.list_character_world_book_entries(world_book["id"], mode="local")
+    fetched = await scope_service.get_character_world_book_entry(entry["id"], mode="local")
+    updated = await scope_service.update_character_world_book_entry(
+        entry["id"],
+        {"content": "The old gate is open."},
+        mode="local",
+    )
+    deleted = await scope_service.delete_character_world_book_entry(entry["id"], mode="local")
+
+    assert listed["entries"][0]["id"] == entry["id"]
+    assert fetched["content"] == "The old gate is sealed."
+    assert updated["content"] == "The old gate is open."
+    assert deleted == {"deleted": True, "id": str(entry["id"])}
+    assert policy.actions == [
+        "character.world_book_entries.create.local",
+        "character.world_book_entries.list.local",
+        "character.world_book_entries.detail.local",
+        "character.world_book_entries.update.local",
+        "character.world_book_entries.delete.local",
+    ]
+    db.close_connection()
+
+
+def test_local_character_persona_service_persists_world_book_entries_links_and_import_export(tmp_path):
+    db = CharactersRAGDB(tmp_path / "ccp-world-book-links.sqlite", "test_client")
+    character_id = db.add_character_card({"name": "Lorekeeper", "first_message": "Ask."})
+    service = LocalCharacterPersonaService(db)
+    session = service.create_character_chat_session({"character_id": character_id, "title": "Lore Chat"})
+
+    world_book = service.create_character_world_book({"name": "City Lore", "description": "Places"})
+    entry = service.create_character_world_book_entry(
+        world_book["id"],
+        {
+            "keys": ["city", "district"],
+            "content": "The city is built in rings.",
+            "position": "before_char",
+            "secondary_keys": ["ring"],
+            "selective": True,
+        },
+    )
+    listed_entries = service.list_character_world_book_entries(world_book["id"])
+    updated_entry = service.update_character_world_book_entry(
+        entry["id"],
+        {"content": "The city is built in seven rings.", "enabled": False},
+    )
+    service.attach_character_world_book_to_session(session["id"], world_book["id"], {"priority": 7})
+    linked = service.list_session_world_books(session["id"], include_disabled=True)
+    exported = service.export_character_world_book(world_book["id"])
+    imported = service.import_character_world_book(exported, name_override="City Lore Copy")
+    service.detach_character_world_book_from_session(session["id"], world_book["id"])
+    after_detach = service.list_session_world_books(session["id"], include_disabled=True)
+    deleted_entry = service.delete_character_world_book_entry(entry["id"])
+
+    assert listed_entries["entries"][0]["keys"] == ["city", "district"]
+    assert updated_entry["content"] == "The city is built in seven rings."
+    assert updated_entry["enabled"] is False
+    assert linked["world_books"][0]["id"] == world_book["id"]
+    assert linked["world_books"][0]["priority"] == 7
+    assert exported["name"] == "City Lore"
+    assert imported["name"] == "City Lore Copy"
+    assert after_detach["world_books"] == []
+    assert deleted_entry == {"deleted": True, "id": str(entry["id"])}
+    db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -1954,6 +2339,7 @@ def test_app_wires_character_persona_services(monkeypatch):
     fake_app = Mock()
     fake_app.app_config = {"tldw_api": {"base_url": "https://example.com"}}
     fake_app.chachanotes_db = object()
+    fake_app.service_policy_enforcer = object()
 
     app_module.TldwCli._wire_character_persona_services(fake_app)
 

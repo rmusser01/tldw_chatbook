@@ -17,6 +17,7 @@ from tldw_chatbook.tldw_api import (
     FlashcardGenerateResponse,
     FlashcardListResponse,
     FlashcardNextReviewResponse,
+    FlashcardResetSchedulingRequest,
     FlashcardResponse,
     FlashcardResetSchedulingRequest,
     FlashcardReviewRequest,

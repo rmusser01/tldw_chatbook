@@ -1,6 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 from typing import Optional
+from unittest.mock import call
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -22,7 +23,7 @@ def _build_media_window(*, runtime_backend: str = "local", scope_service: Option
     app = SimpleNamespace(
         _media_types_for_ui=["All Media"],
         media_runtime_state=MediaRuntimeState(runtime_backend=runtime_backend),
-        media_reading_scope_service=scope_service or Mock(),
+        media_reading_scope_service=scope_service if scope_service is not None else Mock(),
         notify=Mock(),
         media_db=None,
     )
@@ -253,6 +254,160 @@ async def test_media_window_uses_scope_service_for_reading_progress():
     scope_service.get_reading_progress.assert_awaited_once_with(mode="server", record=record)
     assert progress["current_page"] == 3
     assert window.runtime_state.reading_progress_by_record_id[record["id"]]["total_pages"] == 10
+
+
+@pytest.mark.asyncio
+async def test_media_window_loads_reading_highlights_for_selected_record():
+    scope_service = Mock()
+    scope_service.get_media_detail = AsyncMock(
+        return_value={
+            "id": "server:reading_item:118",
+            "backend": "server",
+            "source_id": "118",
+            "backing_media_id": 42,
+            "title": "Remote Article",
+            "content": "hello",
+        }
+    )
+    scope_service.list_reading_highlights = AsyncMock(
+        return_value=[
+            {
+                "id": "server:reading_highlight:5",
+                "item_id": "118",
+                "quote": "Important sentence",
+                "color": "yellow",
+                "note": "Check this",
+            }
+        ]
+    )
+    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+
+    await window.handle_media_item_selected(
+        SimpleNamespace(
+            record_id="server:reading_item:118",
+            media_data={
+                "id": "server:reading_item:118",
+                "backend": "server",
+                "source_id": "118",
+                "backing_media_id": 42,
+            },
+        )
+    )
+
+    scope_service.list_reading_highlights.assert_awaited_once_with(mode="server", record=scope_service.get_media_detail.return_value)
+    loaded_detail = window.viewer_panel.load_media.call_args.args[0]
+    assert loaded_detail["reading_highlights"][0]["quote"] == "Important sentence"
+
+
+@pytest.mark.asyncio
+async def test_media_window_routes_reading_highlight_crud_through_scope_service():
+    scope_service = Mock()
+    scope_service.create_reading_highlight = AsyncMock(
+        return_value={
+            "id": "server:reading_highlight:6",
+            "source_id": "6",
+            "quote": "Created quote",
+            "color": "blue",
+            "note": "Created note",
+        }
+    )
+    scope_service.update_reading_highlight = AsyncMock(
+        return_value={
+            "id": "server:reading_highlight:6",
+            "source_id": "6",
+            "quote": "Created quote",
+            "color": "blue",
+            "note": "Updated note",
+        }
+    )
+    scope_service.delete_reading_highlight = AsyncMock(return_value=True)
+    scope_service.list_reading_highlights = AsyncMock(
+        side_effect=[
+            [
+                {
+                    "id": "server:reading_highlight:6",
+                    "source_id": "6",
+                    "quote": "Created quote",
+                    "color": "blue",
+                    "note": "Created note",
+                }
+            ],
+            [
+                {
+                    "id": "server:reading_highlight:6",
+                    "source_id": "6",
+                    "quote": "Created quote",
+                    "color": "blue",
+                    "note": "Updated note",
+                }
+            ],
+            [],
+        ]
+    )
+    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    record = {
+        "id": "server:reading_item:118",
+        "backend": "server",
+        "source_id": "118",
+        "backing_media_id": 42,
+        "title": "Remote Article",
+    }
+    window.viewer_panel.media_data = record
+    window.runtime_state.detail_by_record_id[record["id"]] = record
+
+    await window._handle_reading_highlight_create_async(
+        MediaReadingHighlightCreateEvent(
+            media_id="118",
+            record_id=record["id"],
+            quote="Created quote",
+            color="blue",
+            note="Created note",
+            media_data=record,
+        )
+    )
+    await window._handle_reading_highlight_update_async(
+        MediaReadingHighlightUpdateEvent(
+            media_id="118",
+            record_id=record["id"],
+            highlight_id="6",
+            quote="Created quote",
+            color="blue",
+            note="Updated note",
+            media_data=record,
+        )
+    )
+    await window._handle_reading_highlight_delete_async(
+        MediaReadingHighlightDeleteEvent(
+            media_id="118",
+            record_id=record["id"],
+            highlight_id="6",
+            media_data=record,
+        )
+    )
+
+    scope_service.create_reading_highlight.assert_awaited_once_with(
+        mode="server",
+        record=record,
+        quote="Created quote",
+        start_offset=None,
+        end_offset=None,
+        color="blue",
+        note="Created note",
+        anchor_strategy="fuzzy_quote",
+    )
+    scope_service.update_reading_highlight.assert_awaited_once_with(
+        mode="server",
+        highlight_id="6",
+        quote="Created quote",
+        color="blue",
+        note="Updated note",
+        state="active",
+    )
+    scope_service.delete_reading_highlight.assert_awaited_once_with(
+        mode="server",
+        highlight_id="6",
+    )
+    assert window.viewer_panel.load_media.call_args.args[0]["reading_highlights"] == []
 
 
 @pytest.mark.asyncio
@@ -657,6 +812,31 @@ def test_media_viewer_metadata_display_includes_reading_progress_for_backed_reco
     rendered_text = display.update.call_args.args[0]
     assert "Reading Progress:" in rendered_text
     assert "3 / 10" in rendered_text
+
+
+def test_media_viewer_metadata_display_includes_reading_highlights():
+    panel = MediaViewerPanel(Mock())
+    display = Mock()
+    panel.query_one = Mock(return_value=display)
+    panel.media_data = {
+        "id": "server:reading_item:118",
+        "title": "Remote Article",
+        "media_type": "article",
+        "reading_highlights": [
+            {
+                "quote": "Important sentence",
+                "color": "yellow",
+                "note": "Check this",
+            }
+        ],
+    }
+
+    panel.update_metadata_display()
+
+    rendered_text = display.update.call_args.args[0]
+    assert "Highlights: 1" in rendered_text
+    assert "Important sentence" in rendered_text
+    assert "Check this" in rendered_text
 
 
 def test_media_viewer_load_analysis_versions_resets_button_state_when_empty():

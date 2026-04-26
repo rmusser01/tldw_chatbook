@@ -16,6 +16,9 @@ def build_media_entity_id(backend: str, entity_kind: str, source_id: Any) -> str
 def _as_mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return dict(model_dump(mode="json"))
     return {}
 
 
@@ -105,6 +108,36 @@ def normalize_reading_progress(
         "zoom_level": progress.get("zoom_level"),
         "cfi": progress.get("cfi"),
         "last_read_at": _clean_timestamp(progress.get("last_read_at"), progress.get("last_modified")),
+    }
+
+
+def normalize_reading_highlight(
+    highlight: Mapping[str, Any],
+    *,
+    backend: str,
+) -> dict[str, Any]:
+    highlight_data = _as_mapping(highlight)
+    source_id = str(highlight_data.get("id"))
+    item_id = highlight_data.get("item_id", highlight_data.get("media_id"))
+    return {
+        "id": build_canonical_media_id(backend, "reading_highlight", source_id),
+        "backend": str(backend),
+        "entity_kind": "reading_highlight",
+        "source_id": source_id,
+        "item_id": str(item_id) if item_id is not None else None,
+        "backing_media_id": item_id,
+        "quote": highlight_data.get("quote") or "",
+        "start_offset": highlight_data.get("start_offset"),
+        "end_offset": highlight_data.get("end_offset"),
+        "color": highlight_data.get("color"),
+        "note": highlight_data.get("note"),
+        "anchor_strategy": highlight_data.get("anchor_strategy") or "fuzzy_quote",
+        "content_hash_ref": highlight_data.get("content_hash_ref"),
+        "context_before": highlight_data.get("context_before"),
+        "context_after": highlight_data.get("context_after"),
+        "state": highlight_data.get("state") or "active",
+        "created_at": _clean_timestamp(highlight_data.get("created_at")),
+        "updated_at": _clean_timestamp(highlight_data.get("updated_at")),
     }
 
 

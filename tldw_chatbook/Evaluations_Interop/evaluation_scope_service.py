@@ -92,6 +92,28 @@ class EvaluationScopeService:
             raise ValueError("Server evaluations backend is unavailable.")
         return self.server_service
 
+    def _enforce_policy(self, mode: EvaluationBackend, resource: str, action: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        self.policy_enforcer.require_allowed(
+            action_id=f"evaluations.{resource}.{action}.{mode.value}"
+        )
+
+    def _server_only_service(
+        self,
+        mode: EvaluationBackend | str | None,
+        feature_name: str,
+        *,
+        resource: str | None = None,
+        action: str | None = None,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != EvaluationBackend.SERVER:
+            raise ValueError(f"{feature_name} is server-only in this Chatbook parity slice.")
+        if resource is not None and action is not None:
+            self._enforce_policy(normalized_mode, resource, action)
+        return self._service_for_mode(normalized_mode)
+
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
             return await value

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from typing import Any, Optional
+from uuid import uuid4
 
 from ..Chunking.chunking_interop_library import get_chunking_service
 from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
@@ -111,6 +113,62 @@ class LocalRAGAdminService:
         manager = self._build_chroma_manager()
         return manager.client.get_collection(name=collection_name)
 
+    def _default_collection_name(self, collection_name: Optional[str] = None) -> str:
+        if collection_name:
+            return str(collection_name)
+        return str(self._build_chroma_manager().get_user_default_collection_name())
+
+    def _get_media_for_embedding(self, media_id: int) -> dict[str, Any]:
+        if self.media_db is None:
+            raise ValueError("Local media DB is required for local embedding generation.")
+
+        getter = getattr(self.media_db, "get_media_by_ids_for_embedding", None)
+        if callable(getter):
+            rows = list(getter([media_id]) or [])
+            if rows:
+                return dict(rows[0])
+
+        detail_getter = getattr(self.media_db, "get_media_by_id", None)
+        if callable(detail_getter):
+            row = detail_getter(media_id)
+            if row:
+                return dict(row)
+
+        raise ValueError(f"Local media item {media_id} was not found or has no embeddable content.")
+
+    @staticmethod
+    def _word_chunks_for_reprocess(content: str, *, chunk_size: int, chunk_overlap: int) -> list[dict[str, Any]]:
+        words = [(match.group(0), match.start(), match.end()) for match in re.finditer(r"\S+", content)]
+        if not words:
+            return []
+        size = max(1, int(chunk_size))
+        overlap = min(max(0, int(chunk_overlap)), size - 1)
+        step = max(1, size - overlap)
+        chunks: list[dict[str, Any]] = []
+        for start in range(0, len(words), step):
+            bucket = words[start:start + size]
+            if not bucket:
+                continue
+            chunks.append(
+                {
+                    "text": " ".join(word for word, _start, _end in bucket),
+                    "start_index": bucket[0][1],
+                    "end_index": bucket[-1][2],
+                }
+            )
+            if start + size >= len(words):
+                break
+        return chunks
+
+    def _embedding_ids_for_media(self, media_id: int, *, collection_name: Optional[str] = None) -> list[str]:
+        collection_name = self._default_collection_name(collection_name)
+        try:
+            collection = self._build_chroma_manager().client.get_collection(name=collection_name)
+            payload = collection.get(where={"media_id": str(media_id)}, include=["metadatas"])
+        except Exception:
+            return []
+        return [str(item_id) for item_id in payload.get("ids", []) if item_id]
+
     def _infer_collection_dimension(self, collection: Any, metadata: Mapping[str, Any]) -> int | None:
         dimension = metadata.get("embedding_dimension")
         try:
@@ -134,6 +192,34 @@ class LocalRAGAdminService:
             return len(candidate)
         except TypeError:
             return None
+
+    def _record_local_media_job(
+        self,
+        *,
+        operation: str,
+        media_id: int,
+        result: Mapping[str, Any],
+        request: Mapping[str, Any] | None = None,
+        status: str = "completed",
+    ) -> dict[str, Any]:
+        prefix = "local-embedding" if operation == "media_embeddings" else "local-reprocess"
+        job_id = f"{prefix}-{media_id}-{uuid4().hex[:12]}"
+        now = datetime.now(timezone.utc).isoformat()
+        record = {
+            "id": job_id,
+            "job_id": job_id,
+            "uuid": job_id,
+            "operation": operation,
+            "media_id": media_id,
+            "status": status,
+            "backend": "local",
+            "created_at": now,
+            "updated_at": now,
+            "request": dict(request or {}),
+            "result": dict(result),
+        }
+        self._local_media_jobs[job_id] = record
+        return record
 
     def list_templates(
         self,

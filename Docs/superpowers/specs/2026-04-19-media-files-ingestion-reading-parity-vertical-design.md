@@ -451,6 +451,8 @@ This vertical should explicitly defer:
 - TTS
 - summarization
 
+Status addendum, 2026-04-23: later parity slices have now landed typed server-backed support for reading saved searches, note links, import jobs, archive creation, export bytes, summarization responses, and TTS bytes at the client/service/scope layer. Digest schedules remain deferred while workflows are out of scope, and mounted UX for the new action endpoints is intentionally left to the parallel UX pass.
+
 ## Behavior Matrix
 
 ### Local Mode

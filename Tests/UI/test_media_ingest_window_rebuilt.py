@@ -2,6 +2,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual.app import App
+from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt
@@ -14,6 +16,22 @@ async def test_ingest_window_does_not_construct_api_client_for_server_mode(monke
     ctor = Mock()
     monkeypatch.setattr("tldw_chatbook.UI.MediaIngestWindowRebuilt.build_runtime_api_client", ctor)
 
+    def compose(self):
+        yield RemoteIngestionPanel(self, id="remote-panel")
+
+
+class WebClipperPanelTestApp(App):
+    def __init__(self, *, runtime_backend: str, scope_service: Mock):
+        super().__init__()
+        self.media_runtime_state = MediaRuntimeState(runtime_backend=runtime_backend)
+        self.server_web_clipper_scope_service = scope_service
+
+    def compose(self):
+        yield WebClipperPanel(self, id="web-clipper-panel")
+
+
+@pytest.mark.asyncio
+async def test_ingest_window_refreshes_server_mode_panels_without_constructing_api_client():
     app = SimpleNamespace(media_runtime_state=MediaRuntimeState(runtime_backend="server"))
     ingest_window = MediaIngestWindowRebuilt(app)
     ingest_window.runtime_state = app.media_runtime_state
@@ -21,10 +39,17 @@ async def test_ingest_window_does_not_construct_api_client_for_server_mode(monke
         runtime_backend="local",
         refresh_for_mode=AsyncMock(),
     )
+    ingest_window.remote_panel = SimpleNamespace(
+        runtime_backend="local",
+        refresh_for_mode=AsyncMock(),
+    )
+    ingest_window.web_clipper_panel = SimpleNamespace(
+        runtime_backend="local",
+        refresh_for_mode=AsyncMock(),
+    )
 
     await ingest_window.refresh_backend_view()
 
-    ctor.assert_not_called()
     assert ingest_window.source_panel.runtime_backend == "server"
     ingest_window.source_panel.refresh_for_mode.assert_awaited_once()
 

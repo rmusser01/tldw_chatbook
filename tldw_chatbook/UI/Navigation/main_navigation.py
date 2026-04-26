@@ -9,6 +9,8 @@ from textual.widgets import Button, Static
 from textual.message import Message
 from textual import on
 
+from tldw_chatbook.Constants import TAB_RESEARCH, TAB_WRITING
+
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 

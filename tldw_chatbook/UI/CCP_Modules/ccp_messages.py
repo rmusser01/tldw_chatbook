@@ -170,21 +170,21 @@ class PromptMessage(CCPMessage):
     
     class Selected(CCPMessage):
         """A prompt was selected."""
-        def __init__(self, prompt_id: int, name: str, sender: Any = None) -> None:
+        def __init__(self, prompt_id: EntityId, name: str, sender: Any = None) -> None:
             super().__init__(sender)
             self.prompt_id = prompt_id
             self.name = name
     
     class Loaded(CCPMessage):
         """A prompt was loaded."""
-        def __init__(self, prompt_id: int, prompt_data: Dict[str, Any], sender: Any = None) -> None:
+        def __init__(self, prompt_id: EntityId, prompt_data: Dict[str, Any], sender: Any = None) -> None:
             super().__init__(sender)
             self.prompt_id = prompt_id
             self.prompt_data = prompt_data
     
     class Created(CCPMessage):
         """A new prompt was created."""
-        def __init__(self, prompt_id: int, name: str, prompt_data: Dict[str, Any], sender: Any = None) -> None:
+        def __init__(self, prompt_id: EntityId, name: str, prompt_data: Dict[str, Any], sender: Any = None) -> None:
             super().__init__(sender)
             self.prompt_id = prompt_id
             self.name = name
@@ -192,14 +192,14 @@ class PromptMessage(CCPMessage):
     
     class Updated(CCPMessage):
         """Prompt details were updated."""
-        def __init__(self, prompt_id: int, prompt_data: Dict[str, Any], sender: Any = None) -> None:
+        def __init__(self, prompt_id: EntityId, prompt_data: Dict[str, Any], sender: Any = None) -> None:
             super().__init__(sender)
             self.prompt_id = prompt_id
             self.prompt_data = prompt_data
     
     class Deleted(CCPMessage):
         """A prompt was deleted."""
-        def __init__(self, prompt_id: int, sender: Any = None) -> None:
+        def __init__(self, prompt_id: EntityId, sender: Any = None) -> None:
             super().__init__(sender)
             self.prompt_id = prompt_id
     

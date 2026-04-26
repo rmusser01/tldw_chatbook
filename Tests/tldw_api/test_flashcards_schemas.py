@@ -2,6 +2,9 @@ import pytest
 from pydantic import ValidationError
 
 from tldw_chatbook.tldw_api import (
+    FlashcardBulkUpdateItemRequest,
+    FlashcardBulkUpdateResponse,
+    FlashcardAssetMetadata,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
     FlashcardDeckResponse,
@@ -10,7 +13,19 @@ from tldw_chatbook.tldw_api import (
     FlashcardResponse,
     FlashcardReviewRequest,
     FlashcardReviewResponse,
+    FlashcardTagSuggestionsResponse,
+    FlashcardTemplateCreateRequest,
+    FlashcardTemplateListResponse,
+    FlashcardTemplateResponse,
+    FlashcardTemplateUpdateRequest,
     FlashcardUpdateRequest,
+    FlashcardsImportRequest,
+    FlashcardsImportResponse,
+    StudyAssistantContextResponse,
+    StudyAssistantRespondRequest,
+    StudyAssistantRespondResponse,
+    StructuredQaImportPreviewRequest,
+    StructuredQaImportPreviewResponse,
 )
 
 
@@ -159,6 +174,202 @@ def test_flashcard_next_review_response_defaults_to_no_card():
     payload = FlashcardNextReviewResponse.model_validate({"card": None, "selection_reason": "none"})
     assert payload.card is None
     assert payload.selection_reason == "none"
+
+
+def test_flashcard_template_models_round_trip_server_shape():
+    create_payload = FlashcardTemplateCreateRequest(
+        name="Cloze Drill",
+        model_type="cloze",
+        front_template="{{statement}}",
+        notes_template="Focus: {{topic}}",
+        placeholder_definitions=[
+            {
+                "key": "statement",
+                "label": "Statement",
+                "required": True,
+                "targets": ["front_template"],
+            }
+        ],
+    )
+    update_payload = FlashcardTemplateUpdateRequest(
+        notes_template="Updated focus: {{topic}}",
+        expected_version=2,
+    )
+    response = FlashcardTemplateResponse.model_validate(
+        {
+            "id": 12,
+            "name": "Cloze Drill",
+            "model_type": "cloze",
+            "front_template": "{{statement}}",
+            "back_template": None,
+            "notes_template": "Focus: {{topic}}",
+            "extra_template": None,
+            "placeholder_definitions": create_payload.placeholder_definitions,
+            "created_at": "2026-04-23T12:00:00Z",
+            "last_modified": "2026-04-23T12:05:00Z",
+            "deleted": False,
+            "client_id": "server-client",
+            "version": 2,
+        }
+    )
+    listed = FlashcardTemplateListResponse.model_validate({"items": [response], "count": 1, "total": 1})
+
+    assert create_payload.model_dump(mode="json", exclude_none=True)["placeholder_definitions"][0]["key"] == "statement"
+    assert update_payload.model_dump(mode="json", exclude_none=True) == {
+        "notes_template": "Updated focus: {{topic}}",
+        "expected_version": 2,
+    }
+    assert response.placeholder_definitions[0].targets == ["front_template"]
+    assert listed.items[0].id == 12
+
+
+def test_flashcard_bulk_update_and_tag_suggestion_models_round_trip_server_shape():
+    update_item = FlashcardBulkUpdateItemRequest(
+        uuid="87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+        tags=["biology", "cell"],
+        expected_version=2,
+    )
+    bulk_response = FlashcardBulkUpdateResponse.model_validate(
+        {
+            "results": [
+                {
+                    "uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+                    "status": "validation_error",
+                    "flashcard": None,
+                    "error": {
+                        "code": "validation_error",
+                        "message": "Invalid deck",
+                        "invalid_deck_ids": [404],
+                    },
+                }
+            ]
+        }
+    )
+    suggestions = FlashcardTagSuggestionsResponse.model_validate(
+        {"items": [{"tag": "biology", "count": 3}], "count": 1}
+    )
+
+    assert update_item.model_dump(mode="json", exclude_none=True) == {
+        "tags": ["biology", "cell"],
+        "expected_version": 2,
+        "uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+    }
+    assert bulk_response.results[0].status == "validation_error"
+    assert bulk_response.results[0].error.invalid_deck_ids == [404]
+    assert suggestions.items[0].tag == "biology"
+
+
+def test_flashcard_import_preview_and_import_models_round_trip_server_shape():
+    preview_request = StructuredQaImportPreviewRequest(content="Q: What powers cells?\nA: ATP")
+    preview = StructuredQaImportPreviewResponse.model_validate(
+        {
+            "drafts": [
+                {
+                    "front": "What powers cells?",
+                    "back": "ATP",
+                    "line_start": 1,
+                    "line_end": 2,
+                    "tags": ["biology"],
+                }
+            ],
+            "errors": [],
+            "detected_format": "qa_labels",
+            "skipped_blocks": 0,
+        }
+    )
+    import_request = FlashcardsImportRequest(
+        content="Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
+        has_header=True,
+    )
+    imported = FlashcardsImportResponse.model_validate(
+        {
+            "imported": 1,
+            "items": [{"uuid": "card-server-1", "deck_id": 7}],
+            "errors": [],
+        }
+    )
+
+    assert preview_request.model_dump(mode="json") == {"content": "Q: What powers cells?\nA: ATP"}
+    assert preview.drafts[0].front == "What powers cells?"
+    assert import_request.delimiter == "\t"
+    assert imported.items[0].deck_id == 7
+
+
+def test_flashcard_asset_metadata_round_trips_server_shape():
+    payload = FlashcardAssetMetadata.model_validate(
+        {
+            "asset_uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+            "reference": "flashcard-asset://87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+            "markdown_snippet": "![image](flashcard-asset://87ca2b3f-7e3a-47d7-a52f-8debc86c03cb)",
+            "mime_type": "image/png",
+            "byte_size": 128,
+            "width": 64,
+            "height": 64,
+            "original_filename": "cell.png",
+        }
+    )
+
+    assert str(payload.asset_uuid) == "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb"
+    assert payload.mime_type == "image/png"
+
+
+def test_study_assistant_models_round_trip_server_shape():
+    thread = {
+        "id": 41,
+        "context_type": "flashcard",
+        "flashcard_uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
+        "message_count": 1,
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 2,
+    }
+    message = {
+        "id": 100,
+        "thread_id": 41,
+        "role": "assistant",
+        "action_type": "explain",
+        "input_modality": "text",
+        "content": "ATP stores energy.",
+        "structured_payload": {"summary": "energy"},
+        "context_snapshot": {"front": "What powers cells?"},
+        "client_id": "server-client",
+    }
+    context = StudyAssistantContextResponse.model_validate(
+        {
+            "thread": thread,
+            "messages": [message],
+            "context_snapshot": {"front": "What powers cells?"},
+            "available_actions": ["explain", "mnemonic"],
+            "citations": [{"source": "manual"}],
+        }
+    )
+    request_data = StudyAssistantRespondRequest(
+        action="explain",
+        message="Explain this",
+        provider="openai",
+        model="gpt-test",
+        expected_thread_version=2,
+    )
+    response = StudyAssistantRespondResponse.model_validate(
+        {
+            "thread": {**thread, "version": 3},
+            "user_message": {**message, "id": 101, "role": "user", "content": "Explain this"},
+            "assistant_message": {**message, "id": 102, "content": "ATP stores energy."},
+            "structured_payload": {"summary": "energy"},
+            "context_snapshot": {"front": "What powers cells?"},
+        }
+    )
+
+    assert context.available_actions == ["explain", "mnemonic"]
+    assert request_data.model_dump(mode="json", exclude_none=True) == {
+        "action": "explain",
+        "message": "Explain this",
+        "input_modality": "text",
+        "provider": "openai",
+        "model": "gpt-test",
+        "expected_thread_version": 2,
+    }
+    assert response.thread.version == 3
 
 
 def test_flashcard_create_request_preserves_optional_fields():

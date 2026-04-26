@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+
+from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 from tldw_chatbook.Study_Interop.local_quiz_service import LocalQuizService
 
 
@@ -178,6 +182,35 @@ def test_local_quiz_service_creates_questions_and_records_attempts():
     assert submitted["score"] == 2
     assert attempts["count"] == 1
     assert loaded["id"] == "attempt-local-1"
+
+
+def test_local_quiz_service_dispatches_quiz_lifecycle_notifications(tmp_path):
+    db = FakeDB()
+    notifications_db = ClientNotificationsDB(tmp_path / "notifications.db")
+    dispatcher = NotificationDispatchService(notifications_db)
+    service = LocalQuizService(
+        db=db,
+        notification_dispatch_service=dispatcher,
+        notification_app=SimpleNamespace(),
+    )
+
+    quiz = service.create_quiz(name="Renal Review", description="Kidney basics")
+    question = service.create_question(
+        quiz["id"],
+        question_type="fill_blank",
+        question_text="The capital of France is ____.",
+        correct_answer="Paris",
+    )
+    submitted = service.submit_attempt(
+        "attempt-local-1",
+        answers=[{"question_id": question["id"], "user_answer": "Paris"}],
+    )
+
+    rows = notifications_db.list_notifications(limit=10, category="study")
+    actions = {row["payload"]["action"] for row in rows}
+    assert submitted["score"] == 2
+    assert {"quiz_created", "quiz_question_created", "quiz_attempt_completed"}.issubset(actions)
+    assert all(row["source_backend"] == "local" for row in rows)
 
 
 def test_local_quiz_service_deletes_quiz_and_question():

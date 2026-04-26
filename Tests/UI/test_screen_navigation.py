@@ -1,5 +1,7 @@
 """Focused screen wiring tests for screen-navigation mode."""
 
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest

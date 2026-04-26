@@ -33,7 +33,7 @@ class MediaRuntimeState:
         self.runtime_backend = _normalize_runtime_backend(self.runtime_backend)
 
     def reset_for_backend(self, runtime_backend: Any) -> None:
-        """Switch backend and clear backend-scoped selection and caches."""
+        """Switch backend and clear backend-scoped selection, saved-view state, and caches."""
         self.runtime_backend = _normalize_runtime_backend(runtime_backend)
         self.active_media_type = None
         self.active_browse_subview = "all"

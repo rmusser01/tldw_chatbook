@@ -119,6 +119,14 @@ class CharacterPersonaScopeService:
             raise ValueError("Local character/persona backend is unavailable.")
         return self.local_service
 
+    def _enforce_policy(self, mode: str, action: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        action_prefix = self._ACTION_IDS.get(action)
+        if action_prefix is None:
+            return
+        self.policy_enforcer.require_allowed(action_id=f"{action_prefix}.{mode}")
+
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
             return await value

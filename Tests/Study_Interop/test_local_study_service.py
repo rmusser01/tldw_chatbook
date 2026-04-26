@@ -1,3 +1,9 @@
+import json
+from types import SimpleNamespace
+
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 
 
@@ -10,6 +16,7 @@ class FakeDB:
                 "deck_id": "deck-local-1",
                 "front": "Question",
                 "back": "Answer",
+                "tags": "science biology",
                 "version": 2,
             }
         }
@@ -80,6 +87,128 @@ class FakeDB:
         self.calls.append(("delete_deck", deck_id, expected_version, hard_delete))
         return True
 
+    def create_flashcard_template(
+        self,
+        *,
+        name,
+        model_type="basic",
+        front_template,
+        back_template=None,
+        notes_template=None,
+        extra_template=None,
+        placeholder_definitions=None,
+    ):
+        self.calls.append(
+            (
+                "create_flashcard_template",
+                name,
+                model_type,
+                front_template,
+                back_template,
+                notes_template,
+                extra_template,
+                placeholder_definitions,
+            )
+        )
+        return {
+            "id": "tmpl-local-1",
+            "name": name,
+            "model_type": model_type,
+            "front_template": front_template,
+            "back_template": back_template,
+            "notes_template": notes_template,
+            "extra_template": extra_template,
+            "placeholder_definitions": placeholder_definitions or [],
+            "version": 1,
+        }
+
+    def list_flashcard_templates(self, *, limit=100, offset=0):
+        self.calls.append(("list_flashcard_templates", limit, offset))
+        return {
+            "items": [
+                {
+                    "id": "tmpl-local-1",
+                    "name": "Cloze Drill",
+                    "model_type": "cloze",
+                    "front_template": "{{statement}}",
+                    "placeholder_definitions": [],
+                    "version": 1,
+                }
+            ],
+            "count": 1,
+        }
+
+    def get_flashcard_template(self, template_id):
+        self.calls.append(("get_flashcard_template", template_id))
+        return {
+            "id": template_id,
+            "name": "Cloze Drill",
+            "model_type": "cloze",
+            "front_template": "{{statement}}",
+            "placeholder_definitions": [],
+            "version": 1,
+        }
+
+    def update_flashcard_template(
+        self,
+        template_id,
+        *,
+        name=None,
+        model_type=None,
+        front_template=None,
+        back_template=None,
+        notes_template=None,
+        extra_template=None,
+        placeholder_definitions=None,
+        expected_version=None,
+    ):
+        self.calls.append(
+            (
+                "update_flashcard_template",
+                template_id,
+                name,
+                model_type,
+                front_template,
+                back_template,
+                notes_template,
+                extra_template,
+                placeholder_definitions,
+                expected_version,
+            )
+        )
+        return {
+            "id": template_id,
+            "name": name or "Cloze Drill",
+            "model_type": model_type or "cloze",
+            "front_template": front_template or "{{statement}}",
+            "back_template": back_template,
+            "notes_template": notes_template,
+            "extra_template": extra_template,
+            "placeholder_definitions": placeholder_definitions or [],
+            "version": 2,
+        }
+
+    def delete_flashcard_template(self, template_id, *, expected_version):
+        self.calls.append(("delete_flashcard_template", template_id, expected_version))
+        return {"deleted": True}
+
+    def create_flashcard_asset(self, *, original_filename, mime_type, content):
+        self.calls.append(("create_flashcard_asset", original_filename, mime_type, content))
+        return {
+            "asset_uuid": "asset-local-1",
+            "reference": "flashcard-asset://asset-local-1",
+            "markdown_snippet": "![cell](flashcard-asset://asset-local-1)",
+            "mime_type": mime_type,
+            "byte_size": len(content),
+            "width": None,
+            "height": None,
+            "original_filename": original_filename,
+        }
+
+    def get_flashcard_asset_content(self, asset_uuid):
+        self.calls.append(("get_flashcard_asset_content", asset_uuid))
+        return b"fake-png"
+
 
 def test_local_study_service_lists_and_creates_decks():
     db = FakeDB()
@@ -127,6 +256,16 @@ def test_local_study_service_normalizes_blank_search_to_list_query():
 
     assert listed[0]["deck_id"] == "deck-local-1"
     assert db.calls == [("list_flashcards", "deck-local-1", None, 7, 3)]
+
+
+def test_local_study_service_fetches_flashcard_by_id():
+    db = FakeDB()
+    service = LocalStudyService(db=db)
+
+    card = service.get_flashcard("card-local-1")
+
+    assert card["id"] == "card-local-1"
+    assert db.calls == [("get_flashcard", "card-local-1")]
 
 
 def test_local_study_service_creates_flashcards_and_fetches_due_review_card():
@@ -245,3 +384,70 @@ def test_local_study_service_deletes_deck_with_expected_version():
 
     assert deleted is True
     assert db.calls == [("delete_deck", "deck-local-1", 4, False)]
+
+
+def test_local_study_service_persists_flashcard_templates_against_chachanotes_db(tmp_path):
+    db_path = tmp_path / "study.db"
+    db = CharactersRAGDB(db_path, client_id="test_client")
+    service = LocalStudyService(db=db)
+
+    created = service.create_flashcard_template(
+        name="Cloze Drill",
+        model_type="cloze",
+        front_template="{{statement}}",
+        notes_template="Focus: {{topic}}",
+        placeholder_definitions=[{"name": "statement", "targets": ["front_template"]}],
+    )
+    listed = service.list_flashcard_templates(limit=10, offset=0)
+    updated = service.update_flashcard_template(
+        created["id"],
+        notes_template="Updated focus: {{topic}}",
+        expected_version=created["version"],
+    )
+    fetched = service.get_flashcard_template(created["id"])
+    db.close()
+
+    reopened = CharactersRAGDB(db_path, client_id="test_client")
+    reopened_service = LocalStudyService(db=reopened)
+    reopened_fetched = reopened_service.get_flashcard_template(created["id"])
+    deleted = reopened_service.delete_flashcard_template(
+        created["id"],
+        expected_version=reopened_fetched["version"],
+    )
+    after_delete = reopened_service.list_flashcard_templates(limit=10, offset=0)
+
+    assert created["id"]
+    assert created["version"] == 1
+    assert created["placeholder_definitions"] == [{"name": "statement", "targets": ["front_template"]}]
+    assert listed["items"][0]["id"] == created["id"]
+    assert updated["notes_template"] == "Updated focus: {{topic}}"
+    assert updated["version"] == created["version"] + 1
+    assert fetched["notes_template"] == "Updated focus: {{topic}}"
+    assert reopened_fetched["notes_template"] == "Updated focus: {{topic}}"
+    assert deleted is True
+    assert after_delete == {"items": [], "count": 0, "total": 0}
+
+
+def test_local_study_service_persists_flashcard_assets_against_chachanotes_db(tmp_path):
+    db_path = tmp_path / "study.db"
+    image_path = tmp_path / "cell.png"
+    image_path.write_bytes(b"fake-png")
+    db = CharactersRAGDB(db_path, client_id="test_client")
+    service = LocalStudyService(db=db)
+
+    asset = service.upload_flashcard_asset(image_path)
+    content = service.get_flashcard_asset_content(asset["asset_uuid"])
+    db.close()
+
+    reopened = CharactersRAGDB(db_path, client_id="test_client")
+    reopened_service = LocalStudyService(db=reopened)
+    reopened_content = reopened_service.get_flashcard_asset_content(asset["asset_uuid"])
+
+    assert asset["asset_uuid"]
+    assert asset["reference"] == f"flashcard-asset://{asset['asset_uuid']}"
+    assert asset["markdown_snippet"] == f"![cell.png](flashcard-asset://{asset['asset_uuid']})"
+    assert asset["mime_type"] == "image/png"
+    assert asset["byte_size"] == len(b"fake-png")
+    assert asset["original_filename"] == "cell.png"
+    assert content == b"fake-png"
+    assert reopened_content == b"fake-png"

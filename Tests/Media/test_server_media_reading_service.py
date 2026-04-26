@@ -33,6 +33,162 @@ class FakeClient:
         self.calls.append(("list_reading_items", kwargs))
         return {"items": [{"id": 41, "media_id": 99, "title": "Server Article"}], "total": 1}
 
+    async def list_media_keywords(self, **kwargs):
+        self.calls.append(("list_media_keywords", kwargs))
+        return {"keywords": ["ai", "testing"]}
+
+    async def list_media_items(self, **kwargs):
+        self.calls.append(("list_media_items", kwargs))
+        return {
+            "items": [{"id": 99, "title": "Server Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "pagination": {"page": 1, "results_per_page": 10, "total_pages": 1, "total_items": 1},
+        }
+
+    async def search_media_items(self, request_data, page=1, results_per_page=10):
+        self.calls.append(("search_media_items", request_data.model_dump(exclude_none=True, mode="json"), page, results_per_page))
+        return {
+            "items": [{"id": 99, "title": "Server Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+        }
+
+    async def list_media_trash(self, **kwargs):
+        self.calls.append(("list_media_trash", kwargs))
+        return {
+            "items": [{"id": 99, "title": "Trashed Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "pagination": {"page": 1, "results_per_page": 10, "total_pages": 1, "total_items": 1},
+        }
+
+    async def empty_media_trash(self):
+        self.calls.append(("empty_media_trash",))
+        return {"deleted_count": 1, "failed_count": 0, "failed_ids": [], "remaining_count": 0}
+
+    async def search_media_metadata(self, **kwargs):
+        self.calls.append(("search_media_metadata", kwargs))
+        return {
+            "results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}],
+            "pagination": {"page": 1, "per_page": 20, "total": 1, "total_pages": 1},
+        }
+
+    async def get_media_by_identifier(self, **kwargs):
+        self.calls.append(("get_media_by_identifier", kwargs))
+        return {"results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}], "total": 1}
+
+    async def get_media_transcription_models(self):
+        self.calls.append(("get_media_transcription_models",))
+        return {"categories": {}, "all_models": ["whisper-small"]}
+
+    async def reprocess_media(self, media_id, request_data):
+        self.calls.append(("reprocess_media", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "media_id": media_id,
+            "status": "completed",
+            "message": "Reprocessed",
+            "chunks_created": 3,
+            "embeddings_started": True,
+        }
+
+    async def add_media(self, request_data, file_paths=None):
+        self.calls.append(("add_media", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {
+                    "status": "Success",
+                    "input_ref": "https://example.com/clip",
+                    "media_type": request_data.media_type,
+                    "db_id": 42,
+                }
+            ],
+        }
+
+    async def save_reading_item(self, request_data):
+        self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "id": 77,
+            "media_id": 123,
+            "title": request_data.title or "Saved Article",
+            "url": str(request_data.url),
+            "status": request_data.status,
+            "favorite": request_data.favorite,
+            "tags": request_data.tags,
+        }
+
+    async def list_unified_items(self, **kwargs):
+        self.calls.append(("list_unified_items", kwargs))
+        return {
+            "items": [
+                {
+                    "id": 42,
+                    "content_item_id": 7,
+                    "media_id": 42,
+                    "title": "Unified Article",
+                    "url": "https://example.com/article",
+                    "domain": "example.com",
+                    "status": "saved",
+                    "favorite": True,
+                    "tags": ["ai"],
+                    "type": "reading",
+                }
+            ],
+            "total": 1,
+            "page": kwargs.get("page", 1),
+            "size": kwargs.get("size", 20),
+        }
+
+    async def get_unified_item(self, item_id):
+        self.calls.append(("get_unified_item", item_id))
+        return {
+            "id": item_id,
+            "content_item_id": 7,
+            "media_id": item_id,
+            "title": "Unified Article",
+            "url": "https://example.com/article",
+            "domain": "example.com",
+            "status": "saved",
+            "favorite": True,
+            "tags": ["ai"],
+            "type": "reading",
+        }
+
+    async def bulk_update_unified_items(self, request_data):
+        self.calls.append(("bulk_update_unified_items", request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "total": len(request_data.item_ids),
+            "succeeded": len(request_data.item_ids),
+            "failed": 0,
+            "results": [{"item_id": item_id, "success": True} for item_id in request_data.item_ids],
+        }
+
+    async def process_video(self, request_data, file_paths=None):
+        self.calls.append(("process_video", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_audio(self, request_data, file_paths=None):
+        self.calls.append(("process_audio", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_pdf(self, request_data, file_paths=None):
+        self.calls.append(("process_pdf", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_ebook(self, request_data, file_paths=None):
+        self.calls.append(("process_ebook", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_document(self, request_data, file_paths=None):
+        self.calls.append(("process_document", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_code(self, request_data, file_paths=None):
+        self.calls.append(("process_code", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
+    async def process_email(self, request_data, file_paths=None):
+        self.calls.append(("process_email", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+
     async def get_reading_item(self, item_id):
         self.calls.append(("get_reading_item", item_id))
         return {"id": item_id, "media_id": 99, "title": "Server Detail"}
@@ -138,6 +294,44 @@ class FakeClient:
     async def delete_reading_progress(self, media_id):
         self.calls.append(("delete_reading_progress", media_id))
         return {"deleted": True}
+
+    async def create_reading_highlight(self, item_id, request_data):
+        self.calls.append(("create_reading_highlight", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "id": 5,
+            "item_id": item_id,
+            "quote": "Important sentence",
+            "start_offset": 10,
+            "end_offset": 28,
+            "color": "yellow",
+            "note": "Check this",
+            "created_at": "2026-04-22T12:00:00Z",
+            "anchor_strategy": "fuzzy_quote",
+            "state": "active",
+        }
+
+    async def list_reading_highlights(self, item_id):
+        self.calls.append(("list_reading_highlights", item_id))
+        return [await self.create_reading_highlight(item_id, request_data=Mock(model_dump=lambda **_: {}))]
+
+    async def update_reading_highlight(self, highlight_id, request_data):
+        self.calls.append(("update_reading_highlight", highlight_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {
+            "id": highlight_id,
+            "item_id": 31,
+            "quote": "Important sentence",
+            "start_offset": 10,
+            "end_offset": 28,
+            "color": "blue",
+            "note": "Updated",
+            "created_at": "2026-04-22T12:00:00Z",
+            "anchor_strategy": "fuzzy_quote",
+            "state": "active",
+        }
+
+    async def delete_reading_highlight(self, highlight_id):
+        self.calls.append(("delete_reading_highlight", highlight_id))
+        return {"success": True}
 
     async def list_ingestion_sources(self):
         self.calls.append(("list_ingestion_sources",))
@@ -743,11 +937,352 @@ async def test_server_service_builds_reading_item_update_payload():
 
 
 @pytest.mark.asyncio
+async def test_server_service_routes_bulk_reading_item_updates_with_schema_object():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    result = await service.bulk_update_reading_items(
+        item_ids=[41, 42],
+        action="set_status",
+        status="read",
+    )
+
+    assert result["succeeded"] == 2
+    assert client.calls == [
+        (
+            "bulk_update_reading_items",
+            {
+                "item_ids": [41, 42],
+                "action": "set_status",
+                "status": "read",
+                "hard": False,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_server_service_rejects_local_only_metadata_fields():
     service = ServerMediaReadingService(client=FakeClient())
 
     with pytest.raises(ValueError, match="Unsupported server media metadata fields: author"):
         await service.update_media_metadata(41, author="Ada")
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_media_listing_search_and_trash_adjuncts_to_client():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    keywords = await service.list_media_keywords(query="ai", limit=5)
+    listed = await service.list_backing_media_items(page=2, results_per_page=25, include_keywords=True)
+    searched = await service.search_backing_media_items(
+        query="paper",
+        media_types=["pdf"],
+        page=2,
+        results_per_page=25,
+    )
+    trash = await service.list_media_trash(page=1, results_per_page=10, include_keywords=True)
+    emptied = await service.empty_media_trash()
+    metadata = await service.search_media_metadata(
+        filters=[{"field": "doi", "op": "eq", "value": "10/example"}],
+        q="paper",
+        media_types=["pdf"],
+        must_have=["ai"],
+    )
+    identifier = await service.get_media_by_identifier(doi="10/example", group_by_media=False)
+
+    assert keywords == {"keywords": ["ai", "testing"]}
+    assert listed["pagination"]["total_items"] == 1
+    assert searched["items"][0]["id"] == 99
+    assert trash["items"][0]["title"] == "Trashed Media"
+    assert emptied["deleted_count"] == 1
+    assert metadata["results"][0]["safe_metadata"]["doi"] == "10/example"
+    assert identifier["total"] == 1
+    assert client.calls[:7] == [
+        ("list_media_keywords", {"query": "ai", "limit": 5}),
+        ("list_media_items", {"page": 2, "results_per_page": 25, "include_keywords": True}),
+        (
+            "search_media_items",
+            {
+                "query": "paper",
+                "fields": ["title", "content"],
+                "media_types": ["pdf"],
+                "sort_by": "relevance",
+            },
+            2,
+            25,
+        ),
+        ("list_media_trash", {"page": 1, "results_per_page": 10, "include_keywords": True}),
+        ("empty_media_trash",),
+        (
+            "search_media_metadata",
+            {
+                "filters": [{"field": "doi", "op": "eq", "value": "10/example"}],
+                "q": "paper",
+                "media_types": ["pdf"],
+                "must_have": ["ai"],
+            },
+        ),
+        ("get_media_by_identifier", {"doi": "10/example", "group_by_media": False}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_media_processing_controls_to_client():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    models = await service.get_media_transcription_models()
+    reprocessed = await service.reprocess_media(
+        99,
+        perform_chunking=True,
+        generate_embeddings=True,
+        chunk_method="sentences",
+    )
+    video = await service.process_video(ProcessVideoRequest(title="Video"), file_paths=["video.mp4"])
+    audio = await service.process_audio(ProcessAudioRequest(title="Audio"), file_paths=["audio.mp3"])
+    pdf = await service.process_pdf(ProcessPDFRequest(title="PDF"), file_paths=["paper.pdf"])
+    ebook = await service.process_ebook(ProcessEbookRequest(title="Book"), file_paths=["book.epub"])
+    document = await service.process_document(ProcessDocumentRequest(title="Doc"), file_paths=["doc.docx"])
+    code = await service.process_code(ProcessCodeRequest(chunk_method="lines"), file_paths=["project.py"])
+    email = await service.process_email(ProcessEmailRequest(title="Inbox"), file_paths=["inbox.eml"])
+
+    assert models["all_models"] == ["whisper-small"]
+    assert reprocessed["chunks_created"] == 3
+    assert video["processed_count"] == 1
+    assert audio["processed_count"] == 1
+    assert pdf["processed_count"] == 1
+    assert ebook["processed_count"] == 1
+    assert document["processed_count"] == 1
+    assert code["processed_count"] == 1
+    assert email["processed_count"] == 1
+    assert client.calls[:9] == [
+        ("get_media_transcription_models",),
+        (
+            "reprocess_media",
+            99,
+            {
+                "perform_chunking": True,
+                "generate_embeddings": True,
+                "chunk_method": "sentences",
+                "chunk_size": 500,
+                "chunk_overlap": 200,
+                "auto_apply_template": False,
+                "force_regenerate_embeddings": False,
+            },
+        ),
+        ("process_video", ProcessVideoRequest(title="Video").model_dump(exclude_none=True, mode="json"), ["video.mp4"]),
+        ("process_audio", ProcessAudioRequest(title="Audio").model_dump(exclude_none=True, mode="json"), ["audio.mp3"]),
+        ("process_pdf", ProcessPDFRequest(title="PDF").model_dump(exclude_none=True, mode="json"), ["paper.pdf"]),
+        ("process_ebook", ProcessEbookRequest(title="Book").model_dump(exclude_none=True, mode="json"), ["book.epub"]),
+        ("process_document", ProcessDocumentRequest(title="Doc").model_dump(exclude_none=True, mode="json"), ["doc.docx"]),
+        ("process_code", ProcessCodeRequest(chunk_method="lines").model_dump(exclude_none=True, mode="json"), ["project.py"]),
+        ("process_email", ProcessEmailRequest(title="Inbox").model_dump(exclude_none=True, mode="json"), ["inbox.eml"]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_persistent_add_media():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    result = await service.add_media(
+        AddMediaRequest(
+            media_type="video",
+            urls=["https://example.com/clip"],
+            title="Clip",
+            keywords=["ai", "video"],
+            keep_original_file=True,
+        ),
+        file_paths=["/tmp/clip.mp4"],
+    )
+
+    assert result["processed_count"] == 1
+    assert result["results"][0]["db_id"] == 42
+    assert client.calls == [
+        (
+            "add_media",
+            {
+                "media_type": "video",
+                "urls": ["https://example.com/clip"],
+                "title": "Clip",
+                "keywords": ["ai", "video"],
+                "overwrite_existing": False,
+                "keep_original_file": True,
+                "perform_analysis": True,
+                "use_cookies": False,
+                "perform_rolling_summarization": False,
+                "summarize_recursively": False,
+                "perform_chunking": True,
+                "use_adaptive_chunking": False,
+                "use_multi_level_chunking": False,
+                "chunk_size": 500,
+                "chunk_overlap": 200,
+                "generate_embeddings": False,
+            },
+            ["/tmp/clip.mp4"],
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_reading_url_save():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    result = await service.save_reading_item(
+        ReadingSaveRequest(
+            url="https://example.com/article",
+            title="Saved Article",
+            tags=[" ai ", "reading"],
+            archive_mode="always",
+            favorite=True,
+            notes="Why this matters",
+        )
+    )
+
+    assert result == {
+        "id": 77,
+        "media_id": 123,
+        "title": "Saved Article",
+        "url": "https://example.com/article",
+        "status": "saved",
+        "favorite": True,
+        "tags": ["ai", "reading"],
+    }
+    assert client.calls == [
+        (
+            "save_reading_item",
+            {
+                "url": "https://example.com/article",
+                "title": "Saved Article",
+                "tags": ["ai", "reading"],
+                "status": "saved",
+                "archive_mode": "always",
+                "favorite": True,
+                "notes": "Why this matters",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_unified_items_surface():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    listing = await service.list_unified_items(q="article", origin="reading", page=2, size=10)
+    item = await service.get_unified_item(42)
+    bulk = await service.bulk_update_unified_items(
+        ItemsBulkRequest(item_ids=[42, 43], action="set_favorite", favorite=True)
+    )
+
+    assert listing["total"] == 1
+    assert listing["page"] == 2
+    assert item["id"] == 42
+    assert bulk["succeeded"] == 2
+    assert client.calls == [
+        ("list_unified_items", {"q": "article", "origin": "reading", "page": 2, "size": 10}),
+        ("get_unified_item", 42),
+        (
+            "bulk_update_unified_items",
+            {
+                "item_ids": [42, 43],
+                "action": "set_favorite",
+                "favorite": True,
+                "hard": False,
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_media_item_lifecycle_to_true_media_endpoints():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    detail = await service.get_media_item(
+        99,
+        include_content=False,
+        include_versions=False,
+        include_version_content=True,
+    )
+    updated = await service.update_media_item(
+        99,
+        title="Renamed",
+        author="Ada",
+        content="Body",
+        prompt="Prompt",
+        analysis="Analysis",
+    )
+    trashed = await service.trash_media_item(99)
+    restored = await service.restore_media_item(99)
+    purged = await service.permanently_delete_media_item(99)
+    keywords = await service.update_media_keywords(99, keywords=["ai", "ml"], mode="set")
+    downloaded = await service.download_media_file(99, file_type="original")
+
+    assert detail["media_id"] == 99
+    assert updated["source"]["title"] == "Renamed"
+    assert trashed == {"deleted": True}
+    assert restored["media_id"] == 99
+    assert purged == {"deleted": True}
+    assert keywords == {"media_id": 99, "keywords": ["ai", "ml"]}
+    assert downloaded == b"%PDF"
+    assert client.calls == [
+        ("get_media_item", 99, False, False, True),
+        (
+            "update_media_item",
+            99,
+            {
+                "title": "Renamed",
+                "content": "Body",
+                "author": "Ada",
+                "analysis": "Analysis",
+                "prompt": "Prompt",
+            },
+        ),
+        ("trash_media_item", 99),
+        ("restore_media_item", 99, True, True, False),
+        ("permanently_delete_media_item", 99),
+        ("update_media_keywords", 99, {"keywords": ["ai", "ml"], "mode": "set"}),
+        ("download_media_file", 99, "original"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_rejects_media_item_keywords_on_general_update():
+    service = ServerMediaReadingService(client=FakeClient())
+
+    with pytest.raises(ValueError, match="Use update_media_keywords"):
+        await service.update_media_item(99, title="Renamed", keywords=["ai"])
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_media_navigation_to_server_contract():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    navigation = await service.get_media_navigation(
+        99,
+        include_generated_fallback=True,
+        max_depth=3,
+        max_nodes=100,
+        parent_id="root",
+    )
+    content = await service.get_media_navigation_content(
+        99,
+        "node-1",
+        content_format="markdown",
+        include_alternates=True,
+    )
+
+    assert navigation["media_id"] == 99
+    assert content["node_id"] == "node-1"
+    assert client.calls == [
+        ("get_media_navigation", 99, True, 3, 100, "root"),
+        ("get_media_navigation_content", 99, "node-1", "markdown", True),
+    ]
 
 
 @pytest.mark.asyncio
@@ -787,6 +1322,48 @@ async def test_server_service_routes_reading_progress_calls_with_schema_objects(
             },
         ),
         ("delete_reading_progress", 99),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_reading_highlight_calls_with_schema_objects():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    created = await service.create_reading_highlight(
+        31,
+        quote="Important sentence",
+        start_offset=10,
+        end_offset=28,
+        color="yellow",
+        note="Check this",
+    )
+    listed = await service.list_reading_highlights(31)
+    updated = await service.update_reading_highlight(5, color="blue", note="Updated", state="active")
+    deleted = await service.delete_reading_highlight(5)
+
+    assert created["id"] == 5
+    assert listed[0]["item_id"] == 31
+    assert updated["color"] == "blue"
+    assert deleted == {"success": True}
+    assert client.calls == [
+        (
+            "create_reading_highlight",
+            31,
+            {
+                "item_id": 31,
+                "quote": "Important sentence",
+                "start_offset": 10,
+                "end_offset": 28,
+                "color": "yellow",
+                "note": "Check this",
+                "anchor_strategy": "fuzzy_quote",
+            },
+        ),
+        ("list_reading_highlights", 31),
+        ("create_reading_highlight", 31, {}),
+        ("update_reading_highlight", 5, {"color": "blue", "note": "Updated", "state": "active"}),
+        ("delete_reading_highlight", 5),
     ]
 
 
@@ -844,17 +1421,389 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
 
 
 @pytest.mark.asyncio
-async def test_server_service_delete_routes_to_soft_delete_endpoint_and_undelete_fails_explicitly():
+async def test_server_service_ingestion_source_delete_fails_explicitly():
+    service = ServerMediaReadingService(client=FakeClient())
+
+    with pytest.raises(ValueError, match="Server ingestion source delete is not available yet."):
+        await service.delete_ingestion_source(7)
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_ingestion_item_reattach_saved_searches_and_note_links():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    reattached = await service.reattach_ingestion_source_item(7, 55)
+    created = await service.create_reading_saved_search(
+        name="Morning",
+        query={"status": ["saved"]},
+        sort="updated_desc",
+    )
+    listed = await service.list_reading_saved_searches(limit=25, offset=5)
+    updated = await service.update_reading_saved_search(9, name="Updated", query={"status": "read"})
+    deleted = await service.delete_reading_saved_search(9)
+    linked = await service.link_reading_item_note(31, note_id="note-uuid-1")
+    links = await service.list_reading_item_note_links(31)
+    unlinked = await service.unlink_reading_item_note(31, "note-uuid-1")
+
+    assert reattached["binding"] == {"media_id": 99}
+    assert created["name"] == "Morning"
+    assert listed["total"] == 1
+    assert updated["name"] == "Updated"
+    assert deleted == {"ok": True}
+    assert linked["note_id"] == "note-uuid-1"
+    assert links["links"][0]["note_id"] == "note-uuid-1"
+    assert unlinked == {"ok": True}
+    assert client.calls[-8:] == [
+        ("reattach_ingestion_source_item", 7, 55),
+        ("create_reading_saved_search", {"name": "Morning", "query": {"status": ["saved"]}, "sort": "updated_desc"}),
+        ("list_reading_saved_searches", 25, 5),
+        ("update_reading_saved_search", 9, {"name": "Updated", "query": {"status": "read"}}),
+        ("delete_reading_saved_search", 9),
+        ("link_reading_item_note", 31, {"note_id": "note-uuid-1"}),
+        ("list_reading_item_note_links", 31),
+        ("unlink_reading_item_note", 31, "note-uuid-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_reading_import_jobs_and_archive_creation():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    submitted = await service.import_reading_items("/tmp/pocket.csv", source="pocket", merge_tags=False)
+    jobs = await service.list_reading_import_jobs(status="processing", limit=25, offset=5)
+    job = await service.get_reading_import_job(42)
+    archive = await service.create_reading_archive(
+        31,
+        format="md",
+        source="text",
+        title="Example Archive",
+    )
+
+    assert submitted["status"] == "queued"
+    assert jobs["jobs"][0]["status"] == "processing"
+    assert job["status"] == "completed"
+    assert archive["download_url"] == "/api/v1/outputs/77/download"
+    assert client.calls[-4:] == [
+        ("import_reading_items", "/tmp/pocket.csv", "pocket", False),
+        ("list_reading_import_jobs", "processing", 25, 5),
+        ("get_reading_import_job", 42),
+        (
+            "create_reading_archive",
+            31,
+            {"format": "md", "source": "text", "title": "Example Archive"},
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_reading_export_summary_and_tts_payloads():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    exported = await service.export_reading_items(status=["saved"], include_text=True, format="jsonl")
+    summary = await service.summarize_reading_item(
+        31,
+        provider="openai",
+        model="gpt-4o-mini",
+        prompt="Summarize",
+    )
+    audio = await service.tts_reading_item(31, model="kokoro", stream=False, text_source="text")
+
+    assert exported == b'{"id":31}\n'
+    assert summary["summary"] == "Short summary"
+    assert audio == b"audio-bytes"
+    assert client.calls[-3:] == [
+        (
+            "export_reading_items",
+            {
+                "status": ["saved"],
+                "page": 1,
+                "size": 1000,
+                "include_metadata": True,
+                "include_clean_html": False,
+                "include_text": True,
+                "include_highlights": False,
+                "include_notes": True,
+                "format": "jsonl",
+            },
+        ),
+        (
+            "summarize_reading_item",
+            31,
+            {
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "prompt": "Summarize",
+                "recursive": False,
+                "chunked": False,
+            },
+        ),
+        (
+            "tts_reading_item",
+            31,
+            {
+                "model": "kokoro",
+                "voice": "af_heart",
+                "response_format": "mp3",
+                "stream": False,
+                "text_source": "text",
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_reading_digest_schedule_and_output_calls():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    created = await service.create_reading_digest_schedule(
+        name="Morning Digest",
+        cron="0 8 * * *",
+        timezone="UTC",
+        filters={"status": "saved"},
+    )
+    schedules = await service.list_reading_digest_schedules(limit=25, offset=5)
+    schedule = await service.get_reading_digest_schedule("sched-1")
+    updated = await service.update_reading_digest_schedule("sched-1", enabled=False)
+    deleted = await service.delete_reading_digest_schedule("sched-1")
+    outputs = await service.list_reading_digest_outputs(schedule_id="sched-1", limit=25, offset=5)
+
+    assert created == {"id": "sched-1"}
+    assert schedules[0]["id"] == "sched-1"
+    assert schedule["cron"] == "0 8 * * *"
+    assert updated["enabled"] is False
+    assert deleted == {"ok": True}
+    assert outputs["items"][0]["download_url"] == "/api/v1/outputs/77/download"
+    assert client.calls[-6:] == [
+        (
+            "create_reading_digest_schedule",
+            {
+                "name": "Morning Digest",
+                "cron": "0 8 * * *",
+                "timezone": "UTC",
+                "enabled": True,
+                "require_online": False,
+                "format": "md",
+                "filters": {"status": ["saved"]},
+            },
+        ),
+        ("list_reading_digest_schedules", 25, 5),
+        ("get_reading_digest_schedule", "sched-1"),
+        ("update_reading_digest_schedule", "sched-1", {"enabled": False}),
+        ("delete_reading_digest_schedule", "sched-1"),
+        ("list_reading_digest_outputs", "sched-1", 25, 5),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_media_ingest_job_calls_and_payloads():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    submitted = await service.submit_media_ingest_jobs(
+        media_type="document",
+        urls=["https://example.com/document"],
+        file_paths=["/tmp/document.html"],
+        title="Example Document",
+        perform_analysis=False,
+    )
+    status = await service.get_media_ingest_job(7)
+    listed = await service.list_media_ingest_jobs(batch_id="batch-1", limit=10)
+    cancelled = await service.cancel_media_ingest_job(7, reason="duplicate")
+    batch_cancelled = await service.cancel_media_ingest_jobs_batch(batch_id="batch-1", reason="duplicate")
+
+    assert submitted["batch_id"] == "batch-1"
+    assert status["id"] == 7
+    assert listed["jobs"][0]["id"] == 7
+    assert cancelled["status"] == "cancelled"
+    assert batch_cancelled["cancelled"] == 1
+    assert client.calls == [
+        (
+            "submit_media_ingest_jobs",
+            {
+                "media_type": "document",
+                "urls": ["https://example.com/document"],
+                "title": "Example Document",
+                "perform_analysis": False,
+            },
+            ["/tmp/document.html"],
+        ),
+        ("get_media_ingest_job", 7),
+        ("list_media_ingest_jobs", "batch-1", 10),
+        ("get_media_ingest_job", 7),
+        ("cancel_media_ingest_job", 7, "duplicate"),
+        ("cancel_media_ingest_jobs_batch", "batch-1", None, "duplicate"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_streams_media_ingest_job_events():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    events = [
+        event
+        async for event in service.stream_media_ingest_job_events(
+            batch_id="batch-1",
+            after_id=3,
+        )
+    ]
+
+    assert events[0]["event"] == "snapshot"
+    assert events[0]["data"]["jobs"][0]["id"] == 7
+    assert events[1]["event"] == "job"
+    assert events[1]["data"]["attrs"]["progress_percent"] == 50
+    assert client.calls[:2] == [
+        ("stream_media_ingest_job_events", "batch-1", 3),
+        ("get_media_ingest_job", 7),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_streams_recent_media_ingest_job_events_without_batch():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    events = [
+        event
+        async for event in service.stream_media_ingest_job_events(
+            batch_id=None,
+            after_id=0,
+        )
+    ]
+
+    assert events[0]["event"] == "snapshot"
+    assert events[0]["data"]["batch_id"] is None
+    assert events[0]["data"]["jobs"][0]["id"] == 7
+    assert client.calls[:2] == [
+        ("stream_media_ingest_job_events", None, 0),
+        ("get_media_ingest_job", 7),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_web_content_ingest_with_schema_object():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    result = await service.ingest_web_content(
+        urls=["https://example.com/a"],
+        scrape_method="url_level",
+        url_level=2,
+        max_pages=3,
+        perform_analysis=False,
+        perform_chunking=False,
+    )
+
+    assert result["status"] == "success"
+    assert result["results"][0]["title"] == "Article"
+    assert client.calls == [
+        (
+            "ingest_web_content",
+            {
+                "urls": ["https://example.com/a"],
+                "scrape_method": "url_level",
+                "url_level": 2,
+                "max_pages": 3,
+                "max_depth": 3,
+                "perform_translation": False,
+                "translation_language": "en",
+                "timestamp_option": True,
+                "overwrite_existing": False,
+                "perform_analysis": False,
+                "perform_rolling_summarization": False,
+                "perform_chunking": False,
+                "use_adaptive_chunking": False,
+                "use_multi_level_chunking": False,
+                "chunk_size": 500,
+                "chunk_overlap": 200,
+                "hierarchical_chunking": False,
+                "use_cookies": False,
+                "perform_confabulation_check_of_analysis": False,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_legacy_web_scraping_process_contract():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+
+    result = await service.process_web_scraping(
+        WebScrapingRequest(
+            scrape_method="individual",
+            url_input="https://example.com/a",
+            max_pages=3,
+            summarize_checkbox=True,
+            mode="ephemeral",
+        )
+    )
+
+    assert result["status"] == "success"
+    assert result["results"][0]["title"] == "Scraped Article"
+    assert client.calls == [
+        (
+            "process_web_scraping",
+            {
+                "scrape_method": "individual",
+                "url_input": "https://example.com/a",
+                "max_pages": 3,
+                "max_depth": 3,
+                "summarize_checkbox": True,
+                "keywords": "default,no_keyword_set",
+                "temperature": 0.7,
+                "mode": "ephemeral",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_routes_mediawiki_process_and_ingest_streams():
+    client = FakeClient()
+    service = ServerMediaReadingService(client=client)
+    request = ProcessMediaWikiRequest(wiki_name="Example Wiki")
+
+    pages = [page async for page in service.process_mediawiki_dump(request, "/tmp/example.xml")]
+    events = [event async for event in service.ingest_mediawiki_dump(request, "/tmp/example.xml")]
+
+    assert pages == [{"title": "Page One", "content": "Body", "status": "Success", "input_ref": "example.xml"}]
+    assert events == [
+        {"type": "progress", "processed": 1},
+        {"type": "item_result", "data": {"title": "Stored Page", "media_id": 42}},
+    ]
+    assert client.calls == [
+        (
+            "process_mediawiki_dump",
+            {"wiki_name": "Example Wiki", "skip_redirects": True, "chunk_max_size": 1000},
+            "/tmp/example.xml",
+        ),
+        (
+            "ingest_mediawiki_dump",
+            {"wiki_name": "Example Wiki", "skip_redirects": True, "chunk_max_size": 1000},
+            "/tmp/example.xml",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_service_delete_and_undelete_route_to_media_lifecycle_endpoints():
     client = FakeClient()
     service = ServerMediaReadingService(client=client)
 
     deleted = await service.delete_media(41)
+    undeleted = await service.undelete_media(41)
 
     assert deleted["status"] == "deleted"
-    assert client.calls == [("delete_reading_item", 41, False)]
-
-    with pytest.raises(ValueError, match="Server media undelete is not available yet."):
-        await service.undelete_media(41)
+    assert undeleted["media_id"] == 41
+    assert client.calls == [
+        ("delete_reading_item", 41, False),
+        ("restore_media_item", 41, True, True, False),
+    ]
 
 
 @pytest.mark.asyncio

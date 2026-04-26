@@ -66,6 +66,16 @@ def find_unsupported_server_import_types(
     )
 
 
+def build_server_chatbook_service_from_config(
+    config: Mapping[str, Any],
+    *,
+    policy_enforcer: Any = None,
+) -> tuple["ServerChatbookService", TLDWAPIClient]:
+    """Build a server chatbook service plus its owned API client from application config."""
+    client = build_tldw_api_client_from_config(config)
+    return ServerChatbookService(client=client, policy_enforcer=policy_enforcer), client
+
+
 def build_server_import_selections_from_manifest(
     manifest: Optional[ChatbookManifest],
     import_media: bool = False,
@@ -126,6 +136,14 @@ def record_server_job(app_instance: Any, job_record: Mapping[str, Any]) -> List[
     records.insert(0, dict(job_record))
     setattr(app_instance, "_chatbook_server_jobs", records)
     return records
+
+
+def _to_plain_dict(value: Any) -> Dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise TypeError(f"Expected mapping-like chatbook response, got {type(value).__name__}")
 
 
 class ServerChatbookService:
@@ -293,6 +311,11 @@ class ServerChatbookService:
         client = self._require_client()
         return await client.continue_chatbook_export(self._coerce_continue_export_request(request_data))
 
+    async def continue_chatbook_export(self, request_data: ChatbookContinueExportRequest) -> Dict[str, Any]:
+        self._enforce_policy("chatbooks.export.server")
+        client = self._require_client()
+        return _to_plain_dict(await client.continue_chatbook_export(request_data))
+
     async def export_chatbook_from_selection(
         self,
         name: str,
@@ -354,7 +377,7 @@ class ServerChatbookService:
     async def get_export_job(self, job_id: str) -> Dict[str, Any]:
         self._enforce(self._action_id("detail"))
         client = self._require_client()
-        return await client.get_chatbook_export_job(job_id)
+        return _to_plain_dict(await client.get_chatbook_export_job(job_id))
 
     @staticmethod
     def _download_response_to_record(job_id: str, response: ReadingExportResponse | Mapping[str, Any]) -> Dict[str, Any]:
@@ -388,7 +411,7 @@ class ServerChatbookService:
     async def get_import_job(self, job_id: str) -> Dict[str, Any]:
         self._enforce(self._action_id("detail"))
         client = self._require_client()
-        return await client.get_chatbook_import_job(job_id)
+        return _to_plain_dict(await client.get_chatbook_import_job(job_id))
 
     async def continue_import(self, job_id: str) -> Dict[str, Any]:
         return await self.get_import_job(job_id)

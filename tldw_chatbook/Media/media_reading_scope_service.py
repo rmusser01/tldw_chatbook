@@ -14,6 +14,8 @@ from .media_reading_normalizers import (
     normalize_local_media_row,
     normalize_reference_image,
     normalize_reading_progress,
+    normalize_reading_saved_search,
+    normalize_reading_summary,
     normalize_server_reading_item,
 )
 
@@ -97,6 +99,27 @@ class MediaReadingScopeService:
             return MediaReadingBackend(str(mode))
         except ValueError as exc:
             raise ValueError(f"Invalid media backend: {mode}") from exc
+
+    def get_read_it_later_context_capability(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_type_slug: str | None = None,
+    ) -> ReadItLaterContextCapability:
+        normalized_mode = self._normalize_mode(mode)
+        normalized_type = str(media_type_slug or "all-media").strip().lower() or "all-media"
+
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            return ReadItLaterContextCapability(available=True, aggregate_only=False, reason=None)
+
+        if normalized_type == "all-media":
+            return ReadItLaterContextCapability(available=True, aggregate_only=True, reason=None)
+
+        return ReadItLaterContextCapability(
+            available=False,
+            aggregate_only=True,
+            reason="Read-it-later is only available in server mode from All Media.",
+        )
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
@@ -1496,6 +1519,40 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.delete_media(media_id))
 
+    async def bulk_update_reading_items(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        item_ids: list[int],
+        action: str,
+        status: str | None = None,
+        favorite: bool | None = None,
+        tags: list[str] | None = None,
+        hard: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        action_kind = "delete" if action == "delete" else "update"
+        self._enforce_policy(self._reading_action_id(normalized_mode, action_kind))
+        service = self._service_for_mode(normalized_mode)
+        options = {
+            key: value
+            for key, value in {
+                "status": status,
+                "favorite": favorite,
+                "tags": tags,
+            }.items()
+            if value is not None
+        }
+        payload = await self._maybe_await(
+            service.bulk_update_reading_items(
+                item_ids=item_ids,
+                action=action,
+                hard=hard,
+                **options,
+            )
+        )
+        return normalize_reading_items_bulk_update(payload, backend=normalized_mode.value)
+
     async def undelete_media(self, *, mode: MediaReadingBackend | str | None = None, media_id: Any) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_action_id(normalized_mode, "update"))
@@ -2029,6 +2086,21 @@ class MediaReadingScopeService:
             for item in list(items or [])
         ]
 
+    async def reattach_ingestion_source_item(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        source_id: Any,
+        item_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Local ingestion sources are not available yet.")
+        self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        item = await self._maybe_await(service.reattach_ingestion_source_item(source_id, item_id))
+        return normalize_ingestion_source_item(item, backend=normalized_mode.value)
+
     async def trigger_ingestion_source_sync(
         self,
         *,
@@ -2079,6 +2151,27 @@ class MediaReadingScopeService:
             service.list_document_versions(media_id, include_deleted=include_deleted)
         )
 
+    async def get_analysis_version(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        version_number: Any,
+        include_content: bool = True,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._reading_action_id(normalized_mode, "detail"))
+        service = self._service_for_mode(normalized_mode)
+        if not hasattr(service, "get_analysis_version"):
+            raise ValueError("Document version detail is not available for this media backend.")
+        return await self._maybe_await(
+            service.get_analysis_version(
+                media_id,
+                version_number=version_number,
+                include_content=include_content,
+            )
+        )
+
     async def save_analysis_version(
         self,
         *,
@@ -2126,6 +2219,8 @@ class MediaReadingScopeService:
         *,
         mode: MediaReadingBackend | str | None = None,
         version_uuid: str,
+        media_id: Any | None = None,
+        version_number: Any | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_action_id(normalized_mode, "delete"))

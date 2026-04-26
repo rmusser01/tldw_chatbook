@@ -335,7 +335,7 @@ class TestChatHistorySaving:
         assert messages["msg-assistant-1"]["is_selected_variant"] == before_messages["msg-assistant-1"]["is_selected_variant"]
         assert messages["msg-assistant-1"]["total_variants"] == before_messages["msg-assistant-1"]["total_variants"]
 
-    def test_resave_chat_history_normalizes_stale_conversation_metadata(self, db_instance: CharactersRAGDB):
+    def test_resave_chat_history_preserves_backend_while_normalizing_stale_identity_metadata(self, db_instance: CharactersRAGDB):
         char_id = db_instance.add_character_card({"name": "Resaver"})
         conversation_id = db_instance.add_conversation(
             {

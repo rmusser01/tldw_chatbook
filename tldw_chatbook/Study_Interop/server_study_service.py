@@ -594,6 +594,268 @@ class ServerStudyService:
             expected_version=expected_version,
         )
 
+    async def update_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
+        response = await self._require_client().update_flashcards_bulk(
+            [FlashcardBulkUpdateItemRequest.model_validate(dict(card)) for card in cards]
+        )
+        return self._model_to_dict(response)
+
+    async def reset_flashcard_scheduling(
+        self,
+        card_id: str,
+        *,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        response = await self._require_client().reset_flashcard_scheduling(
+            card_id,
+            FlashcardResetSchedulingRequest(expected_version=expected_version),
+        )
+        return self._model_to_dict(response)
+
+    async def set_flashcard_tags(
+        self,
+        card_id: str,
+        *,
+        tags: list[str],
+    ) -> dict[str, Any]:
+        response = await self._require_client().set_flashcard_tags(
+            card_id,
+            FlashcardTagsUpdateRequest(tags=tags),
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard_tags(self, card_id: str) -> dict[str, Any]:
+        return self._model_to_dict(await self._require_client().get_flashcard_tags(card_id))
+
+    async def list_flashcard_tag_suggestions(
+        self,
+        *,
+        q: Optional[str] = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().list_flashcard_tag_suggestions(q=q, limit=limit)
+        )
+
+    async def preview_structured_qa_import(
+        self,
+        content: str,
+        *,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().preview_structured_qa_import(
+            StructuredQaImportPreviewRequest(content=content),
+            max_lines=max_lines,
+            max_line_length=max_line_length,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def import_flashcards_tsv(
+        self,
+        content: str,
+        *,
+        delimiter: str = "\t",
+        has_header: bool = False,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().import_flashcards_tsv(
+            FlashcardsImportRequest(
+                content=content,
+                delimiter=delimiter,
+                has_header=has_header,
+            ),
+            max_lines=max_lines,
+            max_line_length=max_line_length,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def export_flashcards(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: bool = False,
+        tag: Optional[str] = None,
+        q: Optional[str] = None,
+        export_format: str = "csv",
+        include_reverse: bool = False,
+        delimiter: str = "\t",
+        include_header: bool = False,
+        extended_header: bool = False,
+    ) -> bytes:
+        return await self._require_client().export_flashcards(
+            deck_id=deck_id,
+            workspace_id=workspace_id,
+            include_workspace_items=include_workspace_items,
+            tag=tag,
+            q=q,
+            export_format=export_format,
+            include_reverse=include_reverse,
+            delimiter=delimiter,
+            include_header=include_header,
+            extended_header=extended_header,
+        )
+
+    async def upload_flashcard_asset(self, file_path: Any) -> dict[str, Any]:
+        response = await self._require_client().upload_flashcard_asset(file_path)
+        return self._model_to_dict(response)
+
+    async def get_flashcard_asset_content(self, asset_uuid: str) -> bytes:
+        return await self._require_client().get_flashcard_asset_content(asset_uuid)
+
+    async def import_flashcards_json_file(
+        self,
+        file_path: Any,
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().import_flashcards_json_file(
+            file_path,
+            max_items=max_items,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def import_flashcards_apkg(
+        self,
+        file_path: Any,
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().import_flashcards_apkg(
+            file_path,
+            max_items=max_items,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard_study_assistant_context(self, card_id: str) -> dict[str, Any]:
+        response = await self._require_client().get_flashcard_study_assistant_context(card_id)
+        return self._model_to_dict(response)
+
+    async def respond_flashcard_study_assistant(
+        self,
+        card_id: str,
+        *,
+        action: str,
+        message: Optional[str] = None,
+        input_modality: str = "text",
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        expected_thread_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().respond_flashcard_study_assistant(
+            card_id,
+            StudyAssistantRespondRequest(
+                action=action,
+                message=message,
+                input_modality=input_modality,
+                provider=provider,
+                model=model,
+                expected_thread_version=expected_thread_version,
+            ),
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard_analytics_summary(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: bool = False,
+    ) -> dict[str, Any]:
+        response = await self._require_client().get_flashcard_analytics_summary(
+            deck_id=deck_id,
+            workspace_id=workspace_id,
+            include_workspace_items=include_workspace_items,
+        )
+        payload = self._model_to_dict(response)
+        payload["source"] = "server"
+        return payload
+
+    async def create_flashcard_template(
+        self,
+        *,
+        name: str,
+        model_type: str = "basic",
+        front_template: str,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().create_flashcard_template(
+            FlashcardTemplateCreateRequest(
+                name=name,
+                model_type=model_type,
+                front_template=front_template,
+                back_template=back_template,
+                notes_template=notes_template,
+                extra_template=extra_template,
+                placeholder_definitions=placeholder_definitions or [],
+            )
+        )
+        return self._model_to_dict(response)
+
+    async def list_flashcard_templates(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().list_flashcard_templates(limit=limit, offset=offset)
+        )
+
+    async def get_flashcard_template(self, template_id: int) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().get_flashcard_template(int(template_id))
+        )
+
+    async def update_flashcard_template(
+        self,
+        template_id: int,
+        *,
+        name: Optional[str] = None,
+        model_type: Optional[str] = None,
+        front_template: Optional[str] = None,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+        expected_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        payload = {
+            key: value
+            for key, value in {
+                "name": name,
+                "model_type": model_type,
+                "front_template": front_template,
+                "back_template": back_template,
+                "notes_template": notes_template,
+                "extra_template": extra_template,
+                "placeholder_definitions": placeholder_definitions,
+                "expected_version": expected_version,
+            }.items()
+            if value is not None
+        }
+        response = await self._require_client().update_flashcard_template(
+            int(template_id),
+            FlashcardTemplateUpdateRequest(**payload),
+        )
+        return self._model_to_dict(response)
+
+    async def delete_flashcard_template(self, template_id: int, *, expected_version: int) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().delete_flashcard_template(
+                int(template_id),
+                expected_version=expected_version,
+            )
+        )
+
     async def delete_deck(
         self,
         deck_id: int,

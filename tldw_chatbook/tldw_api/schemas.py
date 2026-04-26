@@ -4,9 +4,12 @@ from pydantic import BaseModel, Field, HttpUrl
 
 # Enum-like Literals from API schema
 MediaType = Literal['video', 'audio', 'document', 'pdf', 'ebook', 'xml', 'mediawiki_dump', 'plaintext']
+AddMediaType = Literal['video', 'audio', 'document', 'pdf', 'ebook', 'email', 'code']
 ChunkMethod = Literal['semantic', 'tokens', 'paragraphs', 'sentences', 'words', 'ebook_chapters', 'json']
+CodeChunkMethod = Literal['code', 'lines']
 PdfEngine = Literal['pymupdf4llm', 'pymupdf', 'docling']
 ScrapeMethod = Literal["individual", "sitemap", "url_level", "recursive_scraping"]
+EmbeddingDispatchMode = Literal["auto", "jobs", "background"]
 
 
 # --- Base Request Options (mirrors parts of AddMediaForm) ---
@@ -72,6 +75,96 @@ class ProcessEbookRequest(BaseMediaRequest):
 class ProcessDocumentRequest(BaseMediaRequest):
     chunk_method: Optional[ChunkMethod] = 'sentences' # Default for documents
     chunk_size: int = 1000
+
+class ProcessCodeRequest(BaseModel):
+    # Matches server ProcessCodeForm; this processing-only endpoint does not
+    # accept title/author/keywords metadata.
+    urls: Optional[List[str]] = None
+    perform_chunking: bool = True
+    chunk_method: Optional[CodeChunkMethod] = 'code'
+    chunk_size: int = 4000
+    chunk_overlap: int = 200
+
+class ProcessEmailRequest(BaseMediaRequest):
+    media_type: Literal['email'] = 'email'
+    keep_original_file: bool = False
+    chunk_method: Optional[ChunkMethod] = 'sentences'
+    chunk_size: int = 1000
+    ingest_attachments: bool = False
+    max_depth: int = 2
+    accept_archives: bool = False
+    accept_mbox: bool = False
+    accept_pst: bool = False
+
+class AddMediaRequest(BaseModel):
+    media_type: AddMediaType
+    urls: Optional[List[str]] = None
+    title: Optional[str] = None
+    author: Optional[str] = None
+    keywords: Optional[List[str]] = None
+    custom_prompt: Optional[str] = None
+    system_prompt: Optional[str] = None
+    overwrite_existing: bool = False
+    keep_original_file: bool = False
+    perform_analysis: bool = True
+    api_provider: Optional[str] = None
+    model_name: Optional[str] = None
+    use_cookies: bool = False
+    cookies: Optional[str] = None
+    api_name: Optional[str] = None
+    ingest_attachments: Optional[bool] = None
+    max_depth: Optional[int] = None
+    accept_archives: Optional[bool] = None
+    accept_mbox: Optional[bool] = None
+    accept_pst: Optional[bool] = None
+    perform_rolling_summarization: bool = False
+    summarize_recursively: bool = False
+    perform_chunking: bool = True
+    chunk_method: Optional[ChunkMethod] = None
+    use_adaptive_chunking: bool = False
+    use_multi_level_chunking: bool = False
+    chunk_language: Optional[str] = None
+    chunk_size: int = 500
+    chunk_overlap: int = 200
+    custom_chapter_pattern: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    transcription_model: Optional[str] = None
+    transcription_language: Optional[str] = None
+    hotwords: Optional[str] = None
+    diarize: Optional[bool] = None
+    timestamp_option: Optional[bool] = None
+    vad_use: Optional[bool] = None
+    perform_confabulation_check_of_analysis: Optional[bool] = None
+    pdf_parsing_engine: Optional[PdfEngine] = None
+    enable_ocr: Optional[bool] = None
+    ocr_backend: Optional[str] = None
+    ocr_lang: Optional[str] = None
+    ocr_dpi: Optional[int] = None
+    ocr_mode: Optional[Literal["always", "fallback"]] = None
+    ocr_min_page_text_chars: Optional[int] = None
+    ocr_output_format: Optional[str] = None
+    ocr_prompt_preset: Optional[str] = None
+    perform_claims_extraction: Optional[bool] = None
+    claims_extractor_mode: Optional[str] = None
+    claims_max_per_chunk: Optional[int] = None
+    generate_embeddings: bool = False
+    embedding_dispatch_mode: Optional[EmbeddingDispatchMode] = None
+    embedding_model: Optional[str] = None
+    embedding_provider: Optional[str] = None
+    proposition_engine: Optional[str] = None
+    proposition_aggressiveness: Optional[int] = None
+    proposition_min_proposition_length: Optional[int] = None
+    proposition_prompt_profile: Optional[str] = None
+    auto_apply_template: Optional[bool] = None
+    chunking_template_name: Optional[str] = None
+    enable_contextual_chunking: Optional[bool] = None
+    contextual_llm_model: Optional[str] = None
+    context_window_size: Optional[int] = None
+    context_strategy: Optional[Literal['auto', 'full', 'window', 'outline_window']] = None
+    context_token_budget: Optional[int] = None
+    hierarchical_chunking: Optional[bool] = None
+    hierarchical_template: Optional[Dict[str, Any]] = None
 
 class ProcessXMLRequest(BaseModel): # Based on XMLIngestRequest
     title: Optional[str] = None

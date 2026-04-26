@@ -9,6 +9,17 @@ from typing import Any, Mapping, Optional
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
+    CharacterCreateRequest,
+    CharacterChatMessageCreate,
+    CharacterChatMessageUpdate,
+    CharacterChatSessionCreate,
+    CharacterChatSessionUpdate,
+    CharacterChatSettingsUpdate,
+    CharacterMemoryArchiveRequest,
+    CharacterMemoryCreate,
+    CharacterMemoryExtractRequest,
+    CharacterMemoryUpdate,
+    CharacterUpdateRequest,
     PersonaProfileCreate,
     PersonaProfileUpdate,
     PresetCreate,

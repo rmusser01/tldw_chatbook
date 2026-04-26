@@ -7,6 +7,7 @@ from tldw_chatbook.Media.media_reading_normalizers import (
     normalize_ingestion_source_item,
     normalize_local_media_row,
     normalize_reading_progress,
+    normalize_reading_summary,
     normalize_server_reading_item,
 )
 
@@ -176,6 +177,33 @@ def test_normalize_reading_progress_computes_percent_when_missing():
         "zoom_level": 110,
         "cfi": None,
         "last_read_at": "2026-02-01T05:00:00Z",
+    }
+
+
+def test_normalize_reading_summary_uses_source_honest_identity():
+    normalized = normalize_reading_summary(
+        {
+            "item_id": 31,
+            "summary": "Short summary",
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "citations": [{"item_id": 31, "title": "Example", "source": "reading"}],
+            "generated_at": "2026-04-23T12:00:00Z",
+        },
+        backend="server",
+    )
+
+    assert normalized == {
+        "id": "server:reading_summary:31",
+        "backend": "server",
+        "entity_kind": "reading_summary",
+        "source_id": "31",
+        "item_id": 31,
+        "summary": "Short summary",
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "citations": [{"item_id": 31, "title": "Example", "source": "reading"}],
+        "generated_at": "2026-04-23T12:00:00Z",
     }
 
 

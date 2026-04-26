@@ -8,8 +8,16 @@ from typing import Any, Optional
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
+    BatchEvaluationRequest,
     CreateEvaluationRequest,
+    EmbeddingsABTestConfig,
+    EmbeddingsABTestCreateRequest,
+    EmbeddingsABTestRunRequest,
+    EvaluationBenchmarkRunRequest,
     EvaluationDatasetCreateRequest,
+    EvaluationHistoryRequest,
+    EvaluationRecipeDatasetValidationRequest,
+    EvaluationRecipeRunCreateRequest,
     EvaluationRunCreateRequest,
     RecipeDatasetValidationRequest,
     RecipeRunCreateRequest,

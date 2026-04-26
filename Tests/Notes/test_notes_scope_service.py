@@ -1,5 +1,7 @@
 import pytest
 
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
@@ -23,6 +25,14 @@ class FakeLocalNotes:
                 {"id": 2, "keyword": "stale"},
             ]
         }
+        self.notes_for_keyword = {
+            1: [
+                {"id": "local-1", "title": "Local", "content": "Body", "version": 1},
+                {"id": "local-2", "title": "Related", "content": "More", "version": 1},
+            ],
+            2: [{"id": "local-1", "title": "Local", "content": "Body", "version": 1}],
+        }
+        self.manual_links = []
 
     def add_note(self, user_id, title, content, note_id=None):
         self.add_calls.append(
@@ -66,8 +76,24 @@ class FakeLocalNotes:
         )
         return [{"id": "local-1", "title": "Local"}]
 
+    def get_note_by_id(self, user_id, note_id):
+        if note_id == "local-1":
+            return {"id": "local-1", "title": "Local", "content": "Body", "version": 1}
+        if note_id == "local-2":
+            return {"id": "local-2", "title": "Related", "content": "More", "version": 1}
+        return None
+
+    def list_notes(self, user_id, limit=100, offset=0):
+        return [
+            {"id": "local-1", "title": "Local", "content": "Body", "version": 1},
+            {"id": "local-2", "title": "Related", "content": "More", "version": 1},
+        ][offset : offset + limit]
+
     def get_keywords_for_note(self, user_id, note_id):
         return list(self.note_keywords.get(note_id, []))
+
+    def get_notes_for_keyword(self, user_id, keyword_id, limit=50, offset=0):
+        return list(self.notes_for_keyword.get(keyword_id, []))[offset : offset + limit]
 
     def get_keyword_by_text(self, user_id, keyword_text):
         return self.keyword_rows.get(keyword_text)
@@ -97,6 +123,34 @@ class FakeLocalNotes:
             }
         )
         return True
+
+    def create_note_link(self, user_id, note_id, to_note_id, directed=False, weight=None, metadata=None):
+        edge = {
+            "id": f"local:manual:{len(self.manual_links) + 1}",
+            "source": note_id,
+            "target": to_note_id,
+            "type": "manual",
+            "directed": directed,
+            "weight": 1.0 if weight is None else weight,
+            "metadata": metadata or {},
+        }
+        self.manual_links.append(edge)
+        return edge
+
+    def list_note_links(self, user_id, center_note_id=None, limit=200):
+        links = list(self.manual_links)
+        if center_note_id:
+            links = [
+                edge
+                for edge in links
+                if edge["source"] == center_note_id or edge["target"] == center_note_id
+            ]
+        return links[:limit]
+
+    def delete_note_link(self, user_id, edge_id):
+        before = len(self.manual_links)
+        self.manual_links = [edge for edge in self.manual_links if edge["id"] != edge_id]
+        return {"deleted": len(self.manual_links) != before, "edge_id": edge_id}
 
 
 class FakeServerNotes:

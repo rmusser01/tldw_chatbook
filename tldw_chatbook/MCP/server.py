@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 MCP Server implementation for tldw_chatbook
 
@@ -6,6 +8,7 @@ through the Model Context Protocol.
 """
 
 import asyncio
+import ast
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
@@ -23,19 +26,70 @@ except ImportError:
 
 from loguru import logger
 
-# Import tldw_chatbook components
-from ..config import get_cli_setting, CLI_APP_CLIENT_ID
-from ..DB.ChaChaNotes_DB import ChaChaNotes_DB
-from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..Chat.Chat_Functions import create_chat_message, save_conversation
-from ..Notes.Notes_Library import NotesInteropService
-from ..Character_Chat.Character_Chat_Lib import CharacterInteropService
-from ..LLM_Calls.LLM_API_Calls import chat_with_provider
 
-# Import MCP components
-from .tools import MCPTools
-from .resources import MCPResources
-from .prompts import MCPPrompts
+def _first_doc_line(value: str | None) -> str:
+    if not value:
+        return ""
+    return value.strip().splitlines()[0].strip()
+
+
+def _load_server_module_ast() -> ast.Module:
+    return ast.parse(Path(__file__).read_text(encoding="utf-8"))
+
+
+def _extract_registered_entries(method_name: str, decorator_name: str) -> list[dict[str, Any]]:
+    module_node = _load_server_module_ast()
+    for node in module_node.body:
+        if not isinstance(node, ast.ClassDef) or node.name != "TldwMCPServer":
+            continue
+        for child in node.body:
+            if not isinstance(child, ast.FunctionDef) or child.name != method_name:
+                continue
+            entries: list[dict[str, Any]] = []
+            for nested in child.body:
+                if not isinstance(nested, ast.AsyncFunctionDef):
+                    continue
+                for decorator in nested.decorator_list:
+                    if not isinstance(decorator, ast.Call):
+                        continue
+                    func = decorator.func
+                    if not isinstance(func, ast.Attribute) or func.attr != decorator_name:
+                        continue
+                    entry = {
+                        "name": nested.name,
+                        "description": _first_doc_line(ast.get_docstring(nested)),
+                    }
+                    if decorator_name == "resource" and decorator.args:
+                        first_arg = decorator.args[0]
+                        if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+                            entry["uri"] = first_arg.value
+                    entries.append(entry)
+                    break
+            return entries
+    return []
+
+
+def _describe_local_resources() -> list[dict[str, Any]]:
+    return _extract_registered_entries("_register_resources", "resource")
+
+
+def _describe_local_prompts() -> list[dict[str, Any]]:
+    return _extract_registered_entries("_register_prompts", "prompt")
+
+
+def _describe_local_tools() -> list[dict[str, Any]]:
+    return _extract_registered_entries("_register_tools", "tool")
+
+
+def describe_local_mcp_capabilities() -> dict[str, Any]:
+    """Return a stable local MCP capability manifest without opening a loopback connection."""
+    return {
+        "server_id": "local:tldw_chatbook",
+        "server_label": "tldw_chatbook local MCP",
+        "tools": _describe_local_tools(),
+        "resources": _describe_local_resources(),
+        "prompts": _describe_local_prompts(),
+    }
 
 
 class TldwMCPServer:
@@ -54,6 +108,10 @@ class TldwMCPServer:
         self._init_databases()
         
         # Initialize MCP components
+        from .tools import MCPTools
+        from .resources import MCPResources
+        from .prompts import MCPPrompts
+
         self.tools = MCPTools(self.chachanotes_db, self.media_db)
         self.resources = MCPResources(self.chachanotes_db, self.media_db)
         self.prompts = MCPPrompts(self.chachanotes_db, self.media_db)
@@ -68,6 +126,12 @@ class TldwMCPServer:
     def _init_databases(self):
         """Initialize database connections."""
         try:
+            from ..config import get_cli_setting, CLI_APP_CLIENT_ID
+            from ..DB.ChaChaNotes_DB import ChaChaNotes_DB
+            from ..DB.Client_Media_DB_v2 import MediaDatabase
+            from ..Notes.Notes_Library import NotesInteropService
+            from ..Character_Chat.Character_Chat_Lib import CharacterInteropService
+
             # Initialize character/chat/notes database
             self.chachanotes_db = ChaChaNotes_DB(
                 db_name="chachanotes_db.sqlite",
@@ -89,6 +153,8 @@ class TldwMCPServer:
     
     def _register_tools(self):
         """Register MCP tools."""
+        from ..config import get_cli_setting
+        from ..LLM_Calls.LLM_API_Calls import chat_with_provider
         
         # Basic chat tool
         @self.mcp.tool()
@@ -419,10 +485,10 @@ class TldwMCPServer:
                 await self.mcp.run(
                     read_stream=read_stream,
                     write_stream=write_stream,
-                    InitializationOptions(
+                    initialization_options=InitializationOptions(
                         server_name=self.name,
                         server_version=self.version
-                    )
+                    ),
                 )
         else:
             # TODO: Implement HTTP transport

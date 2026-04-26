@@ -1,4 +1,10 @@
+import pytest
+from types import SimpleNamespace
+
+from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evaluations_Interop.local_evaluations_service import LocalEvaluationsService
+from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 
 
 class FakeEvalsDB:
@@ -175,6 +181,21 @@ def test_create_evaluation_stores_eval_metadata_in_local_task_payload():
     assert db.created_task["config_data"]["__tldw_eval_metadata__"]["project"] == "offline-parity"
 
 
+def test_create_evaluation_accepts_scope_dataset_keyword_when_empty():
+    db = FakeEvalsDB()
+    service = LocalEvaluationsService(db=db)
+
+    task_id = service.create_evaluation(
+        name="demo_eval",
+        eval_type="question_answer",
+        eval_spec={"metrics": ["accuracy"]},
+        dataset=None,
+    )
+
+    assert task_id == "task_999"
+    assert db.created_task["dataset_id"] is None
+
+
 def test_get_run_enriches_local_run_with_flattened_metrics_summary():
     service = LocalEvaluationsService(db=FakeEvalsDB())
 
@@ -183,6 +204,108 @@ def test_get_run_enriches_local_run_with_flattened_metrics_summary():
     assert run["metrics_summary"]["accuracy"] == 0.95
     assert run["task_id"] == "task_123"
     assert run["model_name"] == "gpt-4.1-mini"
+
+
+def test_create_dataset_stores_inline_samples_in_local_metadata():
+    db = FakeEvalsDB()
+    service = LocalEvaluationsService(db=db)
+
+    dataset_id = service.create_dataset(
+        name="offline_dataset",
+        description="Offline dataset",
+        samples=[{"input": "Question", "expected": "Answer", "metadata": {"source": "local"}}],
+        metadata={"project": "offline-parity"},
+    )
+
+    assert dataset_id == "dataset_999"
+    assert db.calls[-1] == (
+        "create_dataset",
+        "offline_dataset",
+        "custom",
+        "inline:offline_dataset",
+        "Offline dataset",
+        {
+            "project": "offline-parity",
+            "__tldw_eval_samples__": [
+                {"input": "Question", "expected": "Answer", "metadata": {"source": "local"}}
+            ],
+            "sample_count": 1,
+            "inline_samples": True,
+        },
+    )
+
+
+def test_update_dataset_threads_inline_samples_through_local_metadata():
+    db = FakeEvalsDB()
+    service = LocalEvaluationsService(db=db)
+
+    updated = service.update_dataset(
+        "dataset_123",
+        name="renamed_dataset",
+        description="Renamed dataset",
+        samples=[{"input": "New question", "expected": "New answer"}],
+        metadata={"project": "offline-v2"},
+    )
+
+    assert updated["id"] == "dataset_123"
+    assert db.calls[-2] == (
+        "update_dataset",
+        "dataset_123",
+        {
+            "name": "renamed_dataset",
+            "description": "Renamed dataset",
+            "format": None,
+            "source_path": "/tmp/demo.json",
+            "metadata": {
+                "project": "offline-v2",
+                "__tldw_eval_samples__": [{"input": "New question", "expected": "New answer"}],
+                "sample_count": 1,
+                "inline_samples": True,
+            },
+        },
+    )
+
+
+def test_update_dataset_preserves_inline_samples_when_metadata_changes_against_evals_db(tmp_path):
+    db = EvalsDB(db_path=str(tmp_path / "evals.db"), client_id="test_client")
+    service = LocalEvaluationsService(db=db)
+
+    dataset_id = service.create_dataset(
+        name="offline_dataset",
+        samples=[{"input": "Question", "expected": "Answer"}],
+        metadata={"project": "offline", "owner": "local"},
+    )
+    updated = service.update_dataset(
+        dataset_id,
+        name="renamed_dataset",
+        description="Updated dataset",
+        metadata={"project": "server-sync"},
+    )
+
+    assert updated["id"] == dataset_id
+    assert updated["name"] == "renamed_dataset"
+    assert updated["description"] == "Updated dataset"
+    assert updated["samples"] == [{"input": "Question", "expected": "Answer"}]
+    assert updated["sample_count"] == 1
+    assert updated["metadata"] == {"project": "server-sync"}
+    assert updated["version"] == 2
+
+
+def test_local_evaluations_service_deletes_dataset_against_evals_db(tmp_path):
+    db = EvalsDB(db_path=str(tmp_path / "evals.db"), client_id="test_client")
+    service = LocalEvaluationsService(db=db)
+
+    dataset_id = service.create_dataset(
+        name="offline_dataset",
+        samples=[{"input": "Question", "expected": "Answer"}],
+    )
+    dataset = service.get_dataset(dataset_id)
+    service.delete_dataset(dataset_id)
+
+    assert dataset["sample_count"] == 1
+    assert dataset["samples"] == [{"input": "Question", "expected": "Answer"}]
+    with pytest.raises(ValueError, match="was not found"):
+        service.get_dataset(dataset_id)
 
 
 def test_create_run_resolves_provider_model_string_to_local_model_id():

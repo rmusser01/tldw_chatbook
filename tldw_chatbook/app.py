@@ -65,6 +65,7 @@ from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDon
 from .Widgets.AppFooterStatus import AppFooterStatus
 from .config import (
     get_media_db_path,
+    get_notifications_db_path,
     get_prompts_db_path,
     get_notifications_db_path,
     get_research_db_path,
@@ -75,7 +76,12 @@ from .config import (
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
+from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_loop_scope_service import ServerChatLoopScopeService
+from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
+from tldw_chatbook.Chat.server_chat_loop_service import ServerChatLoopService
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
@@ -147,6 +153,16 @@ from .Study_Interop import (
     ServerStudyService,
     StudyScopeService,
 )
+from .Writing_Interop import (
+    LocalWritingService,
+    ServerWritingService,
+    WritingScopeService,
+)
+from .Research_Interop import (
+    LocalResearchService,
+    ResearchScopeService,
+    ServerResearchService,
+)
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
@@ -188,6 +204,8 @@ from .UI.Screens.logs_screen import LogsScreen
 from .UI.Screens.stats_screen import StatsScreen
 from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
+from .UI.Screens.writing_screen import WritingScreen
+from .UI.Screens.research_screen import ResearchScreen
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
 # The legacy per-view navigation (ingest-nav-*/ingest-view-*) is not used anymore.
 # Keep these as empty to avoid wiring legacy handlers.
@@ -1244,6 +1262,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
         self.loguru_logger = loguru_logger
         self.loguru_logger.info(f"Loaded app_config - strip_thinking_tags: {self.app_config.get('chat_defaults', {}).get('strip_thinking_tags', 'NOT SET')}") # Make loguru_logger an instance variable for handlers
+        self.client_id = CLI_APP_CLIENT_ID
         self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
         self.db_status_manager = DBStatusManager(self)  # Initialize database status manager
         self._startup_phases["basic_init"] = time.perf_counter() - phase_start
@@ -1347,7 +1366,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         initial_media_runtime_backend = self._resolve_initial_media_runtime_backend()
         self.media_runtime_state = MediaRuntimeState(runtime_backend=initial_media_runtime_backend)
-        self.local_media_reading_service = LocalMediaReadingService(self.media_db)
+        self.local_media_reading_service = LocalMediaReadingService(self.media_db, app_config=self.app_config)
         try:
             self.server_media_reading_service = ServerMediaReadingService.from_config(
                 self.app_config,
@@ -1390,6 +1409,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         else:
             self.prompts_db = None # Ensure it's None if service failed
             logging.warning("Prompts service not initialized, self.prompts_db set to None.")
+        self.prompt_scope_service = build_prompt_scope_service(
+            prompt_db=self.prompts_db,
+            app_config=self.app_config,
+            policy_enforcer=self.service_policy_enforcer,
+        )
 
         if self.notes_service and hasattr(self.notes_service, 'db') and self.notes_service.db:
             self.chachanotes_db = self.notes_service.db # ChaChaNotesDB is used by NotesInteropService
@@ -1402,6 +1426,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             else:
                 logging.error("ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.")
                 self.chachanotes_db = None # Explicitly set to None
+
+        self._wire_chat_conversation_services()
 
         try:
             self.server_notes_workspace_service = ServerNotesWorkspaceService.from_config(
@@ -1440,6 +1466,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
         self._wire_evaluation_services()
         self._wire_study_services()
+        self._wire_writing_services()
+        self._wire_research_services()
         self._wire_character_persona_services()
         self._wire_chat_conversation_services()
         self._notes_tab_initializer = NotesTabInitializer(self)
@@ -1639,8 +1667,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
 
     def _wire_study_services(self) -> None:
-        self.local_study_service = LocalStudyService(self.chachanotes_db) if self.chachanotes_db is not None else None
-        self.local_quiz_service = LocalQuizService(self.chachanotes_db) if self.chachanotes_db is not None else None
+        self.local_study_service = (
+            LocalStudyService(
+                self.chachanotes_db,
+                notification_dispatch_service=self.notification_dispatch_service,
+                notification_app=self,
+            )
+            if self.chachanotes_db is not None
+            else None
+        )
+        self.local_quiz_service = (
+            LocalQuizService(
+                self.chachanotes_db,
+                notification_dispatch_service=self.notification_dispatch_service,
+                notification_app=self,
+            )
+            if self.chachanotes_db is not None
+            else None
+        )
         try:
             self.server_study_service = ServerStudyService.from_config(
                 self.app_config,

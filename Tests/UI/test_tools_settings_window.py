@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 from datetime import datetime
 
-from textual.widgets import Button, TextArea, Label, Static
+from textual.widgets import Button, Checkbox, Input, Select, TextArea, Label, Static
 from textual.app import App
 try:
     from textual.app import AppTest
@@ -17,6 +17,8 @@ except ImportError:
     AppTest = None
 
 from tldw_chatbook.UI.Tools_Settings_Window import ToolsSettingsWindow
+from tldw_chatbook.UI.Outputs_Panel import OutputsPanel
+from tldw_chatbook.UI.Sharing_Panel import SharingPanel
 # Import DEFAULT_CONFIG_PATH to be monkeypatched, and the function that uses it
 import tldw_chatbook.config
 
@@ -481,3 +483,317 @@ async def test_database_error_handling(settings_window: ToolsSettingsWindow, moc
         calls = mock_app_instance.notify.call_args_list
         assert any("error" in str(call).lower() for call in calls)
 
+
+@pytest.mark.asyncio
+async def test_tools_settings_window_exposes_unified_mcp_view():
+    class ToolsSettingsHostApp(App):
+        def __init__(self):
+            super().__init__()
+            self.notify = MagicMock()
+            self.unified_mcp_service = None
+
+        def compose(self):
+            yield ToolsSettingsWindow(app_instance=self)
+
+    app = ToolsSettingsHostApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(ToolsSettingsWindow)
+        nav_button = window.query_one("#ts-nav-unified-mcp", Button)
+
+        assert nav_button.label.plain == "Unified MCP"
+
+        await window.on_button_pressed(Button.Pressed(nav_button))
+
+        content_switcher = window.query_one("#tools-settings-content-pane")
+        assert content_switcher.current == "ts-view-unified-mcp"
+
+
+@pytest.mark.asyncio
+async def test_tools_settings_window_exposes_sharing_view():
+    class ToolsSettingsHostApp(App):
+        def __init__(self):
+            super().__init__()
+            self.notify = MagicMock()
+            self.unified_mcp_service = None
+            self.current_runtime_backend = "server"
+            self.server_sharing_scope_service = MagicMock()
+
+        def get_authoritative_runtime_source(self):
+            return self.current_runtime_backend
+
+        def compose(self):
+            yield ToolsSettingsWindow(app_instance=self)
+
+    app = ToolsSettingsHostApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(ToolsSettingsWindow)
+        nav_button = window.query_one("#ts-nav-sharing", Button)
+
+        assert nav_button.label.plain == "Sharing"
+
+        await window.on_button_pressed(Button.Pressed(nav_button))
+
+        content_switcher = window.query_one("#tools-settings-content-pane")
+        assert content_switcher.current == "ts-view-sharing"
+        assert window.query_one("#sharing-panel", SharingPanel) is not None
+
+
+@pytest.mark.asyncio
+async def test_tools_settings_window_exposes_outputs_view():
+    class ToolsSettingsHostApp(App):
+        def __init__(self):
+            super().__init__()
+            self.notify = MagicMock()
+            self.unified_mcp_service = None
+            self.current_runtime_backend = "server"
+            self.server_outputs_scope_service = MagicMock()
+            self.server_sharing_scope_service = MagicMock()
+
+        def get_authoritative_runtime_source(self):
+            return self.current_runtime_backend
+
+        def compose(self):
+            yield ToolsSettingsWindow(app_instance=self)
+
+    app = ToolsSettingsHostApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(ToolsSettingsWindow)
+        nav_button = window.query_one("#ts-nav-outputs", Button)
+
+        assert nav_button.label.plain == "Outputs"
+
+        await window.on_button_pressed(Button.Pressed(nav_button))
+
+        content_switcher = window.query_one("#tools-settings-content-pane")
+        assert content_switcher.current == "ts-view-outputs"
+        assert window.query_one("#outputs-panel", OutputsPanel) is not None
+
+
+class SharingPanelHostApp(App):
+    def __init__(self, *, runtime_backend: str, scope_service: MagicMock):
+        super().__init__()
+        self.notify = MagicMock()
+        self.current_runtime_backend = runtime_backend
+        self.server_sharing_scope_service = scope_service
+
+    def get_authoritative_runtime_source(self):
+        return self.current_runtime_backend
+
+    def compose(self):
+        yield SharingPanel(self, id="sharing-panel")
+
+
+class OutputsPanelHostApp(App):
+    def __init__(self, *, runtime_backend: str, scope_service: MagicMock):
+        super().__init__()
+        self.notify = MagicMock()
+        self.current_runtime_backend = runtime_backend
+        self.server_outputs_scope_service = scope_service
+
+    def get_authoritative_runtime_source(self):
+        return self.current_runtime_backend
+
+    def compose(self):
+        yield OutputsPanel(self, id="outputs-panel")
+
+
+@pytest.mark.asyncio
+async def test_sharing_panel_rejects_local_mode_with_explicit_guidance():
+    scope_service = MagicMock()
+    app = SharingPanelHostApp(runtime_backend="local", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(SharingPanel)
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        assert panel.query_one("#sharing-disabled", Static).display is True
+        assert panel.query_one("#sharing-main").display is False
+        assert panel.query_one("#sharing-create-workspace-share-btn", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_sharing_panel_routes_server_workspace_share_and_token_operations():
+    scope_service = MagicMock()
+    scope_service.share_workspace = AsyncMock(return_value={"id": "server:share:7", "access_level": "view_chat"})
+    scope_service.list_workspace_shares = AsyncMock(return_value={"shares": [{"id": "server:share:7"}], "total": 1})
+    scope_service.create_share_token = AsyncMock(return_value={"id": "server:share_token:5", "raw_token": "raw-token"})
+    scope_service.list_share_tokens = AsyncMock(return_value={"tokens": [{"id": "server:share_token:5"}], "total": 1})
+    scope_service.list_shared_with_me = AsyncMock(return_value={"items": [{"id": "server:share:9"}], "total": 1})
+    app = SharingPanelHostApp(runtime_backend="server", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(SharingPanel)
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        panel.query_one("#sharing-workspace-id", Input).value = "ws-1"
+        panel.query_one("#sharing-scope-type", Select).value = "team"
+        panel.query_one("#sharing-scope-id", Input).value = "11"
+        panel.query_one("#sharing-access-level", Select).value = "view_chat"
+        panel.query_one("#sharing-allow-clone", Checkbox).value = True
+        await panel.create_workspace_share()
+        await panel.list_workspace_shares()
+
+        panel.query_one("#sharing-resource-type", Select).value = "workspace"
+        panel.query_one("#sharing-resource-id", Input).value = "ws-1"
+        panel.query_one("#sharing-token-password", Input).value = "passphrase"
+        panel.query_one("#sharing-token-max-uses", Input).value = "10"
+        await panel.create_share_token()
+        await panel.list_share_tokens()
+        await panel.list_shared_with_me()
+
+        scope_service.share_workspace.assert_awaited_once_with(
+            mode="server",
+            workspace_id="ws-1",
+            share_scope_type="team",
+            share_scope_id=11,
+            access_level="view_chat",
+            allow_clone=True,
+        )
+        scope_service.list_workspace_shares.assert_awaited_once_with(
+            mode="server",
+            workspace_id="ws-1",
+            include_revoked=False,
+        )
+        scope_service.create_share_token.assert_awaited_once_with(
+            mode="server",
+            resource_type="workspace",
+            resource_id="ws-1",
+            access_level="view_chat",
+            allow_clone=True,
+            password="passphrase",
+            max_uses=10,
+            expires_at=None,
+        )
+        scope_service.list_share_tokens.assert_awaited_once_with(mode="server")
+        scope_service.list_shared_with_me.assert_awaited_once_with(mode="server")
+        rendered_status = str(panel.query_one("#sharing-status", Static).render())
+        assert "server:share:9" in rendered_status
+
+
+@pytest.mark.asyncio
+async def test_outputs_panel_rejects_local_mode_with_explicit_guidance():
+    scope_service = MagicMock()
+    app = OutputsPanelHostApp(runtime_backend="local", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(OutputsPanel)
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        assert panel.query_one("#outputs-disabled", Static).display is True
+        assert panel.query_one("#outputs-main").display is False
+        assert panel.query_one("#outputs-list-templates-btn", Button).disabled is True
+        assert panel.query_one("#outputs-list-artifacts-btn", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_outputs_panel_routes_server_template_and_artifact_operations():
+    scope_service = MagicMock()
+    scope_service.list_output_templates = AsyncMock(
+        return_value={"items": [{"id": "server:output_template:7", "name": "Weekly Briefing"}], "total": 1}
+    )
+    scope_service.create_output_template = AsyncMock(
+        return_value={"id": "server:output_template:7", "name": "Weekly Briefing"}
+    )
+    scope_service.preview_output_template = AsyncMock(
+        return_value={"entity_kind": "output_template_preview", "rendered": "# Preview"}
+    )
+    scope_service.list_outputs = AsyncMock(
+        return_value={"items": [{"id": "server:output:11", "title": "Weekly Briefing"}], "total": 1, "page": 1, "size": 10}
+    )
+    scope_service.create_output = AsyncMock(
+        return_value={"id": "server:output:11", "entity_kind": "output_render_result", "title": "Weekly Briefing"}
+    )
+    scope_service.delete_output = AsyncMock(
+        return_value={"entity_kind": "output_delete", "success": True, "output_id": 11}
+    )
+    app = OutputsPanelHostApp(runtime_backend="server", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(OutputsPanel)
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        panel.query_one("#outputs-template-query", Input).value = "brief"
+        panel.query_one("#outputs-template-limit", Input).value = "25"
+        panel.query_one("#outputs-template-offset", Input).value = "5"
+        panel.query_one("#outputs-template-name", Input).value = "Weekly Briefing"
+        panel.query_one("#outputs-template-type", Select).value = "briefing_markdown"
+        panel.query_one("#outputs-template-format", Select).value = "md"
+        panel.query_one("#outputs-template-description", Input).value = "Render a weekly markdown briefing"
+        panel.query_one("#outputs-template-body", TextArea).text = "# {{ job.name }}"
+        panel.query_one("#outputs-template-default", Checkbox).value = True
+        panel.query_one("#outputs-preview-template-id", Input).value = "7"
+        panel.query_one("#outputs-preview-item-ids", Input).value = "1,2"
+        panel.query_one("#outputs-preview-limit", Input).value = "10"
+
+        await panel.list_output_templates()
+        await panel.create_output_template()
+        await panel.preview_output_template()
+
+        panel.query_one("#outputs-artifact-page", Input).value = "1"
+        panel.query_one("#outputs-artifact-size", Input).value = "10"
+        panel.query_one("#outputs-artifact-run-id", Input).value = "77"
+        panel.query_one("#outputs-artifact-workspace-tag", Input).value = "workspace:demo"
+        panel.query_one("#outputs-create-template-id", Input).value = "7"
+        panel.query_one("#outputs-create-item-ids", Input).value = "1,2"
+        panel.query_one("#outputs-create-title", Input).value = "Weekly Briefing"
+        panel.query_one("#outputs-create-workspace-tag", Input).value = "workspace:demo"
+        panel.query_one("#outputs-create-ingest", Checkbox).value = True
+        panel.query_one("#outputs-delete-output-id", Input).value = "11"
+        panel.query_one("#outputs-delete-hard", Checkbox).value = True
+        panel.query_one("#outputs-delete-file", Checkbox).value = True
+
+        await panel.list_outputs()
+        await panel.create_output()
+        await panel.delete_output()
+
+        scope_service.list_output_templates.assert_awaited_once_with(
+            mode="server",
+            q="brief",
+            limit=25,
+            offset=5,
+        )
+        scope_service.create_output_template.assert_awaited_once_with(
+            mode="server",
+            name="Weekly Briefing",
+            type="briefing_markdown",
+            format="md",
+            body="# {{ job.name }}",
+            description="Render a weekly markdown briefing",
+            is_default=True,
+        )
+        scope_service.preview_output_template.assert_awaited_once_with(
+            mode="server",
+            template_id=7,
+            item_ids=[1, 2],
+            limit=10,
+        )
+        scope_service.list_outputs.assert_awaited_once_with(
+            mode="server",
+            page=1,
+            size=10,
+            run_id=77,
+            workspace_tag="workspace:demo",
+        )
+        scope_service.create_output.assert_awaited_once_with(
+            mode="server",
+            template_id=7,
+            item_ids=[1, 2],
+            title="Weekly Briefing",
+            workspace_tag="workspace:demo",
+            ingest_to_media_db=True,
+        )
+        scope_service.delete_output.assert_awaited_once_with(
+            mode="server",
+            output_id=11,
+            hard=True,
+            delete_file=True,
+        )
+        rendered_status = str(panel.query_one("#outputs-status", Static).render())
+        assert "server:output:11" in rendered_status or "output_delete" in rendered_status

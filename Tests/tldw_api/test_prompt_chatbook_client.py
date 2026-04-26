@@ -12,7 +12,16 @@ from tldw_chatbook.tldw_api.prompt_chatbook_schemas import (
     ChatbookContinueExportRequest,
     ChatbookExportRequest,
     ChatbookImportRequest,
+    ChatbookImportJobListResponse,
+    PaginatedPromptsResponse,
+    PromptCollectionCreateRequest,
+    PromptCollectionCreateResponse,
+    PromptCollectionListResponse,
+    PromptCollectionResponse,
+    PromptCollectionUpdateRequest,
     PromptCreateRequest,
+    PromptResponse,
+    PromptVersionResponse,
 )
 
 

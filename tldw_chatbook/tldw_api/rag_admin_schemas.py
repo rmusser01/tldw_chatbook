@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -81,6 +81,17 @@ class ChunkingTemplateDiagnosticsResponse(BaseModel):
     hint: Optional[str] = None
 
 
+class ChunkingTemplateValidationIssue(BaseModel):
+    field: str
+    message: str
+
+
+class ChunkingTemplateValidationResponse(BaseModel):
+    valid: bool
+    errors: Optional[list[ChunkingTemplateValidationIssue]] = None
+    warnings: Optional[list[Any]] = None
+
+
 class ChunkingTemplateApplyRequest(BaseModel):
     template_name: str
     text: str
@@ -91,6 +102,23 @@ class ChunkingTemplateApplyResponse(BaseModel):
     template_name: str
     chunks: list[Any]
     metadata: Optional[dict[str, Any]] = None
+
+
+class ChunkingTemplateMatchResponse(BaseModel):
+    matches: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ChunkingTemplateLearnRequest(BaseModel):
+    name: str
+    example_text: Optional[str] = None
+    description: Optional[str] = None
+    save: bool = False
+    classifier: Optional[dict[str, Any]] = None
+
+
+class ChunkingTemplateLearnResponse(BaseModel):
+    template: dict[str, Any]
+    saved: bool = False
 
 
 class EmbeddingCollectionResponse(BaseModel):

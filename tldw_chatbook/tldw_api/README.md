@@ -16,9 +16,13 @@ The prompt/chatbook parity vertical extends the shared client with the server-ba
 
 ### Prompt methods
 
-- `list_prompts(include_deleted=False)`
+- `list_prompts(page=1, per_page=10, include_deleted=False, sort_by="last_modified", sort_order="desc")`
 - `preview_prompt(request_data)`
 - `create_prompt(request_data)`
+- `get_prompt(prompt_identifier, include_deleted=False)`
+- `update_prompt(prompt_identifier, request_data)`
+- `record_prompt_usage(prompt_identifier)`
+- `delete_prompt(prompt_identifier)`
 - `list_prompt_versions(prompt_identifier)`
 - `restore_prompt_version(prompt_identifier, version)`
 
@@ -27,8 +31,14 @@ The prompt/chatbook parity vertical extends the shared client with the server-ba
 - `export_chatbook(request_data)`
 - `preview_chatbook(chatbook_file_path)`
 - `import_chatbook(chatbook_file_path, request_data)`
+- `list_chatbook_export_jobs(limit=100, offset=0)`
+- `list_chatbook_import_jobs(limit=100, offset=0)`
 - `get_chatbook_export_job(job_id)`
 - `get_chatbook_import_job(job_id)`
+- `cancel_chatbook_export_job(job_id)`
+- `cancel_chatbook_import_job(job_id)`
+- `remove_chatbook_export_job(job_id)`
+- `remove_chatbook_import_job(job_id)`
 
 ### Request models
 
@@ -36,7 +46,13 @@ The prompt/chatbook parity vertical extends the shared client with the server-ba
 
 - `PromptPreviewRequest`
 - `PromptCreateRequest`
+- `PaginatedPromptsResponse`
+- `PromptResponse`
+- `PromptVersionResponse`
 - `ChatbookExportRequest`
 - `ChatbookImportRequest`
+- `ChatbookExportJobListResponse`
+- `ChatbookImportJobListResponse`
+- `ChatbookJobMutationResponse`
 
 These contracts are intentionally thin mirrors of the server request shapes so `tldw_chatbook` can round-trip prompt and chatbook operations without introducing a second client abstraction layer.

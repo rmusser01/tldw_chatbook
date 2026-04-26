@@ -44,22 +44,94 @@ class PromptResponse(BaseModel):
     id: Optional[int] = None
     uuid: Optional[str] = None
     name: str
+    author: Optional[str] = None
+    details: Optional[str] = None
     prompt_format: PromptFormat = "legacy"
     prompt_schema_version: Optional[int] = None
     prompt_definition: Optional[Dict[str, Any]] = None
     system_prompt: Optional[str] = None
     user_prompt: Optional[str] = None
+    last_modified: Optional[str] = None
+    version: Optional[int] = None
+    usage_count: int = 0
+    last_used_at: Optional[str] = None
+    keywords: List[str] = Field(default_factory=list)
     deleted: bool = False
+
+
+class PromptBriefResponse(BaseModel):
+    """Prompt list item returned by the server's paginated prompt listing."""
+
+    id: Optional[int] = None
+    uuid: Optional[str] = None
+    name: str
+    author: Optional[str] = None
+    last_modified: Optional[str] = None
+    usage_count: int = 0
+    last_used_at: Optional[str] = None
+
+
+class PaginatedPromptsResponse(BaseModel):
+    """Server paginated prompt listing response."""
+
+    items: List[PromptBriefResponse] = Field(default_factory=list)
+    total_pages: int = 0
+    current_page: int = 1
+    total_items: int = 0
 
 
 class PromptVersionResponse(BaseModel):
     """Minimal prompt version payload."""
 
     version: int
+    created_at: Optional[str] = None
+    comment: Optional[str] = None
+    name: Optional[str] = None
+    author: Optional[str] = None
+    details: Optional[str] = None
+    system_prompt: Optional[str] = None
+    user_prompt: Optional[str] = None
     prompt_uuid: Optional[str] = None
     prompt_format: PromptFormat = "legacy"
     prompt_schema_version: Optional[int] = None
     prompt_definition: Optional[Dict[str, Any]] = None
+
+
+class PromptCollectionCreateRequest(BaseModel):
+    """Request for creating a server prompt collection."""
+
+    name: str
+    description: Optional[str] = None
+    prompt_ids: List[int] = Field(default_factory=list)
+
+
+class PromptCollectionCreateResponse(BaseModel):
+    """Server response for prompt collection creation."""
+
+    collection_id: int
+
+
+class PromptCollectionUpdateRequest(BaseModel):
+    """Request for updating a server prompt collection."""
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    prompt_ids: Optional[List[int]] = None
+
+
+class PromptCollectionResponse(BaseModel):
+    """Server prompt collection payload."""
+
+    collection_id: int
+    name: str
+    description: Optional[str] = None
+    prompt_ids: List[int] = Field(default_factory=list)
+
+
+class PromptCollectionListResponse(BaseModel):
+    """Server prompt collection list response."""
+
+    collections: List[PromptCollectionResponse] = Field(default_factory=list)
 
 
 class ChatbookExportRequest(BaseModel):
@@ -112,7 +184,15 @@ class ChatbookExportJobResponse(BaseModel):
     job_id: str
     status: str
     chatbook_name: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error_message: Optional[str] = None
+    total_items: int = 0
+    processed_items: int = 0
+    file_size_bytes: Optional[int] = None
     download_url: Optional[str] = None
+    expires_at: Optional[str] = None
     progress_percentage: int = 0
 
 
@@ -121,6 +201,45 @@ class ChatbookImportJobResponse(BaseModel):
 
     job_id: str
     status: str
+    chatbook_path: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error_message: Optional[str] = None
     progress_percentage: int = 0
+    total_items: int = 0
+    processed_items: int = 0
     successful_items: int = 0
     failed_items: int = 0
+    skipped_items: int = 0
+    conflicts: List[Dict[str, Any]] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+
+class ChatbookExportJobListResponse(BaseModel):
+    """Server export job list response."""
+
+    jobs: List[ChatbookExportJobResponse] = Field(default_factory=list)
+    total: int = 0
+
+
+class ChatbookImportJobListResponse(BaseModel):
+    """Server import job list response."""
+
+    jobs: List[ChatbookImportJobResponse] = Field(default_factory=list)
+    total: int = 0
+
+
+class ChatbookJobMutationResponse(BaseModel):
+    """Server response for cancelling or removing a chatbook job."""
+
+    success: bool
+    message: str
+    job_id: str
+
+
+class ChatbookCleanupResponse(BaseModel):
+    """Server response for cleaning up expired chatbook exports."""
+
+    deleted_count: int
+    message: Optional[str] = None
