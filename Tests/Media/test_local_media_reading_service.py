@@ -36,6 +36,15 @@ def memory_db_factory():
             pass
 
 
+class RecordingNotificationDispatcher:
+    def __init__(self):
+        self.calls = []
+
+    def dispatch(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"persisted": True, **kwargs}
+
+
 class SpyReadItLaterDb:
     def __init__(self):
         self.saved_filters = []
@@ -1621,3 +1630,47 @@ def test_local_service_executes_local_file_ingest_jobs(memory_db_factory, tmp_pa
     assert media["title"] == "note"
     assert media["content"] == "Standalone file body"
     assert db.fetch_keywords_for_media_batch([media["id"]])[media["id"]] == ["offline"]
+
+
+def test_local_service_dispatches_completed_ingest_job_notifications(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    dispatcher = RecordingNotificationDispatcher()
+    app = object()
+    service = LocalMediaReadingService(
+        db,
+        notification_dispatcher=dispatcher,
+        notification_app=app,
+    )
+    file_path = tmp_path / "notify.txt"
+    file_path.write_text("Notification body", encoding="utf-8")
+
+    submitted = service.submit_ingest_jobs(
+        media_type="plaintext",
+        file_paths=[str(file_path)],
+    )
+    job = submitted["jobs"][0]
+
+    assert job["status"] == "completed"
+    assert dispatcher.calls == [
+        {
+            "app": app,
+            "category": "media_ingestion",
+            "title": "Media ingestion job completed",
+            "message": "Completed",
+            "severity": "information",
+            "source_backend": "local",
+            "source_entity_kind": "media_ingest_job",
+            "source_entity_id": str(job["id"]),
+            "payload": {
+                "job_id": job["id"],
+                "batch_id": job["batch_id"],
+                "source_id": None,
+                "job_type": "media_ingest",
+                "media_type": "plaintext",
+                "source_kind": "file",
+                "status": "completed",
+                "result": job["result"],
+                "error_message": None,
+            },
+        }
+    ]

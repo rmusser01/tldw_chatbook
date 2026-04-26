@@ -2093,6 +2093,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_watchlists_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self.local_media_reading_service.notification_dispatcher = self.notification_dispatch_service
+        self.local_media_reading_service.notification_app = self
         self.local_watchlists_service.notification_dispatcher = self.notification_dispatch_service
         self.local_watchlists_service.notification_app = self
 

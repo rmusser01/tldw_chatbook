@@ -146,6 +146,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.local_research_service, LocalResearchService)
     assert app.local_research_service.notification_dispatcher is app.notification_dispatch_service
     assert app.local_research_service.notification_app is app
+    assert app.local_media_reading_service.notification_dispatcher is app.notification_dispatch_service
+    assert app.local_media_reading_service.notification_app is app
     assert isinstance(app.server_research_service, ServerResearchService)
     assert isinstance(app.research_scope_service, ResearchScopeService)
     assert isinstance(app.local_research_search_service, LocalResearchSearchService)

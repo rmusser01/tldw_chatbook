@@ -36,6 +36,8 @@ class LocalMediaReadingService:
         url_file_downloader: Any = None,
         audio_processor_factory: Any = None,
         video_processor_factory: Any = None,
+        notification_dispatcher: Any = None,
+        notification_app: Any = None,
     ):
         self.media_db = media_db
         self.tts_audio_generator = tts_audio_generator
@@ -43,6 +45,8 @@ class LocalMediaReadingService:
         self.url_file_downloader = url_file_downloader
         self.audio_processor_factory = audio_processor_factory
         self.video_processor_factory = video_processor_factory
+        self.notification_dispatcher = notification_dispatcher
+        self.notification_app = notification_app
 
     def _require_db(self) -> Any:
         if self.media_db is None:
@@ -5378,6 +5382,47 @@ class LocalMediaReadingService:
             job_id = cursor.lastrowid
         return self.get_ingest_job(job_id)
 
+    def _dispatch_terminal_ingest_job_notification(self, job: Mapping[str, Any]) -> None:
+        status = str(job.get("status") or "").strip()
+        if status not in {"completed", "failed", "cancelled"}:
+            return
+        dispatcher = self.notification_dispatcher
+        dispatch = getattr(dispatcher, "dispatch", None)
+        if not callable(dispatch):
+            return
+        severity = "information"
+        if status == "failed":
+            severity = "error"
+        elif status == "cancelled":
+            severity = "warning"
+        dispatch(
+            app=self.notification_app,
+            category="media_ingestion",
+            title=f"Media ingestion job {status}",
+            message=str(
+                job.get("progress_message")
+                or job.get("error_message")
+                or job.get("source")
+                or job.get("id")
+                or "Media ingestion job updated"
+            ),
+            severity=severity,
+            source_backend="local",
+            source_entity_kind="media_ingest_job",
+            source_entity_id=str(job.get("id")),
+            payload={
+                "job_id": job.get("id"),
+                "batch_id": job.get("batch_id"),
+                "source_id": job.get("source_id"),
+                "job_type": job.get("job_type"),
+                "media_type": job.get("media_type"),
+                "source_kind": job.get("source_kind"),
+                "status": job.get("status"),
+                "result": job.get("result"),
+                "error_message": job.get("error_message"),
+            },
+        )
+
     def _mark_ingest_job_started(self, job_id: Any, *, progress_message: str) -> dict[str, Any]:
         db = self._require_db()
         now = db._get_current_utc_timestamp_str()
@@ -5423,7 +5468,9 @@ class LocalMediaReadingService:
                     int(job_id),
                 ),
             )
-        return self.get_ingest_job(job_id)
+        job = self.get_ingest_job(job_id)
+        self._dispatch_terminal_ingest_job_notification(job)
+        return job
 
     def _set_ingestion_source_active_job(self, source_id: Any, job_id: Any, *, status: str) -> None:
         db = self._require_db()
