@@ -651,7 +651,16 @@ from .quizzes_schemas import (
     QuizUpdateRequest,
 )
 from .chat_conversation_schemas import (
+    ChatAnalyticsResponse,
+    ChatCommandsListResponse,
+    ChatKnowledgeSaveRequest,
+    ChatKnowledgeSaveResponse,
+    ConversationShareLinkCreateRequest,
+    ConversationShareLinkResponse,
+    ConversationShareLinkRevokeResponse,
+    ConversationShareLinksResponse,
     ConversationScopeParams,
+    SharedConversationResolveResponse,
     ConversationUpdateRequest,
     normalize_conversation_state,
 )
@@ -8383,6 +8392,128 @@ class TLDWAPIClient:
 
     async def get_chat_conversation_citations(self, conversation_id: str) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/citations")
+
+    @staticmethod
+    def _chat_knowledge_save_request(
+        request_data: ChatKnowledgeSaveRequest | Dict[str, Any],
+    ) -> ChatKnowledgeSaveRequest:
+        if isinstance(request_data, ChatKnowledgeSaveRequest):
+            return request_data
+        return ChatKnowledgeSaveRequest(**dict(request_data))
+
+    @staticmethod
+    def _conversation_share_link_create_request(
+        request_data: ConversationShareLinkCreateRequest | Dict[str, Any],
+    ) -> ConversationShareLinkCreateRequest:
+        if isinstance(request_data, ConversationShareLinkCreateRequest):
+            return request_data
+        return ConversationShareLinkCreateRequest(**dict(request_data))
+
+    async def list_chat_commands(self) -> ChatCommandsListResponse:
+        response = await self._request("GET", "/api/v1/chat/commands")
+        return ChatCommandsListResponse.model_validate(response)
+
+    async def save_chat_knowledge(
+        self,
+        request_data: ChatKnowledgeSaveRequest | Dict[str, Any],
+    ) -> ChatKnowledgeSaveResponse:
+        payload = self._chat_knowledge_save_request(request_data)
+        response = await self._request(
+            "POST",
+            "/api/v1/chat/knowledge/save",
+            json_data=payload.model_dump(exclude_none=True, mode="json"),
+        )
+        return ChatKnowledgeSaveResponse.model_validate(response)
+
+    async def create_chat_conversation_share_link(
+        self,
+        conversation_id: str,
+        request_data: ConversationShareLinkCreateRequest | Dict[str, Any],
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> ConversationShareLinkResponse:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        payload = self._conversation_share_link_create_request(request_data)
+        response = await self._request(
+            "POST",
+            f"/api/v1/chat/conversations/{conversation_id}/share-links",
+            json_data=payload.model_dump(exclude_none=True, mode="json"),
+            params=params or None,
+        )
+        return ConversationShareLinkResponse.model_validate(response)
+
+    async def list_chat_conversation_share_links(
+        self,
+        conversation_id: str,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> ConversationShareLinksResponse:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        response = await self._request(
+            "GET",
+            f"/api/v1/chat/conversations/{conversation_id}/share-links",
+            params=params or None,
+        )
+        return ConversationShareLinksResponse.model_validate(response)
+
+    async def revoke_chat_conversation_share_link(
+        self,
+        conversation_id: str,
+        share_id: str,
+        scope_type: Optional[Literal["global", "workspace"]] = None,
+        workspace_id: Optional[str] = None,
+    ) -> ConversationShareLinkRevokeResponse:
+        scope_params = self._normalize_conversation_scope_params(scope_type=scope_type, workspace_id=workspace_id)
+        params: Dict[str, Any] = {}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/chat/conversations/{conversation_id}/share-links/{share_id}",
+            params=params or None,
+        )
+        return ConversationShareLinkRevokeResponse.model_validate(response)
+
+    async def resolve_chat_conversation_share_token(
+        self,
+        share_token: str,
+        *,
+        limit: int = 200,
+    ) -> SharedConversationResolveResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/chat/shared/conversations/{share_token}",
+            params={"limit": limit},
+        )
+        return SharedConversationResolveResponse.model_validate(response)
+
+    async def get_chat_analytics(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        bucket_granularity: Literal["day", "week"] = "day",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> ChatAnalyticsResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/chat/analytics",
+            params={
+                "start_date": start_date,
+                "end_date": end_date,
+                "bucket_granularity": bucket_granularity,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        return ChatAnalyticsResponse.model_validate(response)
 
     async def start_chat_loop_run(
         self,

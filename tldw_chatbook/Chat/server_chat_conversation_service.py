@@ -7,8 +7,10 @@ from typing import Any, Mapping, Optional
 from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_from_config
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.tldw_api import (
+    ChatKnowledgeSaveRequest,
     ChatLoopApprovalDecisionRequest,
     ChatLoopStartRequest,
+    ConversationShareLinkCreateRequest,
     ConversationUpdateRequest,
     TLDWAPIClient,
 )
@@ -78,6 +80,18 @@ class ServerChatConversationService:
         payload["messages"] = messages
         return ChatLoopStartRequest(**payload)
 
+    @staticmethod
+    def _knowledge_save_request(payload: Mapping[str, Any]) -> ChatKnowledgeSaveRequest:
+        return ChatKnowledgeSaveRequest(**dict(payload))
+
+    @staticmethod
+    def _share_link_create_request(
+        payload: ConversationShareLinkCreateRequest | Mapping[str, Any],
+    ) -> ConversationShareLinkCreateRequest:
+        if isinstance(payload, ConversationShareLinkCreateRequest):
+            return payload
+        return ConversationShareLinkCreateRequest(**dict(payload))
+
     async def list_conversations(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce(self._action_id("list"))
         return await self._require_client().list_chat_conversations(**kwargs)
@@ -110,6 +124,47 @@ class ServerChatConversationService:
     async def get_citations(self, conversation_id: str) -> dict[str, Any]:
         self._enforce(self._action_id("detail"))
         return await self._require_client().get_chat_conversation_citations(conversation_id)
+
+    async def list_commands(self) -> Any:
+        self._enforce("chat.commands.list.server")
+        return await self._require_client().list_chat_commands()
+
+    async def save_knowledge(self, **kwargs: Any) -> Any:
+        self._enforce("chat.knowledge.create.server")
+        return await self._require_client().save_chat_knowledge(self._knowledge_save_request(kwargs))
+
+    async def create_share_link(
+        self,
+        conversation_id: str,
+        request_data: ConversationShareLinkCreateRequest | Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        self._enforce("chat.share_links.create.server")
+        return await self._require_client().create_chat_conversation_share_link(
+            conversation_id,
+            self._share_link_create_request(request_data),
+            **kwargs,
+        )
+
+    async def list_share_links(self, conversation_id: str, **kwargs: Any) -> Any:
+        self._enforce("chat.share_links.list.server")
+        return await self._require_client().list_chat_conversation_share_links(conversation_id, **kwargs)
+
+    async def revoke_share_link(self, conversation_id: str, share_id: str, **kwargs: Any) -> Any:
+        self._enforce("chat.share_links.revoke.server")
+        return await self._require_client().revoke_chat_conversation_share_link(
+            conversation_id,
+            share_id,
+            **kwargs,
+        )
+
+    async def resolve_share_token(self, share_token: str, *, limit: int = 200) -> Any:
+        self._enforce("chat.share_links.detail.server")
+        return await self._require_client().resolve_chat_conversation_share_token(share_token, limit=limit)
+
+    async def get_analytics(self, **kwargs: Any) -> Any:
+        self._enforce("chat.analytics.observe.server")
+        return await self._require_client().get_chat_analytics(**kwargs)
 
     async def start_loop(self, *, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         self._enforce("chat.loop.launch.server")

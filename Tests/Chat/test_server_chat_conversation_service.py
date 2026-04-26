@@ -37,6 +37,34 @@ class FakeChatClient:
         self.calls.append(("get_chat_conversation_citations", (conversation_id,), {}))
         return {"conversation_id": conversation_id, "citations": [{"id": "doc-1"}], "total_count": 1}
 
+    async def list_chat_commands(self) -> Any:
+        self.calls.append(("list_chat_commands", (), {}))
+        return {"commands": [{"name": "/search"}]}
+
+    async def save_chat_knowledge(self, request_data: Any) -> Any:
+        self.calls.append(("save_chat_knowledge", (request_data,), {}))
+        return {"note_id": 9, "conversation_id": "conv-1"}
+
+    async def create_chat_conversation_share_link(self, conversation_id: str, request_data: Any, **kwargs: Any) -> Any:
+        self.calls.append(("create_chat_conversation_share_link", (conversation_id, request_data), kwargs))
+        return {"share_id": "share-1"}
+
+    async def list_chat_conversation_share_links(self, conversation_id: str, **kwargs: Any) -> Any:
+        self.calls.append(("list_chat_conversation_share_links", (conversation_id,), kwargs))
+        return {"conversation_id": conversation_id, "links": []}
+
+    async def revoke_chat_conversation_share_link(self, conversation_id: str, share_id: str, **kwargs: Any) -> Any:
+        self.calls.append(("revoke_chat_conversation_share_link", (conversation_id, share_id), kwargs))
+        return {"success": True, "share_id": share_id}
+
+    async def resolve_chat_conversation_share_token(self, share_token: str, *, limit: int = 200) -> Any:
+        self.calls.append(("resolve_chat_conversation_share_token", (share_token,), {"limit": limit}))
+        return {"conversation_id": "conv-1", "messages": []}
+
+    async def get_chat_analytics(self, **kwargs: Any) -> Any:
+        self.calls.append(("get_chat_analytics", (), kwargs))
+        return {"buckets": [], "pagination": {"total": 0}}
+
     async def start_chat_loop_run(self, request_data: Any) -> ChatLoopStartResponse:
         self.calls.append(("start_chat_loop_run", (request_data,), {}))
         return ChatLoopStartResponse(run_id="run_123")
@@ -174,3 +202,53 @@ async def test_server_chat_conversation_service_routes_chat_loop_with_policy_act
     assert client.calls[-3][0] == "approve_chat_loop_call"
     assert client.calls[-2][0] == "reject_chat_loop_call"
     assert client.calls[-1] == ("cancel_chat_loop_run", ("run_123",), {})
+
+
+@pytest.mark.asyncio
+async def test_server_chat_conversation_service_routes_chat_adjunct_controls_with_policy():
+    client = FakeChatClient()
+    policy = RecordingPolicy()
+    service = ServerChatConversationService(client, policy_enforcer=policy)
+
+    await service.list_commands()
+    await service.save_knowledge(conversation_id="conv-1", snippet="Important", tags=["alpha"])
+    await service.create_share_link("conv-1", {"label": "Reviewer"}, scope_type="workspace", workspace_id="ws-1")
+    await service.list_share_links("conv-1", scope_type="workspace", workspace_id="ws-1")
+    await service.revoke_share_link("conv-1", "share-1", scope_type="workspace", workspace_id="ws-1")
+    await service.resolve_share_token("token", limit=25)
+    await service.get_analytics(start_date="2026-04-01T00:00:00Z", end_date="2026-04-26T00:00:00Z")
+
+    assert policy.calls[-7:] == [
+        "chat.commands.list.server",
+        "chat.knowledge.create.server",
+        "chat.share_links.create.server",
+        "chat.share_links.list.server",
+        "chat.share_links.revoke.server",
+        "chat.share_links.detail.server",
+        "chat.analytics.observe.server",
+    ]
+    assert client.calls[-7][0] == "list_chat_commands"
+    knowledge_request = client.calls[-6][1][0]
+    assert knowledge_request.conversation_id == "conv-1"
+    assert knowledge_request.snippet == "Important"
+    assert client.calls[-5] == (
+        "create_chat_conversation_share_link",
+        ("conv-1", service._share_link_create_request({"label": "Reviewer"})),
+        {"scope_type": "workspace", "workspace_id": "ws-1"},
+    )
+    assert client.calls[-4] == (
+        "list_chat_conversation_share_links",
+        ("conv-1",),
+        {"scope_type": "workspace", "workspace_id": "ws-1"},
+    )
+    assert client.calls[-3] == (
+        "revoke_chat_conversation_share_link",
+        ("conv-1", "share-1"),
+        {"scope_type": "workspace", "workspace_id": "ws-1"},
+    )
+    assert client.calls[-2] == ("resolve_chat_conversation_share_token", ("token",), {"limit": 25})
+    assert client.calls[-1] == (
+        "get_chat_analytics",
+        (),
+        {"start_date": "2026-04-01T00:00:00Z", "end_date": "2026-04-26T00:00:00Z"},
+    )

@@ -107,6 +107,34 @@ class FakeServerConversationService:
         self.calls.append(("cancel_loop", (run_id,), {}))
         return {"ok": True}
 
+    async def list_commands(self) -> dict[str, Any]:
+        self.calls.append(("list_commands", (), {}))
+        return {"commands": [{"name": "/search"}]}
+
+    async def save_knowledge(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("save_knowledge", (), kwargs))
+        return {"note_id": 9, "conversation_id": kwargs["conversation_id"]}
+
+    async def create_share_link(self, conversation_id: str, request_data: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("create_share_link", (conversation_id, request_data), kwargs))
+        return {"share_id": "share-1"}
+
+    async def list_share_links(self, conversation_id: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("list_share_links", (conversation_id,), kwargs))
+        return {"conversation_id": conversation_id, "links": []}
+
+    async def revoke_share_link(self, conversation_id: str, share_id: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("revoke_share_link", (conversation_id, share_id), kwargs))
+        return {"success": True, "share_id": share_id}
+
+    async def resolve_share_token(self, share_token: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("resolve_share_token", (share_token,), kwargs))
+        return {"conversation_id": "conv-1", "messages": []}
+
+    async def get_analytics(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("get_analytics", (), kwargs))
+        return {"buckets": [], "pagination": {"total": 0}}
+
 
 @dataclass
 class RecordingPolicy:
@@ -257,6 +285,49 @@ async def test_scope_service_routes_create_delete_and_requires_local_or_server_m
         await service.list_conversations(mode="mixed")
 
 
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_chat_adjunct_controls_and_rejects_local_mode():
+    server = FakeServerConversationService()
+    policy = RecordingPolicy()
+    service = ChatConversationScopeService(
+        local_service=FakeConversationService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    await service.list_commands(mode="server")
+    await service.save_knowledge(mode="server", conversation_id="conv-1", snippet="Important", tags=["alpha"])
+    await service.create_share_link("conv-1", {"label": "Reviewer"}, mode="server", scope_type="workspace", workspace_id="ws-1")
+    await service.list_share_links("conv-1", mode="server", scope_type="workspace", workspace_id="ws-1")
+    await service.revoke_share_link("conv-1", "share-1", mode="server", scope_type="workspace", workspace_id="ws-1")
+    await service.resolve_share_token("token", mode="server", limit=25)
+    await service.get_analytics(mode="server", start_date="2026-04-01T00:00:00Z", end_date="2026-04-26T00:00:00Z")
+
+    assert policy.calls[-7:] == [
+        "chat.commands.list.server",
+        "chat.knowledge.create.server",
+        "chat.share_links.create.server",
+        "chat.share_links.list.server",
+        "chat.share_links.revoke.server",
+        "chat.share_links.detail.server",
+        "chat.analytics.observe.server",
+    ]
+    assert server.calls[-7:] == [
+        ("list_commands", (), {}),
+        ("save_knowledge", (), {"conversation_id": "conv-1", "snippet": "Important", "tags": ["alpha"]}),
+        ("create_share_link", ("conv-1", {"label": "Reviewer"}), {"scope_type": "workspace", "workspace_id": "ws-1"}),
+        ("list_share_links", ("conv-1",), {"scope_type": "workspace", "workspace_id": "ws-1"}),
+        ("revoke_share_link", ("conv-1", "share-1"), {"scope_type": "workspace", "workspace_id": "ws-1"}),
+        ("resolve_share_token", ("token",), {"limit": 25}),
+        ("get_analytics", (), {"start_date": "2026-04-01T00:00:00Z", "end_date": "2026-04-26T00:00:00Z"}),
+    ]
+
+    with pytest.raises(NotImplementedError, match="Server chat commands are unavailable in local mode"):
+        await service.list_commands(mode="local")
+    with pytest.raises(NotImplementedError, match="Server chat analytics are unavailable in local mode"):
+        await service.get_analytics(mode="local")
+
+
 def test_scope_service_reports_known_chat_conversation_capability_gaps():
     service = ChatConversationScopeService(
         local_service=FakeConversationService(),
@@ -279,7 +350,23 @@ def test_scope_service_reports_known_chat_conversation_capability_gaps():
                 "chat.loop.approve.local",
                 "chat.loop.cancel.local",
             ],
-        }
+        },
+        {
+            "operation_id": "chat.adjunct_controls.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Server chat adjunct controls are not available in local Chatbook mode.",
+            "affected_action_ids": [
+                "chat.analytics.observe.local",
+                "chat.commands.list.local",
+                "chat.knowledge.create.local",
+                "chat.share_links.create.local",
+                "chat.share_links.detail.local",
+                "chat.share_links.list.local",
+                "chat.share_links.revoke.local",
+            ],
+        },
     ]
     assert server_report == [
         {

@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tldw_chatbook.tldw_api.chat_conversation_schemas import ConversationUpdateRequest
 from tldw_chatbook.tldw_api.chat_loop_schemas import ChatLoopApprovalDecisionRequest, ChatLoopStartRequest
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
-from tldw_chatbook.tldw_api.chat_conversation_schemas import ConversationUpdateRequest
 
 
 def _assert_request_call(call_args, expected_method, expected_endpoint, expected_kwargs):
@@ -176,6 +176,117 @@ class TestChatConversationClient:
             "GET",
             "/api/v1/chat/conversations/conv-1/citations",
             {},
+        )
+
+    async def test_chat_adjunct_routes_wire_commands_knowledge_share_links_and_analytics(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(
+            side_effect=[
+                {"commands": [{"name": "/search", "description": "Search", "requires_api_key": True}]},
+                {"note_id": 9, "flashcard_id": None, "conversation_id": "conv-1", "message_id": "msg-1", "export_status": "not_requested", "export_job_id": None},
+                {"share_id": "share-1", "permission": "view", "created_at": "2026-04-26T00:00:00Z", "expires_at": "2026-05-03T00:00:00Z", "token": "token", "share_path": "/knowledge/shared/token"},
+                {"conversation_id": "conv-1", "links": []},
+                {"success": True, "share_id": "share-1"},
+                {"conversation_id": "conv-1", "title": "Shared", "source": "chat", "permission": "view", "shared_by_user_id": "7", "expires_at": "2026-05-03T00:00:00Z", "messages": []},
+                {"buckets": [], "pagination": {"limit": 10, "offset": 0, "total": 0, "has_more": False}, "bucket_granularity": "day"},
+            ]
+        )
+        monkeypatch.setattr(client, "_request", mocked)
+
+        commands = await client.list_chat_commands()
+        knowledge = await client.save_chat_knowledge(
+            {
+                "conversation_id": "conv-1",
+                "message_id": "msg-1",
+                "snippet": "Important excerpt",
+                "tags": ["alpha"],
+                "make_flashcard": False,
+                "scope_type": "workspace",
+                "workspace_id": "ws-1",
+            }
+        )
+        share = await client.create_chat_conversation_share_link(
+            "conv-1",
+            {"label": "Reviewer", "ttl_seconds": 3600},
+            scope_type="workspace",
+            workspace_id="ws-1",
+        )
+        links = await client.list_chat_conversation_share_links("conv-1", scope_type="workspace", workspace_id="ws-1")
+        revoked = await client.revoke_chat_conversation_share_link("conv-1", "share-1", scope_type="workspace", workspace_id="ws-1")
+        resolved = await client.resolve_chat_conversation_share_token("token", limit=25)
+        analytics = await client.get_chat_analytics(
+            start_date="2026-04-01T00:00:00Z",
+            end_date="2026-04-26T00:00:00Z",
+            bucket_granularity="day",
+            limit=10,
+            offset=0,
+        )
+
+        assert commands.commands[0].name == "/search"
+        assert knowledge.note_id == 9
+        assert share.share_id == "share-1"
+        assert links.conversation_id == "conv-1"
+        assert revoked.success is True
+        assert resolved.shared_by_user_id == "7"
+        assert analytics.pagination.total == 0
+        _assert_request_call(mocked.await_args_list[0], "GET", "/api/v1/chat/commands", {})
+        _assert_request_call(
+            mocked.await_args_list[1],
+            "POST",
+            "/api/v1/chat/knowledge/save",
+            {
+                "json_data": {
+                    "conversation_id": "conv-1",
+                    "message_id": "msg-1",
+                    "snippet": "Important excerpt",
+                    "tags": ["alpha"],
+                    "make_flashcard": False,
+                    "export_to": "none",
+                    "scope_type": "workspace",
+                    "workspace_id": "ws-1",
+                }
+            },
+        )
+        _assert_request_call(
+            mocked.await_args_list[2],
+            "POST",
+            "/api/v1/chat/conversations/conv-1/share-links",
+            {
+                "json_data": {"permission": "view", "ttl_seconds": 3600, "label": "Reviewer"},
+                "params": {"scope_type": "workspace", "workspace_id": "ws-1"},
+            },
+        )
+        _assert_request_call(
+            mocked.await_args_list[3],
+            "GET",
+            "/api/v1/chat/conversations/conv-1/share-links",
+            {"params": {"scope_type": "workspace", "workspace_id": "ws-1"}},
+        )
+        _assert_request_call(
+            mocked.await_args_list[4],
+            "DELETE",
+            "/api/v1/chat/conversations/conv-1/share-links/share-1",
+            {"params": {"scope_type": "workspace", "workspace_id": "ws-1"}},
+        )
+        _assert_request_call(
+            mocked.await_args_list[5],
+            "GET",
+            "/api/v1/chat/shared/conversations/token",
+            {"params": {"limit": 25}},
+        )
+        _assert_request_call(
+            mocked.await_args_list[6],
+            "GET",
+            "/api/v1/chat/analytics",
+            {
+                "params": {
+                    "start_date": "2026-04-01T00:00:00Z",
+                    "end_date": "2026-04-26T00:00:00Z",
+                    "bucket_granularity": "day",
+                    "limit": 10,
+                    "offset": 0,
+                }
+            },
         )
 
     @pytest.mark.parametrize(

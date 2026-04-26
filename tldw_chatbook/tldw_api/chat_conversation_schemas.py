@@ -5,7 +5,7 @@ Conversation request and response schemas for the shared TLDW API client.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -260,3 +260,158 @@ class ConversationTreeResponse(BaseModel):
     root_threads: list[ConversationTreeNode]
     pagination: ConversationTreePagination
     depth_cap: int = Field(..., description="Applied depth cap")
+
+
+class ChatCommandInfo(BaseModel):
+    """Slash command metadata exposed by the server chat command registry."""
+
+    name: str
+    description: str = ""
+    required_permission: str | None = None
+    usage: str | None = None
+    args: list[str] = Field(default_factory=list)
+    requires_api_key: bool | None = None
+    rate_limit: str | None = None
+    rbac_required: bool | None = None
+
+
+class ChatCommandsListResponse(BaseModel):
+    """Available server chat slash commands."""
+
+    commands: list[ChatCommandInfo] = Field(default_factory=list)
+
+
+class ChatKnowledgeSaveRequest(BaseModel):
+    """Request to save a server conversation snippet into server Notes/Flashcards."""
+
+    conversation_id: str
+    message_id: str | None = None
+    scope_type: Literal["global", "workspace"] = "global"
+    workspace_id: str | None = None
+    snippet: str = Field(..., min_length=1)
+    tags: list[str] | None = None
+    make_flashcard: bool = False
+    export_to: Literal["none", "notion", "wiki"] = "none"
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _normalize_tags(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if item is None:
+                continue
+            normalized = str(item).strip()
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(normalized)
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def _validate_scope(self) -> "ChatKnowledgeSaveRequest":
+        if self.scope_type == "workspace" and not self.workspace_id:
+            raise ValueError("workspace_id is required when scope_type='workspace'")
+        if self.scope_type == "global":
+            self.workspace_id = None
+        return self
+
+
+class ChatKnowledgeSaveResponse(BaseModel):
+    """Server response for saved chat knowledge snippets."""
+
+    note_id: str | int
+    flashcard_id: str | int | None = None
+    conversation_id: str
+    message_id: str | None = None
+    export_status: Literal["not_requested", "skipped_disabled", "queued", "completed"] = "not_requested"
+    export_job_id: str | None = None
+
+
+class ConversationShareLinkCreateRequest(BaseModel):
+    """Request to create a tokenized server conversation share link."""
+
+    permission: Literal["view"] = "view"
+    ttl_seconds: int | None = Field(None, ge=300)
+    label: str | None = Field(None, max_length=80)
+
+
+class ConversationShareLinkResponse(BaseModel):
+    """Created tokenized server conversation share link."""
+
+    share_id: str
+    permission: Literal["view"]
+    created_at: datetime
+    expires_at: datetime
+    token: str
+    share_path: str
+
+
+class ConversationShareLinkListItem(BaseModel):
+    """Existing server conversation share link metadata."""
+
+    id: str
+    permission: Literal["view"]
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    label: str | None = None
+    share_path: str | None = None
+    token: str | None = None
+
+
+class ConversationShareLinksResponse(BaseModel):
+    """Share links for a server conversation."""
+
+    conversation_id: str
+    links: list[ConversationShareLinkListItem] = Field(default_factory=list)
+
+
+class ConversationShareLinkRevokeResponse(BaseModel):
+    """Result of revoking a server conversation share link."""
+
+    success: bool
+    share_id: str
+
+
+class SharedConversationResolveResponse(BaseModel):
+    """Public shared-conversation payload resolved from a share token."""
+
+    conversation_id: str
+    title: str | None = None
+    source: str | None = None
+    permission: Literal["view"]
+    shared_by_user_id: str
+    expires_at: datetime
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ChatAnalyticsBucket(BaseModel):
+    """Conversation analytics bucket."""
+
+    bucket_start: datetime
+    topic_label: str | None = None
+    state: str
+    count: int
+
+
+class ChatAnalyticsPagination(BaseModel):
+    """Conversation analytics pagination."""
+
+    limit: int
+    offset: int
+    total: int
+    has_more: bool
+
+
+class ChatAnalyticsResponse(BaseModel):
+    """Server conversation analytics response."""
+
+    buckets: list[ChatAnalyticsBucket] = Field(default_factory=list)
+    pagination: ChatAnalyticsPagination
+    bucket_granularity: Literal["day", "week"]

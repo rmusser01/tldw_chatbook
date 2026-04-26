@@ -392,8 +392,14 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         chat.create.server
         chat.delete.local
         chat.delete.server
+        chat.analytics.observe.local
+        chat.analytics.observe.server
+        chat.commands.list.local
+        chat.commands.list.server
         chat.detail.local
         chat.detail.server
+        chat.knowledge.create.local
+        chat.knowledge.create.server
         chat.launch.local
         chat.launch.server
         chat.list.local
@@ -406,6 +412,14 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         chat.loop.launch.server
         chat.loop.observe.local
         chat.loop.observe.server
+        chat.share_links.create.local
+        chat.share_links.create.server
+        chat.share_links.detail.local
+        chat.share_links.detail.server
+        chat.share_links.list.local
+        chat.share_links.list.server
+        chat.share_links.revoke.local
+        chat.share_links.revoke.server
         chat.update.local
         chat.update.server
     """),

@@ -237,7 +237,11 @@ AUDITED_CAPABILITY_SEEDS = (
                 "chat",
                 actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH,)),
             ),
+            _resource("chat.analytics", actions=(OBSERVE,)),
+            _resource("chat.commands", actions=(LIST,)),
+            _resource("chat.knowledge", actions=(CREATE,)),
             _resource("chat.loop", actions=(LAUNCH, OBSERVE, APPROVE, CANCEL)),
+            _resource("chat.share_links", actions=(LIST, DETAIL, CREATE, REVOKE)),
         ),
     ),
     _capability(

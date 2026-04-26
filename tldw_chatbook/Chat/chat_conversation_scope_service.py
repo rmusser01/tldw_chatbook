@@ -20,6 +20,22 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
             "chat.loop.cancel.local",
         ],
     },
+    {
+        "operation_id": "chat.adjunct_controls.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Server chat adjunct controls are not available in local Chatbook mode.",
+        "affected_action_ids": [
+            "chat.analytics.observe.local",
+            "chat.commands.list.local",
+            "chat.knowledge.create.local",
+            "chat.share_links.create.local",
+            "chat.share_links.detail.local",
+            "chat.share_links.list.local",
+            "chat.share_links.revoke.local",
+        ],
+    },
 ]
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
@@ -64,6 +80,22 @@ class ChatConversationScopeService:
     @staticmethod
     def _loop_action_id(action: str, mode: str) -> str:
         return f"chat.loop.{action}.{mode}"
+
+    @staticmethod
+    def _commands_action_id(action: str, mode: str) -> str:
+        return f"chat.commands.{action}.{mode}"
+
+    @staticmethod
+    def _knowledge_action_id(action: str, mode: str) -> str:
+        return f"chat.knowledge.{action}.{mode}"
+
+    @staticmethod
+    def _share_links_action_id(action: str, mode: str) -> str:
+        return f"chat.share_links.{action}.{mode}"
+
+    @staticmethod
+    def _analytics_action_id(action: str, mode: str) -> str:
+        return f"chat.analytics.{action}.{mode}"
 
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -165,6 +197,73 @@ class ChatConversationScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("detail", normalized_mode))
         return await self._maybe_await(self._service_for_mode(normalized_mode).get_citations(conversation_id))
+
+    async def list_commands(self, *, mode: str = "server") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._commands_action_id("list", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Server chat commands are unavailable in local mode.")
+        return await self._maybe_await(self._service_for_mode(normalized_mode).list_commands())
+
+    async def save_knowledge(self, *, mode: str = "server", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._knowledge_action_id("create", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Server chat knowledge-save is unavailable in local mode.")
+        return await self._maybe_await(self._service_for_mode(normalized_mode).save_knowledge(**kwargs))
+
+    async def create_share_link(
+        self,
+        conversation_id: str,
+        request_data: Mapping[str, Any],
+        *,
+        mode: str = "server",
+        **kwargs: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._share_links_action_id("create", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Server chat share links are unavailable in local mode.")
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).create_share_link(conversation_id, request_data, **kwargs)
+        )
+
+    async def list_share_links(self, conversation_id: str, *, mode: str = "server", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._share_links_action_id("list", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Server chat share links are unavailable in local mode.")
+        return await self._maybe_await(self._service_for_mode(normalized_mode).list_share_links(conversation_id, **kwargs))
+
+    async def revoke_share_link(
+        self,
+        conversation_id: str,
+        share_id: str,
+        *,
+        mode: str = "server",
+        **kwargs: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._share_links_action_id("revoke", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Server chat share links are unavailable in local mode.")
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).revoke_share_link(conversation_id, share_id, **kwargs)
+        )
+
+    async def resolve_share_token(self, share_token: str, *, mode: str = "server", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._share_links_action_id("detail", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Server chat share links are unavailable in local mode.")
+        return await self._maybe_await(self._service_for_mode(normalized_mode).resolve_share_token(share_token, **kwargs))
+
+    async def get_analytics(self, *, mode: str = "server", **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._analytics_action_id("observe", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Server chat analytics are unavailable in local mode.")
+        return await self._maybe_await(self._service_for_mode(normalized_mode).get_analytics(**kwargs))
 
     async def start_loop(self, *, mode: str = "server", messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         normalized_mode = self._normalize_mode(mode)
