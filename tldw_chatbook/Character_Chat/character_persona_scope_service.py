@@ -177,6 +177,22 @@ class CharacterPersonaScopeService:
                     for item in reports
                     if item["operation_id"] != "character.persona.exemplars.local"
                 ]
+            if local_backend is not None and self._backend_supports(
+                local_backend,
+                (
+                    "search_character_exemplars",
+                    "get_character_exemplar",
+                    "create_character_exemplar",
+                    "update_character_exemplar",
+                    "select_character_exemplars_debug",
+                    "delete_character_exemplar",
+                ),
+            ):
+                reports = [
+                    item
+                    for item in reports
+                    if item["operation_id"] != "character.exemplars.local"
+                ]
             return reports
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 

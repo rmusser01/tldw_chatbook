@@ -2,6 +2,10 @@ from tldw_chatbook.Character_Chat.local_character_persona_service import LocalCh
 from tldw_chatbook.tldw_api.character_persona_schemas import (
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
+    CharacterExemplarCreate,
+    CharacterExemplarSearchRequest,
+    CharacterExemplarSelectionDebugRequest,
+    CharacterExemplarUpdate,
     CharacterCreateRequest,
     CharacterUpdateRequest,
     PersonaExemplarCreate,
@@ -369,3 +373,42 @@ def test_local_character_persona_service_persists_persona_exemplar_crud(tmp_path
     assert deleted == {"status": "deleted", "persona_id": "guide", "exemplar_id": "ex-1"}
     assert all(item["id"] != "ex-1" for item in visible_after_delete)
     assert len(reloaded.list_persona_exemplars("guide", include_disabled=True)) == 2
+
+
+def test_local_character_persona_service_persists_character_exemplar_crud(tmp_path):
+    db = FakeConversationDB()
+    store_path = tmp_path / "personas.json"
+    service = LocalCharacterPersonaService(db, persona_store_path=store_path)
+
+    created = service.create_character_exemplar(
+        7,
+        CharacterExemplarCreate(text="Use dry wit when answering."),
+    )
+    search = service.search_character_exemplars(
+        7,
+        CharacterExemplarSearchRequest(query="dry", limit=5),
+    )
+    detail = service.get_character_exemplar(7, created["id"])
+    updated = service.update_character_exemplar(
+        7,
+        created["id"],
+        CharacterExemplarUpdate(text="Use dry wit and concise answers."),
+    )
+    debug = service.select_character_exemplars_debug(
+        7,
+        CharacterExemplarSelectionDebugRequest(user_turn="Can you answer with dry wit?"),
+    )
+    deleted = service.delete_character_exemplar(7, created["id"])
+    hidden_after_delete = service.search_character_exemplars(7, CharacterExemplarSearchRequest(query="dry"))
+    reloaded = LocalCharacterPersonaService(db, persona_store_path=store_path)
+
+    assert created["record_id"] == f"local:character_exemplar:7:{created['id']}"
+    assert created["backend"] == "local"
+    assert created["character_id"] == 7
+    assert search["total"] == 1
+    assert detail["text"] == "Use dry wit when answering."
+    assert updated["text"] == "Use dry wit and concise answers."
+    assert debug["selected"][0]["id"] == created["id"]
+    assert deleted == {"status": "deleted", "character_id": 7, "exemplar_id": created["id"]}
+    assert hidden_after_delete["total"] == 0
+    assert reloaded.get_character_exemplar(7, created["id"], include_deleted=True)["deleted"] is True

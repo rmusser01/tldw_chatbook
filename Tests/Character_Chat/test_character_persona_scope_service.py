@@ -505,6 +505,32 @@ class FakeLocalPersonaExemplarBackend(FakeLocalPersonaProfileBackend):
         return {"status": "deleted", "persona_id": persona_id, "exemplar_id": exemplar_id}
 
 
+class FakeLocalCharacterExemplarBackend(FakeLocalPersonaExemplarBackend):
+    def search_character_exemplars(self, character_id, request_data):
+        self.calls.append(("search_character_exemplars", character_id, request_data))
+        return {"items": [{"id": "local-char-ex-1", "character_id": character_id}], "total": 1}
+
+    def get_character_exemplar(self, character_id, exemplar_id):
+        self.calls.append(("get_character_exemplar", character_id, exemplar_id))
+        return {"id": exemplar_id, "character_id": character_id, "text": "Be dry."}
+
+    def create_character_exemplar(self, character_id, request_data):
+        self.calls.append(("create_character_exemplar", character_id, request_data))
+        return {"id": "local-char-ex-created", "character_id": character_id, "text": "Created"}
+
+    def update_character_exemplar(self, character_id, exemplar_id, request_data):
+        self.calls.append(("update_character_exemplar", character_id, exemplar_id, request_data))
+        return {"id": exemplar_id, "character_id": character_id, "text": "Updated"}
+
+    def select_character_exemplars_debug(self, character_id, request_data):
+        self.calls.append(("select_character_exemplars_debug", character_id, request_data))
+        return {"selected": [{"id": "local-char-ex-1", "character_id": character_id}], "coverage": {}}
+
+    def delete_character_exemplar(self, character_id, exemplar_id):
+        self.calls.append(("delete_character_exemplar", character_id, exemplar_id))
+        return {"status": "deleted", "character_id": character_id, "exemplar_id": exemplar_id}
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
         self.denied_reason = denied_reason
@@ -900,6 +926,41 @@ async def test_scope_service_routes_character_exemplar_crud_to_server_backend():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_character_exemplar_crud_to_local_backend():
+    local_service = FakeLocalCharacterExemplarBackend()
+    scope_service = CharacterPersonaScopeService(
+        local_service=local_service,
+        server_service=FakeCharacterPersonaClient(),
+    )
+    search_data = Mock()
+    create_data = Mock()
+    update_data = Mock()
+    debug_data = Mock()
+
+    search = await scope_service.search_character_exemplars(12, search_data, mode="local")
+    exemplar = await scope_service.get_character_exemplar(12, "local-char-ex-1", mode="local")
+    created = await scope_service.create_character_exemplar(12, create_data, mode="local")
+    updated = await scope_service.update_character_exemplar(12, "local-char-ex-1", update_data, mode="local")
+    debug = await scope_service.select_character_exemplars_debug(12, debug_data, mode="local")
+    deleted = await scope_service.delete_character_exemplar(12, "local-char-ex-1", mode="local")
+
+    assert search["total"] == 1
+    assert exemplar["id"] == "local-char-ex-1"
+    assert created["id"] == "local-char-ex-created"
+    assert updated["text"] == "Updated"
+    assert debug["selected"][0]["id"] == "local-char-ex-1"
+    assert deleted == {"status": "deleted", "character_id": 12, "exemplar_id": "local-char-ex-1"}
+    assert local_service.calls == [
+        ("search_character_exemplars", 12, search_data),
+        ("get_character_exemplar", 12, "local-char-ex-1"),
+        ("create_character_exemplar", 12, create_data),
+        ("update_character_exemplar", 12, "local-char-ex-1", update_data),
+        ("select_character_exemplars_debug", 12, debug_data),
+        ("delete_character_exemplar", 12, "local-char-ex-1"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_chat_execution_support_to_server_backend():
     server_service = FakeCharacterPersonaClient()
     scope_service = CharacterPersonaScopeService(
@@ -1274,6 +1335,22 @@ def test_scope_service_does_not_report_local_persona_exemplars_when_backend_wrap
     assert "character.persona.profiles.local" not in operation_ids
     assert "character.persona.exemplars.local" not in operation_ids
     assert "character.exemplars.local" in operation_ids
+
+
+def test_scope_service_does_not_report_local_character_exemplars_when_backend_wraps_them():
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalCharacterExemplarBackend(),
+        server_service=FakeCharacterPersonaClient(),
+    )
+
+    operation_ids = {
+        item["operation_id"]
+        for item in scope_service.list_unsupported_capabilities(mode="local")
+    }
+
+    assert "character.persona.profiles.local" not in operation_ids
+    assert "character.persona.exemplars.local" not in operation_ids
+    assert "character.exemplars.local" not in operation_ids
 
 
 @pytest.mark.asyncio
