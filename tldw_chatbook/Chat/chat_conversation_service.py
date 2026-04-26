@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from tldw_chatbook.tldw_api.chat_conversation_schemas import ALLOWED_CONVERSATION_STATES
@@ -231,8 +234,40 @@ def normalize_conversation_row(
 
 
 class ChatConversationService:
-    def __init__(self, db: Any):
+    def __init__(self, db: Any, *, rag_context_store_path: str | Path | None = None):
         self.db = db
+        self.rag_context_store_path = Path(rag_context_store_path) if rag_context_store_path else None
+        self._rag_context_store: dict[str, Any] | None = None
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _load_rag_context_store(self) -> dict[str, Any]:
+        if self._rag_context_store is not None:
+            return self._rag_context_store
+        if self.rag_context_store_path is None or not self.rag_context_store_path.exists():
+            self._rag_context_store = {"version": 1, "conversations": {}}
+            return self._rag_context_store
+        try:
+            payload = json.loads(self.rag_context_store_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        conversations = payload.get("conversations") if isinstance(payload, Mapping) else None
+        self._rag_context_store = {
+            "version": 1,
+            "conversations": conversations if isinstance(conversations, dict) else {},
+        }
+        return self._rag_context_store
+
+    def _save_rag_context_store(self) -> None:
+        if self.rag_context_store_path is None or self._rag_context_store is None:
+            return
+        self.rag_context_store_path.parent.mkdir(parents=True, exist_ok=True)
+        self.rag_context_store_path.write_text(
+            json.dumps(self._rag_context_store, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
 
     def derive_conversation_title(self, conversation_row: Mapping[str, Any] | None) -> str:
         if not conversation_row:
@@ -570,6 +605,85 @@ class ChatConversationService:
                 "has_more": root_offset + len(root_rows) < total_root_threads,
             },
             "depth_cap": depth_cap,
+        }
+
+    def record_message_rag_context(
+        self,
+        conversation_id: str,
+        message_id: str,
+        *,
+        rag_context: Mapping[str, Any] | None = None,
+        citations: Iterable[Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        if hasattr(self.db, "get_message_by_id"):
+            message_row = self.db.get_message_by_id(message_id)
+            if not message_row:
+                raise ValueError("message not found")
+            if str(message_row.get("conversation_id")) != str(conversation_id):
+                raise ValueError("message does not belong to conversation")
+
+        normalized_citations = []
+        for citation in citations or []:
+            item = dict(citation)
+            item.setdefault("message_id", message_id)
+            normalized_citations.append(item)
+
+        record = {
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+            "rag_context": dict(rag_context or {}),
+            "citations": normalized_citations,
+            "last_modified": self._now(),
+        }
+        store = self._load_rag_context_store()
+        conversation_store = store.setdefault("conversations", {}).setdefault(str(conversation_id), {})
+        conversation_store[str(message_id)] = record
+        self._save_rag_context_store()
+        return dict(record)
+
+    def get_messages_with_context(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        order_by_timestamp: str = "ASC",
+        include_rag_context: bool = True,
+        **_: Any,
+    ) -> list[dict[str, Any]]:
+        if not hasattr(self.db, "get_messages_for_conversation"):
+            return []
+        rows = self.db.get_messages_for_conversation(
+            conversation_id,
+            limit=limit,
+            offset=offset,
+            order_by_timestamp=order_by_timestamp,
+        )
+        conversation_store = self._load_rag_context_store().get("conversations", {}).get(str(conversation_id), {})
+        messages: list[dict[str, Any]] = []
+        for row in rows:
+            normalized = normalize_message_row(row)
+            if normalized is None:
+                continue
+            adjunct = conversation_store.get(str(normalized["id"]), {})
+            if include_rag_context:
+                normalized["rag_context"] = adjunct.get("rag_context")
+            normalized["citations"] = list(adjunct.get("citations") or [])
+            messages.append(normalized)
+        return messages
+
+    def get_citations(self, conversation_id: str) -> dict[str, Any]:
+        conversation_store = self._load_rag_context_store().get("conversations", {}).get(str(conversation_id), {})
+        citations: list[dict[str, Any]] = []
+        for message_id, adjunct in conversation_store.items():
+            for citation in adjunct.get("citations") or []:
+                item = dict(citation)
+                item.setdefault("message_id", message_id)
+                citations.append(item)
+        return {
+            "conversation_id": conversation_id,
+            "citations": citations,
+            "total_count": len(citations),
         }
 
     def _build_message_tree(

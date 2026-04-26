@@ -1519,7 +1519,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     def _wire_chat_conversation_services(self) -> None:
         self.local_chat_conversation_service = (
-            ChatConversationService(self.chachanotes_db)
+            ChatConversationService(
+                self.chachanotes_db,
+                rag_context_store_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
+            )
             if getattr(self, "chachanotes_db", None) is not None
             else None
         )

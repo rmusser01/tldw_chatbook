@@ -8,14 +8,6 @@ from typing import Any, Mapping
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
-        "operation_id": "chat.rag_context.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "local_contract_missing",
-        "user_message": "Local chat history does not expose server-style RAG context or citation adjuncts yet.",
-        "affected_action_ids": ["chat.detail.local"],
-    },
-    {
         "operation_id": "chat.loop.local",
         "source": "local",
         "supported": False,
@@ -165,10 +157,6 @@ class ChatConversationScopeService:
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("detail", normalized_mode))
-        if normalized_mode == "local":
-            raise NotImplementedError(
-                "Local RAG-context conversation adjuncts are not implemented in the local chat database service."
-            )
         return await self._maybe_await(
             self._service_for_mode(normalized_mode).get_messages_with_context(conversation_id, **kwargs)
         )
@@ -176,10 +164,6 @@ class ChatConversationScopeService:
     async def get_citations(self, conversation_id: str, *, mode: str = "server") -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("detail", normalized_mode))
-        if normalized_mode == "local":
-            raise NotImplementedError(
-                "Local RAG-context conversation adjuncts are not implemented in the local chat database service."
-            )
         return await self._maybe_await(self._service_for_mode(normalized_mode).get_citations(conversation_id))
 
     async def start_loop(self, *, mode: str = "server", messages: list[dict[str, Any]], **kwargs: Any) -> Any:

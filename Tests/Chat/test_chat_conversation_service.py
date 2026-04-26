@@ -21,6 +21,8 @@ class FakeDB:
     root_messages: dict[tuple[str, int, int, str], list[dict[str, Any]]] = field(default_factory=dict)
     child_messages: dict[tuple[str, tuple[str, ...], str], list[dict[str, Any]]] = field(default_factory=dict)
     latest_message: dict[str, dict[str, Any] | None] = field(default_factory=dict)
+    messages_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
+    messages_by_conversation: dict[tuple[str, int, int, str], list[dict[str, Any]]] = field(default_factory=dict)
     calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = field(default_factory=list)
     replaced_keyword_ids: list[tuple[str, list[int]]] = field(default_factory=list)
     updates: list[tuple[str, dict[str, Any], int]] = field(default_factory=list)
@@ -137,6 +139,20 @@ class FakeDB:
             )
         )
         return self.child_messages.get((conversation_id, tuple(parent_ids), order_by_timestamp), [])
+
+    def get_message_by_id(self, message_id):
+        self.calls.append(("get_message_by_id", (message_id,), {}))
+        return self.messages_by_id.get(message_id)
+
+    def get_messages_for_conversation(self, conversation_id, limit=100, offset=0, order_by_timestamp="ASC"):
+        self.calls.append(
+            (
+                "get_messages_for_conversation",
+                (conversation_id,),
+                {"limit": limit, "offset": offset, "order_by_timestamp": order_by_timestamp},
+            )
+        )
+        return self.messages_by_conversation.get((conversation_id, limit, offset, order_by_timestamp), [])
 
 
 def test_normalize_conversation_and_message_rows_preserve_stable_shape():
@@ -603,3 +619,64 @@ def test_get_conversation_tree_wraps_root_and_child_rows():
     assert [node["id"] for node in tree["root_threads"]] == ["msg-root-1", "msg-root-2"]
     assert tree["root_threads"][0]["children"][0]["id"] == "msg-child-1"
     assert tree["root_threads"][0]["children"][0]["variant"]["variant_number"] == 2
+
+
+def test_local_rag_context_adjuncts_are_persisted_and_reloaded(tmp_path):
+    message = {
+        "id": "msg-1",
+        "conversation_id": "conv-1",
+        "parent_message_id": None,
+        "sender": "assistant",
+        "content": "Answer with citation",
+        "timestamp": "2026-04-19T00:02:00Z",
+        "role": "assistant",
+    }
+    db = FakeDB(
+        messages_by_id={"msg-1": message},
+        messages_by_conversation={("conv-1", 10, 0, "ASC"): [message]},
+    )
+    store_path = tmp_path / "chat_rag_context.json"
+    service = ChatConversationService(db, rag_context_store_path=store_path)
+
+    saved = service.record_message_rag_context(
+        "conv-1",
+        "msg-1",
+        rag_context={"search_query": "alpha", "chunks": [{"source_id": "note-1"}]},
+        citations=[{"id": "cite-1", "source_id": "note-1", "quote": "fact"}],
+    )
+    messages = service.get_messages_with_context("conv-1", limit=10)
+    citations = service.get_citations("conv-1")
+
+    reloaded = ChatConversationService(db, rag_context_store_path=store_path)
+    reloaded_messages = reloaded.get_messages_with_context("conv-1", limit=10)
+    reloaded_citations = reloaded.get_citations("conv-1")
+
+    assert saved["conversation_id"] == "conv-1"
+    assert saved["message_id"] == "msg-1"
+    assert messages[0]["id"] == "msg-1"
+    assert messages[0]["rag_context"]["search_query"] == "alpha"
+    assert messages[0]["citations"][0]["message_id"] == "msg-1"
+    assert citations == {
+        "conversation_id": "conv-1",
+        "citations": [{"id": "cite-1", "source_id": "note-1", "quote": "fact", "message_id": "msg-1"}],
+        "total_count": 1,
+    }
+    assert reloaded_messages[0]["rag_context"]["chunks"] == [{"source_id": "note-1"}]
+    assert reloaded_citations == citations
+
+
+def test_local_rag_context_rejects_message_conversation_mismatches(tmp_path):
+    db = FakeDB(
+        messages_by_id={
+            "msg-1": {
+                "id": "msg-1",
+                "conversation_id": "conv-2",
+                "sender": "assistant",
+                "content": "Wrong conversation",
+            }
+        }
+    )
+    service = ChatConversationService(db, rag_context_store_path=tmp_path / "chat_rag_context.json")
+
+    with pytest.raises(ValueError, match="message does not belong to conversation"):
+        service.record_message_rag_context("conv-1", "msg-1", rag_context={"search_query": "alpha"})

@@ -34,6 +34,14 @@ class FakeConversationService:
         self.calls.append(("get_conversation_tree", (conversation_id,), kwargs))
         return {"conversation": {"id": conversation_id}, "root_threads": []}
 
+    def get_messages_with_context(self, conversation_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+        self.calls.append(("get_messages_with_context", (conversation_id,), kwargs))
+        return [{"id": "local-msg-1", "conversation_id": conversation_id, "rag_context": {"query": "local"}}]
+
+    def get_citations(self, conversation_id: str) -> dict[str, Any]:
+        self.calls.append(("get_citations", (conversation_id,), {}))
+        return {"conversation_id": conversation_id, "citations": [{"id": "local-cite-1"}], "total_count": 1}
+
     def create_conversation(self, **kwargs: Any) -> str:
         self.calls.append(("create_conversation", (), kwargs))
         return "local-created"
@@ -183,30 +191,34 @@ async def test_scope_service_maps_server_style_tree_pagination_to_local_tree_arg
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_server_context_and_citations_with_local_unsupported_boundaries():
+async def test_scope_service_routes_local_and_server_context_and_citations():
     server = FakeServerConversationService()
+    local = FakeConversationService()
     policy = RecordingPolicy()
     service = ChatConversationScopeService(
-        local_service=FakeConversationService(),
+        local_service=local,
         server_service=server,
         policy_enforcer=policy,
     )
 
     messages = await service.get_messages_with_context("conv-1", mode="server", limit=10)
     citations = await service.get_citations("conv-1", mode="server")
+    local_messages = await service.get_messages_with_context("conv-2", mode="local", limit=5)
+    local_citations = await service.get_citations("conv-2", mode="local")
 
     assert messages == [{"id": "msg-1", "conversation_id": "conv-1"}]
     assert citations["conversation_id"] == "conv-1"
-    assert policy.calls == ["chat.detail.server", "chat.detail.server"]
+    assert local_messages[0]["rag_context"]["query"] == "local"
+    assert local_citations["total_count"] == 1
+    assert policy.calls == ["chat.detail.server", "chat.detail.server", "chat.detail.local", "chat.detail.local"]
     assert server.calls == [
         ("get_messages_with_context", ("conv-1",), {"limit": 10}),
         ("get_citations", ("conv-1",), {}),
     ]
-
-    with pytest.raises(NotImplementedError, match="Local RAG-context conversation adjuncts"):
-        await service.get_messages_with_context("conv-1", mode="local")
-    with pytest.raises(NotImplementedError, match="Local RAG-context conversation adjuncts"):
-        await service.get_citations("conv-1", mode="local")
+    assert local.calls == [
+        ("get_messages_with_context", ("conv-2",), {"limit": 5}),
+        ("get_citations", ("conv-2",), {}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -255,14 +267,6 @@ def test_scope_service_reports_known_chat_conversation_capability_gaps():
     server_report = service.list_unsupported_capabilities(mode="server")
 
     assert local_report == [
-        {
-            "operation_id": "chat.rag_context.local",
-            "source": "local",
-            "supported": False,
-            "reason_code": "local_contract_missing",
-            "user_message": "Local chat history does not expose server-style RAG context or citation adjuncts yet.",
-            "affected_action_ids": ["chat.detail.local"],
-        },
         {
             "operation_id": "chat.loop.local",
             "source": "local",
