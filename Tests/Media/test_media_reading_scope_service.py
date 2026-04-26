@@ -163,6 +163,10 @@ class FakeLocalMediaService:
         self.calls.append(("check_media_file", media_id, file_type))
         return {"available": True, "media_id": media_id, "file_type": file_type, "source": "stored_content"}
 
+    def add_media(self, *, file_paths=None, **options):
+        self.calls.append(("add_media", options, file_paths))
+        return {"status": "success", "backend": "local", "processed_count": 1}
+
     def delete_media(self, media_id):
         self.calls.append(("delete_media", media_id))
         return True
@@ -1345,7 +1349,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
     assert [item["operation_id"] for item in local_report] == [
         "media.file_artifacts.local",
         "media.reading_digests.scheduler.local",
-        "media.add.local",
         "media.web_content_ingest.local",
         "media.processing.code.local",
         "media.processing.video.local",
@@ -1768,11 +1771,12 @@ async def test_scope_service_routes_server_mediawiki_and_media_file_and_blocks_l
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_server_add_media_and_blocks_local_mode():
+async def test_scope_service_routes_add_media_for_local_and_server():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     server = FakeServerMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=server,
         policy_enforcer=policy,
     )
@@ -1787,7 +1791,16 @@ async def test_scope_service_routes_server_add_media_and_blocks_local_mode():
     )
 
     assert result["processed_count"] == 1
-    assert policy.calls[-1:] == ["media.add.create.server"]
+    local_result = await scope.add_media(
+        mode="local",
+        media_type="document",
+        urls=["https://example.com/local.md"],
+        title="Local Report",
+        content="Local body",
+        file_paths=["/tmp/local.md"],
+    )
+
+    assert policy.calls[-2:] == ["media.add.create.server", "media.add.create.local"]
     assert server.calls[-1] == (
         "add_media",
         {
@@ -1798,9 +1811,17 @@ async def test_scope_service_routes_server_add_media_and_blocks_local_mode():
         },
         ["/tmp/report.md"],
     )
-
-    with pytest.raises(ValueError, match="server-only"):
-        await scope.add_media(mode="local", media_type="document", urls=["https://example.com/report.md"])
+    assert local_result["backend"] == "local"
+    assert local.calls[-1] == (
+        "add_media",
+        {
+            "media_type": "document",
+            "urls": ["https://example.com/local.md"],
+            "title": "Local Report",
+            "content": "Local body",
+        },
+        ["/tmp/local.md"],
+    )
 
 
 @pytest.mark.asyncio

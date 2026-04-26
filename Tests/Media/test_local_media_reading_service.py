@@ -234,6 +234,38 @@ def test_local_service_downloads_local_media_files_and_stored_content(memory_db_
     assert content_download["content_type"] == "text/plain; charset=utf-8"
 
 
+def test_local_service_add_media_persists_url_content_and_files(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    source_file = tmp_path / "source.md"
+    source_file.write_text("# File body\n\nStored locally", encoding="utf-8")
+    service = LocalMediaReadingService(db)
+
+    result = service.add_media(
+        media_type="document",
+        urls=["https://example.com/report.md"],
+        file_paths=[str(source_file)],
+        title="Research Report",
+        author="Ada",
+        keywords="AI, Research",
+        content="URL supplied body",
+        overwrite_existing=True,
+    )
+
+    assert result["status"] == "success"
+    assert result["backend"] == "local"
+    assert result["processed_count"] == 2
+    assert result["failed_count"] == 0
+    assert [item["source"] for item in result["items"]] == ["url", "file_path"]
+    url_detail = service.get_media_item(result["items"][0]["media_id"], include_content=True)
+    file_detail = service.get_media_detail(result["items"][1]["media_id"])
+    assert url_detail["url"] == "https://example.com/report.md"
+    assert url_detail["content"] == "URL supplied body"
+    assert url_detail["keywords"] == ["ai", "research"]
+    assert file_detail["url"] == source_file.as_uri()
+    assert file_detail["content"] == "# File body\n\nStored locally"
+    assert service.check_media_file(result["items"][1]["media_id"])["source"] == "file_path"
+
+
 def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])

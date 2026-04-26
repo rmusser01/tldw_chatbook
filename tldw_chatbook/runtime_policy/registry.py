@@ -314,7 +314,7 @@ AUDITED_CAPABILITY_SEEDS = (
                 "media.reading",
                 actions=_combine_action_sets(CRUD_ACTIONS, (BULK_UPDATE, ARCHIVE, SUMMARIZE, IMPORT, EXPORT, TTS)),
             ),
-            _resource("media.add", actions=(CREATE,), sources=(SERVER_SOURCE,)),
+            _resource("media.add", actions=(CREATE,)),
             _resource("media.file_artifacts", actions=(DETAIL, CREATE, DELETE, EXPORT, PURGE), sources=(SERVER_SOURCE,)),
             _resource("media.reference_images", actions=(LIST,), sources=(SERVER_SOURCE,)),
             _resource("media.reading_import_jobs", actions=(LIST, DETAIL)),

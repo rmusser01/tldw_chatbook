@@ -37,14 +37,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "affected_action_ids": [],
     },
     {
-        "operation_id": "media.add.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "source_specific_equivalent",
-        "user_message": "The server /media/add persistence endpoint is server-owned; local mode uses local ingestion jobs instead.",
-        "affected_action_ids": [],
-    },
-    {
         "operation_id": "media.web_content_ingest.local",
         "source": "local",
         "supported": False,
@@ -263,8 +255,8 @@ class MediaReadingScopeService:
         return f"media.items.{subresource}.{action}.{mode.value}"
 
     @staticmethod
-    def _media_add_action_id(action: str) -> str:
-        return f"media.add.{action}.server"
+    def _media_add_action_id(mode: MediaReadingBackend, action: str) -> str:
+        return f"media.add.{action}.{mode.value}"
 
     @staticmethod
     def _file_artifact_action_id(action: str) -> str:
@@ -349,11 +341,6 @@ class MediaReadingScopeService:
     def _server_web_content_ingest_service(self, mode: MediaReadingBackend) -> Any:
         if mode == MediaReadingBackend.LOCAL:
             raise ValueError("The direct web-content ingestion is server-only; use local URL ingest jobs in local mode.")
-        return self._service_for_mode(mode)
-
-    def _server_add_media_service(self, mode: MediaReadingBackend) -> Any:
-        if mode == MediaReadingBackend.LOCAL:
-            raise ValueError("The server add-media endpoint is server-only; use local ingestion jobs in local mode.")
         return self._service_for_mode(mode)
 
     def _server_file_artifact_service(self, mode: MediaReadingBackend, operation_name: str) -> Any:
@@ -1347,8 +1334,8 @@ class MediaReadingScopeService:
         **options: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_add_media_service(normalized_mode)
-        self._enforce_policy(self._media_add_action_id("create"))
+        service = self._service_for_mode(normalized_mode)
+        self._enforce_policy(self._media_add_action_id(normalized_mode, "create"))
         return self._to_plain(
             await self._maybe_await(
                 service.add_media(

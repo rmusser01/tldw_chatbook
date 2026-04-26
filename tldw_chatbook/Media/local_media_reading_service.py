@@ -428,6 +428,108 @@ class LocalMediaReadingService:
             "source": source_kind,
         }
 
+    def add_media(
+        self,
+        *,
+        media_type: str,
+        urls: list[str] | None = None,
+        file_paths: list[str] | None = None,
+        **options: Any,
+    ) -> dict[str, Any]:
+        db = self._require_db()
+        normalized_media_type = str(media_type or "unknown").strip() or "unknown"
+        normalized_urls = [str(url).strip() for url in urls or [] if str(url).strip()]
+        normalized_file_paths = [str(path).strip() for path in file_paths or [] if str(path).strip()]
+        if not normalized_urls and not normalized_file_paths:
+            raise ValueError("Local media add requires at least one URL or file path.")
+
+        keywords = self._normalize_import_tags(options.get("keywords"))
+        title = str(options.get("title") or "").strip()
+        author = str(options.get("author") or "").strip() or None
+        prompt = options.get("custom_prompt") or options.get("prompt")
+        analysis_content = options.get("analysis_content") or options.get("summary")
+        overwrite = bool(options.get("overwrite_existing") if options.get("overwrite_existing") is not None else options.get("overwrite"))
+        supplied_content = self._first_present_text(options, "content", "text", "body", "markdown")
+
+        items: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+
+        for url in normalized_urls:
+            content = supplied_content if supplied_content not in (None, "") else url
+            media_id, media_uuid, message = db.add_media_with_keywords(
+                url=url,
+                title=title or url,
+                media_type=normalized_media_type,
+                content=str(content),
+                keywords=keywords,
+                prompt=str(prompt) if prompt not in (None, "") else None,
+                analysis_content=str(analysis_content) if analysis_content not in (None, "") else None,
+                author=author,
+                overwrite=overwrite,
+            )
+            if media_id is None:
+                errors.append({"source": "url", "url": url, "message": str(message or "skipped")})
+                continue
+            items.append(
+                {
+                    "source": "url",
+                    "media_id": self._coerce_media_id(media_id),
+                    "media_uuid": media_uuid,
+                    "url": url,
+                    "title": title or url,
+                    "message": message,
+                }
+            )
+
+        for file_path in normalized_file_paths:
+            path = Path(file_path).expanduser()
+            if not path.exists() or not path.is_file():
+                errors.append({"source": "file_path", "file_path": file_path, "message": "file not found"})
+                continue
+            resolved_path = path.resolve()
+            content = resolved_path.read_text(encoding="utf-8", errors="replace")
+            file_title = title or resolved_path.stem or resolved_path.name
+            media_id, media_uuid, message = db.add_media_with_keywords(
+                url=resolved_path.as_uri(),
+                title=file_title,
+                media_type=normalized_media_type,
+                content=content,
+                keywords=keywords,
+                prompt=str(prompt) if prompt not in (None, "") else None,
+                analysis_content=str(analysis_content) if analysis_content not in (None, "") else None,
+                author=author,
+                overwrite=overwrite,
+            )
+            if media_id is None:
+                errors.append({"source": "file_path", "file_path": file_path, "message": str(message or "skipped")})
+                continue
+            items.append(
+                {
+                    "source": "file_path",
+                    "media_id": self._coerce_media_id(media_id),
+                    "media_uuid": media_uuid,
+                    "file_path": str(resolved_path),
+                    "url": resolved_path.as_uri(),
+                    "title": file_title,
+                    "message": message,
+                }
+            )
+
+        if errors and not items:
+            status = "failed"
+        elif errors:
+            status = "partial_success"
+        else:
+            status = "success"
+        return {
+            "status": status,
+            "backend": "local",
+            "processed_count": len(items),
+            "failed_count": len(errors),
+            "items": items,
+            "errors": errors,
+        }
+
     def delete_media(self, media_id: Any) -> Any:
         return self._require_db().soft_delete_media(self._coerce_media_id(media_id))
 

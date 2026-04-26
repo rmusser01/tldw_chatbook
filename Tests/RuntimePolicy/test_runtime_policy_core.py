@@ -773,6 +773,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.ingestion_sources.update.server
         media.ingestion_source_items.reattach.local
         media.ingestion_source_items.reattach.server
+        media.add.create.local
         media.add.create.server
         media.file_artifacts.create.server
         media.file_artifacts.delete.server
