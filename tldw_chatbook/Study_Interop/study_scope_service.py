@@ -53,22 +53,18 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "source": "local",
         "supported": False,
         "reason_code": "remote_only_surface",
-        "user_message": "Server flashcard helpers such as assets, bulk actions, imports, exports, analytics, tag suggestions, assistant, generation, and review-session discovery are unavailable in local/offline mode.",
+        "user_message": "Server flashcard helpers such as assets, imports, exports, analytics, tag suggestions, assistant, generation, templates, and review-session discovery are unavailable in local/offline mode.",
         "affected_action_ids": [
             "study.flashcard.analytics.observe.local",
             "study.flashcard.assistant.detail.local",
             "study.flashcard.assistant.launch.local",
             "study.flashcard.assets.create.local",
             "study.flashcard.assets.detail.local",
-            "study.flashcard.bulk.create.local",
-            "study.flashcard.bulk.update.local",
             "study.flashcard.export.export.local",
             "study.flashcard.generation.launch.local",
             "study.flashcard.import.import.local",
             "study.flashcard.import.preview.local",
             "study.flashcard.review_sessions.list.local",
-            "study.flashcard.tags.list.local",
-            "study.flashcard.tags.update.local",
             "study.flashcard.templates.create.local",
             "study.flashcard.templates.delete.local",
             "study.flashcard.templates.detail.local",
@@ -849,7 +845,6 @@ class StudyScopeService:
         tags: list[str],
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_only(normalized_mode, "Flashcard tag helpers")
         self._enforce_policy(self._study_flashcard_tags_action_id(normalized_mode, "update"))
         record = await self._maybe_await(
             self._service_for_mode(normalized_mode).set_flashcard_tags(card_id, tags=tags)
@@ -863,7 +858,6 @@ class StudyScopeService:
         card_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_only(normalized_mode, "Flashcard tag helpers")
         self._enforce_policy(self._study_flashcard_tags_action_id(normalized_mode, "list"))
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).get_flashcard_tags(card_id)
@@ -1041,7 +1035,6 @@ class StudyScopeService:
         cards: list[Mapping[str, Any]],
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_only(normalized_mode, "Flashcard bulk create")
         self._enforce_policy(self._study_flashcard_bulk_action_id(normalized_mode, "create"))
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).create_flashcards_bulk(cards)
@@ -1055,7 +1048,6 @@ class StudyScopeService:
         updates: list[Mapping[str, Any]],
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._require_server_only(normalized_mode, "Flashcard bulk update")
         self._enforce_policy(self._study_flashcard_bulk_action_id(normalized_mode, "update"))
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).update_flashcards_bulk(updates)

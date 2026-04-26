@@ -66,6 +66,23 @@ class LocalStudyService:
     def get_flashcard(self, card_id: str) -> Any:
         return self._require_db().get_flashcard(card_id)
 
+    @staticmethod
+    def _normalize_tags(tags: Any) -> list[str]:
+        if isinstance(tags, str):
+            raw_tags = tags.split()
+        elif isinstance(tags, (list, tuple, set)):
+            raw_tags = list(tags)
+        else:
+            raw_tags = [tags]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in raw_tags:
+            tag = str(item or "").strip()
+            if tag and tag not in seen:
+                seen.add(tag)
+                normalized.append(tag)
+        return normalized
+
     def create_flashcard(
         self,
         *,
@@ -92,6 +109,84 @@ class LocalStudyService:
             }
         )
         return self._require_db().get_flashcard(card_id)
+
+    def update_flashcard(
+        self,
+        card_id: str,
+        *,
+        deck_id: Optional[str] = None,
+        front: Optional[str] = None,
+        back: Optional[str] = None,
+        tags: Any = None,
+        notes: Optional[str] = None,
+        extra: Optional[str] = None,
+        expected_version: Optional[int] = None,
+        card_type: Optional[str] = None,
+        **_: Any,
+    ) -> Any:
+        request = {
+            key: value
+            for key, value in {
+                "deck_id": deck_id,
+                "front": front,
+                "back": back,
+                "tags": tags,
+                "notes": notes,
+                "extra": extra,
+                "expected_version": expected_version,
+                "card_type": card_type,
+            }.items()
+            if value is not None
+        }
+        updated = self._require_db().update_flashcard(card_id, **request)
+        if not updated:
+            return None
+        return self._require_db().get_flashcard(card_id)
+
+    def get_flashcard_tags(self, card_id: str) -> dict[str, Any]:
+        card = self.get_flashcard(card_id)
+        return {"uuid": card_id, "tags": self._normalize_tags((card or {}).get("tags"))}
+
+    def set_flashcard_tags(self, card_id: str, *, tags: list[str]) -> Any:
+        return self.update_flashcard(card_id, tags=tags)
+
+    def create_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
+        created: list[Any] = []
+        for card in cards:
+            created.append(
+                self.create_flashcard(
+                    deck_id=card["deck_id"],
+                    front=str(card.get("front") or ""),
+                    back=str(card.get("back") or ""),
+                    tags=self._normalize_tags(card.get("tags")),
+                    notes=card.get("notes"),
+                    extra=card.get("extra"),
+                )
+            )
+        return {"items": created, "count": len(created), "total": len(created)}
+
+    def update_flashcards_bulk(self, updates: list[Mapping[str, Any]]) -> dict[str, Any]:
+        results: list[dict[str, Any]] = []
+        for update in updates:
+            card_id = update.get("uuid") or update.get("id") or update.get("card_id")
+            if not card_id:
+                results.append({"uuid": None, "status": "error", "error": "missing_card_id"})
+                continue
+            card_id = str(card_id)
+            card = self.update_flashcard(
+                card_id,
+                deck_id=update.get("deck_id"),
+                front=update.get("front"),
+                back=update.get("back"),
+                tags=update.get("tags"),
+                notes=update.get("notes"),
+                extra=update.get("extra"),
+                expected_version=update.get("expected_version"),
+                card_type=update.get("card_type") or update.get("type") or update.get("model_type"),
+            )
+            status = "updated" if card else "not_found"
+            results.append({"uuid": card_id, "status": status, "flashcard": card})
+        return {"results": results}
 
     def move_flashcard(
         self,

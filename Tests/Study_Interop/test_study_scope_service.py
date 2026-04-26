@@ -39,6 +39,22 @@ class FakeLocalStudyService:
             "type": "basic",
         }
 
+    def set_flashcard_tags(self, card_id, *, tags):
+        self.calls.append(("set_flashcard_tags", card_id, tags))
+        return {
+            "id": card_id,
+            "deck_id": "deck-local-1",
+            "front": "Question",
+            "back": "Answer",
+            "tags": " ".join(tags),
+            "type": "basic",
+            "version": 2,
+        }
+
+    def get_flashcard_tags(self, card_id):
+        self.calls.append(("get_flashcard_tags", card_id))
+        return {"uuid": card_id, "tags": ["science", "biology"]}
+
     def list_flashcards(self, *, deck_id=None, q=None, limit=100, offset=0):
         self.calls.append(("list_flashcards", deck_id, q, limit, offset))
         return [{"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer", "tags": "science"}]
@@ -54,6 +70,43 @@ class FakeLocalStudyService:
             "notes": notes,
             "extra": extra,
             "type": "basic",
+        }
+
+    def create_flashcards_bulk(self, cards):
+        self.calls.append(("create_flashcards_bulk", cards))
+        return {
+            "items": [
+                {
+                    "id": "card-local-1",
+                    "deck_id": "deck-local-1",
+                    "front": "Question",
+                    "back": "Answer",
+                    "tags": "science",
+                    "type": "basic",
+                }
+            ],
+            "count": 1,
+            "total": 1,
+        }
+
+    def update_flashcards_bulk(self, updates):
+        self.calls.append(("update_flashcards_bulk", updates))
+        return {
+            "results": [
+                {
+                    "uuid": "card-local-1",
+                    "status": "updated",
+                    "flashcard": {
+                        "id": "card-local-1",
+                        "deck_id": "deck-local-1",
+                        "front": "Updated",
+                        "back": "Answer",
+                        "tags": "science",
+                        "type": "basic",
+                        "version": 2,
+                    },
+                }
+            ]
         }
 
     def get_next_review_candidate(self, *, deck_id=None):
@@ -747,6 +800,53 @@ async def test_scope_service_routes_server_flashcard_bulk_import_export_and_asse
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_local_flashcard_tags_and_bulk_helpers():
+    local = FakeLocalStudyService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = StudyScopeService(
+        local_service=local,
+        server_service=FakeServerStudyService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    tagged = await scope.set_flashcard_tags(
+        mode="local",
+        card_id="card-local-1",
+        tags=["science", "biology"],
+    )
+    tags = await scope.get_flashcard_tags(mode="local", card_id="card-local-1")
+    created_bulk = await scope.create_flashcards_bulk(
+        mode="local",
+        cards=[{"deck_id": "deck-local-1", "front": "Question", "back": "Answer", "tags": ["science"]}],
+    )
+    updated_bulk = await scope.update_flashcards_bulk(
+        mode="local",
+        updates=[{"uuid": "card-local-1", "front": "Updated", "expected_version": 1}],
+    )
+
+    assert tagged["record_id"] == "local:study_flashcard:card-local-1"
+    assert tagged["tags"] == ["science", "biology"]
+    assert tags["record_id"] == "local:study_flashcard_tags:card-local-1"
+    assert tags["tags"] == ["science", "biology"]
+    assert created_bulk["record_id"] == "local:study_flashcard_bulk_create:transient"
+    assert created_bulk["items"][0]["record_id"] == "local:study_flashcard:card-local-1"
+    assert updated_bulk["record_id"] == "local:study_flashcard_bulk_update:transient"
+    assert updated_bulk["results"][0]["flashcard"]["record_id"] == "local:study_flashcard:card-local-1"
+    assert policy_enforcer.calls == [
+        "study.flashcard.tags.update.local",
+        "study.flashcard.tags.list.local",
+        "study.flashcard.bulk.create.local",
+        "study.flashcard.bulk.update.local",
+    ]
+    assert local.calls == [
+        ("set_flashcard_tags", "card-local-1", ["science", "biology"]),
+        ("get_flashcard_tags", "card-local-1"),
+        ("create_flashcards_bulk", [{"deck_id": "deck-local-1", "front": "Question", "back": "Answer", "tags": ["science"]}]),
+        ("update_flashcards_bulk", [{"uuid": "card-local-1", "front": "Updated", "expected_version": 1}]),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_server_flashcard_template_crud_and_normalizes_payloads():
     server = FakeServerStudyService()
     policy_enforcer = FakePolicyEnforcer()
@@ -795,8 +895,6 @@ async def test_scope_service_routes_server_flashcard_template_crud_and_normalize
         ("get_flashcard_analytics_summary", {"deck_id": "deck-local-1"}),
         ("upload_flashcard_asset", {"file": ("cell.png", b"pngdata", "image/png")}),
         ("get_flashcard_asset_content", {"asset_uuid": "asset-local-1"}),
-        ("create_flashcards_bulk", {"cards": [{"deck_id": "deck-local-1", "front": "Q", "back": "A"}]}),
-        ("update_flashcards_bulk", {"updates": [{"uuid": "card-local-1", "front": "Updated"}]}),
         ("preview_structured_qa_import", {"content": "Q: What powers the cell?\nA: ATP"}),
         ("import_flashcards", {"content": "Deck\tFront\tBack\nBio\tQ\tA"}),
         ("import_flashcards_json", {"file": ("cards.json", b"[]", "application/json")}),
@@ -1428,22 +1526,18 @@ def test_scope_service_reports_study_pack_and_suggestion_unsupported_capabilitie
             "source": "local",
             "supported": False,
             "reason_code": "remote_only_surface",
-            "user_message": "Server flashcard helpers such as assets, bulk actions, imports, exports, analytics, tag suggestions, assistant, generation, and review-session discovery are unavailable in local/offline mode.",
+            "user_message": "Server flashcard helpers such as assets, imports, exports, analytics, tag suggestions, assistant, generation, templates, and review-session discovery are unavailable in local/offline mode.",
             "affected_action_ids": [
                 "study.flashcard.analytics.observe.local",
                 "study.flashcard.assistant.detail.local",
                 "study.flashcard.assistant.launch.local",
                 "study.flashcard.assets.create.local",
                 "study.flashcard.assets.detail.local",
-                "study.flashcard.bulk.create.local",
-                "study.flashcard.bulk.update.local",
                 "study.flashcard.export.export.local",
                 "study.flashcard.generation.launch.local",
                 "study.flashcard.import.import.local",
                 "study.flashcard.import.preview.local",
                 "study.flashcard.review_sessions.list.local",
-                "study.flashcard.tags.list.local",
-                "study.flashcard.tags.update.local",
                 "study.flashcard.templates.create.local",
                 "study.flashcard.templates.delete.local",
                 "study.flashcard.templates.detail.local",

@@ -133,7 +133,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 15  # Incremented schema version to add local quiz parity tables
+    _CURRENT_SCHEMA_VERSION = 16  # Repairs flashcard FTS triggers for local study updates.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -1590,11 +1590,13 @@ CREATE TRIGGER IF NOT EXISTS flashcards_ai AFTER INSERT ON flashcards BEGIN
 END;
 
 CREATE TRIGGER IF NOT EXISTS flashcards_ad AFTER DELETE ON flashcards BEGIN
-    DELETE FROM flashcards_fts WHERE rowid = old.rowid;
+    INSERT INTO flashcards_fts(flashcards_fts, rowid, front, back, tags)
+    VALUES('delete', old.rowid, old.front, old.back, old.tags);
 END;
 
 CREATE TRIGGER IF NOT EXISTS flashcards_au AFTER UPDATE ON flashcards BEGIN
-    DELETE FROM flashcards_fts WHERE rowid = old.rowid;
+    INSERT INTO flashcards_fts(flashcards_fts, rowid, front, back, tags)
+    VALUES('delete', old.rowid, old.front, old.back, old.tags);
     INSERT INTO flashcards_fts(rowid, front, back, tags) 
     VALUES (new.rowid, new.front, new.back, new.tags);
 END;
@@ -1978,6 +1980,36 @@ UPDATE db_schema_version
    SET version = 15
  WHERE schema_name = 'rag_char_chat_schema'
    AND version = 14;
+"""
+
+    _MIGRATE_V15_TO_V16_SQL = """
+-- Migration from V15 to V16: Repair flashcard FTS5 triggers.
+--
+-- flashcards_fts is an external-content FTS5 table. Direct DELETE statements
+-- can corrupt the index for multi-token updates; FTS5 requires the special
+-- 'delete' command carrying the old indexed values.
+
+DROP TRIGGER IF EXISTS flashcards_ad;
+DROP TRIGGER IF EXISTS flashcards_au;
+
+CREATE TRIGGER flashcards_ad AFTER DELETE ON flashcards BEGIN
+    INSERT INTO flashcards_fts(flashcards_fts, rowid, front, back, tags)
+    VALUES('delete', old.rowid, old.front, old.back, old.tags);
+END;
+
+CREATE TRIGGER flashcards_au AFTER UPDATE ON flashcards BEGIN
+    INSERT INTO flashcards_fts(flashcards_fts, rowid, front, back, tags)
+    VALUES('delete', old.rowid, old.front, old.back, old.tags);
+    INSERT INTO flashcards_fts(rowid, front, back, tags)
+    VALUES (new.rowid, new.front, new.back, new.tags);
+END;
+
+INSERT INTO flashcards_fts(flashcards_fts) VALUES('rebuild');
+
+UPDATE db_schema_version
+   SET version = 16
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 15;
 """
 
     def __init__(self, db_path: Union[str, Path], client_id: str, 
@@ -2764,6 +2796,32 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V14→V15] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V14 to V15 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v15_to_v16(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 15 to version 16.
+
+        This migration repairs flashcard FTS5 triggers and rebuilds the local
+        flashcard FTS index so multi-token flashcard updates remain searchable.
+        """
+        logger.info(f"Migrating schema from V15 to V16 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V15_TO_V16_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V15→V16] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 16:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V15→V16] Migration version check failed. Expected 16, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V15→V16] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V15→V16] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V15 to V16 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V15→V16] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V15 to V16 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 7 to version 8.
@@ -2847,6 +2905,7 @@ UPDATE db_schema_version
                     12: self._migrate_from_v12_to_v13,
                     13: self._migrate_from_v13_to_v14,
                     14: self._migrate_from_v14_to_v15,
+                    15: self._migrate_from_v15_to_v16,
                 }
 
                 if current_db_version == 0:
@@ -6986,6 +7045,139 @@ UPDATE db_schema_version
         if row:
             return dict(row)
         return None
+
+    @staticmethod
+    def _normalize_flashcard_tags(tags: Any) -> str:
+        """Normalize list/string tag payloads into the local space-separated format."""
+        if isinstance(tags, str):
+            raw_tags = tags.split()
+        elif isinstance(tags, (list, tuple, set)):
+            raw_tags = [str(item).strip() for item in tags]
+        else:
+            raw_tags = [str(tags).strip()]
+
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for tag in raw_tags:
+            cleaned = str(tag or "").strip()
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                normalized.append(cleaned)
+        return " ".join(normalized)
+
+    def update_flashcard(
+        self,
+        card_id: str,
+        *,
+        deck_id: Optional[str] = None,
+        front: Optional[str] = None,
+        back: Optional[str] = None,
+        tags: Any = None,
+        card_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        notes: Optional[str] = None,
+        extra: Optional[str] = None,
+        expected_version: Optional[int] = None,
+    ) -> bool:
+        """Update local flashcard content/metadata with optional optimistic locking."""
+        try:
+            with self.transaction() as cursor:
+                row = cursor.execute(
+                    """
+                    SELECT deck_id, version, is_deleted, metadata
+                    FROM flashcards
+                    WHERE id = ?
+                    """,
+                    (card_id,),
+                ).fetchone()
+                if not row or int(row["is_deleted"]):
+                    return False
+
+                current_version = int(row["version"])
+                if expected_version is not None and current_version != expected_version:
+                    raise ConflictError("Version mismatch updating flashcard", entity="flashcards", entity_id=card_id)
+
+                source_deck_id = row["deck_id"]
+                updates: list[str] = []
+                params: list[Any] = []
+
+                if deck_id is not None:
+                    target_deck_id = str(deck_id).strip()
+                    if not target_deck_id:
+                        raise InputError("Flashcard deck cannot be blank")
+                    target_row = cursor.execute(
+                        "SELECT id FROM decks WHERE id = ? AND is_deleted = 0",
+                        (target_deck_id,),
+                    ).fetchone()
+                    if not target_row:
+                        raise InputError(f"Target deck {target_deck_id} not found")
+                    updates.append("deck_id = ?")
+                    params.append(target_deck_id)
+
+                if front is not None:
+                    normalized_front = str(front).strip()
+                    if not normalized_front:
+                        raise InputError("Flashcard front cannot be blank")
+                    updates.append("front = ?")
+                    params.append(normalized_front)
+
+                if back is not None:
+                    normalized_back = str(back).strip()
+                    if not normalized_back:
+                        raise InputError("Flashcard back cannot be blank")
+                    updates.append("back = ?")
+                    params.append(normalized_back)
+
+                if tags is not None:
+                    updates.append("tags = ?")
+                    params.append(self._normalize_flashcard_tags(tags))
+
+                if card_type is not None:
+                    normalized_type = str(card_type).strip() or "basic"
+                    updates.append("type = ?")
+                    params.append(normalized_type)
+
+                metadata_update_requested = metadata is not None or notes is not None or extra is not None
+                if metadata_update_requested:
+                    existing_metadata: dict[str, Any] = {}
+                    if row["metadata"]:
+                        with contextlib.suppress(json.JSONDecodeError, TypeError):
+                            parsed = json.loads(row["metadata"])
+                            if isinstance(parsed, dict):
+                                existing_metadata = parsed
+                    if metadata:
+                        existing_metadata.update(metadata)
+                    if notes is not None:
+                        existing_metadata["notes"] = notes
+                    if extra is not None:
+                        existing_metadata["extra"] = extra
+                    updates.append("metadata = ?")
+                    params.append(json.dumps(existing_metadata) if existing_metadata else None)
+
+                if not updates:
+                    return True
+
+                updates.extend(
+                    [
+                        "updated_at = CURRENT_TIMESTAMP",
+                        "version = version + 1",
+                        "last_modified_by = ?",
+                    ]
+                )
+                params.append(self.client_id)
+                params.append(card_id)
+                cursor.execute(
+                    f"UPDATE flashcards SET {', '.join(updates)} WHERE id = ? AND is_deleted = 0",
+                    tuple(params),
+                )
+
+                if deck_id is not None and source_deck_id != str(deck_id).strip():
+                    if source_deck_id:
+                        self._recount_deck_card_count(cursor, source_deck_id)
+                    self._recount_deck_card_count(cursor, str(deck_id).strip())
+                return bool(cursor.rowcount)
+        except sqlite3.Error as e:
+            raise CharactersRAGDBError(f"Failed to update flashcard: {e}") from e
     
     def update_flashcard_review(self, card_id: str, rating: int) -> None:
         """

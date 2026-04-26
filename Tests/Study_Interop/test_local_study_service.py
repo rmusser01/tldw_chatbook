@@ -42,6 +42,20 @@ class FakeDB:
         self.calls.append(("get_flashcard", card_id))
         return dict(self.flashcards[card_id])
 
+    def update_flashcard(self, card_id, **payload):
+        self.calls.append(("update_flashcard", card_id, payload))
+        stored_payload = {
+            key: (" ".join(value) if key == "tags" and isinstance(value, list) else value)
+            for key, value in payload.items()
+            if key != "expected_version" and value is not None
+        }
+        self.flashcards[card_id] = {
+            **self.flashcards[card_id],
+            **stored_payload,
+            "version": self.flashcards[card_id]["version"] + 1,
+        }
+        return True
+
     def get_due_flashcards(self, *, deck_id=None, limit=20):
         self.calls.append(("get_due_flashcards", deck_id, limit))
         return [{"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer"}]
@@ -130,6 +144,66 @@ def test_local_study_service_creates_flashcards_and_fetches_due_review_card():
     assert created["id"] == "card-local-1"
     assert candidate["card"]["id"] == "card-local-1"
     assert candidate["selection_reason"] == "due"
+
+
+def test_local_study_service_gets_and_sets_flashcard_tags():
+    db = FakeDB()
+    db.flashcards["card-local-1"]["tags"] = "science biology science"
+    service = LocalStudyService(db=db)
+
+    tags = service.get_flashcard_tags("card-local-1")
+    tagged = service.set_flashcard_tags("card-local-1", tags=["biology", "cells"])
+
+    assert tags == {"uuid": "card-local-1", "tags": ["science", "biology"]}
+    assert tagged["tags"] == "biology cells"
+    assert db.calls == [
+        ("get_flashcard", "card-local-1"),
+        ("update_flashcard", "card-local-1", {"tags": ["biology", "cells"]}),
+        ("get_flashcard", "card-local-1"),
+    ]
+
+
+def test_local_study_service_bulk_creates_and_updates_flashcards():
+    db = FakeDB()
+    service = LocalStudyService(db=db)
+
+    created = service.create_flashcards_bulk(
+        [
+            {
+                "deck_id": "deck-local-1",
+                "front": "Question",
+                "back": "Answer",
+                "tags": ["science"],
+            }
+        ]
+    )
+    updated = service.update_flashcards_bulk(
+        [
+            {
+                "uuid": "card-local-1",
+                "front": "Updated question",
+                "tags": ["science", "updated"],
+                "expected_version": 2,
+            }
+        ]
+    )
+
+    assert created["count"] == 1
+    assert created["items"][0]["id"] == "card-local-1"
+    assert updated["results"] == [
+        {
+            "uuid": "card-local-1",
+            "status": "updated",
+            "flashcard": {
+                "id": "card-local-1",
+                "deck_id": "deck-local-1",
+                "front": "Updated question",
+                "back": "Answer",
+                "tags": "science updated",
+                "version": 3,
+            },
+        }
+    ]
 
 
 def test_local_study_service_updates_review_and_returns_refetched_card():
