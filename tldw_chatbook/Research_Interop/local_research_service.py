@@ -15,8 +15,16 @@ from .research_normalizers import normalize_research_record
 class LocalResearchService:
     """Local-first persistence for research sessions, runs, events, and artifacts."""
 
-    def __init__(self, db_path: str | Path):
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        notification_dispatcher: Any | None = None,
+        notification_app: Any | None = None,
+    ):
         self.db_path = Path(db_path)
+        self.notification_dispatcher = notification_dispatcher
+        self.notification_app = notification_app
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
@@ -352,7 +360,9 @@ class LocalResearchService:
                 (*updates.values(), run_id),
             )
             self._record_event(conn, run_id, event)
-        return self._normalize_run(self._require_one("research_runs", run_id, "research run"))
+        updated = self._normalize_run(self._require_one("research_runs", run_id, "research run"))
+        self._dispatch_terminal_run_notification(updated)
+        return updated
 
     def pause_run(self, run_id: str) -> dict[str, Any]:
         return self._update_run_state(run_id, "paused", control_state="paused")
@@ -362,6 +372,58 @@ class LocalResearchService:
 
     def cancel_run(self, run_id: str) -> dict[str, Any]:
         return self._update_run_state(run_id, "cancelled", status="cancelled", control_state="cancelled")
+
+    def complete_run(self, run_id: str, *, progress_message: str | None = None) -> dict[str, Any]:
+        fields: dict[str, Any] = {
+            "status": "completed",
+            "control_state": "completed",
+            "phase": "completed",
+            "progress_percent": 100.0,
+        }
+        if progress_message is not None:
+            fields["progress_message"] = progress_message
+        return self._update_run_state(run_id, "completed", **fields)
+
+    def fail_run(self, run_id: str, *, error_msg: str | None = None) -> dict[str, Any]:
+        fields: dict[str, Any] = {
+            "status": "failed",
+            "control_state": "failed",
+            "phase": "failed",
+        }
+        if error_msg is not None:
+            fields["progress_message"] = error_msg
+        return self._update_run_state(run_id, "failed", **fields)
+
+    def _dispatch_terminal_run_notification(self, run: dict[str, Any]) -> None:
+        status = str(run.get("status") or "").strip()
+        if status not in {"completed", "failed", "cancelled"}:
+            return
+        dispatcher = self.notification_dispatcher
+        dispatch = getattr(dispatcher, "dispatch", None)
+        if not callable(dispatch):
+            return
+        severity = "information"
+        if status == "failed":
+            severity = "error"
+        elif status == "cancelled":
+            severity = "warning"
+        dispatch(
+            app=self.notification_app,
+            category="research",
+            title=f"Research run {status}",
+            message=str(run.get("query") or run.get("progress_message") or run.get("id") or "Research run updated"),
+            severity=severity,
+            source_backend="local",
+            source_entity_kind="research_run",
+            source_entity_id=str(run.get("id")),
+            payload={
+                "run_id": run.get("id"),
+                "session_id": run.get("session_id"),
+                "status": run.get("status"),
+                "control_state": run.get("control_state"),
+                "query": run.get("query"),
+            },
+        )
 
     def save_artifact(
         self,

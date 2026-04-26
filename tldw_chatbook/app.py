@@ -1793,7 +1793,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
-            self.local_research_service = LocalResearchService(get_research_db_path())
+            self.local_research_service = LocalResearchService(
+                get_research_db_path(),
+                notification_dispatcher=self.notification_dispatch_service,
+                notification_app=self,
+            )
         except Exception:
             logger.warning("Local research service unavailable during app wiring", exc_info=True)
             self.local_research_service = None

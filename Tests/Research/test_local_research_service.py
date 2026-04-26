@@ -3,6 +3,15 @@ import pytest
 from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
 
 
+class RecordingDispatcher:
+    def __init__(self):
+        self.calls = []
+
+    def dispatch(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"id": len(self.calls), **kwargs}
+
+
 def test_local_research_service_persists_sessions_runs_events_and_artifacts(tmp_path):
     service = LocalResearchService(tmp_path / "research.db")
 
@@ -57,3 +66,40 @@ def test_local_research_service_can_clear_nullable_session_fields(tmp_path):
 
     assert updated["notes"] is None
     assert updated["version"] == 2
+
+
+def test_local_research_service_dispatches_terminal_run_notifications(tmp_path):
+    dispatcher = RecordingDispatcher()
+    app = object()
+    service = LocalResearchService(
+        tmp_path / "research.db",
+        notification_dispatcher=dispatcher,
+        notification_app=app,
+    )
+    session = service.create_session(title="MCP governance", query="How should MCP approvals work?")
+    run = service.launch_run(session_id=session["id"])
+
+    completed = service.complete_run(run["id"], progress_message="Final report ready")
+
+    assert completed["status"] == "completed"
+    assert completed["control_state"] == "completed"
+    assert completed["progress_percent"] == 100.0
+    assert dispatcher.calls == [
+        {
+            "app": app,
+            "category": "research",
+            "title": "Research run completed",
+            "message": "How should MCP approvals work?",
+            "severity": "information",
+            "source_backend": "local",
+            "source_entity_kind": "research_run",
+            "source_entity_id": run["id"],
+            "payload": {
+                "run_id": run["id"],
+                "session_id": session["id"],
+                "status": "completed",
+                "control_state": "completed",
+                "query": "How should MCP approvals work?",
+            },
+        }
+    ]
