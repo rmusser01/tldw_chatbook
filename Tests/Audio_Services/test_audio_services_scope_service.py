@@ -264,6 +264,37 @@ async def test_audio_services_scope_service_blocks_denied_action_before_dispatch
     assert local.calls == []
 
 
+@pytest.mark.asyncio
+async def test_audio_services_scope_service_blocks_local_advanced_audio_before_dispatch():
+    local = FakeAudioService("local")
+    policy = FakePolicyEnforcer()
+    scope = AudioServicesScopeService(
+        local_service=local,
+        server_service=FakeAudioService("server"),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(NotImplementedError, match="Local advanced audio"):
+        await scope.create_audio_speech_job(mode="local", request_data={"input": "hello"})
+    with pytest.raises(NotImplementedError, match="Local advanced audio"):
+        await scope.submit_audio_job(mode="local", request_data={"url": "https://example.com/a.mp3"})
+    with pytest.raises(NotImplementedError, match="Local advanced audio"):
+        await scope.create_audio_transcription(mode="local", file_path="sample.wav")
+    with pytest.raises(NotImplementedError, match="Local advanced audio"):
+        await scope.upload_custom_voice(mode="local", file_path="voice.wav", name="Narrator")
+    with pytest.raises(NotImplementedError, match="Local advanced audio"):
+        await scope.parse_audiobook_source(mode="local", request_data={"source": {"raw_text": "Hello"}})
+
+    assert local.calls == []
+    assert policy.calls == [
+        "audio.speech.launch.local",
+        "audio.jobs.create.local",
+        "audio.transcriptions.launch.local",
+        "audio.voices.create.local",
+        "audiobooks.parse.launch.local",
+    ]
+
+
 def test_audio_services_scope_service_reports_known_unsupported_capabilities():
     scope = AudioServicesScopeService(local_service=None, server_service=None)
 

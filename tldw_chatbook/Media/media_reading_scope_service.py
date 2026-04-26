@@ -2009,6 +2009,8 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "delete"))
+        if normalized_mode == MediaReadingBackend.SERVER:
+            raise NotImplementedError("Server ingestion source deletion is not exposed by tldw_server.")
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.delete_ingestion_source(source_id))
 

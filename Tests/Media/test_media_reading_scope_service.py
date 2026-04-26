@@ -2780,7 +2780,7 @@ async def test_scope_service_server_ingestion_source_delete_enforces_policy_then
         await scope_service.delete_ingestion_source(mode="server", source_id=7)
 
     assert policy_enforcer.calls[-1:] == ["media.ingestion_sources.delete.server"]
-    assert server.calls[-1:] == [("delete_ingestion_source", 7)]
+    assert server.calls == []
 
 
 @pytest.mark.asyncio

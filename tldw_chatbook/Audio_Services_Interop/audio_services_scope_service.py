@@ -80,6 +80,11 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
     },
 ]
 
+_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE = (
+    "Local advanced audio jobs, STT/translation, tokenizer, custom voices, "
+    "and audiobook operations are not available through this source-aware seam yet."
+)
+
 
 class AudioServicesScopeService:
     """Route local and server audio services without merging histories or artifacts."""
@@ -137,9 +142,13 @@ class AudioServicesScopeService:
         action_id: str,
         method_name: str,
         kwargs: dict[str, Any] | None = None,
+        local_unavailable_message: str | None = None,
     ) -> tuple[AudioServicesBackend, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(action_id.rsplit(".", 1)[0] + f".{normalized_mode.value}")
+        normalized_action_id = action_id.rsplit(".", 1)[0] + f".{normalized_mode.value}"
+        self._enforce_policy(normalized_action_id)
+        if normalized_mode == AudioServicesBackend.LOCAL and local_unavailable_message:
+            raise NotImplementedError(local_unavailable_message)
         service = self._service_for_mode(normalized_mode)
         method = getattr(service, method_name, None)
         if not callable(method):
@@ -363,6 +372,7 @@ class AudioServicesScopeService:
             action_id="audio.speech.launch.local",
             method_name="create_audio_speech_job",
             kwargs={"request_data": request_data},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio_speech_job", result)
 
@@ -391,6 +401,7 @@ class AudioServicesScopeService:
             action_id="audio.speech_jobs.detail.local",
             method_name="list_audio_speech_job_artifacts",
             kwargs={"job_id": job_id},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._normalize_artifacts(
             normalized_mode,
@@ -410,6 +421,7 @@ class AudioServicesScopeService:
             action_id="audio.jobs.create.local",
             method_name="submit_audio_job",
             kwargs={"request_data": request_data},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio_job", result)
 
@@ -424,6 +436,7 @@ class AudioServicesScopeService:
             action_id="audio.jobs.detail.local",
             method_name="get_audio_job",
             kwargs={"job_id": job_id},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio_job", result, job_id)
 
@@ -436,6 +449,8 @@ class AudioServicesScopeService:
     ) -> AsyncGenerator[dict[str, Any], None]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("audio.jobs", "observe", normalized_mode))
+        if normalized_mode == AudioServicesBackend.LOCAL:
+            raise NotImplementedError(_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE)
         service = self._service_for_mode(normalized_mode)
         method = getattr(service, "stream_audio_job_progress", None)
         if not callable(method):
@@ -510,6 +525,7 @@ class AudioServicesScopeService:
             action_id="audio.transcriptions.launch.local",
             method_name="create_audio_transcription",
             kwargs={"file_path": file_path, "request_data": request_data},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio", result, "transcription")
 
@@ -525,6 +541,7 @@ class AudioServicesScopeService:
             action_id="audio.translations.launch.local",
             method_name="create_audio_translation",
             kwargs={"file_path": file_path, "request_data": request_data},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio", result, "translation")
 
@@ -539,6 +556,7 @@ class AudioServicesScopeService:
             action_id="audio.tokenizer.launch.local",
             method_name="encode_audio_tokenizer",
             kwargs={"request_data": request_data},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio", result, "tokenizer_encode")
 
@@ -553,6 +571,7 @@ class AudioServicesScopeService:
             action_id="audio.tokenizer.launch.local",
             method_name="decode_audio_tokenizer",
             kwargs={"request_data": request_data},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio", result, "tokenizer_decode")
 
@@ -577,6 +596,7 @@ class AudioServicesScopeService:
                 "provider": provider,
                 "reference_text": reference_text,
             },
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio_voice", result)
 
@@ -591,6 +611,7 @@ class AudioServicesScopeService:
             action_id="audio.voices.launch.local",
             method_name="encode_custom_voice_reference",
             kwargs={"request_data": request_data},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio_voice", result)
 
@@ -599,6 +620,7 @@ class AudioServicesScopeService:
             mode=mode,
             action_id="audio.voices.list.local",
             method_name="list_custom_voices",
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._normalize_voice_list(normalized_mode, result)
 
@@ -613,6 +635,7 @@ class AudioServicesScopeService:
             action_id="audio.voices.detail.local",
             method_name="get_custom_voice",
             kwargs={"voice_id": voice_id},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio_voice", result, voice_id)
 
@@ -628,6 +651,7 @@ class AudioServicesScopeService:
             action_id="audio.voices.preview.local",
             method_name="preview_custom_voice",
             kwargs={"voice_id": voice_id, "text": text},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio_voice_preview", result, voice_id)
 
@@ -642,6 +666,7 @@ class AudioServicesScopeService:
             action_id="audio.voices.delete.local",
             method_name="delete_custom_voice",
             kwargs={"voice_id": voice_id},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audio_voice", result, voice_id)
 
@@ -656,6 +681,7 @@ class AudioServicesScopeService:
             action_id="audiobooks.parse.launch.local",
             method_name="parse_audiobook_source",
             kwargs={"request_data": request_data},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audiobook_parse", result, result.get("project_id"))
 
@@ -670,6 +696,7 @@ class AudioServicesScopeService:
             action_id="audiobooks.jobs.create.local",
             method_name="create_audiobook_job",
             kwargs={"request_data": request_data},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audiobook_job", result)
 
@@ -684,6 +711,7 @@ class AudioServicesScopeService:
             action_id="audiobooks.jobs.detail.local",
             method_name="get_audiobook_job_status",
             kwargs={"job_id": job_id},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audiobook_job", result, job_id)
 
@@ -698,6 +726,7 @@ class AudioServicesScopeService:
             action_id="audiobooks.artifacts.list.local",
             method_name="list_audiobook_job_artifacts",
             kwargs={"job_id": job_id},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._normalize_artifacts(
             normalized_mode,
@@ -718,6 +747,7 @@ class AudioServicesScopeService:
             action_id="audiobooks.projects.list.local",
             method_name="list_audiobook_projects",
             kwargs={"limit": limit, "offset": offset},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._normalize_audiobook_projects(normalized_mode, result)
 
@@ -732,6 +762,7 @@ class AudioServicesScopeService:
             action_id="audiobooks.projects.detail.local",
             method_name="get_audiobook_project",
             kwargs={"project_ref": project_ref},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._normalize_audiobook_project_detail(normalized_mode, result)
 
@@ -748,6 +779,7 @@ class AudioServicesScopeService:
             action_id="audiobooks.chapters.list.local",
             method_name="list_audiobook_project_chapters",
             kwargs={"project_ref": project_ref, "limit": limit, "offset": offset},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._normalize_audiobook_chapters(normalized_mode, result)
 
@@ -764,6 +796,7 @@ class AudioServicesScopeService:
             action_id="audiobooks.artifacts.list.local",
             method_name="list_audiobook_project_artifacts",
             kwargs={"project_ref": project_ref, "limit": limit, "offset": offset},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._normalize_artifacts(
             normalized_mode,
@@ -783,6 +816,7 @@ class AudioServicesScopeService:
             action_id="audiobooks.voice_profiles.create.local",
             method_name="create_audiobook_voice_profile",
             kwargs={"request_data": request_data},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audiobook_voice_profile", result)
 
@@ -795,6 +829,7 @@ class AudioServicesScopeService:
             mode=mode,
             action_id="audiobooks.voice_profiles.list.local",
             method_name="list_audiobook_voice_profiles",
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._normalize_audiobook_voice_profiles(normalized_mode, result)
 
@@ -809,6 +844,7 @@ class AudioServicesScopeService:
             action_id="audiobooks.voice_profiles.delete.local",
             method_name="delete_audiobook_voice_profile",
             kwargs={"profile_id": profile_id},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audiobook_voice_profile", result, profile_id)
 
@@ -823,5 +859,6 @@ class AudioServicesScopeService:
             action_id="audiobooks.subtitles.export.local",
             method_name="export_audiobook_subtitles",
             kwargs={"request_data": request_data},
+            local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
         return self._with_record_id(normalized_mode, "audiobook_subtitles", result, "export")
