@@ -440,10 +440,10 @@ AUDITED_CAPABILITY_SEEDS = (
         "collections_feed_subscriptions",
         "Collections: Feed Subscriptions",
         "collections_feeds",
-        sources=REMOTE_ONLY_SOURCES,
+        sources=SEPARATED_SOURCES,
         resources=(
             _resource("collections.feeds", actions=CRUD_ACTIONS),
-            _resource("collections.feeds.websub", actions=(DETAIL, LAUNCH, DELETE)),
+            _resource("collections.feeds.websub", actions=(DETAIL, LAUNCH, DELETE), sources=(SERVER_SOURCE,)),
         ),
     ),
     _capability(

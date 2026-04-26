@@ -46,9 +46,22 @@ class LocalWatchlistsService:
     def _db(self) -> SubscriptionsDB:
         return self.db_factory()
 
-    async def list_sources(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
-        rows = self._db().get_all_subscriptions(include_inactive=True, limit=limit, offset=offset)
-        return [normalize_local_subscription_row(row) for row in rows]
+    async def list_sources(self, *, limit: int = 100, offset: int = 0, q: str | None = None) -> list[dict[str, Any]]:
+        normalized_limit = int(limit)
+        normalized_offset = int(offset)
+        fetch_limit = normalized_limit if not q else max(normalized_limit + normalized_offset, 1000)
+        rows = self._db().get_all_subscriptions(include_inactive=True, limit=fetch_limit, offset=0 if q else normalized_offset)
+        items = [normalize_local_subscription_row(row) for row in rows]
+        if not q:
+            return items
+        needle = str(q).strip().lower()
+        filtered = [
+            item
+            for item in items
+            if needle in str(item.get("title") or "").lower()
+            or needle in str(item.get("url") or "").lower()
+        ]
+        return filtered[normalized_offset : normalized_offset + normalized_limit]
 
     async def get_source(self, source_id: Any) -> dict[str, Any]:
         row = self._db().get_subscription(int(source_id))

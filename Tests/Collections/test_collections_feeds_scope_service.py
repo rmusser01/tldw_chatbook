@@ -41,6 +41,83 @@ class FakeCollectionsFeedsService:
         return {"source_id": feed_id, "state": "unsubscribed"}
 
 
+class FakeLocalCollectionsFeedsService:
+    def __init__(self):
+        self.calls = []
+
+    async def list_sources(self, **kwargs):
+        self.calls.append(("list_sources", kwargs))
+        return [
+            {
+                "id": "local:subscription:7",
+                "backend": "local",
+                "entity_kind": "subscription",
+                "source_id": 7,
+                "title": "Local Feed",
+                "url": "https://local.example/feed.xml",
+                "source_type": "rss",
+                "active": True,
+                "tags": ["local"],
+                "settings": {"poll": "manual"},
+            }
+        ]
+
+    async def get_source(self, source_id):
+        self.calls.append(("get_source", source_id))
+        return {
+            "id": f"local:subscription:{source_id}",
+            "backend": "local",
+            "entity_kind": "subscription",
+            "source_id": int(source_id),
+            "title": "Local Feed",
+            "url": "https://local.example/feed.xml",
+            "source_type": "rss",
+            "active": True,
+            "tags": ["local"],
+            "settings": {},
+        }
+
+    async def create_source(self, payload):
+        self.calls.append(("create_source", dict(payload)))
+        return {
+            "id": "local:subscription:8",
+            "backend": "local",
+            "entity_kind": "subscription",
+            "source_id": 8,
+            "title": payload["name"],
+            "url": payload["url"],
+            "source_type": payload["source_type"],
+            "active": payload["active"],
+            "tags": payload["tags"],
+            "settings": {},
+        }
+
+    async def update_source(self, source_id, payload):
+        self.calls.append(("update_source", source_id, dict(payload)))
+        return {
+            "id": f"local:subscription:{source_id}",
+            "backend": "local",
+            "entity_kind": "subscription",
+            "source_id": int(source_id),
+            "title": payload.get("name", "Local Feed"),
+            "url": payload.get("url", "https://local.example/feed.xml"),
+            "source_type": payload.get("source_type", "rss"),
+            "active": payload.get("active", True),
+            "tags": payload.get("tags", []),
+            "settings": {},
+        }
+
+    async def delete_source(self, source_id):
+        self.calls.append(("delete_source", source_id))
+        return {
+            "success": True,
+            "id": f"local:subscription:{source_id}",
+            "backend": "local",
+            "entity_kind": "subscription",
+            "source_id": int(source_id),
+        }
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
         self.denied_reason = denied_reason
@@ -93,14 +170,73 @@ async def test_collections_feeds_scope_service_routes_server_crud_and_normalizes
 
 
 @pytest.mark.asyncio
-async def test_collections_feeds_scope_service_honestly_rejects_local_mode_as_remote_only():
+async def test_collections_feeds_scope_service_requires_local_backend_for_local_mode():
     server = FakeCollectionsFeedsService()
     scope = CollectionsFeedsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
 
-    with pytest.raises(ValueError, match="Collections feed subscriptions are server-only"):
+    with pytest.raises(ValueError, match="Local collections feeds backend is unavailable"):
         await scope.list_feeds(mode="local")
 
     assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_collections_feeds_scope_service_routes_local_crud_through_local_subscriptions():
+    local = FakeLocalCollectionsFeedsService()
+    server = FakeCollectionsFeedsService()
+    policy = FakePolicyEnforcer()
+    scope = CollectionsFeedsScopeService(
+        local_service=local,
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    listed = await scope.list_feeds(mode="local", q="local", page=1, size=5)
+    created = await scope.create_feed(
+        mode="local",
+        url="https://local.example/new.xml",
+        name="New Local",
+        tags=["local"],
+        active=False,
+        settings={"source_type": "atom"},
+    )
+    fetched = await scope.get_feed("local:collections_feed:7", mode="local")
+    updated = await scope.update_feed("local:collections_feed:7", mode="local", name="Renamed")
+    deleted = await scope.delete_feed("local:collections_feed:7", mode="local")
+
+    assert listed["items"][0]["record_id"] == "local:collections_feed:7"
+    assert listed["items"][0]["name"] == "Local Feed"
+    assert listed["total"] == 1
+    assert created["record_id"] == "local:collections_feed:8"
+    assert created["source_type"] == "atom"
+    assert fetched["record_id"] == "local:collections_feed:7"
+    assert updated["name"] == "Renamed"
+    assert deleted["record_id"] == "local:collections_feed:7"
+    assert server.calls == []
+    assert local.calls == [
+        ("list_sources", {"limit": 5, "offset": 0, "q": "local"}),
+        (
+            "create_source",
+            {
+                "url": "https://local.example/new.xml",
+                "name": "New Local",
+                "tags": ["local"],
+                "active": False,
+                "settings": {"source_type": "atom"},
+                "source_type": "atom",
+            },
+        ),
+        ("get_source", "7"),
+        ("update_source", "7", {"name": "Renamed"}),
+        ("delete_source", "7"),
+    ]
+    assert policy.calls == [
+        "collections.feeds.list.local",
+        "collections.feeds.create.local",
+        "collections.feeds.detail.local",
+        "collections.feeds.update.local",
+        "collections.feeds.delete.local",
+    ]
 
 
 @pytest.mark.asyncio
@@ -144,17 +280,28 @@ async def test_collections_feeds_scope_service_blocks_denied_server_action_befor
     assert server.calls == []
 
 
+@pytest.mark.asyncio
+async def test_collections_feeds_scope_service_rejects_local_websub_as_server_only():
+    local = FakeLocalCollectionsFeedsService()
+    scope = CollectionsFeedsScopeService(local_service=local, server_service=FakeCollectionsFeedsService())
+
+    with pytest.raises(ValueError, match="WebSub subscriptions require the server"):
+        await scope.subscribe_feed_websub(7, mode="local")
+
+    assert local.calls == []
+
+
 def test_collections_feeds_scope_service_reports_known_unsupported_capabilities():
     scope = CollectionsFeedsScopeService(server_service=FakeCollectionsFeedsService())
 
     assert scope.list_unsupported_capabilities(mode="server") == []
     assert scope.list_unsupported_capabilities(mode="local") == [
         {
-            "operation_id": "collections.feeds.remote_only.local",
+            "operation_id": "collections.feeds.websub.local",
             "source": "local",
             "supported": False,
-            "reason_code": "remote_only_surface",
-            "user_message": "Collections feed subscriptions are unavailable in local/offline mode.",
+            "reason_code": "server_authority_required",
+            "user_message": "WebSub subscriptions require the server because local Chatbook has no public callback authority.",
             "affected_action_ids": [],
         }
     ]

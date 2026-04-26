@@ -118,6 +118,30 @@ async def test_local_watchlists_service_persists_alert_rule_crud(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_local_watchlists_service_filters_sources_by_query(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    await service.create_source(
+        {
+            "name": "Python Weekly",
+            "url": "https://example.com/python.xml",
+            "source_type": "rss",
+        }
+    )
+    await service.create_source(
+        {
+            "name": "Cooking Notes",
+            "url": "https://example.com/cooking.xml",
+            "source_type": "rss",
+        }
+    )
+
+    results = await service.list_sources(q="python", limit=10, offset=0)
+
+    assert [item["title"] for item in results] == ["Python Weekly"]
+
+
+@pytest.mark.asyncio
 async def test_local_watchlists_service_evaluates_completed_run_alerts_into_notifications(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     notification_store = ClientNotificationsDB(tmp_path / "notifications.db")

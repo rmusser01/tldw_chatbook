@@ -1842,6 +1842,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 policy_enforcer=self.service_policy_enforcer,
             )
         self.collections_feeds_scope_service = CollectionsFeedsScopeService(
+            local_service=self.local_watchlists_service,
             server_service=self.server_collections_feeds_service,
             policy_enforcer=self.service_policy_enforcer,
         )

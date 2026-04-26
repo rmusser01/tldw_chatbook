@@ -160,6 +160,7 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.translation_scope_service, TranslationScopeService)
     assert isinstance(app.server_collections_feeds_service, ServerCollectionsFeedsService)
     assert isinstance(app.collections_feeds_scope_service, CollectionsFeedsScopeService)
+    assert app.collections_feeds_scope_service.local_service is app.local_watchlists_service
     assert isinstance(app.server_connectors_service, ServerConnectorsService)
     assert isinstance(app.connectors_scope_service, ConnectorsScopeService)
     assert isinstance(app.server_skills_service, ServerSkillsService)

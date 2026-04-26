@@ -93,6 +93,7 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "collections_feed_subscriptions": {
         "expected_domain_ids": {"collections_feeds"},
         "expected_action_kinds_by_source": {
+            "local": FULL_CRUD,
             "server": FULL_CRUD,
         },
     },
@@ -462,10 +463,15 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         collections.reading_list.update.server
     """),
     "collections_feed_subscriptions": _action_ids("""
+        collections.feeds.create.local
         collections.feeds.create.server
+        collections.feeds.delete.local
         collections.feeds.delete.server
+        collections.feeds.detail.local
         collections.feeds.detail.server
+        collections.feeds.list.local
         collections.feeds.list.server
+        collections.feeds.update.local
         collections.feeds.update.server
         collections.feeds.websub.delete.server
         collections.feeds.websub.detail.server
