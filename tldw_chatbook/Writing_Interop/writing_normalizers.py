@@ -13,6 +13,17 @@ _KIND_TO_RECORD_TYPE = {
     "chapter": "writing_chapter",
     "scene": "writing_scene",
     "version": "writing_version",
+    "character": "writing_character",
+    "relationship": "writing_relationship",
+    "world_info": "writing_world_info",
+    "plot_line": "writing_plot_line",
+    "plot_event": "writing_plot_event",
+    "plot_hole": "writing_plot_hole",
+    "citation": "writing_citation",
+    "scene_character_link": "writing_scene_character_link",
+    "scene_world_info_link": "writing_scene_world_info_link",
+    "research_result": "writing_research_result",
+    "analysis": "writing_analysis",
 }
 
 
@@ -21,7 +32,7 @@ def normalize_writing_record(source: str, kind: str, record: Mapping[str, Any]) 
 
     payload = dict(record)
     record_type = _KIND_TO_RECORD_TYPE[kind]
-    record_id = str(payload.get("id"))
+    record_id = _record_id_for_kind(kind, payload)
     payload["source"] = source
     payload["record_type"] = record_type
     payload["record_id"] = f"{source}:{record_type}:{record_id}"
@@ -31,6 +42,22 @@ def normalize_writing_record(source: str, kind: str, record: Mapping[str, Any]) 
     if kind == "scene":
         payload["content_markdown"], payload["content_markdown_fidelity"] = extract_markdown_from_server_scene(payload)
     return payload
+
+
+def _record_id_for_kind(kind: str, payload: Mapping[str, Any]) -> str:
+    """Derive stable IDs for server records that do not have one native `id` field."""
+    if kind == "scene_character_link":
+        return f"{payload.get('scene_id')}:{payload.get('character_id')}"
+    if kind == "scene_world_info_link":
+        return f"{payload.get('scene_id')}:{payload.get('world_info_id')}"
+    if kind == "research_result":
+        return str(
+            payload.get("source_id")
+            or payload.get("title")
+            or payload.get("id")
+            or "result"
+        )
+    return str(payload.get("id"))
 
 
 def normalize_writing_structure(source: str, payload: Mapping[str, Any]) -> dict[str, Any]:

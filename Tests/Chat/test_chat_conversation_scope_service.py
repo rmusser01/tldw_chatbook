@@ -79,6 +79,26 @@ class FakeServerConversationService:
         self.calls.append(("delete_conversation", (conversation_id, expected_version), {}))
         return True
 
+    async def start_loop(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("start_loop", (), kwargs))
+        return {"run_id": "run_123"}
+
+    async def list_loop_events(self, run_id: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("list_loop_events", (run_id,), kwargs))
+        return {"run_id": run_id, "events": []}
+
+    async def approve_loop_call(self, run_id: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("approve_loop_call", (run_id,), kwargs))
+        return {"ok": True}
+
+    async def reject_loop_call(self, run_id: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("reject_loop_call", (run_id,), kwargs))
+        return {"ok": True}
+
+    async def cancel_loop(self, run_id: str) -> dict[str, Any]:
+        self.calls.append(("cancel_loop", (run_id,), {}))
+        return {"ok": True}
+
 
 @dataclass
 class RecordingPolicy:
@@ -108,6 +128,46 @@ async def test_scope_service_routes_local_and_server_conversation_reads_with_pol
         ("list_conversations", (), {"query": "beta", "scope_type": "workspace", "workspace_id": "ws-1"}),
         ("get_conversation_tree", ("conv-1",), {"limit": 10, "offset": 2, "max_depth": 3}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_chat_loop_and_rejects_local_loop():
+    server = FakeServerConversationService()
+    policy = RecordingPolicy()
+    service = ChatConversationScopeService(
+        local_service=FakeConversationService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    started = await service.start_loop(mode="server", messages=[{"role": "user", "content": "Hi"}])
+    events = await service.list_loop_events("run_123", mode="server", after_seq=3)
+    approved = await service.approve_loop_call("run_123", mode="server", approval_id="approval-1")
+    rejected = await service.reject_loop_call("run_123", mode="server", approval_id="approval-2")
+    cancelled = await service.cancel_loop("run_123", mode="server")
+
+    assert started["run_id"] == "run_123"
+    assert events["events"] == []
+    assert approved["ok"] is True
+    assert rejected["ok"] is True
+    assert cancelled["ok"] is True
+    assert policy.calls == [
+        "chat.loop.launch.server",
+        "chat.loop.observe.server",
+        "chat.loop.approve.server",
+        "chat.loop.approve.server",
+        "chat.loop.cancel.server",
+    ]
+    assert server.calls == [
+        ("start_loop", (), {"messages": [{"role": "user", "content": "Hi"}]}),
+        ("list_loop_events", ("run_123",), {"after_seq": 3}),
+        ("approve_loop_call", ("run_123",), {"approval_id": "approval-1"}),
+        ("reject_loop_call", ("run_123",), {"approval_id": "approval-2"}),
+        ("cancel_loop", ("run_123",), {}),
+    ]
+
+    with pytest.raises(NotImplementedError, match="Local chat loop runs are not implemented"):
+        await service.start_loop(mode="local", messages=[{"role": "user", "content": "Hi"}])
 
 
 @pytest.mark.asyncio
@@ -202,6 +262,19 @@ def test_scope_service_reports_known_chat_conversation_capability_gaps():
             "reason_code": "local_contract_missing",
             "user_message": "Local chat history does not expose server-style RAG context or citation adjuncts yet.",
             "affected_action_ids": ["chat.detail.local"],
+        },
+        {
+            "operation_id": "chat.loop.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local chat loop run control is not implemented in Chatbook yet.",
+            "affected_action_ids": [
+                "chat.loop.launch.local",
+                "chat.loop.observe.local",
+                "chat.loop.approve.local",
+                "chat.loop.cancel.local",
+            ],
         }
     ]
     assert server_report == [

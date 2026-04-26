@@ -5,21 +5,49 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tldw_chatbook.tldw_api import (
+    ManuscriptAnalysisListResponse,
+    ManuscriptAnalysisRequest,
+    ManuscriptAnalysisResponse,
+    ManuscriptCharacterCreate,
+    ManuscriptCharacterResponse,
+    ManuscriptCharacterUpdate,
     ManuscriptChapterCreate,
     ManuscriptChapterResponse,
     ManuscriptChapterUpdate,
+    ManuscriptCitationCreate,
+    ManuscriptCitationResponse,
     ManuscriptPartCreate,
     ManuscriptPartResponse,
+    ManuscriptPlotEventCreate,
+    ManuscriptPlotEventResponse,
+    ManuscriptPlotEventUpdate,
+    ManuscriptPlotHoleCreate,
+    ManuscriptPlotHoleResponse,
+    ManuscriptPlotHoleUpdate,
+    ManuscriptPlotLineCreate,
+    ManuscriptPlotLineResponse,
+    ManuscriptPlotLineUpdate,
     ManuscriptProjectCreate,
     ManuscriptProjectListResponse,
     ManuscriptProjectResponse,
     ManuscriptProjectUpdate,
+    ManuscriptRelationshipCreate,
+    ManuscriptRelationshipResponse,
+    ManuscriptResearchRequest,
+    ManuscriptResearchResponse,
     ManuscriptSceneCreate,
     ManuscriptSceneResponse,
     ManuscriptSceneUpdate,
     ManuscriptStructureResponse,
+    ManuscriptWorldInfoCreate,
+    ManuscriptWorldInfoResponse,
+    ManuscriptWorldInfoUpdate,
     ReorderItem,
     ReorderRequest,
+    SceneCharacterLink,
+    SceneCharacterLinkResponse,
+    SceneWorldInfoLink,
+    SceneWorldInfoLinkResponse,
     TLDWAPIClient,
 )
 
@@ -102,6 +130,178 @@ def _scene_payload(**overrides):
         "last_modified": "2026-04-21T00:01:00Z",
         "deleted": False,
         "client_id": "server-client",
+        "version": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _character_payload(**overrides):
+    payload = {
+        "id": "character-1",
+        "project_id": "project-1",
+        "name": "Ada",
+        "role": "protagonist",
+        "cast_group": "heroes",
+        "full_name": "Ada Lovelace",
+        "age": None,
+        "gender": None,
+        "appearance": None,
+        "personality": None,
+        "backstory": None,
+        "motivation": None,
+        "arc_summary": None,
+        "notes": None,
+        "custom_fields": {},
+        "sort_order": 0.0,
+        "created_at": "2026-04-21T00:00:00Z",
+        "last_modified": "2026-04-21T00:01:00Z",
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _world_info_payload(**overrides):
+    payload = {
+        "id": "world-1",
+        "project_id": "project-1",
+        "kind": "location",
+        "name": "Capital",
+        "description": "City",
+        "parent_id": None,
+        "properties": {},
+        "tags": [],
+        "sort_order": 0.0,
+        "created_at": "2026-04-21T00:00:00Z",
+        "last_modified": "2026-04-21T00:01:00Z",
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _plot_line_payload(**overrides):
+    payload = {
+        "id": "plot-line-1",
+        "project_id": "project-1",
+        "title": "Main Plot",
+        "description": None,
+        "status": "active",
+        "color": None,
+        "sort_order": 0.0,
+        "created_at": "2026-04-21T00:00:00Z",
+        "last_modified": "2026-04-21T00:01:00Z",
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _plot_event_payload(**overrides):
+    payload = {
+        "id": "plot-event-1",
+        "project_id": "project-1",
+        "plot_line_id": "plot-line-1",
+        "title": "Inciting Incident",
+        "description": None,
+        "scene_id": "scene-1",
+        "chapter_id": "chapter-1",
+        "event_type": "plot",
+        "sort_order": 0.0,
+        "created_at": "2026-04-21T00:00:00Z",
+        "last_modified": "2026-04-21T00:01:00Z",
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _plot_hole_payload(**overrides):
+    payload = {
+        "id": "plot-hole-1",
+        "project_id": "project-1",
+        "title": "Continuity Issue",
+        "description": None,
+        "severity": "medium",
+        "status": "open",
+        "resolution": None,
+        "scene_id": "scene-1",
+        "chapter_id": "chapter-1",
+        "plot_line_id": "plot-line-1",
+        "detected_by": "manual",
+        "created_at": "2026-04-21T00:00:00Z",
+        "last_modified": "2026-04-21T00:01:00Z",
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _relationship_payload(**overrides):
+    payload = {
+        "id": "relationship-1",
+        "project_id": "project-1",
+        "from_character_id": "character-1",
+        "to_character_id": "character-2",
+        "relationship_type": "mentor",
+        "description": None,
+        "bidirectional": True,
+        "created_at": "2026-04-21T00:00:00Z",
+        "last_modified": "2026-04-21T00:01:00Z",
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _citation_payload(**overrides):
+    payload = {
+        "id": "citation-1",
+        "project_id": "project-1",
+        "scene_id": "scene-1",
+        "source_type": "manual",
+        "source_id": None,
+        "source_title": "Reference",
+        "excerpt": "Quote",
+        "query_used": None,
+        "anchor_offset": None,
+        "created_at": "2026-04-21T00:00:00Z",
+        "last_modified": "2026-04-21T00:01:00Z",
+        "deleted": False,
+        "client_id": "server-client",
+        "version": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _analysis_payload(**overrides):
+    payload = {
+        "id": "analysis-1",
+        "project_id": "project-1",
+        "scope_type": "scene",
+        "scope_id": "scene-1",
+        "analysis_type": "pacing",
+        "result": {"pacing": 0.8},
+        "score": 0.8,
+        "stale": False,
+        "provider": None,
+        "model": None,
+        "created_at": "2026-04-21T00:00:00Z",
+        "last_modified": "2026-04-21T00:01:00Z",
         "version": 1,
     }
     payload.update(overrides)
@@ -264,3 +464,258 @@ async def test_writing_hierarchy_routes_wire_and_return_typed_models(monkeypatch
     assert isinstance(structure, ManuscriptStructureResponse)
     assert reordered is True
     assert deleted_scene is True
+
+
+@pytest.mark.asyncio
+async def test_writing_auxiliary_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            _character_payload(),
+            [_character_payload()],
+            _character_payload(),
+            _character_payload(name="Ada v2", version=2),
+            None,
+            _relationship_payload(),
+            [_relationship_payload()],
+            None,
+            _world_info_payload(),
+            [_world_info_payload()],
+            _world_info_payload(),
+            _world_info_payload(name="Capital v2", version=2),
+            None,
+            _plot_line_payload(),
+            [_plot_line_payload()],
+            _plot_line_payload(title="Main Plot v2", version=2),
+            None,
+            _plot_event_payload(),
+            [_plot_event_payload()],
+            _plot_event_payload(title="Incident v2", version=2),
+            None,
+            _plot_hole_payload(),
+            [_plot_hole_payload()],
+            _plot_hole_payload(status="resolved", version=2),
+            None,
+            [{"scene_id": "scene-1", "character_id": "character-1", "is_pov": True, "name": "Ada", "role": "protagonist"}],
+            [{"scene_id": "scene-1", "character_id": "character-1", "is_pov": True, "name": "Ada", "role": "protagonist"}],
+            None,
+            [{"scene_id": "scene-1", "world_info_id": "world-1", "name": "Capital", "kind": "location"}],
+            [{"scene_id": "scene-1", "world_info_id": "world-1", "name": "Capital", "kind": "location"}],
+            None,
+            _citation_payload(),
+            [_citation_payload()],
+            None,
+            {"query": "airships", "results": [{"source_id": "media-1", "title": "Source", "excerpt": "Text"}]},
+            [_analysis_payload()],
+            [_analysis_payload(scope_type="chapter", scope_id="chapter-1")],
+            [_analysis_payload(scope_type="project", scope_id="project-1", analysis_type="plot_holes", score=None)],
+            [_analysis_payload(scope_type="project", scope_id="project-1", analysis_type="consistency")],
+            {"analyses": [_analysis_payload()], "total": 1},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    character = await client.create_manuscript_character(
+        "project-1",
+        ManuscriptCharacterCreate(name="Ada", role="protagonist", cast_group="heroes"),
+    )
+    characters = await client.list_manuscript_characters("project-1", role="protagonist", cast_group="heroes")
+    fetched_character = await client.get_manuscript_character("character-1")
+    updated_character = await client.update_manuscript_character(
+        "character-1",
+        ManuscriptCharacterUpdate(name="Ada v2"),
+        expected_version=1,
+    )
+    deleted_character = await client.delete_manuscript_character("character-1", expected_version=2)
+    relationship = await client.create_manuscript_relationship(
+        "project-1",
+        ManuscriptRelationshipCreate(
+            from_character_id="character-1",
+            to_character_id="character-2",
+            relationship_type="mentor",
+        ),
+    )
+    relationships = await client.list_manuscript_relationships("project-1")
+    deleted_relationship = await client.delete_manuscript_relationship("relationship-1", expected_version=1)
+    world_info = await client.create_manuscript_world_info(
+        "project-1",
+        ManuscriptWorldInfoCreate(kind="location", name="Capital"),
+    )
+    world_infos = await client.list_manuscript_world_info("project-1", kind="location")
+    fetched_world_info = await client.get_manuscript_world_info("world-1")
+    updated_world_info = await client.update_manuscript_world_info(
+        "world-1",
+        ManuscriptWorldInfoUpdate(name="Capital v2"),
+        expected_version=1,
+    )
+    deleted_world_info = await client.delete_manuscript_world_info("world-1", expected_version=2)
+    plot_line = await client.create_manuscript_plot_line(
+        "project-1",
+        ManuscriptPlotLineCreate(title="Main Plot"),
+    )
+    plot_lines = await client.list_manuscript_plot_lines("project-1")
+    updated_plot_line = await client.update_manuscript_plot_line(
+        "plot-line-1",
+        ManuscriptPlotLineUpdate(title="Main Plot v2"),
+        expected_version=1,
+    )
+    deleted_plot_line = await client.delete_manuscript_plot_line("plot-line-1", expected_version=2)
+    plot_event = await client.create_manuscript_plot_event(
+        "plot-line-1",
+        ManuscriptPlotEventCreate(title="Inciting Incident", scene_id="scene-1", chapter_id="chapter-1"),
+    )
+    plot_events = await client.list_manuscript_plot_events("plot-line-1")
+    updated_plot_event = await client.update_manuscript_plot_event(
+        "plot-event-1",
+        ManuscriptPlotEventUpdate(title="Incident v2"),
+        expected_version=1,
+    )
+    deleted_plot_event = await client.delete_manuscript_plot_event("plot-event-1", expected_version=2)
+    plot_hole = await client.create_manuscript_plot_hole(
+        "project-1",
+        ManuscriptPlotHoleCreate(title="Continuity Issue", scene_id="scene-1", chapter_id="chapter-1"),
+    )
+    plot_holes = await client.list_manuscript_plot_holes("project-1", status="open")
+    updated_plot_hole = await client.update_manuscript_plot_hole(
+        "plot-hole-1",
+        ManuscriptPlotHoleUpdate(status="resolved"),
+        expected_version=1,
+    )
+    deleted_plot_hole = await client.delete_manuscript_plot_hole("plot-hole-1", expected_version=2)
+    linked_characters = await client.link_manuscript_scene_character(
+        "scene-1",
+        SceneCharacterLink(character_id="character-1", is_pov=True),
+    )
+    scene_characters = await client.list_manuscript_scene_characters("scene-1")
+    unlinked_character = await client.unlink_manuscript_scene_character("scene-1", "character-1")
+    linked_world_info = await client.link_manuscript_scene_world_info(
+        "scene-1",
+        SceneWorldInfoLink(world_info_id="world-1"),
+    )
+    scene_world_info = await client.list_manuscript_scene_world_info("scene-1")
+    unlinked_world_info = await client.unlink_manuscript_scene_world_info("scene-1", "world-1")
+    citation = await client.create_manuscript_citation(
+        "scene-1",
+        ManuscriptCitationCreate(source_type="manual", source_title="Reference", excerpt="Quote"),
+    )
+    citations = await client.list_manuscript_citations("scene-1")
+    deleted_citation = await client.delete_manuscript_citation("citation-1", expected_version=1)
+    research = await client.research_manuscript_scene(
+        "scene-1",
+        ManuscriptResearchRequest(query="airships", top_k=3),
+    )
+    scene_analyses = await client.analyze_manuscript_scene(
+        "scene-1",
+        ManuscriptAnalysisRequest(analysis_types=["pacing"]),
+    )
+    chapter_analyses = await client.analyze_manuscript_chapter(
+        "chapter-1",
+        ManuscriptAnalysisRequest(analysis_types=["pacing"]),
+    )
+    plot_hole_analyses = await client.analyze_manuscript_project_plot_holes(
+        "project-1",
+        ManuscriptAnalysisRequest(analysis_types=["plot_holes"]),
+    )
+    consistency_analyses = await client.analyze_manuscript_project_consistency(
+        "project-1",
+        ManuscriptAnalysisRequest(analysis_types=["consistency"]),
+    )
+    analyses = await client.list_manuscript_analyses(
+        "project-1",
+        scope_type="scene",
+        analysis_type="pacing",
+        include_stale=True,
+    )
+
+    expected_routes = [
+        ("POST", "/api/v1/writing/manuscripts/projects/project-1/characters"),
+        ("GET", "/api/v1/writing/manuscripts/projects/project-1/characters"),
+        ("GET", "/api/v1/writing/manuscripts/characters/character-1"),
+        ("PATCH", "/api/v1/writing/manuscripts/characters/character-1"),
+        ("DELETE", "/api/v1/writing/manuscripts/characters/character-1"),
+        ("POST", "/api/v1/writing/manuscripts/projects/project-1/characters/relationships"),
+        ("GET", "/api/v1/writing/manuscripts/projects/project-1/characters/relationships"),
+        ("DELETE", "/api/v1/writing/manuscripts/characters/relationships/relationship-1"),
+        ("POST", "/api/v1/writing/manuscripts/projects/project-1/world-info"),
+        ("GET", "/api/v1/writing/manuscripts/projects/project-1/world-info"),
+        ("GET", "/api/v1/writing/manuscripts/world-info/world-1"),
+        ("PATCH", "/api/v1/writing/manuscripts/world-info/world-1"),
+        ("DELETE", "/api/v1/writing/manuscripts/world-info/world-1"),
+        ("POST", "/api/v1/writing/manuscripts/projects/project-1/plot-lines"),
+        ("GET", "/api/v1/writing/manuscripts/projects/project-1/plot-lines"),
+        ("PATCH", "/api/v1/writing/manuscripts/plot-lines/plot-line-1"),
+        ("DELETE", "/api/v1/writing/manuscripts/plot-lines/plot-line-1"),
+        ("POST", "/api/v1/writing/manuscripts/plot-lines/plot-line-1/events"),
+        ("GET", "/api/v1/writing/manuscripts/plot-lines/plot-line-1/events"),
+        ("PATCH", "/api/v1/writing/manuscripts/plot-events/plot-event-1"),
+        ("DELETE", "/api/v1/writing/manuscripts/plot-events/plot-event-1"),
+        ("POST", "/api/v1/writing/manuscripts/projects/project-1/plot-holes"),
+        ("GET", "/api/v1/writing/manuscripts/projects/project-1/plot-holes"),
+        ("PATCH", "/api/v1/writing/manuscripts/plot-holes/plot-hole-1"),
+        ("DELETE", "/api/v1/writing/manuscripts/plot-holes/plot-hole-1"),
+        ("POST", "/api/v1/writing/manuscripts/scenes/scene-1/characters"),
+        ("GET", "/api/v1/writing/manuscripts/scenes/scene-1/characters"),
+        ("DELETE", "/api/v1/writing/manuscripts/scenes/scene-1/characters/character-1"),
+        ("POST", "/api/v1/writing/manuscripts/scenes/scene-1/world-info"),
+        ("GET", "/api/v1/writing/manuscripts/scenes/scene-1/world-info"),
+        ("DELETE", "/api/v1/writing/manuscripts/scenes/scene-1/world-info/world-1"),
+        ("POST", "/api/v1/writing/manuscripts/scenes/scene-1/citations"),
+        ("GET", "/api/v1/writing/manuscripts/scenes/scene-1/citations"),
+        ("DELETE", "/api/v1/writing/manuscripts/citations/citation-1"),
+        ("POST", "/api/v1/writing/manuscripts/scenes/scene-1/research"),
+        ("POST", "/api/v1/writing/manuscripts/scenes/scene-1/analyze"),
+        ("POST", "/api/v1/writing/manuscripts/chapters/chapter-1/analyze"),
+        ("POST", "/api/v1/writing/manuscripts/projects/project-1/analyze/plot-holes"),
+        ("POST", "/api/v1/writing/manuscripts/projects/project-1/analyze/consistency"),
+        ("GET", "/api/v1/writing/manuscripts/projects/project-1/analyses"),
+    ]
+    assert [call.args[:2] for call in mocked.await_args_list] == expected_routes
+    assert mocked.await_args_list[1].kwargs["params"] == {"role": "protagonist", "cast_group": "heroes"}
+    assert mocked.await_args_list[3].kwargs["headers"] == {"expected-version": "1"}
+    assert mocked.await_args_list[9].kwargs["params"] == {"kind": "location"}
+    assert mocked.await_args_list[22].kwargs["params"] == {"status": "open"}
+    assert mocked.await_args_list[39].kwargs["params"] == {
+        "scope_type": "scene",
+        "analysis_type": "pacing",
+        "include_stale": True,
+    }
+    assert isinstance(character, ManuscriptCharacterResponse)
+    assert isinstance(characters[0], ManuscriptCharacterResponse)
+    assert isinstance(fetched_character, ManuscriptCharacterResponse)
+    assert isinstance(updated_character, ManuscriptCharacterResponse)
+    assert deleted_character is True
+    assert isinstance(relationship, ManuscriptRelationshipResponse)
+    assert isinstance(relationships[0], ManuscriptRelationshipResponse)
+    assert deleted_relationship is True
+    assert isinstance(world_info, ManuscriptWorldInfoResponse)
+    assert isinstance(world_infos[0], ManuscriptWorldInfoResponse)
+    assert isinstance(fetched_world_info, ManuscriptWorldInfoResponse)
+    assert isinstance(updated_world_info, ManuscriptWorldInfoResponse)
+    assert deleted_world_info is True
+    assert isinstance(plot_line, ManuscriptPlotLineResponse)
+    assert isinstance(plot_lines[0], ManuscriptPlotLineResponse)
+    assert isinstance(updated_plot_line, ManuscriptPlotLineResponse)
+    assert deleted_plot_line is True
+    assert isinstance(plot_event, ManuscriptPlotEventResponse)
+    assert isinstance(plot_events[0], ManuscriptPlotEventResponse)
+    assert isinstance(updated_plot_event, ManuscriptPlotEventResponse)
+    assert deleted_plot_event is True
+    assert isinstance(plot_hole, ManuscriptPlotHoleResponse)
+    assert isinstance(plot_holes[0], ManuscriptPlotHoleResponse)
+    assert isinstance(updated_plot_hole, ManuscriptPlotHoleResponse)
+    assert deleted_plot_hole is True
+    assert isinstance(linked_characters[0], SceneCharacterLinkResponse)
+    assert isinstance(scene_characters[0], SceneCharacterLinkResponse)
+    assert unlinked_character is True
+    assert isinstance(linked_world_info[0], SceneWorldInfoLinkResponse)
+    assert isinstance(scene_world_info[0], SceneWorldInfoLinkResponse)
+    assert unlinked_world_info is True
+    assert isinstance(citation, ManuscriptCitationResponse)
+    assert isinstance(citations[0], ManuscriptCitationResponse)
+    assert deleted_citation is True
+    assert isinstance(research, ManuscriptResearchResponse)
+    assert isinstance(scene_analyses[0], ManuscriptAnalysisResponse)
+    assert isinstance(chapter_analyses[0], ManuscriptAnalysisResponse)
+    assert isinstance(plot_hole_analyses[0], ManuscriptAnalysisResponse)
+    assert isinstance(consistency_analyses[0], ManuscriptAnalysisResponse)
+    assert isinstance(analyses, ManuscriptAnalysisListResponse)

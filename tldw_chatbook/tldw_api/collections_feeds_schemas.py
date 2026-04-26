@@ -74,3 +74,27 @@ class CollectionsFeedsListResponse(BaseModel):
     total: int
 
     model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class CollectionsWebSubSubscribeRequest(BaseModel):
+    lease_seconds: int | None = None
+
+
+class CollectionsWebSubSubscriptionResponse(BaseModel):
+    id: int
+    source_id: int
+    hub_url: str
+    topic_url: str
+    state: str
+    lease_seconds: int | None = None
+    verified_at: str | None = None
+    expires_at: str | None = None
+    last_push_at: str | None = None
+    created_at: str | None = None
+
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class CollectionsWebSubUnsubscribeResponse(BaseModel):
+    message: str
+    state: str

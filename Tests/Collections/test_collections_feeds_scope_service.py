@@ -28,6 +28,18 @@ class FakeCollectionsFeedsService:
         self.calls.append(("delete_feed", feed_id))
         return {"id": feed_id, "deleted": True}
 
+    async def subscribe_feed_websub(self, feed_id, **kwargs):
+        self.calls.append(("subscribe_feed_websub", feed_id, kwargs))
+        return {"id": 41, "source_id": feed_id, "state": "pending"}
+
+    async def get_feed_websub_status(self, feed_id):
+        self.calls.append(("get_feed_websub_status", feed_id))
+        return {"id": 41, "source_id": feed_id, "state": "verified"}
+
+    async def unsubscribe_feed_websub(self, feed_id):
+        self.calls.append(("unsubscribe_feed_websub", feed_id))
+        return {"source_id": feed_id, "state": "unsubscribed"}
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
@@ -89,6 +101,32 @@ async def test_collections_feeds_scope_service_honestly_rejects_local_mode_as_re
         await scope.list_feeds(mode="local")
 
     assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_collections_feeds_scope_service_routes_server_websub_and_normalizes_records():
+    server = FakeCollectionsFeedsService()
+    policy = FakePolicyEnforcer()
+    scope = CollectionsFeedsScopeService(server_service=server, policy_enforcer=policy)
+
+    subscribed = await scope.subscribe_feed_websub(12, mode="server", lease_seconds=3600)
+    status = await scope.get_feed_websub_status(12, mode="server")
+    unsubscribed = await scope.unsubscribe_feed_websub(12, mode="server")
+
+    assert subscribed["record_id"] == "server:collections_feed_websub:41"
+    assert subscribed["backend"] == "server"
+    assert status["record_id"] == "server:collections_feed_websub:41"
+    assert unsubscribed["record_id"] == "server:collections_feed_websub:12"
+    assert server.calls[-3:] == [
+        ("subscribe_feed_websub", 12, {"lease_seconds": 3600}),
+        ("get_feed_websub_status", 12),
+        ("unsubscribe_feed_websub", 12),
+    ]
+    assert policy.calls[-3:] == [
+        "collections.feeds.websub.launch.server",
+        "collections.feeds.websub.detail.server",
+        "collections.feeds.websub.delete.server",
+    ]
 
 
 @pytest.mark.asyncio

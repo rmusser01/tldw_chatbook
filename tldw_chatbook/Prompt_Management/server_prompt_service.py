@@ -61,6 +61,10 @@ class ServerPromptService:
     def _version_action_id(action: str) -> str:
         return f"prompts.versions.{action}.server"
 
+    @staticmethod
+    def _subresource_action_id(resource: str, action: str) -> str:
+        return f"prompts.{resource}.{action}.server"
+
     async def list_prompts(self, *, include_deleted: bool = False, **_kwargs: Any) -> Any:
         self._enforce(self._action_id("list"))
         return await self._require_client().list_prompts(include_deleted=include_deleted)
@@ -104,3 +108,85 @@ class ServerPromptService:
     async def restore_prompt_version(self, prompt_id: int | str, version: int) -> dict[str, Any]:
         self._enforce(self._version_action_id("restore"))
         return await self._require_client().restore_prompt_version(prompt_id, version)
+
+    async def get_prompts_health(self) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("health", "detail"))
+        return await self._require_client().get_prompts_health()
+
+    async def get_prompt_sync_log(self, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("sync_log", "list"))
+        return await self._require_client().get_prompt_sync_log(**kwargs)
+
+    async def search_prompts(self, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("search", "list"))
+        return await self._require_client().search_prompts(**kwargs)
+
+    async def create_prompt_keyword(self, keyword_text: str) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("keywords", "create"))
+        return await self._require_client().create_prompt_keyword(keyword_text)
+
+    async def list_prompt_keywords(self) -> Any:
+        self._enforce(self._subresource_action_id("keywords", "list"))
+        return await self._require_client().list_prompt_keywords()
+
+    async def delete_prompt_keyword(self, keyword_text: str) -> Any:
+        self._enforce(self._subresource_action_id("keywords", "delete"))
+        return await self._require_client().delete_prompt_keyword(keyword_text)
+
+    async def export_prompts(self, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("transfer", "export"))
+        return await self._require_client().export_prompts(**kwargs)
+
+    async def export_prompt_keywords(self) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("keywords", "export"))
+        return await self._require_client().export_prompt_keywords()
+
+    async def import_prompts(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("transfer", "import"))
+        return await self._require_client().import_prompts(payload)
+
+    async def extract_prompt_template_variables(self, template: str) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("templates", "process"))
+        return await self._require_client().extract_prompt_template_variables(template)
+
+    async def render_prompt_template(self, template: str, variables: dict[str, Any]) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("templates", "process"))
+        return await self._require_client().render_prompt_template(template, variables)
+
+    async def convert_prompt(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("templates", "process"))
+        return await self._require_client().convert_prompt(payload)
+
+    async def bulk_delete_prompts(self, prompt_ids: list[int]) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("bulk", "delete"))
+        return await self._require_client().bulk_delete_prompts(prompt_ids)
+
+    async def bulk_update_prompt_keywords(
+        self,
+        prompt_ids: list[int],
+        keywords: list[str] | None = None,
+        *,
+        mode: str = "add",
+    ) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("bulk", "update"))
+        return await self._require_client().bulk_update_prompt_keywords(prompt_ids, keywords, mode=mode)
+
+    async def record_prompt_usage(self, prompt_identifier: int | str) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("usage", "update"))
+        return await self._require_client().record_prompt_usage(prompt_identifier)
+
+    async def create_prompt_collection(self, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("collections", "create"))
+        return await self._require_client().create_prompt_collection(**kwargs)
+
+    async def list_prompt_collections(self, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("collections", "list"))
+        return await self._require_client().list_prompt_collections(**kwargs)
+
+    async def get_prompt_collection(self, collection_id: int) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("collections", "detail"))
+        return await self._require_client().get_prompt_collection(collection_id)
+
+    async def update_prompt_collection(self, collection_id: int, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._subresource_action_id("collections", "update"))
+        return await self._require_client().update_prompt_collection(collection_id, **kwargs)

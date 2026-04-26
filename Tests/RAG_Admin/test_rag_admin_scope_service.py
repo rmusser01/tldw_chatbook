@@ -60,6 +60,34 @@ class FakeServerService:
         self.calls.append(("reprocess_media", media_id, options))
         return {"backend": "server", "media_id": media_id, "status": "queued", "options": options}
 
+    async def get_media_embeddings_status(self, media_id):
+        self.calls.append(("get_media_embeddings_status", media_id))
+        return {"media_id": media_id, "has_embeddings": True, "embedding_count": 2}
+
+    async def generate_media_embeddings(self, media_id, **options):
+        self.calls.append(("generate_media_embeddings", media_id, options))
+        return {"media_id": media_id, "status": "accepted", "job_id": "job-7"}
+
+    async def generate_media_embeddings_batch(self, **options):
+        self.calls.append(("generate_media_embeddings_batch", options))
+        return {"status": "accepted", "job_ids": ["job-7"], "submitted": 1}
+
+    async def search_media_embeddings(self, **options):
+        self.calls.append(("search_media_embeddings", options))
+        return {"results": [{"id": "chunk-1", "metadata": {"media_id": "7"}}], "count": 1}
+
+    async def delete_media_embeddings(self, media_id):
+        self.calls.append(("delete_media_embeddings", media_id))
+        return {"status": "success"}
+
+    async def get_media_embedding_job(self, job_id):
+        self.calls.append(("get_media_embedding_job", job_id))
+        return {"uuid": job_id, "status": "completed"}
+
+    async def list_media_embedding_jobs(self, **options):
+        self.calls.append(("list_media_embedding_jobs", options))
+        return {"data": [{"uuid": "job-7", "status": "completed"}], "pagination": {"count": 1}}
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
@@ -229,6 +257,59 @@ async def test_scope_service_routes_reprocess_media_as_rag_admin_launch():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_routes_server_media_embedding_admin_and_blocks_local_mode():
+    server = FakeServerService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = RAGAdminScopeService(
+        local_service=FakeLocalService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    status = await scope.get_media_embeddings_status(mode="server", media_id=7)
+    generated = await scope.generate_media_embeddings(
+        mode="server",
+        media_id=7,
+        embedding_model="text-embedding-3-small",
+        chunk_size=512,
+    )
+    batch = await scope.generate_media_embeddings_batch(mode="server", media_ids=[7])
+    search = await scope.search_media_embeddings(mode="server", query="alpha", filters={"media_id": "7"})
+    deleted = await scope.delete_media_embeddings(mode="server", media_id=7)
+    job = await scope.get_media_embedding_job(mode="server", job_id="job-7")
+    jobs = await scope.list_media_embedding_jobs(mode="server", status="completed")
+
+    assert status["backend"] == "server"
+    assert generated["backend"] == "server"
+    assert batch["backend"] == "server"
+    assert search["backend"] == "server"
+    assert deleted["backend"] == "server"
+    assert job["backend"] == "server"
+    assert jobs["backend"] == "server"
+    assert server.calls == [
+        ("get_media_embeddings_status", 7),
+        ("generate_media_embeddings", 7, {"embedding_model": "text-embedding-3-small", "chunk_size": 512}),
+        ("generate_media_embeddings_batch", {"media_ids": [7]}),
+        ("search_media_embeddings", {"query": "alpha", "filters": {"media_id": "7"}}),
+        ("delete_media_embeddings", 7),
+        ("get_media_embedding_job", "job-7"),
+        ("list_media_embedding_jobs", {"status": "completed"}),
+    ]
+    assert policy_enforcer.calls == [
+        "rag.media_embeddings.status.server",
+        "rag.media_embeddings.create.server",
+        "rag.media_embeddings.create.server",
+        "rag.media_embeddings.search.server",
+        "rag.media_embeddings.delete.server",
+        "rag.media_embedding_jobs.detail.server",
+        "rag.media_embedding_jobs.list.server",
+    ]
+
+    with pytest.raises(ValueError, match="server-only"):
+        await scope.get_media_embeddings_status(mode="local", media_id=7)
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_local_collection_export_as_rag_admin_observe():
     local = FakeLocalService()
     policy_enforcer = FakePolicyEnforcer()
@@ -259,7 +340,16 @@ def test_scope_service_reports_known_rag_admin_capability_gaps():
     local_report = scope.list_unsupported_capabilities(mode="local")
     server_report = scope.list_unsupported_capabilities(mode="server")
 
-    assert local_report == []
+    assert local_report == [
+        {
+            "operation_id": "rag.media_embeddings.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Server-style per-media embedding status, generation, search, deletion, and job tracking are not exposed by the local RAG admin seam yet.",
+            "affected_action_ids": [],
+        },
+    ]
     assert server_report == [
         {
             "operation_id": "rag.collections.export.server",

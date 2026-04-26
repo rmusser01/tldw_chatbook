@@ -37,6 +37,82 @@ class FakePromptBackend:
         self.calls.append(("restore_prompt_version", prompt_id, version))
         return {"id": prompt_id, "name": "Restored", "version": version}
 
+    async def get_prompts_health(self):
+        self.calls.append(("get_prompts_health",))
+        return {"status": "healthy"}
+
+    async def get_prompt_sync_log(self, **kwargs):
+        self.calls.append(("get_prompt_sync_log", kwargs))
+        return {"changes": []}
+
+    async def search_prompts(self, **kwargs):
+        self.calls.append(("search_prompts", kwargs))
+        return {"items": [{"id": f"{self.source}-prompt-1", "name": "Prompt"}]}
+
+    async def create_prompt_keyword(self, keyword_text):
+        self.calls.append(("create_prompt_keyword", keyword_text))
+        return {"keyword_text": keyword_text}
+
+    async def list_prompt_keywords(self):
+        self.calls.append(("list_prompt_keywords",))
+        return ["drafting"]
+
+    async def delete_prompt_keyword(self, keyword_text):
+        self.calls.append(("delete_prompt_keyword", keyword_text))
+        return None
+
+    async def export_prompts(self, **kwargs):
+        self.calls.append(("export_prompts", kwargs))
+        return {"message": "exported"}
+
+    async def export_prompt_keywords(self):
+        self.calls.append(("export_prompt_keywords",))
+        return {"message": "exported"}
+
+    async def import_prompts(self, payload):
+        self.calls.append(("import_prompts", payload))
+        return {"imported": 1}
+
+    async def extract_prompt_template_variables(self, template):
+        self.calls.append(("extract_prompt_template_variables", template))
+        return {"variables": ["name"]}
+
+    async def render_prompt_template(self, template, variables):
+        self.calls.append(("render_prompt_template", template, variables))
+        return {"rendered": "Hello Ada"}
+
+    async def convert_prompt(self, payload):
+        self.calls.append(("convert_prompt", payload))
+        return {"prompt_definition": {"blocks": []}}
+
+    async def bulk_delete_prompts(self, prompt_ids):
+        self.calls.append(("bulk_delete_prompts", prompt_ids))
+        return {"deleted": len(prompt_ids)}
+
+    async def bulk_update_prompt_keywords(self, prompt_ids, keywords, mode="add"):
+        self.calls.append(("bulk_update_prompt_keywords", prompt_ids, keywords, mode))
+        return {"updated": len(prompt_ids)}
+
+    async def record_prompt_usage(self, prompt_identifier):
+        self.calls.append(("record_prompt_usage", prompt_identifier))
+        return {"usage_count": 1}
+
+    async def create_prompt_collection(self, **kwargs):
+        self.calls.append(("create_prompt_collection", kwargs))
+        return {"collection_id": f"{self.source}-collection-1", **kwargs}
+
+    async def list_prompt_collections(self, **kwargs):
+        self.calls.append(("list_prompt_collections", kwargs))
+        return {"collections": [{"collection_id": f"{self.source}-collection-1", "name": "Pack"}]}
+
+    async def get_prompt_collection(self, collection_id):
+        self.calls.append(("get_prompt_collection", collection_id))
+        return {"collection_id": collection_id, "name": "Pack"}
+
+    async def update_prompt_collection(self, collection_id, **kwargs):
+        self.calls.append(("update_prompt_collection", collection_id, kwargs))
+        return {"collection_id": collection_id, **kwargs}
+
 
 class FakeChatbookBackend:
     def __init__(self, source):
@@ -319,6 +395,117 @@ async def test_prompt_chatbook_scope_service_routes_local_prompt_version_control
 
 
 @pytest.mark.asyncio
+async def test_prompt_chatbook_scope_service_routes_server_prompt_utility_surfaces():
+    server_prompts = FakePromptBackend("server")
+    policy = FakePolicyEnforcer()
+    scope = PromptChatbookScopeService(
+        local_prompt_service=FakePromptBackend("local"),
+        server_prompt_service=server_prompts,
+        local_chatbook_service=FakeChatbookBackend("local"),
+        server_chatbook_service=FakeChatbookBackend("server"),
+        policy_enforcer=policy,
+    )
+
+    health = await scope.get_prompts_health(mode="server")
+    sync_log = await scope.get_prompt_sync_log(mode="server", since_change_id=5, limit=25)
+    searched = await scope.search_prompts(mode="server", search_query="rag")
+    keyword = await scope.create_prompt_keyword(mode="server", keyword_text="Drafting")
+    keywords = await scope.list_prompt_keywords(mode="server")
+    deleted_keyword = await scope.delete_prompt_keyword(mode="server", keyword_text="Drafting")
+    exported = await scope.export_prompts(mode="server", export_format="markdown")
+    keyword_export = await scope.export_prompt_keywords(mode="server")
+    imported = await scope.import_prompts(mode="server", payload={"prompts": [{"name": "Draft", "content": "Body"}]})
+    variables = await scope.extract_prompt_template_variables(mode="server", template="Hello {{name}}")
+    rendered = await scope.render_prompt_template(mode="server", template="Hello {{name}}", variables={"name": "Ada"})
+    converted = await scope.convert_prompt(mode="server", payload={"system_prompt": "S", "user_prompt": "U"})
+    bulk_deleted = await scope.bulk_delete_prompts(mode="server", prompt_ids=[1])
+    bulk_keywords = await scope.bulk_update_prompt_keywords(mode="server", prompt_ids=[1], keywords=["drafting"])
+    usage = await scope.record_prompt_usage(mode="server", prompt_identifier="prompt-1")
+    collection = await scope.create_prompt_collection(mode="server", name="Pack", prompt_ids=[1])
+    collections = await scope.list_prompt_collections(mode="server", limit=25)
+    fetched_collection = await scope.get_prompt_collection(mode="server", collection_id=7)
+    updated_collection = await scope.update_prompt_collection(mode="server", collection_id=7, name="Updated")
+
+    assert health["status"] == "healthy"
+    assert sync_log == {"changes": []}
+    assert searched["items"][0]["id"] == "server-prompt-1"
+    assert keyword["keyword_text"] == "Drafting"
+    assert keywords == ["drafting"]
+    assert deleted_keyword is None
+    assert exported["message"] == "exported"
+    assert keyword_export["message"] == "exported"
+    assert imported["imported"] == 1
+    assert variables["variables"] == ["name"]
+    assert rendered["rendered"] == "Hello Ada"
+    assert converted["prompt_definition"] == {"blocks": []}
+    assert bulk_deleted["deleted"] == 1
+    assert bulk_keywords["updated"] == 1
+    assert usage["usage_count"] == 1
+    assert collection["collection_id"] == "server-collection-1"
+    assert collections["collections"][0]["collection_id"] == "server-collection-1"
+    assert fetched_collection["collection_id"] == 7
+    assert updated_collection["name"] == "Updated"
+    assert server_prompts.calls[-19:] == [
+        ("get_prompts_health",),
+        ("get_prompt_sync_log", {"since_change_id": 5, "limit": 25}),
+        ("search_prompts", {"search_query": "rag"}),
+        ("create_prompt_keyword", "Drafting"),
+        ("list_prompt_keywords",),
+        ("delete_prompt_keyword", "Drafting"),
+        ("export_prompts", {"export_format": "markdown"}),
+        ("export_prompt_keywords",),
+        ("import_prompts", {"prompts": [{"name": "Draft", "content": "Body"}]}),
+        ("extract_prompt_template_variables", "Hello {{name}}"),
+        ("render_prompt_template", "Hello {{name}}", {"name": "Ada"}),
+        ("convert_prompt", {"system_prompt": "S", "user_prompt": "U"}),
+        ("bulk_delete_prompts", [1]),
+        ("bulk_update_prompt_keywords", [1], ["drafting"], "add"),
+        ("record_prompt_usage", "prompt-1"),
+        ("create_prompt_collection", {"name": "Pack", "prompt_ids": [1]}),
+        ("list_prompt_collections", {"limit": 25}),
+        ("get_prompt_collection", 7),
+        ("update_prompt_collection", 7, {"name": "Updated"}),
+    ]
+    assert policy.calls[-19:] == [
+        "prompts.health.detail.server",
+        "prompts.sync_log.list.server",
+        "prompts.search.list.server",
+        "prompts.keywords.create.server",
+        "prompts.keywords.list.server",
+        "prompts.keywords.delete.server",
+        "prompts.transfer.export.server",
+        "prompts.keywords.export.server",
+        "prompts.transfer.import.server",
+        "prompts.templates.process.server",
+        "prompts.templates.process.server",
+        "prompts.templates.process.server",
+        "prompts.bulk.delete.server",
+        "prompts.bulk.update.server",
+        "prompts.usage.update.server",
+        "prompts.collections.create.server",
+        "prompts.collections.list.server",
+        "prompts.collections.detail.server",
+        "prompts.collections.update.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_chatbook_scope_service_rejects_local_prompt_utility_surfaces_before_dispatch():
+    local_prompts = FakePromptBackend("local")
+    scope = PromptChatbookScopeService(
+        local_prompt_service=local_prompts,
+        server_prompt_service=FakePromptBackend("server"),
+        local_chatbook_service=FakeChatbookBackend("local"),
+        server_chatbook_service=FakeChatbookBackend("server"),
+    )
+
+    with pytest.raises(NotImplementedError, match="server-only"):
+        await scope.get_prompts_health(mode="local")
+
+    assert local_prompts.calls == []
+
+
+@pytest.mark.asyncio
 async def test_prompt_chatbook_scope_service_denies_before_dispatch():
     server_prompts = FakePromptBackend("server")
     scope = PromptChatbookScopeService(
@@ -398,6 +585,7 @@ def test_prompt_chatbook_scope_service_reports_known_unsupported_capabilities():
 
     assert [item["operation_id"] for item in local_report] == [
         "chatbooks.records.local",
+        "prompts.server_utilities.local",
     ]
     assert [item["operation_id"] for item in server_report] == [
         "chatbooks.records.server",
@@ -428,4 +616,6 @@ def test_prompt_chatbook_scope_service_omits_local_record_gap_when_backend_suppo
 
     local_report = scope.list_unsupported_capabilities(mode="local")
 
-    assert [item["operation_id"] for item in local_report] == []
+    assert [item["operation_id"] for item in local_report] == [
+        "prompts.server_utilities.local",
+    ]

@@ -11,6 +11,8 @@ from tldw_chatbook.tldw_api import (
     AudioTranslationRequest,
     OpenAISpeechRequest,
     ReadingExportResponse,
+    SpeechChatLLMConfig,
+    SpeechChatRequest,
     SubmitAudioJobRequest,
     VoiceEncodeRequest,
 )
@@ -35,6 +37,22 @@ class FakeAudioClient:
     async def list_tts_voices(self, **kwargs):
         self.calls.append(("list_tts_voices", kwargs))
         return {"kokoro": [{"id": "af_heart", "name": "Heart"}]}
+
+    async def get_audio_streaming_status(self):
+        self.calls.append(("get_audio_streaming_status",))
+        return {"status": "available", "available_models": ["parakeet-mlx"], "websocket_endpoint": "/api/v1/audio/stream/transcribe", "supported_features": {}}
+
+    async def get_audio_streaming_limits(self):
+        self.calls.append(("get_audio_streaming_limits",))
+        return {"user_id": "user-1", "tier": "free", "limits": {}, "used_today_minutes": 0.0, "remaining_minutes": None, "active_streams": 0, "can_start_stream": True}
+
+    async def test_audio_streaming(self):
+        self.calls.append(("test_audio_streaming",))
+        return {"status": "success", "test_passed": True, "message": "ok"}
+
+    async def create_speech_chat(self, request_data):
+        self.calls.append(("create_speech_chat", request_data))
+        return {"session_id": "speech-session-1", "assistant_text": "Hi", "user_transcript": "Hello", "output_audio": "bXAz", "output_audio_mime_type": "audio/mpeg"}
 
     async def create_audio_speech(self, request_data):
         self.calls.append(("create_audio_speech", request_data))
@@ -131,6 +149,16 @@ async def test_server_audio_services_service_routes_core_audio_with_policy():
     stt_health = await service.get_stt_health(model="whisper-1", warm=True)
     providers = await service.list_tts_providers()
     voices = await service.list_tts_voices(provider="kokoro")
+    streaming_status = await service.get_audio_streaming_status()
+    streaming_limits = await service.get_audio_streaming_limits()
+    streaming_test = await service.test_audio_streaming()
+    speech_chat = await service.create_speech_chat(
+        SpeechChatRequest(
+            input_audio="UklGRg==",
+            input_audio_format="wav",
+            llm_config=SpeechChatLLMConfig(model="gpt-test"),
+        )
+    )
     speech = await service.create_audio_speech(OpenAISpeechRequest(model="kokoro", input="Hello"))
     speech_job = await service.create_audio_speech_job(OpenAISpeechRequest(model="kokoro", input="Long text"))
     speech_artifacts = await service.list_audio_speech_job_artifacts(42)
@@ -154,6 +182,10 @@ async def test_server_audio_services_service_routes_core_audio_with_policy():
     assert stt_health["model"] == "whisper-1"
     assert providers["providers"]["kokoro"]["available"] is True
     assert voices["kokoro"][0]["id"] == "af_heart"
+    assert streaming_status["status"] == "available"
+    assert streaming_limits["can_start_stream"] is True
+    assert streaming_test["test_passed"] is True
+    assert speech_chat["session_id"] == "speech-session-1"
     assert speech["content"] == b"mp3"
     assert speech_job["job_id"] == 42
     assert speech_artifacts["artifacts"][0]["output_id"] == 9
@@ -177,6 +209,10 @@ async def test_server_audio_services_service_routes_core_audio_with_policy():
         "audio.health.observe.server",
         "audio.providers.list.server",
         "audio.voices.list.server",
+        "audio.streaming.status.server",
+        "audio.streaming.detail.server",
+        "audio.streaming.launch.server",
+        "audio.speech_chat.launch.server",
         "audio.speech.launch.server",
         "audio.speech.launch.server",
         "audio.speech_jobs.detail.server",

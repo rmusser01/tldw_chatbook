@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
+from tldw_chatbook.tldw_api.chat_loop_schemas import ChatLoopActionResponse, ChatLoopEventsResponse, ChatLoopStartResponse
 
 
 @dataclass
@@ -35,6 +36,26 @@ class FakeChatClient:
     async def get_chat_conversation_citations(self, conversation_id: str) -> dict[str, Any]:
         self.calls.append(("get_chat_conversation_citations", (conversation_id,), {}))
         return {"conversation_id": conversation_id, "citations": [{"id": "doc-1"}], "total_count": 1}
+
+    async def start_chat_loop_run(self, request_data: Any) -> ChatLoopStartResponse:
+        self.calls.append(("start_chat_loop_run", (request_data,), {}))
+        return ChatLoopStartResponse(run_id="run_123")
+
+    async def list_chat_loop_events(self, run_id: str, *, after_seq: int = 0) -> ChatLoopEventsResponse:
+        self.calls.append(("list_chat_loop_events", (run_id,), {"after_seq": after_seq}))
+        return ChatLoopEventsResponse(run_id=run_id, events=[])
+
+    async def approve_chat_loop_call(self, run_id: str, request_data: Any) -> ChatLoopActionResponse:
+        self.calls.append(("approve_chat_loop_call", (run_id, request_data), {}))
+        return ChatLoopActionResponse(ok=True)
+
+    async def reject_chat_loop_call(self, run_id: str, request_data: Any) -> ChatLoopActionResponse:
+        self.calls.append(("reject_chat_loop_call", (run_id, request_data), {}))
+        return ChatLoopActionResponse(ok=True)
+
+    async def cancel_chat_loop_run(self, run_id: str) -> ChatLoopActionResponse:
+        self.calls.append(("cancel_chat_loop_run", (run_id,), {}))
+        return ChatLoopActionResponse(ok=True)
 
 
 @dataclass
@@ -122,3 +143,34 @@ async def test_server_chat_conversation_create_and_delete_are_explicit_unsupport
         await service.delete_conversation("conv-1", expected_version=1)
 
     assert policy.calls == ["chat.create.server", "chat.delete.server"]
+
+
+@pytest.mark.asyncio
+async def test_server_chat_conversation_service_routes_chat_loop_with_policy_actions():
+    client = FakeChatClient()
+    policy = RecordingPolicy()
+    service = ServerChatConversationService(client, policy_enforcer=policy)
+
+    started = await service.start_loop(messages=[{"role": "user", "content": "Hi"}])
+    events = await service.list_loop_events("run_123", after_seq=3)
+    approved = await service.approve_loop_call("run_123", approval_id="approval-1")
+    rejected = await service.reject_loop_call("run_123", approval_id="approval-2")
+    cancelled = await service.cancel_loop("run_123")
+
+    assert started.run_id == "run_123"
+    assert events.run_id == "run_123"
+    assert approved.ok is True
+    assert rejected.ok is True
+    assert cancelled.ok is True
+    assert policy.calls == [
+        "chat.loop.launch.server",
+        "chat.loop.observe.server",
+        "chat.loop.approve.server",
+        "chat.loop.approve.server",
+        "chat.loop.cancel.server",
+    ]
+    assert client.calls[-5][0] == "start_chat_loop_run"
+    assert client.calls[-4] == ("list_chat_loop_events", ("run_123",), {"after_seq": 3})
+    assert client.calls[-3][0] == "approve_chat_loop_call"
+    assert client.calls[-2][0] == "reject_chat_loop_call"
+    assert client.calls[-1] == ("cancel_chat_loop_run", ("run_123",), {})

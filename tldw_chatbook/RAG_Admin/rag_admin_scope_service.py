@@ -14,7 +14,16 @@ class RAGAdminBackend(str, Enum):
     SERVER = "server"
 
 
-_LOCAL_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
+_LOCAL_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = [
+    {
+        "operation_id": "rag.media_embeddings.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Server-style per-media embedding status, generation, search, deletion, and job tracking are not exposed by the local RAG admin seam yet.",
+        "affected_action_ids": [],
+    },
+]
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
     {
@@ -72,6 +81,37 @@ class RAGAdminScopeService:
     @staticmethod
     def _admin_action_id(mode: RAGAdminBackend, action: str) -> str:
         return f"rag.admin.{action}.{mode.value}"
+
+    @staticmethod
+    def _media_embeddings_action_id(action: str) -> str:
+        return f"rag.media_embeddings.{action}.server"
+
+    @staticmethod
+    def _media_embedding_jobs_action_id(action: str) -> str:
+        return f"rag.media_embedding_jobs.{action}.server"
+
+    def _server_media_embeddings_service(self, mode: RAGAdminBackend, operation_name: str) -> Any:
+        if mode != RAGAdminBackend.SERVER:
+            raise ValueError(f"{operation_name} is server-only.")
+        return self._service_for_mode(mode)
+
+    @staticmethod
+    def _to_plain(value: Any) -> Any:
+        if hasattr(value, "model_dump") and callable(value.model_dump):
+            return value.model_dump(mode="json")
+        if isinstance(value, list):
+            return [RAGAdminScopeService._to_plain(item) for item in value]
+        return value
+
+    @classmethod
+    def _with_backend(cls, mode: RAGAdminBackend, value: Any) -> dict[str, Any]:
+        payload = cls._to_plain(value)
+        if isinstance(payload, dict):
+            result = dict(payload)
+        else:
+            result = {"data": payload}
+        result.setdefault("backend", mode.value)
+        return result
 
     def list_unsupported_capabilities(
         self,
@@ -314,3 +354,102 @@ class RAGAdminScopeService:
             raise ValueError(f"{normalized_mode.value.title()} media reprocess is not available yet.")
         result = await self._maybe_await(method(media_id, **options))
         return dict(result or {})
+
+    async def get_media_embeddings_status(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        media_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._server_media_embeddings_service(normalized_mode, "Media embedding status")
+        self._enforce_policy(self._media_embeddings_action_id("status"))
+        return self._with_backend(
+            normalized_mode,
+            await self._maybe_await(service.get_media_embeddings_status(media_id)),
+        )
+
+    async def generate_media_embeddings(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        media_id: Any,
+        **options: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._server_media_embeddings_service(normalized_mode, "Media embedding generation")
+        self._enforce_policy(self._media_embeddings_action_id("create"))
+        return self._with_backend(
+            normalized_mode,
+            await self._maybe_await(service.generate_media_embeddings(media_id, **options)),
+        )
+
+    async def generate_media_embeddings_batch(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        **options: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._server_media_embeddings_service(normalized_mode, "Media embedding batch generation")
+        self._enforce_policy(self._media_embeddings_action_id("create"))
+        return self._with_backend(
+            normalized_mode,
+            await self._maybe_await(service.generate_media_embeddings_batch(**options)),
+        )
+
+    async def search_media_embeddings(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        **options: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._server_media_embeddings_service(normalized_mode, "Media embedding search")
+        self._enforce_policy(self._media_embeddings_action_id("search"))
+        return self._with_backend(
+            normalized_mode,
+            await self._maybe_await(service.search_media_embeddings(**options)),
+        )
+
+    async def delete_media_embeddings(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        media_id: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._server_media_embeddings_service(normalized_mode, "Media embedding deletion")
+        self._enforce_policy(self._media_embeddings_action_id("delete"))
+        return self._with_backend(
+            normalized_mode,
+            await self._maybe_await(service.delete_media_embeddings(media_id)),
+        )
+
+    async def get_media_embedding_job(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        job_id: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._server_media_embeddings_service(normalized_mode, "Media embedding job detail")
+        self._enforce_policy(self._media_embedding_jobs_action_id("detail"))
+        return self._with_backend(
+            normalized_mode,
+            await self._maybe_await(service.get_media_embedding_job(job_id)),
+        )
+
+    async def list_media_embedding_jobs(
+        self,
+        *,
+        mode: RAGAdminBackend | str | None = None,
+        **options: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._server_media_embeddings_service(normalized_mode, "Media embedding job listing")
+        self._enforce_policy(self._media_embedding_jobs_action_id("list"))
+        return self._with_backend(
+            normalized_mode,
+            await self._maybe_await(service.list_media_embedding_jobs(**options)),
+        )

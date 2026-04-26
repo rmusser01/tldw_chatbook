@@ -17,6 +17,12 @@ from tldw_chatbook.tldw_api import (
     CustomVoiceResponse,
     OpenAISpeechRequest,
     ReadingExportResponse,
+    SpeechChatLLMConfig,
+    SpeechChatRequest,
+    SpeechChatResponse,
+    StreamingLimitsResponse,
+    StreamingStatusResponse,
+    StreamingTestResponse,
     SubmitAudioJobRequest,
     TLDWAPIClient,
     TTSHealthResponse,
@@ -220,6 +226,88 @@ async def test_audio_routes_wire_speech_jobs_history_and_transcription(monkeypat
     assert isinstance(transcription, AudioTranscriptionResponse)
     assert isinstance(translation, AudioTranscriptionResponse)
     assert translation.text == "Translated"
+
+
+@pytest.mark.asyncio
+async def test_audio_streaming_rest_routes_and_speech_chat_are_typed(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "status": "available",
+                "available_models": ["parakeet-mlx"],
+                "websocket_endpoint": "/api/v1/audio/stream/transcribe",
+                "supported_features": {
+                    "partial_results": True,
+                    "multiple_languages": True,
+                    "concurrent_streams": True,
+                    "segment_metadata": True,
+                    "live_insights": True,
+                    "meeting_notes": True,
+                    "speaker_diarization": True,
+                    "audio_persistence": True,
+                },
+            },
+            {
+                "user_id": "user-1",
+                "tier": "free",
+                "limits": {"daily_minutes": 60},
+                "used_today_minutes": 7.5,
+                "remaining_minutes": 52.5,
+                "active_streams": 1,
+                "can_start_stream": True,
+                "_can_start_stream": True,
+            },
+            {
+                "status": "success",
+                "test_passed": True,
+                "message": "ok",
+                "test_result": "Buffer accumulating",
+            },
+            {
+                "session_id": "speech-session-1",
+                "user_transcript": "Hello",
+                "assistant_text": "Hi",
+                "output_audio": "bXAz",
+                "output_audio_mime_type": "audio/mpeg",
+                "timing": {"stt_ms": 10.0, "llm_ms": 20.0, "tts_ms": 30.0},
+                "token_usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+                "metadata": {"trace_id": "trace-1"},
+                "action_result": None,
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    status = await client.get_audio_streaming_status()
+    limits = await client.get_audio_streaming_limits()
+    test_result = await client.test_audio_streaming()
+    speech_chat = await client.create_speech_chat(
+        SpeechChatRequest(
+            input_audio="UklGRg==",
+            input_audio_format="wav",
+            llm_config=SpeechChatLLMConfig(model="gpt-test", api_provider="openai"),
+        )
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/audio/stream/status")
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/audio/stream/limits")
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/audio/stream/test")
+    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/audio/chat")
+    assert mocked.await_args_list[3].kwargs["json_data"] == {
+        "input_audio": "UklGRg==",
+        "input_audio_format": "wav",
+        "llm_config": {"api_provider": "openai", "model": "gpt-test"},
+        "store_audio": False,
+    }
+    assert isinstance(status, StreamingStatusResponse)
+    assert status.supported_features.audio_persistence is True
+    assert isinstance(limits, StreamingLimitsResponse)
+    assert limits.legacy_can_start_stream is True
+    assert isinstance(test_result, StreamingTestResponse)
+    assert test_result.test_passed is True
+    assert isinstance(speech_chat, SpeechChatResponse)
+    assert speech_chat.token_usage.total_tokens == 5
 
 
 @pytest.mark.asyncio

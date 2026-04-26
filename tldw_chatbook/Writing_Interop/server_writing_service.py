@@ -8,15 +8,31 @@ from typing import Any, Optional
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
+    ManuscriptAnalysisRequest,
+    ManuscriptCharacterCreate,
+    ManuscriptCharacterUpdate,
     ManuscriptChapterCreate,
     ManuscriptChapterUpdate,
+    ManuscriptCitationCreate,
     ManuscriptPartCreate,
     ManuscriptPartUpdate,
+    ManuscriptPlotEventCreate,
+    ManuscriptPlotEventUpdate,
+    ManuscriptPlotHoleCreate,
+    ManuscriptPlotHoleUpdate,
+    ManuscriptPlotLineCreate,
+    ManuscriptPlotLineUpdate,
     ManuscriptProjectCreate,
     ManuscriptProjectUpdate,
+    ManuscriptRelationshipCreate,
+    ManuscriptResearchRequest,
     ManuscriptSceneCreate,
     ManuscriptSceneUpdate,
+    ManuscriptWorldInfoCreate,
+    ManuscriptWorldInfoUpdate,
     ReorderRequest,
+    SceneCharacterLink,
+    SceneWorldInfoLink,
     TLDWAPIClient,
 )
 from .writing_markdown_adapter import markdown_to_plain_text, markdown_to_server_content
@@ -304,6 +320,421 @@ class ServerWritingService:
             ReorderRequest(entity_type=server_entity_type, items=items),
         )
         return bool(response)
+
+    async def create_character(self, project_id: str, *, name: str, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._action_id("characters", "create"))
+        response = await self._require_client().create_manuscript_character(
+            project_id,
+            ManuscriptCharacterCreate(name=name, **kwargs),
+        )
+        return normalize_writing_record("server", "character", self._model_to_dict(response))
+
+    async def list_characters(
+        self,
+        project_id: str,
+        *,
+        role: str | None = None,
+        cast_group: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("characters", "list"))
+        response = await self._require_client().list_manuscript_characters(
+            project_id,
+            role=role,
+            cast_group=cast_group,
+        )
+        return [
+            normalize_writing_record("server", "character", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def get_character(self, character_id: str) -> dict[str, Any] | None:
+        self._enforce(self._action_id("characters", "detail"))
+        response = await self._require_client().get_manuscript_character(character_id)
+        return normalize_writing_record("server", "character", self._model_to_dict(response))
+
+    async def update_character(
+        self,
+        character_id: str,
+        *,
+        expected_version: int,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        self._enforce(self._action_id("characters", "update"))
+        response = await self._require_client().update_manuscript_character(
+            character_id,
+            ManuscriptCharacterUpdate(**fields),
+            expected_version=expected_version,
+        )
+        return normalize_writing_record("server", "character", self._model_to_dict(response))
+
+    async def delete_character(self, character_id: str, *, expected_version: int) -> bool:
+        self._enforce(self._action_id("characters", "delete"))
+        return await self._require_client().delete_manuscript_character(
+            character_id,
+            expected_version=expected_version,
+        )
+
+    async def create_relationship(self, project_id: str, **fields: Any) -> dict[str, Any]:
+        self._enforce(self._action_id("relationships", "create"))
+        response = await self._require_client().create_manuscript_relationship(
+            project_id,
+            ManuscriptRelationshipCreate(**fields),
+        )
+        return normalize_writing_record("server", "relationship", self._model_to_dict(response))
+
+    async def list_relationships(self, project_id: str) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("relationships", "list"))
+        response = await self._require_client().list_manuscript_relationships(project_id)
+        return [
+            normalize_writing_record("server", "relationship", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def delete_relationship(self, relationship_id: str, *, expected_version: int) -> bool:
+        self._enforce(self._action_id("relationships", "delete"))
+        return await self._require_client().delete_manuscript_relationship(
+            relationship_id,
+            expected_version=expected_version,
+        )
+
+    async def create_world_info(self, project_id: str, *, kind: str, name: str, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._action_id("world_info", "create"))
+        response = await self._require_client().create_manuscript_world_info(
+            project_id,
+            ManuscriptWorldInfoCreate(kind=kind, name=name, **kwargs),
+        )
+        return normalize_writing_record("server", "world_info", self._model_to_dict(response))
+
+    async def list_world_info(self, project_id: str, *, kind: str | None = None) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("world_info", "list"))
+        response = await self._require_client().list_manuscript_world_info(project_id, kind=kind)
+        return [
+            normalize_writing_record("server", "world_info", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def get_world_info(self, item_id: str) -> dict[str, Any] | None:
+        self._enforce(self._action_id("world_info", "detail"))
+        response = await self._require_client().get_manuscript_world_info(item_id)
+        return normalize_writing_record("server", "world_info", self._model_to_dict(response))
+
+    async def update_world_info(
+        self,
+        item_id: str,
+        *,
+        expected_version: int,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        self._enforce(self._action_id("world_info", "update"))
+        response = await self._require_client().update_manuscript_world_info(
+            item_id,
+            ManuscriptWorldInfoUpdate(**fields),
+            expected_version=expected_version,
+        )
+        return normalize_writing_record("server", "world_info", self._model_to_dict(response))
+
+    async def delete_world_info(self, item_id: str, *, expected_version: int) -> bool:
+        self._enforce(self._action_id("world_info", "delete"))
+        return await self._require_client().delete_manuscript_world_info(
+            item_id,
+            expected_version=expected_version,
+        )
+
+    async def create_plot_line(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._action_id("plot_lines", "create"))
+        response = await self._require_client().create_manuscript_plot_line(
+            project_id,
+            ManuscriptPlotLineCreate(title=title, **kwargs),
+        )
+        return normalize_writing_record("server", "plot_line", self._model_to_dict(response))
+
+    async def list_plot_lines(self, project_id: str) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("plot_lines", "list"))
+        response = await self._require_client().list_manuscript_plot_lines(project_id)
+        return [
+            normalize_writing_record("server", "plot_line", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def update_plot_line(
+        self,
+        plot_line_id: str,
+        *,
+        expected_version: int,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        self._enforce(self._action_id("plot_lines", "update"))
+        response = await self._require_client().update_manuscript_plot_line(
+            plot_line_id,
+            ManuscriptPlotLineUpdate(**fields),
+            expected_version=expected_version,
+        )
+        return normalize_writing_record("server", "plot_line", self._model_to_dict(response))
+
+    async def delete_plot_line(self, plot_line_id: str, *, expected_version: int) -> bool:
+        self._enforce(self._action_id("plot_lines", "delete"))
+        return await self._require_client().delete_manuscript_plot_line(
+            plot_line_id,
+            expected_version=expected_version,
+        )
+
+    async def create_plot_event(self, plot_line_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._action_id("plot_events", "create"))
+        response = await self._require_client().create_manuscript_plot_event(
+            plot_line_id,
+            ManuscriptPlotEventCreate(title=title, **kwargs),
+        )
+        return normalize_writing_record("server", "plot_event", self._model_to_dict(response))
+
+    async def list_plot_events(self, plot_line_id: str) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("plot_events", "list"))
+        response = await self._require_client().list_manuscript_plot_events(plot_line_id)
+        return [
+            normalize_writing_record("server", "plot_event", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def update_plot_event(
+        self,
+        plot_event_id: str,
+        *,
+        expected_version: int,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        self._enforce(self._action_id("plot_events", "update"))
+        response = await self._require_client().update_manuscript_plot_event(
+            plot_event_id,
+            ManuscriptPlotEventUpdate(**fields),
+            expected_version=expected_version,
+        )
+        return normalize_writing_record("server", "plot_event", self._model_to_dict(response))
+
+    async def delete_plot_event(self, plot_event_id: str, *, expected_version: int) -> bool:
+        self._enforce(self._action_id("plot_events", "delete"))
+        return await self._require_client().delete_manuscript_plot_event(
+            plot_event_id,
+            expected_version=expected_version,
+        )
+
+    async def create_plot_hole(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._action_id("plot_holes", "create"))
+        response = await self._require_client().create_manuscript_plot_hole(
+            project_id,
+            ManuscriptPlotHoleCreate(title=title, **kwargs),
+        )
+        return normalize_writing_record("server", "plot_hole", self._model_to_dict(response))
+
+    async def list_plot_holes(self, project_id: str, *, status: str | None = None) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("plot_holes", "list"))
+        response = await self._require_client().list_manuscript_plot_holes(project_id, status=status)
+        return [
+            normalize_writing_record("server", "plot_hole", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def update_plot_hole(
+        self,
+        plot_hole_id: str,
+        *,
+        expected_version: int,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        self._enforce(self._action_id("plot_holes", "update"))
+        response = await self._require_client().update_manuscript_plot_hole(
+            plot_hole_id,
+            ManuscriptPlotHoleUpdate(**fields),
+            expected_version=expected_version,
+        )
+        return normalize_writing_record("server", "plot_hole", self._model_to_dict(response))
+
+    async def delete_plot_hole(self, plot_hole_id: str, *, expected_version: int) -> bool:
+        self._enforce(self._action_id("plot_holes", "delete"))
+        return await self._require_client().delete_manuscript_plot_hole(
+            plot_hole_id,
+            expected_version=expected_version,
+        )
+
+    async def link_scene_character(
+        self,
+        scene_id: str,
+        *,
+        character_id: str,
+        is_pov: bool = False,
+    ) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("scene_characters", "create"))
+        response = await self._require_client().link_manuscript_scene_character(
+            scene_id,
+            SceneCharacterLink(character_id=character_id, is_pov=is_pov),
+        )
+        return [
+            normalize_writing_record("server", "scene_character_link", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def list_scene_characters(self, scene_id: str) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("scene_characters", "list"))
+        response = await self._require_client().list_manuscript_scene_characters(scene_id)
+        return [
+            normalize_writing_record("server", "scene_character_link", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def unlink_scene_character(self, scene_id: str, character_id: str) -> bool:
+        self._enforce(self._action_id("scene_characters", "delete"))
+        return await self._require_client().unlink_manuscript_scene_character(scene_id, character_id)
+
+    async def link_scene_world_info(self, scene_id: str, *, world_info_id: str) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("scene_world_info", "create"))
+        response = await self._require_client().link_manuscript_scene_world_info(
+            scene_id,
+            SceneWorldInfoLink(world_info_id=world_info_id),
+        )
+        return [
+            normalize_writing_record("server", "scene_world_info_link", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def list_scene_world_info(self, scene_id: str) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("scene_world_info", "list"))
+        response = await self._require_client().list_manuscript_scene_world_info(scene_id)
+        return [
+            normalize_writing_record("server", "scene_world_info_link", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def unlink_scene_world_info(self, scene_id: str, world_info_id: str) -> bool:
+        self._enforce(self._action_id("scene_world_info", "delete"))
+        return await self._require_client().unlink_manuscript_scene_world_info(scene_id, world_info_id)
+
+    async def create_citation(self, scene_id: str, *, source_type: str, **kwargs: Any) -> dict[str, Any]:
+        self._enforce(self._action_id("citations", "create"))
+        response = await self._require_client().create_manuscript_citation(
+            scene_id,
+            ManuscriptCitationCreate(source_type=source_type, **kwargs),
+        )
+        return normalize_writing_record("server", "citation", self._model_to_dict(response))
+
+    async def list_citations(self, scene_id: str) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("citations", "list"))
+        response = await self._require_client().list_manuscript_citations(scene_id)
+        return [
+            normalize_writing_record("server", "citation", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def delete_citation(self, citation_id: str, *, expected_version: int) -> bool:
+        self._enforce(self._action_id("citations", "delete"))
+        return await self._require_client().delete_manuscript_citation(
+            citation_id,
+            expected_version=expected_version,
+        )
+
+    async def research_scene(self, scene_id: str, *, query: str, top_k: int = 5) -> dict[str, Any]:
+        self._enforce(self._action_id("research", "launch"))
+        response = await self._require_client().research_manuscript_scene(
+            scene_id,
+            ManuscriptResearchRequest(query=query, top_k=top_k),
+        )
+        payload = self._model_to_dict(response)
+        payload["results"] = [
+            normalize_writing_record("server", "research_result", self._model_to_dict(item))
+            for item in list(payload.get("results", []))
+        ]
+        return payload
+
+    async def analyze_scene(
+        self,
+        scene_id: str,
+        *,
+        analysis_types: list[str],
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("analysis", "launch"))
+        request_data = ManuscriptAnalysisRequest(analysis_types=analysis_types, provider=provider, model=model)
+        response = await self._require_client().analyze_manuscript_scene(scene_id, request_data)
+        return [
+            normalize_writing_record("server", "analysis", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def analyze_chapter(
+        self,
+        chapter_id: str,
+        *,
+        analysis_types: list[str],
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("analysis", "launch"))
+        request_data = ManuscriptAnalysisRequest(analysis_types=analysis_types, provider=provider, model=model)
+        response = await self._require_client().analyze_manuscript_chapter(chapter_id, request_data)
+        return [
+            normalize_writing_record("server", "analysis", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def analyze_project_plot_holes(
+        self,
+        project_id: str,
+        *,
+        analysis_types: list[str] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("analysis", "launch"))
+        request_data = ManuscriptAnalysisRequest(
+            analysis_types=analysis_types or ["plot_holes"],
+            provider=provider,
+            model=model,
+        )
+        response = await self._require_client().analyze_manuscript_project_plot_holes(project_id, request_data)
+        return [
+            normalize_writing_record("server", "analysis", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def analyze_project_consistency(
+        self,
+        project_id: str,
+        *,
+        analysis_types: list[str] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self._enforce(self._action_id("analysis", "launch"))
+        request_data = ManuscriptAnalysisRequest(
+            analysis_types=analysis_types or ["consistency"],
+            provider=provider,
+            model=model,
+        )
+        response = await self._require_client().analyze_manuscript_project_consistency(project_id, request_data)
+        return [
+            normalize_writing_record("server", "analysis", self._model_to_dict(item))
+            for item in list(response or [])
+        ]
+
+    async def list_analyses(
+        self,
+        project_id: str,
+        *,
+        scope_type: str | None = None,
+        analysis_type: str | None = None,
+        include_stale: bool = False,
+    ) -> dict[str, Any]:
+        self._enforce(self._action_id("analysis", "list"))
+        response = await self._require_client().list_manuscript_analyses(
+            project_id,
+            scope_type=scope_type,
+            analysis_type=analysis_type,
+            include_stale=include_stale,
+        )
+        payload = self._model_to_dict(response)
+        payload["analyses"] = [
+            normalize_writing_record("server", "analysis", self._model_to_dict(item))
+            for item in list(payload.get("analyses", []))
+        ]
+        return payload
 
     async def create_version(self, entity_type: str, entity_id: str, *, label: str | None = None) -> dict[str, Any]:
         self._enforce(self._action_id("versions", "create"))

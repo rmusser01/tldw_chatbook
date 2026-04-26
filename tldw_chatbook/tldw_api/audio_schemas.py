@@ -263,6 +263,103 @@ class AudioTranscriptionResponse(BaseModel):
     segments: list[Any] | None = None
 
 
+class StreamingStatusFeatures(BaseModel):
+    partial_results: bool = True
+    multiple_languages: bool = True
+    concurrent_streams: bool = True
+    segment_metadata: bool = True
+    live_insights: bool = True
+    meeting_notes: bool = True
+    speaker_diarization: bool = True
+    audio_persistence: bool = True
+
+
+class StreamingStatusResponse(BaseModel):
+    status: Literal["available", "unavailable", "error"]
+    available_models: list[str] = Field(default_factory=list)
+    websocket_endpoint: str
+    supported_features: StreamingStatusFeatures
+
+
+class StreamingLimitsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    user_id: int | str
+    tier: str
+    limits: dict[str, Any]
+    used_today_minutes: float
+    remaining_minutes: float | None = None
+    active_streams: int
+    can_start_stream: bool
+    legacy_can_start_stream: bool = Field(..., alias="_can_start_stream")
+
+
+class StreamingTestResponse(BaseModel):
+    status: Literal["success", "error"]
+    test_passed: bool
+    message: str
+    test_result: Any | None = None
+
+
+class SpeechChatSTTConfig(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    language: str | None = None
+    extra_params: dict[str, Any] | None = None
+
+
+class SpeechChatLLMConfig(BaseModel):
+    api_provider: str | None = None
+    model: str | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(default=None, ge=1)
+    extra_params: dict[str, Any] | None = None
+
+
+class SpeechChatTTSConfig(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    voice: str | None = None
+    response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] | None = None
+    speed: float | None = Field(default=None, ge=0.25, le=4.0)
+    extra_params: dict[str, Any] | None = None
+
+
+class SpeechChatRequest(BaseModel):
+    session_id: str | None = None
+    input_audio: str
+    input_audio_format: str
+    stt_config: SpeechChatSTTConfig | None = None
+    llm_config: SpeechChatLLMConfig
+    tts_config: SpeechChatTTSConfig | None = None
+    store_audio: bool | None = False
+    metadata: dict[str, Any] | None = None
+
+
+class SpeechChatTiming(BaseModel):
+    stt_ms: float
+    llm_ms: float
+    tts_ms: float
+
+
+class SpeechChatTokenUsage(BaseModel):
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+class SpeechChatResponse(BaseModel):
+    session_id: str
+    user_transcript: str
+    assistant_text: str
+    output_audio: str
+    output_audio_mime_type: str
+    timing: SpeechChatTiming
+    token_usage: SpeechChatTokenUsage | None = None
+    metadata: dict[str, Any] | None = None
+    action_result: dict[str, Any] | None = None
+
+
 __all__ = [
     "AudioFormat",
     "AudioJobResponse",
@@ -280,6 +377,17 @@ __all__ = [
     "CustomVoiceResponse",
     "NormalizationOptions",
     "OpenAISpeechRequest",
+    "SpeechChatLLMConfig",
+    "SpeechChatRequest",
+    "SpeechChatResponse",
+    "SpeechChatSTTConfig",
+    "SpeechChatTTSConfig",
+    "SpeechChatTiming",
+    "SpeechChatTokenUsage",
+    "StreamingLimitsResponse",
+    "StreamingStatusFeatures",
+    "StreamingStatusResponse",
+    "StreamingTestResponse",
     "SubmitAudioJobRequest",
     "SubmitAudioJobResponse",
     "TranscriptResponseFormat",

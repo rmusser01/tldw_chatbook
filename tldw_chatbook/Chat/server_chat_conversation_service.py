@@ -6,7 +6,12 @@ from typing import Any, Mapping, Optional
 
 from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_from_config
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-from tldw_chatbook.tldw_api import ConversationUpdateRequest, TLDWAPIClient
+from tldw_chatbook.tldw_api import (
+    ChatLoopApprovalDecisionRequest,
+    ChatLoopStartRequest,
+    ConversationUpdateRequest,
+    TLDWAPIClient,
+)
 
 
 class ServerChatConversationService:
@@ -67,6 +72,12 @@ class ServerChatConversationService:
             return update_data
         return ConversationUpdateRequest(**dict(update_data))
 
+    @staticmethod
+    def _loop_start_request(messages: list[dict[str, Any]], extras: Mapping[str, Any]) -> ChatLoopStartRequest:
+        payload = dict(extras)
+        payload["messages"] = messages
+        return ChatLoopStartRequest(**payload)
+
     async def list_conversations(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce(self._action_id("list"))
         return await self._require_client().list_chat_conversations(**kwargs)
@@ -99,6 +110,34 @@ class ServerChatConversationService:
     async def get_citations(self, conversation_id: str) -> dict[str, Any]:
         self._enforce(self._action_id("detail"))
         return await self._require_client().get_chat_conversation_citations(conversation_id)
+
+    async def start_loop(self, *, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
+        self._enforce("chat.loop.launch.server")
+        return await self._require_client().start_chat_loop_run(
+            self._loop_start_request(messages=messages, extras=kwargs)
+        )
+
+    async def list_loop_events(self, run_id: str, *, after_seq: int = 0) -> Any:
+        self._enforce("chat.loop.observe.server")
+        return await self._require_client().list_chat_loop_events(run_id, after_seq=after_seq)
+
+    async def approve_loop_call(self, run_id: str, *, approval_id: str) -> Any:
+        self._enforce("chat.loop.approve.server")
+        return await self._require_client().approve_chat_loop_call(
+            run_id,
+            ChatLoopApprovalDecisionRequest(approval_id=approval_id, decision="approve"),
+        )
+
+    async def reject_loop_call(self, run_id: str, *, approval_id: str) -> Any:
+        self._enforce("chat.loop.approve.server")
+        return await self._require_client().reject_chat_loop_call(
+            run_id,
+            ChatLoopApprovalDecisionRequest(approval_id=approval_id, decision="reject"),
+        )
+
+    async def cancel_loop(self, run_id: str) -> Any:
+        self._enforce("chat.loop.cancel.server")
+        return await self._require_client().cancel_chat_loop_run(run_id)
 
     async def create_conversation(self, **_kwargs: Any) -> dict[str, Any]:
         self._enforce(self._action_id("create"))

@@ -7,6 +7,8 @@ from tldw_chatbook.tldw_api import (
     CollectionsFeedCreateRequest,
     CollectionsFeedUpdateRequest,
     CollectionsFeedsListResponse,
+    CollectionsWebSubSubscribeRequest,
+    CollectionsWebSubSubscriptionResponse,
     TLDWAPIClient,
 )
 
@@ -95,3 +97,45 @@ async def test_collections_feeds_client_routes_crud(monkeypatch):
     assert isinstance(fetched, CollectionsFeed)
     assert updated.active is False
     assert deleted is True
+
+
+@pytest.mark.asyncio
+async def test_collections_feeds_client_routes_websub_management(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "id": 41,
+                "source_id": 12,
+                "hub_url": "https://hub.example.com",
+                "topic_url": "https://example.com/feed.xml",
+                "state": "pending",
+                "lease_seconds": 3600,
+            },
+            {
+                "id": 41,
+                "source_id": 12,
+                "hub_url": "https://hub.example.com",
+                "topic_url": "https://example.com/feed.xml",
+                "state": "verified",
+                "lease_seconds": 3600,
+            },
+            {"message": "unsubscribed", "state": "unsubscribed"},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    subscribed = await client.subscribe_collections_feed_websub(
+        12,
+        CollectionsWebSubSubscribeRequest(lease_seconds=3600),
+    )
+    status = await client.get_collections_feed_websub(12)
+    unsubscribed = await client.unsubscribe_collections_feed_websub(12)
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/collections/feeds/12/websub/subscribe")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {"lease_seconds": 3600}
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/collections/feeds/12/websub")
+    assert mocked.await_args_list[2].args[:2] == ("DELETE", "/api/v1/collections/feeds/12/websub")
+    assert isinstance(subscribed, CollectionsWebSubSubscriptionResponse)
+    assert status.state == "verified"
+    assert unsubscribed["state"] == "unsubscribed"

@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from tldw_chatbook.tldw_api import (
+    BatchMediaProcessResponse,
     FileArtifactsPurgeRequest,
     FileCreateOptions,
     FileCreateRequest,
@@ -12,9 +13,26 @@ from tldw_chatbook.tldw_api import (
     IngestionSourceItemResponse,
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
+    IngestWebContentRequest,
+    IngestWebContentResponse,
+    AddMediaRequest,
+    MediaNavigationContentResponse,
+    MediaNavigationResponse,
+    MediaItemUpdateRequest,
+    MediaKeywordsUpdateRequest,
+    ProcessMediaWikiRequest,
+    ProcessCodeRequest,
+    ProcessEmailsRequest,
+    ProcessWebScrapingRequest,
     ReadingProgressUpdate,
     ReadingArchiveCreateRequest,
     ReadingArchiveResponse,
+    ReadingDigestOutputsListResponse,
+    ReadingDigestScheduleCreateRequest,
+    ReadingDigestScheduleFilters,
+    ReadingDigestScheduleResponse,
+    ReadingDigestScheduleUpdateRequest,
+    ReadingDigestSuggestionsConfig,
     ReadingExportResponse,
     ReadingImportJobResponse,
     ReadingImportJobStatus,
@@ -41,6 +59,527 @@ class _FakeHTTPClient:
     async def request(self, *args, **kwargs):
         self.request_calls.append((args, kwargs))
         return self.response
+
+
+@pytest.mark.asyncio
+async def test_add_media_route_posts_multipart_form_to_server_media_add(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(return_value={"status": "success", "processed_count": 1})
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.add_media(
+        AddMediaRequest(
+            media_type="document",
+            urls=["https://example.com/report.md"],
+            title="Report",
+            keywords=["ai", "research"],
+            keep_original_file=True,
+        )
+    )
+
+    assert result["processed_count"] == 1
+    assert mocked.await_args.args[:2] == ("POST", "/api/v1/media/add")
+    assert mocked.await_args.kwargs["data"] == {
+        "media_type": "document",
+        "urls": ["https://example.com/report.md"],
+        "title": "Report",
+        "keywords": "ai,research",
+        "keep_original_file": "true",
+    }
+    assert mocked.await_args.kwargs["files"] is None
+
+
+@pytest.mark.asyncio
+async def test_media_management_routes_wire_server_item_listing_and_lookup(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {"keywords": ["ai", "paper"]},
+            {"items": [], "pagination": {"page": 2, "results_per_page": 25, "total_pages": 0, "total_items": 0}},
+            {"deleted_count": 2, "failed_count": 0, "failed_ids": [], "remaining_count": 0},
+            {
+                "media_id": 7,
+                "source": {"title": "Paper", "type": "pdf"},
+                "processing": {},
+                "content": {},
+                "keywords": ["ai"],
+                "timestamps": [],
+            },
+            {
+                "media_id": 7,
+                "source": {"title": "Renamed", "type": "pdf"},
+                "processing": {},
+                "content": {},
+                "keywords": ["ai"],
+                "timestamps": [],
+            },
+            {},
+            {
+                "media_id": 7,
+                "source": {"title": "Renamed", "type": "pdf"},
+                "processing": {},
+                "content": {},
+                "keywords": ["ai"],
+                "timestamps": [],
+            },
+            {},
+            {"media_id": 7, "keywords": ["ai"]},
+            {"results": [{"media_id": 7}], "pagination": {"page": 2, "per_page": 10, "total": 1, "total_pages": 1}},
+            {"results": [{"media_id": 7}], "total": 1},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.list_media_keywords(query="ai", limit=5)
+    await client.list_media_trash(page=2, results_per_page=25, include_keywords=True)
+    await client.empty_media_trash()
+    await client.get_media_item(7, include_content=False, include_versions=True, include_version_content=False)
+    await client.update_media_item(7, MediaItemUpdateRequest(title="Renamed", keywords=["ai"]))
+    await client.delete_media_item(7)
+    await client.restore_media_item(7, include_content=False)
+    await client.permanently_delete_media_item(7)
+    await client.update_media_keywords(7, MediaKeywordsUpdateRequest(keywords=["ai"], mode="set"))
+    await client.search_media_metadata(
+        field="doi",
+        value="10.123/example",
+        media_types=["pdf"],
+        must_have=["paper"],
+        group_by_media=False,
+        page=2,
+        per_page=10,
+    )
+    await client.get_media_by_identifier(doi="10.123/example", group_by_media=False)
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/media/keywords")
+    assert mocked.await_args_list[0].kwargs["params"] == {"query": "ai", "limit": 5}
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/trash")
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "page": 2,
+        "results_per_page": 25,
+        "include_keywords": "true",
+    }
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/media/trash/empty")
+    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/media/7")
+    assert mocked.await_args_list[3].kwargs["params"] == {
+        "include_content": "false",
+        "include_versions": "true",
+        "include_version_content": "false",
+    }
+    assert mocked.await_args_list[4].args[:2] == ("PUT", "/api/v1/media/7")
+    assert mocked.await_args_list[4].kwargs["json_data"] == {"title": "Renamed", "keywords": ["ai"]}
+    assert mocked.await_args_list[5].args[:2] == ("DELETE", "/api/v1/media/7")
+    assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/media/7/restore")
+    assert mocked.await_args_list[6].kwargs["params"]["include_content"] == "false"
+    assert mocked.await_args_list[7].args[:2] == ("DELETE", "/api/v1/media/7/permanent")
+    assert mocked.await_args_list[8].args[:2] == ("PATCH", "/api/v1/media/7/keywords")
+    assert mocked.await_args_list[8].kwargs["json_data"] == {"keywords": ["ai"], "mode": "set"}
+    assert mocked.await_args_list[9].args[:2] == ("GET", "/api/v1/media/metadata-search")
+    assert mocked.await_args_list[9].kwargs["params"] == {
+        "field": "doi",
+        "op": "icontains",
+        "value": "10.123/example",
+        "match_mode": "all",
+        "group_by_media": "false",
+        "page": 2,
+        "per_page": 10,
+        "media_types": "pdf",
+        "must_have": "paper",
+    }
+    assert mocked.await_args_list[10].args[:2] == ("GET", "/api/v1/media/by-identifier")
+    assert mocked.await_args_list[10].kwargs["params"] == {
+        "doi": "10.123/example",
+        "group_by_media": "false",
+    }
+
+
+@pytest.mark.asyncio
+async def test_media_navigation_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "media_id": 9,
+                "available": True,
+                "navigation_version": "nav-v1",
+                "source_order_used": ["pdf_outline"],
+                "nodes": [
+                    {
+                        "id": "node-1",
+                        "parent_id": None,
+                        "level": 0,
+                        "title": "Chapter 1",
+                        "order": 0,
+                        "target_type": "page",
+                        "target_start": 1,
+                        "source": "pdf_outline",
+                    }
+                ],
+                "stats": {"returned_node_count": 1, "node_count": 1, "max_depth": 0, "truncated": False},
+            },
+            {
+                "media_id": 9,
+                "node_id": "node-1",
+                "title": "Chapter 1",
+                "content_format": "markdown",
+                "available_formats": ["plain", "markdown"],
+                "content": "# Chapter 1",
+                "target": {"target_type": "page", "target_start": 1},
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    navigation = await client.get_media_navigation(9, max_depth=3, max_nodes=25, parent_id="root")
+    content = await client.get_media_navigation_content(
+        9,
+        "node-1",
+        format="markdown",
+        include_alternates=True,
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/media/9/navigation")
+    assert mocked.await_args_list[0].kwargs["params"] == {
+        "include_generated_fallback": False,
+        "max_depth": 3,
+        "max_nodes": 25,
+        "parent_id": "root",
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/9/navigation/node-1/content")
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "format": "markdown",
+        "include_alternates": True,
+    }
+    assert isinstance(navigation, MediaNavigationResponse)
+    assert navigation.nodes[0].title == "Chapter 1"
+    assert isinstance(content, MediaNavigationContentResponse)
+    assert content.content == "# Chapter 1"
+
+
+@pytest.mark.asyncio
+async def test_mediawiki_streaming_and_original_file_routes_use_media_router(monkeypatch, tmp_path):
+    client = TLDWAPIClient("http://localhost:8000")
+    dump_path = tmp_path / "dump.xml"
+    dump_path.write_text("<mediawiki />", encoding="utf-8")
+    stream_calls = []
+
+    async def fake_stream(method, endpoint, data=None, files=None):
+        stream_calls.append((method, endpoint, data, files))
+        yield {
+            "type": "item_result",
+            "data": {
+                "title": "Main Page",
+                "content": "Body",
+                "chunks": [],
+            },
+        }
+
+    binary = AsyncMock(return_value=ReadingExportResponse(content=b"%PDF", content_type="application/pdf"))
+    headers = AsyncMock(
+        return_value={
+            "content-type": "application/pdf",
+            "content-length": "1024",
+            "content-disposition": 'inline; filename="demo.pdf"',
+            "etag": '"abc"',
+            "accept-ranges": "bytes",
+        }
+    )
+    monkeypatch.setattr(client, "_stream_request", fake_stream)
+    monkeypatch.setattr(client, "_binary_request", binary)
+    monkeypatch.setattr(client, "_headers_request", headers)
+
+    request = ProcessMediaWikiRequest(wiki_name="Demo", namespaces_str="0", skip_redirects=True)
+    pages = [page async for page in client.process_mediawiki_dump(request, str(dump_path))]
+    events = [event async for event in client.ingest_mediawiki_dump(request, str(dump_path))]
+    file_response = await client.download_media_file(7, file_type="original")
+    file_availability = await client.check_media_file(7, file_type="original")
+
+    assert pages[0].title == "Main Page"
+    assert events[0]["type"] == "item_result"
+    assert stream_calls[0][0:2] == ("POST", "/api/v1/media/mediawiki/process-dump")
+    assert stream_calls[1][0:2] == ("POST", "/api/v1/media/mediawiki/ingest-dump")
+    assert stream_calls[0][2]["wiki_name"] == "Demo"
+    assert stream_calls[0][2]["namespaces_str"] == "0"
+    assert binary.await_args.args[:2] == ("GET", "/api/v1/media/7/file")
+    assert binary.await_args.kwargs["params"] == {"file_type": "original"}
+    assert file_response.content == b"%PDF"
+    assert headers.await_args.args[:2] == ("HEAD", "/api/v1/media/7/file")
+    assert headers.await_args.kwargs["params"] == {"file_type": "original"}
+    assert file_availability.available is True
+    assert file_availability.content_length == 1024
+    assert file_availability.filename == "demo.pdf"
+
+
+@pytest.mark.asyncio
+async def test_reading_digest_schedule_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {"id": "digest-1"},
+            [
+                {
+                    "id": "digest-1",
+                    "name": "Morning",
+                    "cron": "0 8 * * *",
+                    "timezone": "UTC",
+                    "enabled": True,
+                    "require_online": False,
+                    "format": "md",
+                    "filters": {"status": ["saved"], "suggestions": {"enabled": True, "limit": 3}},
+                }
+            ],
+            {
+                "id": "digest-1",
+                "name": "Morning",
+                "cron": "0 8 * * *",
+                "timezone": "UTC",
+                "enabled": True,
+                "require_online": False,
+                "format": "md",
+            },
+            {
+                "id": "digest-1",
+                "name": "Updated",
+                "cron": "0 9 * * *",
+                "timezone": "UTC",
+                "enabled": False,
+                "require_online": True,
+                "format": "html",
+            },
+            {"ok": True},
+            {
+                "items": [
+                    {
+                        "output_id": 77,
+                        "title": "Morning Digest",
+                        "format": "md",
+                        "download_url": "/api/v1/outputs/77/download",
+                        "schedule_id": "digest-1",
+                        "item_count": 3,
+                    }
+                ],
+                "total": 1,
+                "limit": 25,
+                "offset": 5,
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    filters = ReadingDigestScheduleFilters(
+        status=["saved"],
+        suggestions=ReadingDigestSuggestionsConfig(enabled=True, limit=3),
+    )
+    created = await client.create_reading_digest_schedule(
+        ReadingDigestScheduleCreateRequest(
+            name="Morning",
+            cron="0 8 * * *",
+            timezone="UTC",
+            filters=filters,
+        )
+    )
+    schedules = await client.list_reading_digest_schedules(limit=25, offset=5)
+    detail = await client.get_reading_digest_schedule("digest-1")
+    updated = await client.update_reading_digest_schedule(
+        "digest-1",
+        ReadingDigestScheduleUpdateRequest(
+            name="Updated",
+            cron="0 9 * * *",
+            enabled=False,
+            require_online=True,
+            format="html",
+        ),
+    )
+    deleted = await client.delete_reading_digest_schedule("digest-1")
+    outputs = await client.list_reading_digest_outputs(schedule_id="digest-1", limit=25, offset=5)
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/digests/schedules")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "name": "Morning",
+        "cron": "0 8 * * *",
+        "timezone": "UTC",
+        "enabled": True,
+        "require_online": False,
+        "format": "md",
+        "filters": {"status": ["saved"], "suggestions": {"enabled": True, "limit": 3, "include_read": False, "include_archived": False}},
+    }
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/digests/schedules")
+    assert mocked.await_args_list[1].kwargs["params"] == {"limit": 25, "offset": 5}
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/reading/digests/schedules/digest-1")
+    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/reading/digests/schedules/digest-1")
+    assert mocked.await_args_list[3].kwargs["json_data"] == {
+        "name": "Updated",
+        "cron": "0 9 * * *",
+        "enabled": False,
+        "require_online": True,
+        "format": "html",
+    }
+    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/reading/digests/schedules/digest-1")
+    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/reading/digests/outputs")
+    assert mocked.await_args_list[5].kwargs["params"] == {"schedule_id": "digest-1", "limit": 25, "offset": 5}
+    assert created == {"id": "digest-1"}
+    assert isinstance(schedules[0], ReadingDigestScheduleResponse)
+    assert schedules[0].filters.suggestions.enabled is True
+    assert isinstance(detail, ReadingDigestScheduleResponse)
+    assert updated.format == "html"
+    assert deleted == {"ok": True}
+    assert isinstance(outputs, ReadingDigestOutputsListResponse)
+    assert outputs.items[0].output_id == 77
+
+
+@pytest.mark.asyncio
+async def test_ingest_web_content_route_wires_and_returns_typed_response(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "status": "success",
+            "message": "Web content processed",
+            "count": 1,
+            "results": [
+                {
+                    "url": "https://example.com/article",
+                    "title": "Example Article",
+                    "author": "Ada",
+                    "content": "Article body",
+                    "keywords": ["ai", "reading"],
+                    "analysis": "Summary",
+                    "extraction_successful": True,
+                    "metadata": {"source": "test"},
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    response = await client.ingest_web_content(
+        IngestWebContentRequest(
+            urls=["https://example.com/article"],
+            titles=["Example Article"],
+            keywords=["ai", "reading"],
+            scrape_method="individual",
+            perform_analysis=True,
+            perform_chunking=False,
+            timestamp_option=False,
+        )
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/media/ingest-web-content")
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "urls": ["https://example.com/article"],
+        "titles": ["Example Article"],
+        "keywords": ["ai", "reading"],
+        "scrape_method": "individual",
+        "url_level": 2,
+        "max_depth": 3,
+        "perform_translation": False,
+        "translation_language": "en",
+        "timestamp_option": False,
+        "overwrite_existing": False,
+        "perform_analysis": True,
+        "perform_rolling_summarization": False,
+        "perform_chunking": False,
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "hierarchical_chunking": False,
+        "use_cookies": False,
+        "perform_confabulation_check_of_analysis": False,
+    }
+    assert isinstance(response, IngestWebContentResponse)
+    assert response.count == 1
+    assert response.results[0].title == "Example Article"
+
+
+@pytest.mark.asyncio
+async def test_processing_no_db_routes_wire_for_code_email_web_and_models(monkeypatch, tmp_path):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "processed_count": 1,
+                "errors_count": 0,
+                "errors": [],
+                "results": [
+                    {
+                        "status": "Success",
+                        "input_ref": "https://example.com/main.py",
+                        "media_type": "code",
+                        "content": "print('hi')",
+                    }
+                ],
+            },
+            {
+                "processed_count": 1,
+                "errors_count": 0,
+                "errors": [],
+                "results": [
+                    {
+                        "status": "Success",
+                        "input_ref": "message.eml",
+                        "media_type": "email",
+                        "content": "Email body",
+                    }
+                ],
+            },
+            {
+                "status": "success",
+                "message": "Web content processed",
+                "count": 1,
+                "results": [{"url": "https://example.com/post", "title": "Post"}],
+            },
+            {"providers": {"local": ["distil-large-v3"]}},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+    email_file = tmp_path / "message.eml"
+    email_file.write_text("Subject: Test\n\nBody", encoding="utf-8")
+
+    code_response = await client.process_code(
+        ProcessCodeRequest(urls=["https://example.com/main.py"], chunk_method="lines")
+    )
+    email_response = await client.process_emails(
+        ProcessEmailsRequest(title="Inbox", accept_mbox=True),
+        file_paths=[str(email_file)],
+    )
+    web_response = await client.process_web_scraping(
+        ProcessWebScrapingRequest(
+            scrape_method="individual",
+            url_input="https://example.com/post",
+            mode="ephemeral",
+            keywords="ai,reading",
+        )
+    )
+    models = await client.get_transcription_models()
+
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/media/process-code")
+    assert mocked.await_args_list[0].kwargs["data"] == {
+        "urls": ["https://example.com/main.py"],
+        "perform_chunking": "true",
+        "chunk_method": "lines",
+        "chunk_size": "4000",
+        "chunk_overlap": "200",
+    }
+    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/media/process-emails")
+    assert mocked.await_args_list[1].kwargs["data"]["title"] == "Inbox"
+    assert mocked.await_args_list[1].kwargs["data"]["accept_mbox"] == "true"
+    assert mocked.await_args_list[1].kwargs["files"][0][0] == "files"
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/media/process-web-scraping")
+    assert mocked.await_args_list[2].kwargs["json_data"] == {
+        "scrape_method": "individual",
+        "url_input": "https://example.com/post",
+        "max_depth": 3,
+        "summarize_checkbox": False,
+        "keywords": "ai,reading",
+        "temperature": 0.7,
+        "mode": "ephemeral",
+    }
+    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/media/transcription-models")
+    assert isinstance(code_response, BatchMediaProcessResponse)
+    assert code_response.results[0].media_type == "code"
+    assert isinstance(email_response, BatchMediaProcessResponse)
+    assert email_response.results[0].media_type == "email"
+    assert web_response.results[0].title == "Post"
+    assert models == {"providers": {"local": ["distil-large-v3"]}}
 
 
 @pytest.mark.asyncio

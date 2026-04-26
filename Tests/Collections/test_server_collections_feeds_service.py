@@ -45,6 +45,18 @@ class FakeCollectionsFeedsClient:
         self.calls.append(("delete_collections_feed", feed_id))
         return True
 
+    async def subscribe_collections_feed_websub(self, feed_id, request_data):
+        self.calls.append(("subscribe_collections_feed_websub", feed_id, request_data.model_dump(exclude_none=True, mode="json")))
+        return {"id": 41, "source_id": feed_id, "hub_url": "https://hub.example.com", "topic_url": "https://example.com/feed.xml", "state": "pending"}
+
+    async def get_collections_feed_websub(self, feed_id):
+        self.calls.append(("get_collections_feed_websub", feed_id))
+        return {"id": 41, "source_id": feed_id, "hub_url": "https://hub.example.com", "topic_url": "https://example.com/feed.xml", "state": "verified"}
+
+    async def unsubscribe_collections_feed_websub(self, feed_id):
+        self.calls.append(("unsubscribe_collections_feed_websub", feed_id))
+        return {"message": "unsubscribed", "state": "unsubscribed"}
+
 
 @pytest.mark.asyncio
 async def test_server_collections_feeds_service_routes_crud_with_policy_actions():
@@ -84,6 +96,31 @@ async def test_server_collections_feeds_service_routes_crud_with_policy_actions(
         "collections.feeds.detail.server",
         "collections.feeds.update.server",
         "collections.feeds.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_collections_feeds_service_routes_websub_with_policy_actions():
+    client = FakeCollectionsFeedsClient()
+    policy = Mock()
+    service = ServerCollectionsFeedsService(client=client, policy_enforcer=policy)
+
+    subscribed = await service.subscribe_feed_websub(12, lease_seconds=3600)
+    status = await service.get_feed_websub_status(12)
+    unsubscribed = await service.unsubscribe_feed_websub(12)
+
+    assert subscribed["state"] == "pending"
+    assert status["state"] == "verified"
+    assert unsubscribed["state"] == "unsubscribed"
+    assert client.calls[-3:] == [
+        ("subscribe_collections_feed_websub", 12, {"lease_seconds": 3600}),
+        ("get_collections_feed_websub", 12),
+        ("unsubscribe_collections_feed_websub", 12),
+    ]
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list][-3:] == [
+        "collections.feeds.websub.launch.server",
+        "collections.feeds.websub.detail.server",
+        "collections.feeds.websub.delete.server",
     ]
 
 

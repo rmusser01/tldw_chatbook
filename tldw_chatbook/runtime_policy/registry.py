@@ -136,6 +136,7 @@ PREVIEW = _action("preview", "detail")
 CREATE = _action("create", "create")
 UPDATE = _action("update", "update")
 DELETE = _action("delete", "delete")
+PURGE = _action("purge", "delete")
 CANCEL = _action("cancel", "delete")
 LAUNCH = _action("launch", "launch")
 OBSERVE = _action("observe", "observe")
@@ -150,6 +151,9 @@ INSPECT = _action("inspect", "detail")
 REVOKE = _action("revoke", "delete")
 CAPTURE = _action("capture", "launch")
 STATUS = _action("status", "detail")
+SEARCH = _action("search", "browse")
+INITIALIZE = _action("initialize", "launch")
+SHUTDOWN = _action("shutdown", "delete")
 STRUCTURE = _action("structure", "detail")
 RESTORE = _action("restore", "update")
 REORDER = _action("reorder", "update")
@@ -205,6 +209,9 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "server_reminders_notification_feeds",
         "external_connectors",
         "server_skills",
+        "server_tools",
+        "text2sql_query",
+        "sync_transport",
         "user_governance",
         "workflows",
         "scheduler_workflows",
@@ -230,6 +237,7 @@ AUDITED_CAPABILITY_SEEDS = (
                 "chat",
                 actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH,)),
             ),
+            _resource("chat.loop", actions=(LAUNCH, OBSERVE, APPROVE, CANCEL)),
         ),
     ),
     _capability(
@@ -306,10 +314,38 @@ AUDITED_CAPABILITY_SEEDS = (
                 "media.reading",
                 actions=_combine_action_sets(CRUD_ACTIONS, (BULK_UPDATE, ARCHIVE, SUMMARIZE, IMPORT, EXPORT, TTS)),
             ),
+            _resource("media.add", actions=(CREATE,), sources=(SERVER_SOURCE,)),
+            _resource("media.file_artifacts", actions=(DETAIL, CREATE, DELETE, EXPORT, PURGE), sources=(SERVER_SOURCE,)),
+            _resource("media.reference_images", actions=(LIST,), sources=(SERVER_SOURCE,)),
             _resource("media.reading_import_jobs", actions=(LIST, DETAIL)),
+            _resource("media.reading.digest_schedules", actions=CRUD_ACTIONS, sources=(SERVER_SOURCE,)),
+            _resource("media.reading.digest_outputs", actions=(LIST,), sources=(SERVER_SOURCE,)),
+            _resource("media.web_content_ingest", actions=(LAUNCH,), sources=(SERVER_SOURCE,)),
+            _resource("media.items", actions=(LIST, DETAIL, UPDATE, DELETE, RESTORE), sources=(SERVER_SOURCE,)),
+            _resource("media.items.trash", actions=(LIST, DELETE), sources=(SERVER_SOURCE,)),
+            _resource("media.items.keywords", actions=(LIST, UPDATE), sources=(SERVER_SOURCE,)),
+            _resource("media.items.permanent", actions=(DELETE,), sources=(SERVER_SOURCE,)),
+            _resource("media.items.metadata_search", actions=(LIST,), sources=(SERVER_SOURCE,)),
+            _resource("media.items.identifier_lookup", actions=(DETAIL,), sources=(SERVER_SOURCE,)),
+            _resource("media.items.file", actions=(DETAIL,), sources=(SERVER_SOURCE,)),
+            _resource("media.processing.video", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
+            _resource("media.processing.audio", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
+            _resource("media.processing.pdf", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
+            _resource("media.processing.ebook", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
+            _resource("media.processing.document", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
+            _resource("media.processing.plaintext", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
+            _resource("media.processing.code", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
+            _resource("media.processing.emails", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
+            _resource("media.processing.web_scraping", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
+            _resource("media.web_scraping", actions=(STATUS, DETAIL, CANCEL, OBSERVE, INSPECT), sources=(SERVER_SOURCE,)),
+            _resource("media.web_scraping.cookies", actions=(DETAIL, UPDATE), sources=(SERVER_SOURCE,)),
+            _resource("media.web_scraping.service", actions=(INITIALIZE, SHUTDOWN), sources=(SERVER_SOURCE,)),
+            _resource("media.processing.mediawiki", actions=(PROCESS, IMPORT), sources=(SERVER_SOURCE,)),
+            _resource("media.transcription_models", actions=(LIST,), sources=(SERVER_SOURCE,)),
             _resource("media.reading.saved_searches", actions=CRUD_ACTIONS),
             _resource("media.reading.note_links", actions=(LIST, CREATE, DELETE)),
             _resource("media.reading_progress", actions=(DETAIL, UPDATE)),
+            _resource("media.navigation", actions=(DETAIL,)),
             _resource("media.ingestion_sources", actions=CRUD_ACTIONS),
             _resource("media.ingestion_source_items", actions=(REATTACH,)),
             _resource("media.ingestion_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE, CANCEL)),
@@ -331,6 +367,15 @@ AUDITED_CAPABILITY_SEEDS = (
                 actions=(LIST, RESTORE),
                 domain_id="prompts",
             ),
+            _resource("prompts.health", actions=(DETAIL,), sources=(SERVER_SOURCE,), domain_id="prompts"),
+            _resource("prompts.sync_log", actions=(LIST,), sources=(SERVER_SOURCE,), domain_id="prompts"),
+            _resource("prompts.search", actions=(LIST,), sources=(SERVER_SOURCE,), domain_id="prompts"),
+            _resource("prompts.keywords", actions=(LIST, CREATE, DELETE, EXPORT), sources=(SERVER_SOURCE,), domain_id="prompts"),
+            _resource("prompts.transfer", actions=(IMPORT, EXPORT), sources=(SERVER_SOURCE,), domain_id="prompts"),
+            _resource("prompts.templates", actions=(PROCESS,), sources=(SERVER_SOURCE,), domain_id="prompts"),
+            _resource("prompts.bulk", actions=(UPDATE, DELETE), sources=(SERVER_SOURCE,), domain_id="prompts"),
+            _resource("prompts.usage", actions=(UPDATE,), sources=(SERVER_SOURCE,), domain_id="prompts"),
+            _resource("prompts.collections", actions=(LIST, DETAIL, CREATE, UPDATE), sources=(SERVER_SOURCE,), domain_id="prompts"),
             _resource(
                 "chatbooks",
                 actions=_combine_action_sets(CRUD_ACTIONS, (IMPORT, EXPORT)),
@@ -396,6 +441,7 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=REMOTE_ONLY_SOURCES,
         resources=(
             _resource("collections.feeds", actions=CRUD_ACTIONS),
+            _resource("collections.feeds.websub", actions=(DETAIL, LAUNCH, DELETE)),
         ),
     ),
     _capability(
@@ -430,6 +476,17 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("writing.manuscripts", actions=CRUD_ACTIONS),
             _resource("writing.chapters", actions=CRUD_ACTIONS),
             _resource("writing.scenes", actions=CRUD_ACTIONS),
+            _resource("writing.characters", actions=CRUD_ACTIONS),
+            _resource("writing.relationships", actions=(LIST, CREATE, DELETE)),
+            _resource("writing.world_info", actions=CRUD_ACTIONS),
+            _resource("writing.plot_lines", actions=(LIST, CREATE, UPDATE, DELETE)),
+            _resource("writing.plot_events", actions=(LIST, CREATE, UPDATE, DELETE)),
+            _resource("writing.plot_holes", actions=(LIST, CREATE, UPDATE, DELETE)),
+            _resource("writing.scene_characters", actions=(LIST, CREATE, DELETE)),
+            _resource("writing.scene_world_info", actions=(LIST, CREATE, DELETE)),
+            _resource("writing.citations", actions=(LIST, CREATE, DELETE)),
+            _resource("writing.research", actions=(LAUNCH,)),
+            _resource("writing.analysis", actions=(LIST, LAUNCH)),
             _resource("writing.versions", actions=(LIST, DETAIL, CREATE, RESTORE)),
             _resource("writing.trash", actions=(LIST, RESTORE)),
             _resource("writing.outline", actions=(REORDER,)),
@@ -605,6 +662,8 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("audio.providers", actions=(LIST,)),
             _resource("audio.voices", actions=(LIST, DETAIL, CREATE, DELETE, PREVIEW, LAUNCH)),
             _resource("audio.speech", actions=(LAUNCH,)),
+            _resource("audio.speech_chat", actions=(LAUNCH,), sources=(SERVER_SOURCE,)),
+            _resource("audio.streaming", actions=(STATUS, DETAIL, LAUNCH), sources=(SERVER_SOURCE,)),
             _resource("audio.speech_jobs", actions=(DETAIL,)),
             _resource("audio.jobs", actions=(CREATE, DETAIL, OBSERVE)),
             _resource("audio.history", actions=(LIST, DETAIL, UPDATE, DELETE)),
@@ -670,6 +729,34 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("skills.export", actions=(LAUNCH,)),
             _resource("skills.execute", actions=(LAUNCH,)),
             _resource("skills.seed", actions=(LAUNCH,)),
+        ),
+    ),
+    _capability(
+        "server_tools",
+        "Server Tools",
+        "tools",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("tools.catalog", actions=(LIST,)),
+            _resource("tools.execution", actions=(LAUNCH,)),
+        ),
+    ),
+    _capability(
+        "text2sql_query",
+        "Text2SQL Query",
+        "text2sql",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("text2sql.query", actions=(LAUNCH,)),
+        ),
+    ),
+    _capability(
+        "sync_transport",
+        "Sync Transport",
+        "sync",
+        sources=REMOTE_ONLY_SOURCES,
+        resources=(
+            _resource("sync.changes", actions=(LAUNCH, OBSERVE)),
         ),
     ),
     _capability(
@@ -788,6 +875,16 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=SEPARATED_SOURCES,
         resources=(
             _resource("rag.admin", actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS),
+            _resource(
+                "rag.media_embeddings",
+                actions=(STATUS, CREATE, SEARCH, DELETE),
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
+                "rag.media_embedding_jobs",
+                actions=(LIST, DETAIL),
+                sources=(SERVER_SOURCE,),
+            ),
             _resource("rag.template", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE)),
         ),
     ),

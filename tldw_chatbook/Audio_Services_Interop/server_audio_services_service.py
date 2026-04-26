@@ -14,6 +14,7 @@ from ..tldw_api import (
     AudiobookJobRequest,
     AudiobookParseRequest,
     OpenAISpeechRequest,
+    SpeechChatRequest,
     SubmitAudioJobRequest,
     SubtitleExportRequest,
     TLDWAPIClient,
@@ -96,6 +97,22 @@ class ServerAudioServicesService:
     async def list_tts_voices(self, *, provider: str | None = None) -> dict[str, Any]:
         self._enforce("audio.voices.list.server")
         return self._dump(await self._require_client().list_tts_voices(provider=provider))
+
+    async def get_audio_streaming_status(self) -> dict[str, Any]:
+        self._enforce("audio.streaming.status.server")
+        return self._dump(await self._require_client().get_audio_streaming_status())
+
+    async def get_audio_streaming_limits(self) -> dict[str, Any]:
+        self._enforce("audio.streaming.detail.server")
+        return self._dump(await self._require_client().get_audio_streaming_limits())
+
+    async def test_audio_streaming(self) -> dict[str, Any]:
+        self._enforce("audio.streaming.launch.server")
+        return self._dump(await self._require_client().test_audio_streaming())
+
+    async def create_speech_chat(self, request_data: SpeechChatRequest) -> dict[str, Any]:
+        self._enforce("audio.speech_chat.launch.server")
+        return self._dump(await self._require_client().create_speech_chat(request_data))
 
     async def create_audio_speech(self, request_data: OpenAISpeechRequest) -> dict[str, Any]:
         self._enforce("audio.speech.launch.server")

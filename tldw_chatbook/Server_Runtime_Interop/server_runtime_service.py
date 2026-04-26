@@ -65,7 +65,7 @@ class ServerRuntimeService:
 
     async def get_health(self) -> dict[str, Any]:
         self._enforce("server.runtime.health.list.server")
-        return self._dump(await self._require_client().get_server_health())
+        return await self.probe_health()
 
     async def get_liveness(self) -> dict[str, Any]:
         self._enforce("server.runtime.health.observe.server")
@@ -73,7 +73,7 @@ class ServerRuntimeService:
 
     async def get_readiness(self) -> dict[str, Any]:
         self._enforce("server.runtime.health.observe.server")
-        return self._dump(await self._require_client().get_server_readiness())
+        return await self.probe_readiness()
 
     async def get_metrics(self) -> dict[str, Any]:
         self._enforce("server.runtime.health.observe.server")
@@ -85,6 +85,15 @@ class ServerRuntimeService:
 
     async def get_docs_info(self) -> dict[str, Any]:
         self._enforce("server.runtime.config.list.server")
+        return await self.probe_docs_info()
+
+    async def probe_health(self) -> dict[str, Any]:
+        return self._dump(await self._require_client().get_server_health())
+
+    async def probe_readiness(self) -> dict[str, Any]:
+        return self._dump(await self._require_client().get_server_readiness())
+
+    async def probe_docs_info(self) -> dict[str, Any]:
         return self._dump(await self._require_client().get_server_docs_info())
 
     async def get_flashcards_import_limits(self) -> dict[str, Any]:

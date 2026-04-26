@@ -14,7 +14,20 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "reason_code": "local_contract_missing",
         "user_message": "Local chat history does not expose server-style RAG context or citation adjuncts yet.",
         "affected_action_ids": ["chat.detail.local"],
-    }
+    },
+    {
+        "operation_id": "chat.loop.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local chat loop run control is not implemented in Chatbook yet.",
+        "affected_action_ids": [
+            "chat.loop.launch.local",
+            "chat.loop.observe.local",
+            "chat.loop.approve.local",
+            "chat.loop.cancel.local",
+        ],
+    },
 ]
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
@@ -55,6 +68,10 @@ class ChatConversationScopeService:
     @staticmethod
     def _action_id(action: str, mode: str) -> str:
         return f"chat.{action}.{mode}"
+
+    @staticmethod
+    def _loop_action_id(action: str, mode: str) -> str:
+        return f"chat.loop.{action}.{mode}"
 
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -164,6 +181,67 @@ class ChatConversationScopeService:
                 "Local RAG-context conversation adjuncts are not implemented in the local chat database service."
             )
         return await self._maybe_await(self._service_for_mode(normalized_mode).get_citations(conversation_id))
+
+    async def start_loop(self, *, mode: str = "server", messages: list[dict[str, Any]], **kwargs: Any) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._loop_action_id("launch", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Local chat loop runs are not implemented in Chatbook yet.")
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).start_loop(messages=messages, **kwargs)
+        )
+
+    async def list_loop_events(
+        self,
+        run_id: str,
+        *,
+        mode: str = "server",
+        after_seq: int = 0,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._loop_action_id("observe", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Local chat loop runs are not implemented in Chatbook yet.")
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).list_loop_events(run_id, after_seq=after_seq)
+        )
+
+    async def approve_loop_call(
+        self,
+        run_id: str,
+        *,
+        mode: str = "server",
+        approval_id: str,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._loop_action_id("approve", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Local chat loop runs are not implemented in Chatbook yet.")
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).approve_loop_call(run_id, approval_id=approval_id)
+        )
+
+    async def reject_loop_call(
+        self,
+        run_id: str,
+        *,
+        mode: str = "server",
+        approval_id: str,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._loop_action_id("approve", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Local chat loop runs are not implemented in Chatbook yet.")
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).reject_loop_call(run_id, approval_id=approval_id)
+        )
+
+    async def cancel_loop(self, run_id: str, *, mode: str = "server") -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._loop_action_id("cancel", normalized_mode))
+        if normalized_mode == "local":
+            raise NotImplementedError("Local chat loop runs are not implemented in Chatbook yet.")
+        return await self._maybe_await(self._service_for_mode(normalized_mode).cancel_loop(run_id))
 
     async def create_conversation(self, *, mode: str = "local", **kwargs: Any) -> Any:
         normalized_mode = self._normalize_mode(mode)

@@ -60,6 +60,19 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
             "audio.history.delete.local",
         ],
     },
+    {
+        "operation_id": "audio.streaming_rest.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "remote_only_surface",
+        "user_message": "Audio streaming REST status, limits, test, and speech-chat helpers are active-server owned in this seam.",
+        "affected_action_ids": [
+            "audio.streaming.status.server",
+            "audio.streaming.detail.server",
+            "audio.streaming.launch.server",
+            "audio.speech_chat.launch.server",
+        ],
+    },
 ]
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
@@ -68,7 +81,7 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "source": "server",
         "supported": False,
         "reason_code": "server_contract_followup",
-        "user_message": "Server websocket speech/chat streaming is not part of this REST-backed audio seam; SSE job observation remains available.",
+        "user_message": "Server websocket speech/chat streaming is not part of this REST-backed audio seam; REST status, limits, test, and non-streaming speech-chat helpers plus SSE job observation remain available.",
         "affected_action_ids": [],
     },
     {
@@ -299,6 +312,59 @@ class AudioServicesScopeService:
             kwargs={"provider": provider},
         )
         return self._with_record_id(normalized_mode, "audio", result, "voices")
+
+    async def get_audio_streaming_status(
+        self,
+        *,
+        mode: AudioServicesBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == AudioServicesBackend.LOCAL:
+            raise ValueError("Audio streaming REST helpers are server-only; switch to server mode to use them.")
+        self._enforce_policy("audio.streaming.status.server")
+        result = await self._maybe_await(self._service_for_mode(normalized_mode).get_audio_streaming_status())
+        return self._with_record_id(normalized_mode, "audio_streaming", self._dump(result), "status")
+
+    async def get_audio_streaming_limits(
+        self,
+        *,
+        mode: AudioServicesBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == AudioServicesBackend.LOCAL:
+            raise ValueError("Audio streaming REST helpers are server-only; switch to server mode to use them.")
+        self._enforce_policy("audio.streaming.detail.server")
+        result = await self._maybe_await(self._service_for_mode(normalized_mode).get_audio_streaming_limits())
+        return self._with_record_id(normalized_mode, "audio_streaming", self._dump(result), "limits")
+
+    async def test_audio_streaming(
+        self,
+        *,
+        mode: AudioServicesBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == AudioServicesBackend.LOCAL:
+            raise ValueError("Audio streaming REST helpers are server-only; switch to server mode to use them.")
+        self._enforce_policy("audio.streaming.launch.server")
+        result = await self._maybe_await(self._service_for_mode(normalized_mode).test_audio_streaming())
+        return self._with_record_id(normalized_mode, "audio_streaming", self._dump(result), "test")
+
+    async def create_speech_chat(
+        self,
+        *,
+        mode: AudioServicesBackend | str | None = None,
+        request_data: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == AudioServicesBackend.LOCAL:
+            raise ValueError("Audio speech-chat REST helper is server-only; switch to server mode to use it.")
+        self._enforce_policy("audio.speech_chat.launch.server")
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).create_speech_chat(request_data)
+        )
+        payload = self._dump(result)
+        identifier = payload.get("session_id") if isinstance(payload, dict) else None
+        return self._with_record_id(normalized_mode, "audio_speech_chat", payload, identifier or "session")
 
     async def create_audio_speech_job(
         self,

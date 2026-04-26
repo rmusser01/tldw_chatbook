@@ -102,6 +102,55 @@ class ProcessPlaintextRequest(BaseMediaRequest):
     chunk_method: Optional[ChunkMethod] = 'paragraphs'  # Default for plaintext
 
 
+class ProcessCodeRequest(BaseModel):
+    """Request model for the server /media/process-code processing-only endpoint."""
+
+    urls: Optional[List[str]] = None
+    perform_chunking: bool = True
+    chunk_method: Optional[Literal["code", "lines"]] = "code"
+    chunk_size: int = 4000
+    chunk_overlap: int = 200
+
+
+class ProcessEmailsRequest(BaseMediaRequest):
+    """Request model for the server /media/process-emails processing-only endpoint."""
+
+    media_type: Literal["email"] = "email"
+    keep_original_file: bool = False
+    chunk_method: Optional[ChunkMethod] = "sentences"
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
+    ingest_attachments: bool = False
+    max_depth: int = 2
+    accept_archives: bool = False
+    accept_mbox: bool = False
+    accept_pst: bool = False
+
+
+class ProcessWebScrapingRequest(BaseModel):
+    """Request model for the server /media/process-web-scraping endpoint."""
+
+    scrape_method: ScrapeMethod
+    url_input: str
+    url_level: Optional[int] = None
+    max_pages: Optional[int] = None
+    max_depth: int = 3
+    summarize_checkbox: bool = False
+    custom_prompt: Optional[str] = None
+    api_name: Optional[str] = None
+    keywords: Optional[str] = "default,no_keyword_set"
+    custom_titles: Optional[str] = None
+    system_prompt: Optional[str] = None
+    temperature: float = 0.7
+    custom_cookies: Optional[List[Dict[str, Any]]] = None
+    mode: str = "persist"
+    user_agent: Optional[str] = None
+    custom_headers: Optional[Dict[str, str]] = None
+    crawl_strategy: Optional[str] = None
+    include_external: Optional[bool] = None
+    score_threshold: Optional[float] = None
+
+
 # --- Response Models (from API specification) ---
 class MediaItemProcessResult(BaseModel):
     status: Literal['Success', 'Error', 'Warning', 'Skipped'] # Added Skipped

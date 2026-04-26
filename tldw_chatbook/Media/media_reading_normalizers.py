@@ -244,3 +244,49 @@ def normalize_ingestion_source_item(
         "created_at": _clean_timestamp(item.get("created_at")),
         "updated_at": _clean_timestamp(item.get("updated_at")),
     }
+
+
+def normalize_file_artifact(
+    payload: Mapping[str, Any],
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    """Normalize a server file-artifact response without hiding the source shape."""
+    outer = _as_mapping(payload)
+    artifact = _as_mapping(outer.get("artifact") or outer)
+    source_id = str(artifact.get("file_id") or artifact.get("id"))
+    return {
+        "id": build_canonical_media_id(backend, "file_artifact", source_id),
+        "backend": backend,
+        "entity_kind": "file_artifact",
+        "source_id": source_id,
+        "backing_file_id": artifact.get("file_id") or artifact.get("id"),
+        "file_type": artifact.get("file_type"),
+        "title": artifact.get("title"),
+        "structured": _as_mapping(artifact.get("structured")),
+        "validation": _as_mapping(artifact.get("validation")),
+        "export": _as_mapping(artifact.get("export")),
+        "retention_until": _clean_timestamp(artifact.get("retention_until")),
+        "created_at": _clean_timestamp(artifact.get("created_at")),
+        "updated_at": _clean_timestamp(artifact.get("updated_at")),
+    }
+
+
+def normalize_reference_image(
+    item: Mapping[str, Any],
+    *,
+    backend: str = "server",
+) -> dict[str, Any]:
+    source_id = str(item.get("file_id") or item.get("id"))
+    return {
+        "id": build_canonical_media_id(backend, "reference_image", source_id),
+        "backend": backend,
+        "entity_kind": "reference_image",
+        "source_id": source_id,
+        "backing_file_id": item.get("file_id") or item.get("id"),
+        "title": item.get("title"),
+        "mime_type": item.get("mime_type"),
+        "width": item.get("width"),
+        "height": item.get("height"),
+        "created_at": _clean_timestamp(item.get("created_at")),
+    }

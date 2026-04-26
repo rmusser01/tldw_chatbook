@@ -64,8 +64,12 @@ from tldw_chatbook.LLM_Provider_Catalog import (
 from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Skills_Interop import ServerSkillsService, SkillsScopeService
+from tldw_chatbook.Sync_Interop import ServerSyncService, SyncScopeService
+from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
+from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
 from tldw_chatbook.User_Governance_Interop import ServerUserGovernanceService, UserGovernanceScopeService
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
+from tldw_chatbook.Web_Scraping_Interop import ServerWebScrapingService, WebScrapingScopeService
 from tldw_chatbook.Writing_Interop import LocalWritingService, ServerWritingService, WritingScopeService
 from tldw_chatbook.Subscriptions import (
     LocalWatchlistsService,
@@ -80,6 +84,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
 
 
 def _build_test_app() -> TldwCli:
@@ -159,8 +164,15 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.connectors_scope_service, ConnectorsScopeService)
     assert isinstance(app.server_skills_service, ServerSkillsService)
     assert isinstance(app.skills_scope_service, SkillsScopeService)
+    assert isinstance(app.server_tools_service, ServerToolsService)
+    assert isinstance(app.tools_scope_service, ToolsScopeService)
+    assert isinstance(app.server_text2sql_service, ServerText2SQLService)
+    assert isinstance(app.text2sql_scope_service, Text2SQLScopeService)
+    assert isinstance(app.server_sync_service, ServerSyncService)
+    assert isinstance(app.sync_scope_service, SyncScopeService)
     assert isinstance(app.server_runtime_service, ServerRuntimeService)
     assert isinstance(app.server_runtime_scope_service, ServerRuntimeScopeService)
+    assert isinstance(app.active_server_capability_service, ActiveServerCapabilityService)
     assert isinstance(app.local_llm_provider_catalog_service, LocalLLMProviderCatalogService)
     assert isinstance(app.server_llm_provider_catalog_service, ServerLLMProviderCatalogService)
     assert isinstance(app.llm_provider_catalog_scope_service, LLMProviderCatalogScopeService)
@@ -175,6 +187,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.sharing_scope_service, SharingScopeService)
     assert isinstance(app.server_web_clipper_service, ServerWebClipperService)
     assert isinstance(app.web_clipper_scope_service, WebClipperScopeService)
+    assert isinstance(app.server_web_scraping_service, ServerWebScrapingService)
+    assert isinstance(app.web_scraping_scope_service, WebScrapingScopeService)
     assert isinstance(app.local_writing_service, LocalWritingService)
     assert isinstance(app.server_writing_service, ServerWritingService)
     assert isinstance(app.writing_scope_service, WritingScopeService)

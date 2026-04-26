@@ -74,6 +74,15 @@ class CollectionsFeedsScopeService:
             record.setdefault("record_id", f"{mode.value}:collections_feed:{source_id}")
         return record
 
+    @staticmethod
+    def _with_websub_record_id(mode: CollectionsFeedsBackend, item: dict[str, Any]) -> dict[str, Any]:
+        record = dict(item or {})
+        record.setdefault("backend", mode.value)
+        record_id = record.get("id") or record.get("source_id")
+        if record_id is not None:
+            record.setdefault("record_id", f"{mode.value}:collections_feed_websub:{record_id}")
+        return record
+
     def _normalize_response(self, mode: CollectionsFeedsBackend, result: Any) -> Any:
         if isinstance(result, list):
             return [self._with_record_id(mode, item) if isinstance(item, dict) else item for item in result]
@@ -140,3 +149,43 @@ class CollectionsFeedsScopeService:
         if not isinstance(result, dict):
             result = {"id": feed_id, "deleted": bool(result)}
         return self._normalize_response(normalized_mode, result)
+
+    async def subscribe_feed_websub(
+        self,
+        feed_id: int,
+        *,
+        mode: CollectionsFeedsBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._require_server_service(normalized_mode)
+        self._enforce_policy(self._action_id("websub.launch"))
+        result = await self._maybe_await(service.subscribe_feed_websub(feed_id, **kwargs))
+        return self._with_websub_record_id(normalized_mode, result)
+
+    async def get_feed_websub_status(
+        self,
+        feed_id: int,
+        *,
+        mode: CollectionsFeedsBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._require_server_service(normalized_mode)
+        self._enforce_policy(self._action_id("websub.detail"))
+        result = await self._maybe_await(service.get_feed_websub_status(feed_id))
+        return self._with_websub_record_id(normalized_mode, result)
+
+    async def unsubscribe_feed_websub(
+        self,
+        feed_id: int,
+        *,
+        mode: CollectionsFeedsBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._require_server_service(normalized_mode)
+        self._enforce_policy(self._action_id("websub.delete"))
+        result = await self._maybe_await(service.unsubscribe_feed_websub(feed_id))
+        if not isinstance(result, dict):
+            result = {"source_id": feed_id, "unsubscribed": bool(result)}
+        result.setdefault("source_id", feed_id)
+        return self._with_websub_record_id(normalized_mode, result)

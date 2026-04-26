@@ -28,9 +28,13 @@ from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 from tldw_chatbook.Study_Interop.quiz_scope_service import QuizScopeService
 from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
 from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistScopeService
+from tldw_chatbook.Sync_Interop.sync_scope_service import SyncScopeService
+from tldw_chatbook.Text2SQL_Interop.text2sql_scope_service import Text2SQLScopeService
+from tldw_chatbook.Tools_Interop.tools_scope_service import ToolsScopeService
 from tldw_chatbook.Translation_Interop.translation_scope_service import TranslationScopeService
 from tldw_chatbook.User_Governance_Interop.user_governance_scope_service import UserGovernanceScopeService
 from tldw_chatbook.Web_Clipper_Interop.web_clipper_scope_service import WebClipperScopeService
+from tldw_chatbook.Web_Scraping_Interop.web_scraping_scope_service import WebScrapingScopeService
 from tldw_chatbook.Writing_Interop.writing_scope_service import WritingScopeService
 from tldw_chatbook.runtime_policy.unsupported_capabilities import (
     UnsupportedCapabilityReportError,
@@ -149,9 +153,13 @@ def test_collect_unsupported_capability_reports_labels_each_report_scope():
         (CollectionsFeedsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (ConnectorsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (SkillsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (ToolsScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (Text2SQLScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (SyncScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (UserGovernanceScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (SharingScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (WebClipperScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
+        (WebScrapingScopeService(server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (EvaluationScopeService(local_service=None, server_service=None), [{"mode": "local"}, {"mode": "server"}]),
         (RAGAdminScopeService(local_service=None, server_service=None), [{"mode": "local"}, {"mode": "server"}]),
     ],

@@ -28,6 +28,14 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
             "chatbooks.delete.local",
         ],
     },
+    {
+        "operation_id": "prompts.server_utilities.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "source_specific_equivalent",
+        "user_message": "Server prompt utility surfaces such as sync-log, collections, bulk actions, and import/export are server-owned; local prompt CRUD remains separate.",
+        "affected_action_ids": [],
+    },
 ]
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
@@ -135,6 +143,10 @@ class PromptChatbookScopeService:
         return f"prompts.versions.{action}.{mode.value}"
 
     @staticmethod
+    def _prompt_subresource_action_id(resource: str, action: str, mode: PromptChatbookBackend) -> str:
+        return f"prompts.{resource}.{action}.{mode.value}"
+
+    @staticmethod
     def _supports_chatbook_record_crud(service: Any) -> bool:
         return service is not None and all(callable(getattr(service, method_name, None)) for method_name in _CHATBOOK_RECORD_CRUD_METHODS)
 
@@ -145,9 +157,13 @@ class PromptChatbookScopeService:
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == PromptChatbookBackend.LOCAL:
+            reports = [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
             if self._supports_chatbook_record_crud(self.local_chatbook_service):
-                return []
-            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+                reports = [
+                    item for item in reports
+                    if item["operation_id"] != "chatbooks.records.local"
+                ]
+            return reports
 
         reports: list[dict[str, Any]] = []
         if not self._supports_chatbook_record_crud(self.server_chatbook_service):
@@ -167,6 +183,27 @@ class PromptChatbookScopeService:
         if not accepts_kwargs:
             kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
         return await self._maybe_await(method(*args, **kwargs))
+
+    async def _call_server_prompt_utility(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None,
+        resource: str,
+        action: str,
+        method_name: str,
+        args: tuple[Any, ...] = (),
+        kwargs: dict[str, Any] | None = None,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != PromptChatbookBackend.SERVER:
+            raise NotImplementedError(f"{method_name} is a server-only prompt utility surface.")
+        self._enforce_policy(self._prompt_subresource_action_id(resource, action, normalized_mode))
+        return await self._call_service(
+            self._service_for_mode("prompts", normalized_mode),
+            method_name,
+            *args,
+            **(kwargs or {}),
+        )
 
     async def list_prompts(
         self,
@@ -271,6 +308,235 @@ class PromptChatbookScopeService:
             version,
         )
         return normalize_prompt_result(normalized_mode.value, result)
+
+    async def get_prompts_health(self, *, mode: PromptChatbookBackend | str | None = None) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="health",
+            action="detail",
+            method_name="get_prompts_health",
+        )
+
+    async def get_prompt_sync_log(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="sync_log",
+            action="list",
+            method_name="get_prompt_sync_log",
+            kwargs=kwargs,
+        )
+
+    async def search_prompts(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="search",
+            action="list",
+            method_name="search_prompts",
+            kwargs=kwargs,
+        )
+
+    async def create_prompt_keyword(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        keyword_text: str,
+    ) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="keywords",
+            action="create",
+            method_name="create_prompt_keyword",
+            args=(keyword_text,),
+        )
+
+    async def list_prompt_keywords(self, *, mode: PromptChatbookBackend | str | None = None) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="keywords",
+            action="list",
+            method_name="list_prompt_keywords",
+        )
+
+    async def delete_prompt_keyword(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        keyword_text: str,
+    ) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="keywords",
+            action="delete",
+            method_name="delete_prompt_keyword",
+            args=(keyword_text,),
+        )
+
+    async def export_prompts(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="transfer",
+            action="export",
+            method_name="export_prompts",
+            kwargs=kwargs,
+        )
+
+    async def export_prompt_keywords(self, *, mode: PromptChatbookBackend | str | None = None) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="keywords",
+            action="export",
+            method_name="export_prompt_keywords",
+        )
+
+    async def import_prompts(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        payload: dict[str, Any],
+    ) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="transfer",
+            action="import",
+            method_name="import_prompts",
+            args=(payload,),
+        )
+
+    async def extract_prompt_template_variables(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        template: str,
+    ) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="templates",
+            action="process",
+            method_name="extract_prompt_template_variables",
+            args=(template,),
+        )
+
+    async def render_prompt_template(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        template: str,
+        variables: dict[str, Any],
+    ) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="templates",
+            action="process",
+            method_name="render_prompt_template",
+            args=(template, variables),
+        )
+
+    async def convert_prompt(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        payload: dict[str, Any],
+    ) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="templates",
+            action="process",
+            method_name="convert_prompt",
+            args=(payload,),
+        )
+
+    async def bulk_delete_prompts(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        prompt_ids: list[int],
+    ) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="bulk",
+            action="delete",
+            method_name="bulk_delete_prompts",
+            args=(prompt_ids,),
+        )
+
+    async def bulk_update_prompt_keywords(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        prompt_ids: list[int],
+        keywords: list[str] | None = None,
+        update_mode: str = "add",
+    ) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="bulk",
+            action="update",
+            method_name="bulk_update_prompt_keywords",
+            args=(prompt_ids, keywords),
+            kwargs={"mode": update_mode},
+        )
+
+    async def record_prompt_usage(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        prompt_identifier: int | str,
+    ) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="usage",
+            action="update",
+            method_name="record_prompt_usage",
+            args=(prompt_identifier,),
+        )
+
+    async def create_prompt_collection(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="collections",
+            action="create",
+            method_name="create_prompt_collection",
+            kwargs=kwargs,
+        )
+
+    async def list_prompt_collections(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="collections",
+            action="list",
+            method_name="list_prompt_collections",
+            kwargs=kwargs,
+        )
+
+    async def get_prompt_collection(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        collection_id: int,
+    ) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="collections",
+            action="detail",
+            method_name="get_prompt_collection",
+            args=(collection_id,),
+        )
+
+    async def update_prompt_collection(
+        self,
+        *,
+        mode: PromptChatbookBackend | str | None = None,
+        collection_id: int,
+        **kwargs: Any,
+    ) -> Any:
+        return await self._call_server_prompt_utility(
+            mode=mode,
+            resource="collections",
+            action="update",
+            method_name="update_prompt_collection",
+            args=(collection_id,),
+            kwargs=kwargs,
+        )
 
     async def preview_chatbook(
         self,

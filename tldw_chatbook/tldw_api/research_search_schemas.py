@@ -105,6 +105,51 @@ class ArxivSearchResponse(BaseModel):
     total_pages: int
 
 
+class BioRxivPaper(BaseModel):
+    doi: str
+    title: str
+    authors: str | None = None
+    category: str | None = None
+    date: str | None = None
+    abstract: str | None = None
+    server: str | None = None
+    version: int | None = None
+    url: str | None = None
+    pdf_url: str | None = None
+
+
+class BioRxivSearchResponse(BaseModel):
+    query_echo: dict[str, Any]
+    items: list[BioRxivPaper]
+    total_results: int
+    page: int
+    results_per_page: int
+    total_pages: int
+
+
+class PubMedPaper(BaseModel):
+    pmid: str
+    title: str
+    authors: str | None = None
+    journal: str | None = None
+    pub_date: str | None = None
+    abstract: str | None = None
+    doi: str | None = None
+    url: str | None = None
+    pmcid: str | None = None
+    pmc_url: str | None = None
+    pdf_url: str | None = None
+
+
+class PubMedSearchResponse(BaseModel):
+    query_echo: dict[str, Any]
+    items: list[PubMedPaper]
+    total_results: int
+    page: int
+    results_per_page: int
+    total_pages: int
+
+
 class SemanticScholarAuthor(BaseModel):
     authorId: str | None = None
     name: str

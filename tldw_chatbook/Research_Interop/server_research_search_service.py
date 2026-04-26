@@ -74,7 +74,7 @@ class ServerResearchSearchService:
 
     async def list_supported_paper_providers(self) -> list[str]:
         self._enforce("research.search.providers.list.server")
-        return ["arxiv", "semantic_scholar"]
+        return ["arxiv", "semantic_scholar", "biorxiv", "medrxiv", "pubmed"]
 
     async def websearch(
         self,
@@ -140,3 +140,66 @@ class ServerResearchSearchService:
                 results_per_page=results_per_page,
             )
         )
+
+    async def search_biorxiv(
+        self,
+        *,
+        q: str | None = None,
+        server: str = "biorxiv",
+        from_date: str | None = None,
+        to_date: str | None = None,
+        category: str | None = None,
+        recent_days: int | None = None,
+        recent_count: int | None = None,
+        page: int = 1,
+        results_per_page: int = 10,
+    ) -> dict[str, Any]:
+        self._enforce("research.search.providers.launch.server")
+        return self._dump(
+            await self._require_client().search_biorxiv_papers(
+                q=q,
+                server=server,
+                from_date=from_date,
+                to_date=to_date,
+                category=category,
+                recent_days=recent_days,
+                recent_count=recent_count,
+                page=page,
+                results_per_page=results_per_page,
+            )
+        )
+
+    async def get_biorxiv_by_doi(
+        self,
+        *,
+        doi: str,
+        server: str = "biorxiv",
+    ) -> dict[str, Any]:
+        self._enforce("research.search.providers.launch.server")
+        return self._dump(await self._require_client().get_biorxiv_paper_by_doi(doi=doi, server=server))
+
+    async def search_pubmed(
+        self,
+        *,
+        q: str,
+        from_year: int | None = None,
+        to_year: int | None = None,
+        free_full_text: bool = False,
+        page: int = 1,
+        results_per_page: int = 10,
+    ) -> dict[str, Any]:
+        self._enforce("research.search.providers.launch.server")
+        return self._dump(
+            await self._require_client().search_pubmed_papers(
+                q=q,
+                from_year=from_year,
+                to_year=to_year,
+                free_full_text=free_full_text,
+                page=page,
+                results_per_page=results_per_page,
+            )
+        )
+
+    async def get_pubmed_by_id(self, *, pmid: str) -> dict[str, Any]:
+        self._enforce("research.search.providers.launch.server")
+        return self._dump(await self._require_client().get_pubmed_paper_by_id(pmid=pmid))

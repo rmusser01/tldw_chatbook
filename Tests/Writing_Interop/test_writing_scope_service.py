@@ -174,6 +174,73 @@ class FakeWritingService:
             ],
         }
 
+    async def create_character(self, project_id, **kwargs):
+        self.calls.append(("create_character", project_id, kwargs))
+        return {"id": f"{self.source}-character-1", "project_id": project_id, "name": kwargs["name"], "version": 1}
+
+    async def list_characters(self, project_id, **kwargs):
+        self.calls.append(("list_characters", project_id, kwargs))
+        return [{"id": f"{self.source}-character-1", "project_id": project_id, "name": "Ada", "version": 1}]
+
+    async def create_world_info(self, project_id, **kwargs):
+        self.calls.append(("create_world_info", project_id, kwargs))
+        return {"id": f"{self.source}-world-1", "project_id": project_id, "kind": kwargs["kind"], "name": kwargs["name"], "version": 1}
+
+    async def create_plot_line(self, project_id, **kwargs):
+        self.calls.append(("create_plot_line", project_id, kwargs))
+        return {"id": f"{self.source}-plot-line-1", "project_id": project_id, "title": kwargs["title"], "version": 1}
+
+    async def create_plot_event(self, plot_line_id, **kwargs):
+        self.calls.append(("create_plot_event", plot_line_id, kwargs))
+        return {"id": f"{self.source}-plot-event-1", "plot_line_id": plot_line_id, "title": kwargs["title"], "version": 1}
+
+    async def create_plot_hole(self, project_id, **kwargs):
+        self.calls.append(("create_plot_hole", project_id, kwargs))
+        return {"id": f"{self.source}-plot-hole-1", "project_id": project_id, "title": kwargs["title"], "version": 1}
+
+    async def link_scene_character(self, scene_id, **kwargs):
+        self.calls.append(("link_scene_character", scene_id, kwargs))
+        return [{"scene_id": scene_id, "character_id": kwargs["character_id"], "is_pov": kwargs.get("is_pov", False)}]
+
+    async def link_scene_world_info(self, scene_id, **kwargs):
+        self.calls.append(("link_scene_world_info", scene_id, kwargs))
+        return [{"scene_id": scene_id, "world_info_id": kwargs["world_info_id"]}]
+
+    async def create_citation(self, scene_id, **kwargs):
+        self.calls.append(("create_citation", scene_id, kwargs))
+        return {"id": f"{self.source}-citation-1", "scene_id": scene_id, "source_type": kwargs["source_type"], "version": 1}
+
+    async def research_scene(self, scene_id, **kwargs):
+        self.calls.append(("research_scene", scene_id, kwargs))
+        return {
+            "scene_id": scene_id,
+            "query": kwargs["query"],
+            "results": [{"source_id": f"{self.source}-source-1", "title": "Reference"}],
+        }
+
+    async def analyze_scene(self, scene_id, **kwargs):
+        self.calls.append(("analyze_scene", scene_id, kwargs))
+        return [{"id": f"{self.source}-analysis-1", "scope_type": "scene", "scope_id": scene_id, "analysis_type": kwargs["analysis_types"][0]}]
+
+    async def analyze_chapter(self, chapter_id, **kwargs):
+        self.calls.append(("analyze_chapter", chapter_id, kwargs))
+        return [{"id": f"{self.source}-analysis-2", "scope_type": "chapter", "scope_id": chapter_id, "analysis_type": kwargs["analysis_types"][0]}]
+
+    async def analyze_project_plot_holes(self, project_id, **kwargs):
+        self.calls.append(("analyze_project_plot_holes", project_id, kwargs))
+        return [{"id": f"{self.source}-analysis-3", "scope_type": "project", "scope_id": project_id, "analysis_type": "plot_holes"}]
+
+    async def analyze_project_consistency(self, project_id, **kwargs):
+        self.calls.append(("analyze_project_consistency", project_id, kwargs))
+        return [{"id": f"{self.source}-analysis-4", "scope_type": "project", "scope_id": project_id, "analysis_type": "consistency"}]
+
+    async def list_analyses(self, project_id, **kwargs):
+        self.calls.append(("list_analyses", project_id, kwargs))
+        return {
+            "analyses": [{"id": f"{self.source}-analysis-5", "scope_type": "scene", "scope_id": "scene-1", "analysis_type": "pacing"}],
+            "total": 1,
+        }
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
@@ -415,6 +482,83 @@ async def test_writing_scope_service_routes_structure_actions():
     assert policy.calls == ["writing.projects.structure.server"]
 
 
+@pytest.mark.asyncio
+async def test_writing_scope_service_routes_auxiliary_server_actions():
+    server = FakeWritingService("server")
+    policy = FakePolicyEnforcer()
+    scope = WritingScopeService(
+        local_service=FakeWritingService("local"),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    character = await scope.create_character(mode="server", project_id="project-1", name="Ada")
+    characters = await scope.list_characters(mode="server", project_id="project-1", role="protagonist")
+    world = await scope.create_world_info(mode="server", project_id="project-1", kind="location", name="Capital")
+    plot_line = await scope.create_plot_line(mode="server", project_id="project-1", title="Main Plot")
+    plot_event = await scope.create_plot_event(mode="server", plot_line_id=plot_line["id"], title="Inciting Incident")
+    plot_hole = await scope.create_plot_hole(mode="server", project_id="project-1", title="Continuity Issue")
+    scene_characters = await scope.link_scene_character(mode="server", scene_id="scene-1", character_id=character["id"], is_pov=True)
+    scene_world = await scope.link_scene_world_info(mode="server", scene_id="scene-1", world_info_id=world["id"])
+    citation = await scope.create_citation(mode="server", scene_id="scene-1", source_type="manual")
+    research = await scope.research_scene(mode="server", scene_id="scene-1", query="context")
+    scene_analyses = await scope.analyze_scene(mode="server", scene_id="scene-1", analysis_types=["pacing"])
+    chapter_analyses = await scope.analyze_chapter(mode="server", chapter_id="chapter-1", analysis_types=["continuity"])
+    plot_hole_analyses = await scope.analyze_project_plot_holes(mode="server", project_id="project-1")
+    consistency_analyses = await scope.analyze_project_consistency(mode="server", project_id="project-1")
+    listed_analyses = await scope.list_analyses(mode="server", project_id="project-1", scope_type="scene")
+
+    assert character["record_id"] == "server:writing_character:server-character-1"
+    assert characters[0]["record_type"] == "writing_character"
+    assert world["record_id"] == "server:writing_world_info:server-world-1"
+    assert plot_line["record_id"] == "server:writing_plot_line:server-plot-line-1"
+    assert plot_event["record_id"] == "server:writing_plot_event:server-plot-event-1"
+    assert plot_hole["record_id"] == "server:writing_plot_hole:server-plot-hole-1"
+    assert scene_characters[0]["record_id"] == "server:writing_scene_character_link:scene-1:server-character-1"
+    assert scene_world[0]["record_id"] == "server:writing_scene_world_info_link:scene-1:server-world-1"
+    assert citation["record_id"] == "server:writing_citation:server-citation-1"
+    assert research["results"][0]["record_id"] == "server:writing_research_result:server-source-1"
+    assert scene_analyses[0]["record_id"] == "server:writing_analysis:server-analysis-1"
+    assert chapter_analyses[0]["record_id"] == "server:writing_analysis:server-analysis-2"
+    assert plot_hole_analyses[0]["record_id"] == "server:writing_analysis:server-analysis-3"
+    assert consistency_analyses[0]["record_id"] == "server:writing_analysis:server-analysis-4"
+    assert listed_analyses["analyses"][0]["record_id"] == "server:writing_analysis:server-analysis-5"
+    assert server.calls == [
+        ("create_character", "project-1", {"name": "Ada"}),
+        ("list_characters", "project-1", {"role": "protagonist", "cast_group": None}),
+        ("create_world_info", "project-1", {"kind": "location", "name": "Capital"}),
+        ("create_plot_line", "project-1", {"title": "Main Plot"}),
+        ("create_plot_event", "server-plot-line-1", {"title": "Inciting Incident"}),
+        ("create_plot_hole", "project-1", {"title": "Continuity Issue"}),
+        ("link_scene_character", "scene-1", {"character_id": "server-character-1", "is_pov": True}),
+        ("link_scene_world_info", "scene-1", {"world_info_id": "server-world-1"}),
+        ("create_citation", "scene-1", {"source_type": "manual"}),
+        ("research_scene", "scene-1", {"query": "context", "top_k": 5}),
+        ("analyze_scene", "scene-1", {"analysis_types": ["pacing"], "provider": None, "model": None}),
+        ("analyze_chapter", "chapter-1", {"analysis_types": ["continuity"], "provider": None, "model": None}),
+        ("analyze_project_plot_holes", "project-1", {"analysis_types": None, "provider": None, "model": None}),
+        ("analyze_project_consistency", "project-1", {"analysis_types": None, "provider": None, "model": None}),
+        ("list_analyses", "project-1", {"scope_type": "scene", "analysis_type": None, "include_stale": False}),
+    ]
+    assert policy.calls == [
+        "writing.characters.create.server",
+        "writing.characters.list.server",
+        "writing.world_info.create.server",
+        "writing.plot_lines.create.server",
+        "writing.plot_events.create.server",
+        "writing.plot_holes.create.server",
+        "writing.scene_characters.create.server",
+        "writing.scene_world_info.create.server",
+        "writing.citations.create.server",
+        "writing.research.launch.server",
+        "writing.analysis.launch.server",
+        "writing.analysis.launch.server",
+        "writing.analysis.launch.server",
+        "writing.analysis.launch.server",
+        "writing.analysis.list.server",
+    ]
+
+
 def test_writing_scope_service_reports_known_unsupported_server_capabilities():
     scope = WritingScopeService(
         local_service=FakeWritingService("local"),
@@ -424,7 +568,48 @@ def test_writing_scope_service_reports_known_unsupported_server_capabilities():
     local_report = scope.list_unsupported_capabilities(mode="local")
     server_report = scope.list_unsupported_capabilities(mode="server")
 
-    assert local_report == []
+    assert [item["operation_id"] for item in local_report] == [
+        "writing.auxiliary.local",
+    ]
+    assert local_report[0]["affected_action_ids"] == [
+        "writing.characters.create.local",
+        "writing.characters.list.local",
+        "writing.characters.detail.local",
+        "writing.characters.update.local",
+        "writing.characters.delete.local",
+        "writing.relationships.create.local",
+        "writing.relationships.list.local",
+        "writing.relationships.delete.local",
+        "writing.world_info.create.local",
+        "writing.world_info.list.local",
+        "writing.world_info.detail.local",
+        "writing.world_info.update.local",
+        "writing.world_info.delete.local",
+        "writing.plot_lines.create.local",
+        "writing.plot_lines.list.local",
+        "writing.plot_lines.update.local",
+        "writing.plot_lines.delete.local",
+        "writing.plot_events.create.local",
+        "writing.plot_events.list.local",
+        "writing.plot_events.update.local",
+        "writing.plot_events.delete.local",
+        "writing.plot_holes.create.local",
+        "writing.plot_holes.list.local",
+        "writing.plot_holes.update.local",
+        "writing.plot_holes.delete.local",
+        "writing.scene_characters.create.local",
+        "writing.scene_characters.list.local",
+        "writing.scene_characters.delete.local",
+        "writing.scene_world_info.create.local",
+        "writing.scene_world_info.list.local",
+        "writing.scene_world_info.delete.local",
+        "writing.citations.create.local",
+        "writing.citations.list.local",
+        "writing.citations.delete.local",
+        "writing.research.launch.local",
+        "writing.analysis.launch.local",
+        "writing.analysis.list.local",
+    ]
     assert [item["operation_id"] for item in server_report] == [
         "writing.scenes.direct_manuscript_level.server",
         "writing.versions.server",

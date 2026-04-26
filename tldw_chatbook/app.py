@@ -244,8 +244,12 @@ from tldw_chatbook.Research_Interop import (
 from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Skills_Interop import ServerSkillsService, SkillsScopeService
+from tldw_chatbook.Sync_Interop import ServerSyncService, SyncScopeService
+from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
+from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
 from tldw_chatbook.User_Governance_Interop import ServerUserGovernanceService, UserGovernanceScopeService
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
+from tldw_chatbook.Web_Scraping_Interop import ServerWebScrapingService, WebScrapingScopeService
 from tldw_chatbook.Writing_Interop import LocalWritingService, ServerWritingService, WritingScopeService
 from tldw_chatbook.Subscriptions import (
     LocalWatchlistsService,
@@ -265,6 +269,7 @@ from tldw_chatbook.runtime_policy.bootstrap import (
     reconcile_saved_screen_state,
     set_authoritative_runtime_source,
 )
+from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
 from tldw_chatbook.runtime_policy.engine import PolicyEngine
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
@@ -1869,6 +1874,48 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
+            self.server_tools_service = ServerToolsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_tools_service = ServerToolsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.tools_scope_service = ToolsScopeService(
+            server_service=self.server_tools_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_text2sql_service = ServerText2SQLService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_text2sql_service = ServerText2SQLService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.text2sql_scope_service = Text2SQLScopeService(
+            server_service=self.server_text2sql_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_sync_service = ServerSyncService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_sync_service = ServerSyncService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.sync_scope_service = SyncScopeService(
+            server_service=self.server_sync_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
             self.server_runtime_service = ServerRuntimeService.from_config(
                 self.app_config,
                 policy_enforcer=self.service_policy_enforcer,
@@ -1881,6 +1928,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.server_runtime_scope_service = ServerRuntimeScopeService(
             server_service=self.server_runtime_service,
             policy_enforcer=self.service_policy_enforcer,
+        )
+        self.active_server_capability_service = ActiveServerCapabilityService(
+            runtime_context=self.runtime_policy,
+            server_runtime_scope_service=self.server_runtime_scope_service,
         )
         self.local_llm_provider_catalog_service = LocalLLMProviderCatalogService(
             provider_catalog_loader=lambda: dict(getattr(self, "providers_models", {}) or {}),
@@ -1978,6 +2029,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
         self.web_clipper_scope_service = WebClipperScopeService(
             server_service=self.server_web_clipper_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_web_scraping_service = ServerWebScrapingService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_web_scraping_service = ServerWebScrapingService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.web_scraping_scope_service = WebScrapingScopeService(
+            server_service=self.server_web_scraping_service,
             policy_enforcer=self.service_policy_enforcer,
         )
         self.watchlist_scope_service = WatchlistScopeService(

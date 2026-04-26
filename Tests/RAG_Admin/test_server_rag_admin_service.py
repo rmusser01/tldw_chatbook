@@ -13,6 +13,9 @@ from tldw_chatbook.tldw_api import (
     EmbeddingCollectionCreateRequest,
     EmbeddingCollectionResponse,
     EmbeddingCollectionStatsResponse,
+    MediaEmbeddingsBatchRequest,
+    MediaEmbeddingsGenerateRequest,
+    MediaEmbeddingsSearchRequest,
     ReprocessMediaRequest,
     ReprocessMediaResponse,
 )
@@ -129,6 +132,51 @@ class FakeClient:
             job_id="job-7",
         )
 
+    async def get_media_embeddings_status(self, media_id):
+        self.calls.append(("get_media_embeddings_status", media_id))
+        return {
+            "media_id": media_id,
+            "has_embeddings": True,
+            "embedding_count": 3,
+            "embedding_model": "text-embedding-3-small",
+        }
+
+    async def generate_media_embeddings(self, media_id, request_data):
+        self.calls.append(("generate_media_embeddings", media_id, request_data))
+        return {
+            "media_id": media_id,
+            "status": "accepted",
+            "message": "Embedding generation started",
+            "embedding_model": request_data.embedding_model or "default",
+            "job_id": "job-7",
+        }
+
+    async def generate_media_embeddings_batch(self, request_data):
+        self.calls.append(("generate_media_embeddings_batch", request_data))
+        return {"status": "accepted", "job_ids": ["job-7", "job-8"], "submitted": 2}
+
+    async def search_media_embeddings(self, request_data):
+        self.calls.append(("search_media_embeddings", request_data))
+        return {
+            "results": [{"id": "chunk-1", "document": "alpha", "metadata": {"media_id": "7"}, "distance": 0.2}],
+            "count": 1,
+        }
+
+    async def delete_media_embeddings(self, media_id):
+        self.calls.append(("delete_media_embeddings", media_id))
+        return {"status": "success", "message": "deleted"}
+
+    async def get_media_embedding_job(self, job_id):
+        self.calls.append(("get_media_embedding_job", job_id))
+        return {"uuid": job_id, "status": "completed", "media_id": 7}
+
+    async def list_media_embedding_jobs(self, **kwargs):
+        self.calls.append(("list_media_embedding_jobs", kwargs))
+        return {
+            "data": [{"uuid": "job-7", "status": "completed", "media_id": 7}],
+            "pagination": {"limit": kwargs.get("limit"), "offset": kwargs.get("offset"), "count": 1},
+        }
+
 
 @pytest.mark.asyncio
 async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
@@ -166,6 +214,34 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
         force_regenerate_embeddings=True,
         chunking_template_name="server-demo",
     )
+    embedding_status = await service.get_media_embeddings_status(7)
+    embedding_generation = await service.generate_media_embeddings(
+        7,
+        embedding_model="text-embedding-3-small",
+        embedding_provider="openai",
+        chunk_size=512,
+        chunk_overlap=64,
+        force_regenerate=True,
+        priority=80,
+    )
+    embedding_batch = await service.generate_media_embeddings_batch(
+        media_ids=[7, 8],
+        embedding_model="text-embedding-3-small",
+        embedding_provider="openai",
+        chunk_size=512,
+        chunk_overlap=64,
+        force_regenerate=True,
+        priority=80,
+    )
+    embedding_search = await service.search_media_embeddings(
+        query="alpha",
+        top_k=3,
+        collection="user_1_media_embeddings",
+        filters={"media_id": "7"},
+    )
+    embedding_deleted = await service.delete_media_embeddings(7)
+    embedding_job = await service.get_media_embedding_job("job-7")
+    embedding_jobs = await service.list_media_embedding_jobs(status="completed", limit=10, offset=5)
 
     assert client.calls[0] == (
         "list_chunking_templates",
@@ -187,6 +263,17 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     assert isinstance(client.calls[8][2], ReprocessMediaRequest)
     assert client.calls[8][2].generate_embeddings is True
     assert client.calls[8][2].chunking_template_name == "server-demo"
+    assert client.calls[9] == ("get_media_embeddings_status", 7)
+    assert client.calls[10][0] == "generate_media_embeddings"
+    assert isinstance(client.calls[10][2], MediaEmbeddingsGenerateRequest)
+    assert client.calls[10][2].priority == 80
+    assert client.calls[11][0] == "generate_media_embeddings_batch"
+    assert isinstance(client.calls[11][1], MediaEmbeddingsBatchRequest)
+    assert client.calls[12][0] == "search_media_embeddings"
+    assert isinstance(client.calls[12][1], MediaEmbeddingsSearchRequest)
+    assert client.calls[13] == ("delete_media_embeddings", 7)
+    assert client.calls[14] == ("get_media_embedding_job", "job-7")
+    assert client.calls[15] == ("list_media_embedding_jobs", {"status": "completed", "limit": 10, "offset": 5})
 
     assert listed[0]["name"] == "server-demo"
     assert created["name"] == "created"
@@ -198,6 +285,13 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     assert stats["count"] == 3
     assert reprocessed["status"] == "queued"
     assert reprocessed["job_id"] == "job-7"
+    assert embedding_status["has_embeddings"] is True
+    assert embedding_generation["job_id"] == "job-7"
+    assert embedding_batch["submitted"] == 2
+    assert embedding_search["count"] == 1
+    assert embedding_deleted["status"] == "success"
+    assert embedding_job["status"] == "completed"
+    assert embedding_jobs["pagination"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -225,6 +319,13 @@ async def test_server_rag_admin_service_enforces_policy_actions():
     await service.get_collection_detail("demo_collection")
     await service.delete_collection("demo_collection")
     await service.reprocess_media(7, generate_embeddings=True)
+    await service.get_media_embeddings_status(7)
+    await service.generate_media_embeddings(7, embedding_model="text-embedding-3-small")
+    await service.generate_media_embeddings_batch(media_ids=[7, 8])
+    await service.search_media_embeddings(query="alpha")
+    await service.delete_media_embeddings(7)
+    await service.get_media_embedding_job("job-7")
+    await service.list_media_embedding_jobs(status="completed")
 
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "rag.template.list.server",
@@ -235,6 +336,13 @@ async def test_server_rag_admin_service_enforces_policy_actions():
         "rag.admin.observe.server",
         "rag.admin.configure.server",
         "rag.admin.launch.server",
+        "rag.media_embeddings.status.server",
+        "rag.media_embeddings.create.server",
+        "rag.media_embeddings.create.server",
+        "rag.media_embeddings.search.server",
+        "rag.media_embeddings.delete.server",
+        "rag.media_embedding_jobs.detail.server",
+        "rag.media_embedding_jobs.list.server",
     ]
 
 

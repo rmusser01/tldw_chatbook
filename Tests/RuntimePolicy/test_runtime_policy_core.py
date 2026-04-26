@@ -223,6 +223,24 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": FULL_CRUD_AND_LAUNCH,
         },
     },
+    "server_tools": {
+        "expected_domain_ids": {"tools"},
+        "expected_action_kinds_by_source": {
+            "server": _action_kinds("browse", "launch"),
+        },
+    },
+    "text2sql_query": {
+        "expected_domain_ids": {"text2sql"},
+        "expected_action_kinds_by_source": {
+            "server": _action_kinds("launch"),
+        },
+    },
+    "sync_transport": {
+        "expected_domain_ids": {"sync"},
+        "expected_action_kinds_by_source": {
+            "server": _action_kinds("launch", "observe"),
+        },
+    },
     "user_governance": {
         "expected_domain_ids": {"user_governance"},
         "expected_action_kinds_by_source": {
@@ -377,6 +395,14 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         chat.launch.server
         chat.list.local
         chat.list.server
+        chat.loop.approve.local
+        chat.loop.approve.server
+        chat.loop.cancel.local
+        chat.loop.cancel.server
+        chat.loop.launch.local
+        chat.loop.launch.server
+        chat.loop.observe.local
+        chat.loop.observe.server
         chat.update.local
         chat.update.server
     """),
@@ -441,6 +467,9 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         collections.feeds.detail.server
         collections.feeds.list.server
         collections.feeds.update.server
+        collections.feeds.websub.delete.server
+        collections.feeds.websub.detail.server
+        collections.feeds.websub.launch.server
     """),
     "external_connectors": _action_ids("""
         connectors.accounts.delete.server
@@ -644,6 +673,17 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         skills.seed.launch.server
         skills.update.server
     """),
+    "server_tools": _action_ids("""
+        tools.catalog.list.server
+        tools.execution.launch.server
+    """),
+    "text2sql_query": _action_ids("""
+        text2sql.query.launch.server
+    """),
+    "sync_transport": _action_ids("""
+        sync.changes.launch.server
+        sync.changes.observe.server
+    """),
     "cross_cutting_runtime_policy": _action_ids("""
         runtime.policy.configure.local
         runtime.policy.configure.server
@@ -733,6 +773,55 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.ingestion_sources.update.server
         media.ingestion_source_items.reattach.local
         media.ingestion_source_items.reattach.server
+        media.add.create.server
+        media.file_artifacts.create.server
+        media.file_artifacts.delete.server
+        media.file_artifacts.detail.server
+        media.file_artifacts.export.server
+        media.file_artifacts.purge.server
+        media.items.delete.server
+        media.items.detail.server
+        media.items.file.detail.server
+        media.items.identifier_lookup.detail.server
+        media.items.keywords.list.server
+        media.items.keywords.update.server
+        media.items.list.server
+        media.items.metadata_search.list.server
+        media.items.permanent.delete.server
+        media.items.restore.server
+        media.items.trash.delete.server
+        media.items.trash.list.server
+        media.items.update.server
+        media.navigation.detail.local
+        media.navigation.detail.server
+        media.processing.audio.process.server
+        media.processing.code.process.server
+        media.processing.document.process.server
+        media.processing.ebook.process.server
+        media.processing.emails.process.server
+        media.processing.mediawiki.import.server
+        media.processing.mediawiki.process.server
+        media.processing.pdf.process.server
+        media.processing.plaintext.process.server
+        media.processing.video.process.server
+        media.processing.web_scraping.process.server
+        media.transcription_models.list.server
+        media.web_scraping.cancel.server
+        media.web_scraping.cookies.detail.server
+        media.web_scraping.cookies.update.server
+        media.web_scraping.detail.server
+        media.web_scraping.inspect.server
+        media.web_scraping.observe.server
+        media.web_scraping.service.initialize.server
+        media.web_scraping.service.shutdown.server
+        media.web_scraping.status.server
+        media.web_content_ingest.launch.server
+        media.reading.digest_outputs.list.server
+        media.reading.digest_schedules.create.server
+        media.reading.digest_schedules.delete.server
+        media.reading.digest_schedules.detail.server
+        media.reading.digest_schedules.list.server
+        media.reading.digest_schedules.update.server
         media.reading.create.local
         media.reading.create.server
         media.reading.archive.local
@@ -779,6 +868,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.reading_progress.detail.server
         media.reading_progress.update.local
         media.reading_progress.update.server
+        media.reference_images.list.server
     """),
     "notes_workspaces": _action_ids("""
         notes.create.local
@@ -828,14 +918,31 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         chatbooks.update.server
         prompts.create.local
         prompts.create.server
+        prompts.bulk.delete.server
+        prompts.bulk.update.server
+        prompts.collections.create.server
+        prompts.collections.detail.server
+        prompts.collections.list.server
+        prompts.collections.update.server
         prompts.delete.local
         prompts.delete.server
+        prompts.health.detail.server
+        prompts.keywords.create.server
+        prompts.keywords.delete.server
+        prompts.keywords.export.server
+        prompts.keywords.list.server
         prompts.list.local
         prompts.list.server
         prompts.preview.local
         prompts.preview.server
+        prompts.search.list.server
+        prompts.sync_log.list.server
+        prompts.templates.process.server
+        prompts.transfer.export.server
+        prompts.transfer.import.server
         prompts.update.local
         prompts.update.server
+        prompts.usage.update.server
         prompts.versions.list.local
         prompts.versions.list.server
         prompts.versions.restore.local
@@ -850,6 +957,12 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         rag.admin.list.server
         rag.admin.observe.local
         rag.admin.observe.server
+        rag.media_embedding_jobs.detail.server
+        rag.media_embedding_jobs.list.server
+        rag.media_embeddings.create.server
+        rag.media_embeddings.delete.server
+        rag.media_embeddings.search.server
+        rag.media_embeddings.status.server
         rag.template.create.local
         rag.template.create.server
         rag.template.delete.local
@@ -962,8 +1075,12 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         audio.providers.list.server
         audio.speech.launch.local
         audio.speech.launch.server
+        audio.speech_chat.launch.server
         audio.speech_jobs.detail.local
         audio.speech_jobs.detail.server
+        audio.streaming.detail.server
+        audio.streaming.launch.server
+        audio.streaming.status.server
         audio.tokenizer.launch.local
         audio.tokenizer.launch.server
         audio.transcriptions.launch.local
@@ -1188,6 +1305,10 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         workflows.observe.server
     """),
     "writing_suite": _action_ids("""
+        writing.analysis.launch.local
+        writing.analysis.launch.server
+        writing.analysis.list.local
+        writing.analysis.list.server
         writing.chapters.create.local
         writing.chapters.create.server
         writing.chapters.delete.local
@@ -1198,6 +1319,22 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         writing.chapters.list.server
         writing.chapters.update.local
         writing.chapters.update.server
+        writing.characters.create.local
+        writing.characters.create.server
+        writing.characters.delete.local
+        writing.characters.delete.server
+        writing.characters.detail.local
+        writing.characters.detail.server
+        writing.characters.list.local
+        writing.characters.list.server
+        writing.characters.update.local
+        writing.characters.update.server
+        writing.citations.create.local
+        writing.citations.create.server
+        writing.citations.delete.local
+        writing.citations.delete.server
+        writing.citations.list.local
+        writing.citations.list.server
         writing.manuscripts.create.local
         writing.manuscripts.create.server
         writing.manuscripts.delete.local
@@ -1210,6 +1347,30 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         writing.manuscripts.update.server
         writing.outline.reorder.local
         writing.outline.reorder.server
+        writing.plot_events.create.local
+        writing.plot_events.create.server
+        writing.plot_events.delete.local
+        writing.plot_events.delete.server
+        writing.plot_events.list.local
+        writing.plot_events.list.server
+        writing.plot_events.update.local
+        writing.plot_events.update.server
+        writing.plot_holes.create.local
+        writing.plot_holes.create.server
+        writing.plot_holes.delete.local
+        writing.plot_holes.delete.server
+        writing.plot_holes.list.local
+        writing.plot_holes.list.server
+        writing.plot_holes.update.local
+        writing.plot_holes.update.server
+        writing.plot_lines.create.local
+        writing.plot_lines.create.server
+        writing.plot_lines.delete.local
+        writing.plot_lines.delete.server
+        writing.plot_lines.list.local
+        writing.plot_lines.list.server
+        writing.plot_lines.update.local
+        writing.plot_lines.update.server
         writing.projects.create.local
         writing.projects.create.server
         writing.projects.delete.local
@@ -1222,6 +1383,26 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         writing.projects.structure.server
         writing.projects.update.local
         writing.projects.update.server
+        writing.relationships.create.local
+        writing.relationships.create.server
+        writing.relationships.delete.local
+        writing.relationships.delete.server
+        writing.relationships.list.local
+        writing.relationships.list.server
+        writing.research.launch.local
+        writing.research.launch.server
+        writing.scene_characters.create.local
+        writing.scene_characters.create.server
+        writing.scene_characters.delete.local
+        writing.scene_characters.delete.server
+        writing.scene_characters.list.local
+        writing.scene_characters.list.server
+        writing.scene_world_info.create.local
+        writing.scene_world_info.create.server
+        writing.scene_world_info.delete.local
+        writing.scene_world_info.delete.server
+        writing.scene_world_info.list.local
+        writing.scene_world_info.list.server
         writing.scenes.create.local
         writing.scenes.create.server
         writing.scenes.delete.local
@@ -1244,6 +1425,16 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         writing.versions.list.server
         writing.versions.restore.local
         writing.versions.restore.server
+        writing.world_info.create.local
+        writing.world_info.create.server
+        writing.world_info.delete.local
+        writing.world_info.delete.server
+        writing.world_info.detail.local
+        writing.world_info.detail.server
+        writing.world_info.list.local
+        writing.world_info.list.server
+        writing.world_info.update.local
+        writing.world_info.update.server
     """),
 }
 

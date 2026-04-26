@@ -37,6 +37,10 @@ ItemsBulkAction = Literal[
     "replace_tags",
     "delete",
 ]
+MediaNavigationFormat = Literal["auto", "plain", "markdown", "html"]
+MediaNavigationTargetType = Literal["page", "char_range", "time_range", "href"]
+WebContentScrapeMethod = Literal["individual", "sitemap", "url_level", "recursive_scraping"]
+MediaKeywordsUpdateMode = Literal["add", "remove", "set"]
 
 
 class FileExportRequest(BaseModel):
@@ -144,6 +148,64 @@ class MediaIngestSubmitRequest(BaseModel):
     force_regenerate_embeddings: bool = False
 
 
+class AddMediaRequest(BaseModel):
+    """Form payload for the server /api/v1/media/add persistence endpoint."""
+
+    model_config = ConfigDict(extra="allow")
+
+    media_type: str
+    urls: list[str] | None = None
+    title: str | None = Field(default=None, max_length=500)
+    author: str | None = Field(default=None, max_length=255)
+    keywords: list[str] | str | None = None
+    custom_prompt: str | None = None
+    system_prompt: str | None = None
+    overwrite_existing: bool | None = None
+    keep_original_file: bool | None = None
+    perform_analysis: bool | None = None
+    perform_claims_extraction: bool | None = None
+    claims_extractor_mode: str | None = None
+    claims_max_per_chunk: int | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    api_provider: str | None = None
+    model_name: str | None = None
+    use_cookies: bool | None = None
+    cookies: str | None = None
+    api_name: str | None = None
+    ingest_attachments: bool | None = None
+    max_depth: int | None = None
+    accept_archives: bool | None = None
+    accept_mbox: bool | None = None
+    accept_pst: bool | None = None
+    generate_embeddings: bool | None = None
+    embedding_dispatch_mode: Literal["auto", "jobs", "background"] | None = None
+    embedding_model: str | None = None
+    embedding_provider: str | None = None
+    perform_rolling_summarization: bool | None = None
+    summarize_recursively: bool | None = None
+    perform_chunking: bool | None = None
+    chunk_method: str | None = None
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
+    transcription_model: str | None = None
+    transcription_language: str | None = None
+    hotwords: str | None = None
+    diarize: bool | None = None
+    timestamp_option: bool | None = None
+    vad_use: bool | None = None
+    perform_confabulation_check_of_analysis: bool | None = None
+    pdf_parsing_engine: str | None = None
+    enable_ocr: bool | None = None
+    ocr_backend: str | None = None
+    ocr_lang: str | None = None
+    ocr_dpi: int | None = None
+    ocr_mode: str | None = None
+    ocr_min_page_text_chars: int | None = None
+    ocr_output_format: str | None = None
+    ocr_prompt_preset: str | None = None
+
+
 class MediaIngestJobItem(BaseModel):
     id: int
     uuid: str | None = None
@@ -156,6 +218,86 @@ class MediaIngestSubmitResponse(BaseModel):
     batch_id: str
     jobs: list[MediaIngestJobItem] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+class IngestWebContentRequest(BaseModel):
+    urls: list[HttpUrl]
+    titles: list[str] | None = None
+    authors: list[str] | None = None
+    keywords: list[str] | None = None
+    scrape_method: WebContentScrapeMethod = "individual"
+    url_level: int | None = 2
+    max_pages: int | None = Field(default=None, ge=1)
+    max_depth: int | None = 3
+    custom_prompt: str | None = None
+    system_prompt: str | None = None
+    perform_translation: bool = False
+    translation_language: str = "en"
+    timestamp_option: bool = True
+    overwrite_existing: bool = False
+    perform_analysis: bool = True
+    perform_rolling_summarization: bool = False
+    api_name: str | None = None
+    api_key: str | None = None
+    perform_chunking: bool = True
+    chunk_method: str | None = None
+    use_adaptive_chunking: bool = False
+    use_multi_level_chunking: bool = False
+    chunk_language: str | None = None
+    chunk_size: int = Field(default=500, gt=0)
+    chunk_overlap: int = Field(default=200, ge=0)
+    hierarchical_chunking: bool | None = False
+    hierarchical_template: dict[str, Any] | None = None
+    use_cookies: bool = False
+    cookies: str | None = None
+    perform_confabulation_check_of_analysis: bool = False
+    custom_chapter_pattern: str | None = None
+    crawl_strategy: str | None = None
+    include_external: bool | None = None
+    score_threshold: float | None = None
+
+
+class WebScrapedItemResult(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    url: str
+    title: str | None = None
+    author: str | None = None
+    content: str | None = None
+    keywords: str | list[str] | None = None
+    analysis: str | None = None
+    chunks: list[Any] | None = None
+    ingested_at: datetime | None = None
+    metadata: dict[str, Any] | None = None
+    extraction_successful: bool | None = None
+
+
+class IngestWebContentResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str
+    message: str
+    count: int | None = None
+    results: list[WebScrapedItemResult] = Field(default_factory=list)
+    media_ids: list[int | str] | None = None
+
+
+class MediaItemUpdateRequest(BaseModel):
+    """Request body for server direct media item updates."""
+
+    title: str | None = Field(default=None, max_length=500)
+    content: str | None = Field(default=None, max_length=5_000_000)
+    author: str | None = Field(default=None, max_length=255)
+    analysis: str | None = Field(default=None, max_length=100_000)
+    prompt: str | None = Field(default=None, max_length=10_000)
+    keywords: list[str] | None = Field(default=None, max_length=50)
+
+
+class MediaKeywordsUpdateRequest(BaseModel):
+    """Request body for server direct media keyword add/remove/set updates."""
+
+    keywords: list[str]
+    mode: MediaKeywordsUpdateMode = "add"
 
 
 class MediaIngestJobStatus(BaseModel):
@@ -457,6 +599,18 @@ class ReadingExportResponse(BaseModel):
     filename: str | None = None
 
 
+class MediaFileAvailabilityResponse(BaseModel):
+    available: bool = True
+    content_type: str | None = None
+    content_length: int | None = None
+    content_disposition: str | None = None
+    filename: str | None = None
+    etag: str | None = None
+    accept_ranges: str | None = None
+    cache_control: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
 class ReadingTTSRequest(BaseModel):
     model: str = Field(..., min_length=1)
     voice: str = "af_heart"
@@ -504,6 +658,125 @@ class ReadingImportJobStatus(BaseModel):
 
 class ReadingImportJobsListResponse(BaseModel):
     jobs: list[ReadingImportJobStatus] = Field(default_factory=list)
+    total: int
+    limit: int | None = None
+    offset: int | None = None
+
+
+class ReadingDigestSuggestionsConfig(BaseModel):
+    enabled: bool = False
+    limit: int | None = Field(default=None, ge=1, le=200)
+    status: list[Literal["saved", "reading", "read", "archived"]] | None = None
+    exclude_tags: list[str] | None = None
+    max_age_days: int | None = Field(default=None, ge=1, le=3650)
+    include_read: bool = False
+    include_archived: bool = False
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [value]
+        return value
+
+    @field_validator("exclude_tags", mode="before")
+    @classmethod
+    def _coerce_exclude_tags(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [value.strip()]
+        if isinstance(value, list):
+            return [item.strip() if isinstance(item, str) else item for item in value]
+        return value
+
+
+class ReadingDigestScheduleFilters(BaseModel):
+    status: list[Literal["saved", "reading", "read", "archived"]] | None = None
+    tags: list[str] | None = None
+    favorite: bool | None = None
+    domain: str | None = None
+    q: str | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    sort: str | None = None
+    limit: int | None = Field(default=None, ge=1, le=500)
+    suggestions: ReadingDigestSuggestionsConfig | None = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [value]
+        return value
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _coerce_tags(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return [value.strip()]
+        if isinstance(value, list):
+            return [item.strip() if isinstance(item, str) else item for item in value]
+        return value
+
+
+class ReadingDigestScheduleCreateRequest(BaseModel):
+    name: str | None = None
+    cron: str
+    timezone: str | None = None
+    enabled: bool = True
+    require_online: bool = False
+    format: Literal["md", "html"] = "md"
+    template_id: int | None = None
+    template_name: str | None = None
+    retention_days: int | None = Field(default=None, ge=0, le=3650)
+    filters: ReadingDigestScheduleFilters | None = None
+
+
+class ReadingDigestScheduleUpdateRequest(BaseModel):
+    name: str | None = None
+    cron: str | None = None
+    timezone: str | None = None
+    enabled: bool | None = None
+    require_online: bool | None = None
+    format: Literal["md", "html"] | None = None
+    template_id: int | None = None
+    template_name: str | None = None
+    retention_days: int | None = Field(default=None, ge=0, le=3650)
+    filters: ReadingDigestScheduleFilters | None = None
+
+
+class ReadingDigestScheduleResponse(BaseModel):
+    id: str
+    name: str | None = None
+    cron: str
+    timezone: str | None = None
+    enabled: bool
+    require_online: bool
+    format: Literal["md", "html"]
+    template_id: int | None = None
+    template_name: str | None = None
+    retention_days: int | None = None
+    filters: ReadingDigestScheduleFilters | None = None
+    last_run_at: str | None = None
+    next_run_at: str | None = None
+    last_status: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ReadingDigestOutput(BaseModel):
+    output_id: int
+    title: str
+    format: Literal["md", "html"]
+    created_at: str | None = None
+    download_url: str
+    schedule_id: str | None = None
+    schedule_name: str | None = None
+    item_count: int | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ReadingDigestOutputsListResponse(BaseModel):
+    items: list[ReadingDigestOutput] = Field(default_factory=list)
     total: int
     limit: int | None = None
     offset: int | None = None
@@ -763,6 +1036,55 @@ class DocumentInsightsResponse(BaseModel):
     cached: bool = False
 
 
+class MediaNavigationNode(BaseModel):
+    id: str
+    parent_id: str | None = None
+    level: int = Field(..., ge=0)
+    title: str
+    order: int = Field(..., ge=0)
+    path_label: str | None = None
+    target_type: MediaNavigationTargetType
+    target_start: float | None = None
+    target_end: float | None = None
+    target_href: str | None = None
+    source: str
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class MediaNavigationStats(BaseModel):
+    returned_node_count: int = Field(..., ge=0)
+    node_count: int = Field(..., ge=0)
+    max_depth: int = Field(..., ge=0)
+    truncated: bool = False
+
+
+class MediaNavigationResponse(BaseModel):
+    media_id: int
+    available: bool = True
+    navigation_version: str
+    source_order_used: list[str] = Field(default_factory=list)
+    nodes: list[MediaNavigationNode] = Field(default_factory=list)
+    stats: MediaNavigationStats
+
+
+class MediaNavigationTarget(BaseModel):
+    target_type: MediaNavigationTargetType
+    target_start: float | None = None
+    target_end: float | None = None
+    target_href: str | None = None
+
+
+class MediaNavigationContentResponse(BaseModel):
+    media_id: int
+    node_id: str
+    title: str
+    content_format: MediaNavigationFormat
+    available_formats: list[MediaNavigationFormat] = Field(default_factory=list)
+    content: str
+    alternate_content: dict[MediaNavigationFormat, str] | None = None
+    target: MediaNavigationTarget
+
+
 class MediaVersionDetail(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -879,6 +1201,8 @@ __all__ = [
     "IngestionSourcePatchRequest",
     "IngestionSourceResponse",
     "IngestionSourceSyncTriggerResponse",
+    "IngestWebContentRequest",
+    "IngestWebContentResponse",
     "ItemsBulkAction",
     "ItemsBulkRequest",
     "ItemsBulkResponse",
@@ -891,6 +1215,14 @@ __all__ = [
     "MediaIngestSubmitRequest",
     "MediaIngestSubmitResponse",
     "MediaAdvancedVersionUpsertRequest",
+    "MediaFileAvailabilityResponse",
+    "MediaNavigationContentResponse",
+    "MediaNavigationFormat",
+    "MediaNavigationNode",
+    "MediaNavigationResponse",
+    "MediaNavigationStats",
+    "MediaNavigationTarget",
+    "MediaNavigationTargetType",
     "MediaMetadataPatchRequest",
     "MediaVersionCreateRequest",
     "MediaVersionDetail",
@@ -899,6 +1231,13 @@ __all__ = [
     "ReadingArchiveCreateRequest",
     "ReadingArchiveResponse",
     "ReadingCitation",
+    "ReadingDigestOutput",
+    "ReadingDigestOutputsListResponse",
+    "ReadingDigestScheduleCreateRequest",
+    "ReadingDigestScheduleFilters",
+    "ReadingDigestScheduleResponse",
+    "ReadingDigestScheduleUpdateRequest",
+    "ReadingDigestSuggestionsConfig",
     "ReadingExportResponse",
     "ReadingHighlight",
     "ReadingHighlightAnchorStrategy",
@@ -934,4 +1273,6 @@ __all__ = [
     "ReprocessMediaRequest",
     "ReprocessMediaResponse",
     "ViewMode",
+    "WebContentScrapeMethod",
+    "WebScrapedItemResult",
 ]

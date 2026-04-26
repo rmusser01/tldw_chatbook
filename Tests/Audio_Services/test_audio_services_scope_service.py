@@ -21,6 +21,22 @@ class FakeAudioService:
         self.calls.append(("list_tts_voices", kwargs))
         return {"kokoro": [{"id": "af_heart"}]}
 
+    async def get_audio_streaming_status(self):
+        self.calls.append(("get_audio_streaming_status",))
+        return {"status": "available", "available_models": ["parakeet-mlx"], "websocket_endpoint": "/api/v1/audio/stream/transcribe", "supported_features": {}}
+
+    async def get_audio_streaming_limits(self):
+        self.calls.append(("get_audio_streaming_limits",))
+        return {"user_id": "user-1", "tier": "free", "limits": {}, "used_today_minutes": 0.0, "active_streams": 0, "can_start_stream": True}
+
+    async def test_audio_streaming(self):
+        self.calls.append(("test_audio_streaming",))
+        return {"status": "success", "test_passed": True, "message": "ok"}
+
+    async def create_speech_chat(self, request_data):
+        self.calls.append(("create_speech_chat", request_data))
+        return {"session_id": "speech-session-1", "assistant_text": "Hi"}
+
     async def create_audio_speech_job(self, request_data):
         self.calls.append(("create_audio_speech_job", request_data))
         return {"job_id": 42, "status": "queued"}
@@ -177,6 +193,13 @@ async def test_audio_services_scope_service_routes_and_normalizes_source_records
     local_health = await scope.get_tts_health(mode="local")
     providers = await scope.list_tts_providers(mode="server")
     voices = await scope.list_tts_voices(mode="server", provider="kokoro")
+    streaming_status = await scope.get_audio_streaming_status(mode="server")
+    streaming_limits = await scope.get_audio_streaming_limits(mode="server")
+    streaming_test = await scope.test_audio_streaming(mode="server")
+    speech_chat = await scope.create_speech_chat(
+        mode="server",
+        request_data={"input_audio": "UklGRg==", "input_audio_format": "wav", "llm_config": {"model": "gpt-test"}},
+    )
     speech_job = await scope.create_audio_speech_job(mode="server", request_data={"model": "kokoro", "input": "Hello"})
     job = await scope.get_audio_job(mode="server", job_id=42)
     history = await scope.list_tts_history(mode="server", provider="kokoro")
@@ -186,6 +209,10 @@ async def test_audio_services_scope_service_routes_and_normalizes_source_records
     assert local_health["record_id"] == "local:audio:health"
     assert providers["record_id"] == "server:audio:providers"
     assert voices["record_id"] == "server:audio:voices"
+    assert streaming_status["record_id"] == "server:audio_streaming:status"
+    assert streaming_limits["record_id"] == "server:audio_streaming:limits"
+    assert streaming_test["record_id"] == "server:audio_streaming:test"
+    assert speech_chat["record_id"] == "server:audio_speech_chat:speech-session-1"
     assert speech_job["record_id"] == "server:audio_speech_job:42"
     assert job["record_id"] == "server:audio_job:42"
     assert history["items"][0]["record_id"] == "server:audio_history:3"
@@ -195,6 +222,10 @@ async def test_audio_services_scope_service_routes_and_normalizes_source_records
     assert server.calls == [
         ("list_tts_providers",),
         ("list_tts_voices", {"provider": "kokoro"}),
+        ("get_audio_streaming_status",),
+        ("get_audio_streaming_limits",),
+        ("test_audio_streaming",),
+        ("create_speech_chat", {"input_audio": "UklGRg==", "input_audio_format": "wav", "llm_config": {"model": "gpt-test"}}),
         ("create_audio_speech_job", {"model": "kokoro", "input": "Hello"}),
         ("get_audio_job", 42),
         ("list_tts_history", {"provider": "kokoro"}),
@@ -205,6 +236,10 @@ async def test_audio_services_scope_service_routes_and_normalizes_source_records
         "audio.health.observe.local",
         "audio.providers.list.server",
         "audio.voices.list.server",
+        "audio.streaming.status.server",
+        "audio.streaming.detail.server",
+        "audio.streaming.launch.server",
+        "audio.speech_chat.launch.server",
         "audio.speech.launch.server",
         "audio.jobs.detail.server",
         "audio.history.list.server",
@@ -282,6 +317,19 @@ def test_audio_services_scope_service_reports_known_unsupported_capabilities():
                 "audio.history.delete.local",
             ],
         },
+        {
+            "operation_id": "audio.streaming_rest.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "remote_only_surface",
+            "user_message": "Audio streaming REST status, limits, test, and speech-chat helpers are active-server owned in this seam.",
+            "affected_action_ids": [
+                "audio.streaming.status.server",
+                "audio.streaming.detail.server",
+                "audio.streaming.launch.server",
+                "audio.speech_chat.launch.server",
+            ],
+        },
     ]
     assert server_report == [
         {
@@ -289,7 +337,7 @@ def test_audio_services_scope_service_reports_known_unsupported_capabilities():
             "source": "server",
             "supported": False,
             "reason_code": "server_contract_followup",
-            "user_message": "Server websocket speech/chat streaming is not part of this REST-backed audio seam; SSE job observation remains available.",
+            "user_message": "Server websocket speech/chat streaming is not part of this REST-backed audio seam; REST status, limits, test, and non-streaming speech-chat helpers plus SSE job observation remain available.",
             "affected_action_ids": [],
         },
         {

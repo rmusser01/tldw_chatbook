@@ -38,6 +38,82 @@ class FakePromptClient:
         self.calls.append(("restore_prompt_version", prompt_id, version))
         return {"id": prompt_id, "uuid": "prompt-uuid", "version": version, "name": "Restored"}
 
+    async def get_prompts_health(self):
+        self.calls.append(("get_prompts_health",))
+        return {"status": "healthy"}
+
+    async def get_prompt_sync_log(self, **kwargs):
+        self.calls.append(("get_prompt_sync_log", kwargs))
+        return {"changes": []}
+
+    async def search_prompts(self, **kwargs):
+        self.calls.append(("search_prompts", kwargs))
+        return {"items": []}
+
+    async def create_prompt_keyword(self, keyword_text):
+        self.calls.append(("create_prompt_keyword", keyword_text))
+        return {"keyword_text": keyword_text}
+
+    async def list_prompt_keywords(self):
+        self.calls.append(("list_prompt_keywords",))
+        return ["drafting"]
+
+    async def delete_prompt_keyword(self, keyword_text):
+        self.calls.append(("delete_prompt_keyword", keyword_text))
+        return None
+
+    async def export_prompts(self, **kwargs):
+        self.calls.append(("export_prompts", kwargs))
+        return {"message": "exported"}
+
+    async def export_prompt_keywords(self):
+        self.calls.append(("export_prompt_keywords",))
+        return {"message": "exported"}
+
+    async def import_prompts(self, payload):
+        self.calls.append(("import_prompts", payload))
+        return {"imported": 1}
+
+    async def extract_prompt_template_variables(self, template):
+        self.calls.append(("extract_prompt_template_variables", template))
+        return {"variables": ["name"]}
+
+    async def render_prompt_template(self, template, variables):
+        self.calls.append(("render_prompt_template", template, variables))
+        return {"rendered": "Hello Ada"}
+
+    async def convert_prompt(self, payload):
+        self.calls.append(("convert_prompt", payload))
+        return {"prompt_definition": {"blocks": []}}
+
+    async def bulk_delete_prompts(self, prompt_ids):
+        self.calls.append(("bulk_delete_prompts", prompt_ids))
+        return {"deleted": len(prompt_ids)}
+
+    async def bulk_update_prompt_keywords(self, prompt_ids, keywords, mode="add"):
+        self.calls.append(("bulk_update_prompt_keywords", prompt_ids, keywords, mode))
+        return {"updated": len(prompt_ids)}
+
+    async def record_prompt_usage(self, prompt_identifier):
+        self.calls.append(("record_prompt_usage", prompt_identifier))
+        return {"usage_count": 1}
+
+    async def create_prompt_collection(self, **kwargs):
+        self.calls.append(("create_prompt_collection", kwargs))
+        return {"collection_id": 3}
+
+    async def list_prompt_collections(self, **kwargs):
+        self.calls.append(("list_prompt_collections", kwargs))
+        return {"collections": []}
+
+    async def get_prompt_collection(self, collection_id):
+        self.calls.append(("get_prompt_collection", collection_id))
+        return {"collection_id": collection_id}
+
+    async def update_prompt_collection(self, collection_id, **kwargs):
+        self.calls.append(("update_prompt_collection", collection_id, kwargs))
+        return {"collection_id": collection_id, **kwargs}
+
 
 @pytest.mark.asyncio
 async def test_server_prompt_service_enforces_policy_actions():
@@ -78,6 +154,76 @@ async def test_server_prompt_service_routes_prompt_version_controls():
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list][-2:] == [
         "prompts.versions.list.server",
         "prompts.versions.restore.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_service_routes_server_prompt_utility_surfaces():
+    client = FakePromptClient()
+    policy = Mock()
+    service = ServerPromptService(client=client, policy_enforcer=policy)
+
+    await service.get_prompts_health()
+    await service.get_prompt_sync_log(since_change_id=5, limit=25)
+    await service.search_prompts(search_query="rag", search_fields=["name"], page=2)
+    await service.create_prompt_keyword("Drafting")
+    await service.list_prompt_keywords()
+    await service.delete_prompt_keyword("Drafting")
+    await service.export_prompts(export_format="markdown", filter_keywords=["drafting"])
+    await service.export_prompt_keywords()
+    await service.import_prompts({"prompts": [{"name": "Draft", "content": "Body"}]})
+    await service.extract_prompt_template_variables("Hello {{name}}")
+    await service.render_prompt_template("Hello {{name}}", {"name": "Ada"})
+    await service.convert_prompt({"system_prompt": "S", "user_prompt": "U"})
+    await service.bulk_delete_prompts([1])
+    await service.bulk_update_prompt_keywords([1], ["drafting"], mode="replace")
+    await service.record_prompt_usage("prompt-1")
+    await service.create_prompt_collection(name="Pack", prompt_ids=[1])
+    await service.list_prompt_collections(limit=25)
+    await service.get_prompt_collection(7)
+    await service.update_prompt_collection(7, name="Updated")
+
+    assert client.calls[-19:] == [
+        ("get_prompts_health",),
+        ("get_prompt_sync_log", {"since_change_id": 5, "limit": 25}),
+        ("search_prompts", {"search_query": "rag", "search_fields": ["name"], "page": 2}),
+        ("create_prompt_keyword", "Drafting"),
+        ("list_prompt_keywords",),
+        ("delete_prompt_keyword", "Drafting"),
+        ("export_prompts", {"export_format": "markdown", "filter_keywords": ["drafting"]}),
+        ("export_prompt_keywords",),
+        ("import_prompts", {"prompts": [{"name": "Draft", "content": "Body"}]}),
+        ("extract_prompt_template_variables", "Hello {{name}}"),
+        ("render_prompt_template", "Hello {{name}}", {"name": "Ada"}),
+        ("convert_prompt", {"system_prompt": "S", "user_prompt": "U"}),
+        ("bulk_delete_prompts", [1]),
+        ("bulk_update_prompt_keywords", [1], ["drafting"], "replace"),
+        ("record_prompt_usage", "prompt-1"),
+        ("create_prompt_collection", {"name": "Pack", "prompt_ids": [1]}),
+        ("list_prompt_collections", {"limit": 25}),
+        ("get_prompt_collection", 7),
+        ("update_prompt_collection", 7, {"name": "Updated"}),
+    ]
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list][-19:] == [
+        "prompts.health.detail.server",
+        "prompts.sync_log.list.server",
+        "prompts.search.list.server",
+        "prompts.keywords.create.server",
+        "prompts.keywords.list.server",
+        "prompts.keywords.delete.server",
+        "prompts.transfer.export.server",
+        "prompts.keywords.export.server",
+        "prompts.transfer.import.server",
+        "prompts.templates.process.server",
+        "prompts.templates.process.server",
+        "prompts.templates.process.server",
+        "prompts.bulk.delete.server",
+        "prompts.bulk.update.server",
+        "prompts.usage.update.server",
+        "prompts.collections.create.server",
+        "prompts.collections.list.server",
+        "prompts.collections.detail.server",
+        "prompts.collections.update.server",
     ]
 
 

@@ -9,6 +9,7 @@ from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     CollectionsFeedCreateRequest,
     CollectionsFeedUpdateRequest,
+    CollectionsWebSubSubscribeRequest,
     TLDWAPIClient,
 )
 
@@ -134,3 +135,16 @@ class ServerCollectionsFeedsService:
     async def delete_feed(self, feed_id: int) -> bool:
         self._enforce("collections.feeds.delete.server")
         return bool(await self._require_client().delete_collections_feed(int(feed_id)))
+
+    async def subscribe_feed_websub(self, feed_id: int, *, lease_seconds: int | None = None) -> dict[str, Any]:
+        self._enforce("collections.feeds.websub.launch.server")
+        request = CollectionsWebSubSubscribeRequest(lease_seconds=lease_seconds)
+        return self._dump(await self._require_client().subscribe_collections_feed_websub(int(feed_id), request))
+
+    async def get_feed_websub_status(self, feed_id: int) -> dict[str, Any]:
+        self._enforce("collections.feeds.websub.detail.server")
+        return self._dump(await self._require_client().get_collections_feed_websub(int(feed_id)))
+
+    async def unsubscribe_feed_websub(self, feed_id: int) -> dict[str, Any]:
+        self._enforce("collections.feeds.websub.delete.server")
+        return self._dump(await self._require_client().unsubscribe_collections_feed_websub(int(feed_id)))

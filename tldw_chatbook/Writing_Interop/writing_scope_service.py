@@ -11,6 +11,55 @@ from .writing_normalizers import normalize_writing_record, normalize_writing_str
 
 _UNSET = object()
 
+_LOCAL_UNSUPPORTED_CAPABILITIES = [
+    {
+        "operation_id": "writing.auxiliary.local",
+        "source": "local",
+        "supported": False,
+        "reason_code": "local_contract_missing",
+        "user_message": "Local writing character, world, plot, citation, research, and analysis auxiliary surfaces are not implemented yet.",
+        "affected_action_ids": [
+            "writing.characters.create.local",
+            "writing.characters.list.local",
+            "writing.characters.detail.local",
+            "writing.characters.update.local",
+            "writing.characters.delete.local",
+            "writing.relationships.create.local",
+            "writing.relationships.list.local",
+            "writing.relationships.delete.local",
+            "writing.world_info.create.local",
+            "writing.world_info.list.local",
+            "writing.world_info.detail.local",
+            "writing.world_info.update.local",
+            "writing.world_info.delete.local",
+            "writing.plot_lines.create.local",
+            "writing.plot_lines.list.local",
+            "writing.plot_lines.update.local",
+            "writing.plot_lines.delete.local",
+            "writing.plot_events.create.local",
+            "writing.plot_events.list.local",
+            "writing.plot_events.update.local",
+            "writing.plot_events.delete.local",
+            "writing.plot_holes.create.local",
+            "writing.plot_holes.list.local",
+            "writing.plot_holes.update.local",
+            "writing.plot_holes.delete.local",
+            "writing.scene_characters.create.local",
+            "writing.scene_characters.list.local",
+            "writing.scene_characters.delete.local",
+            "writing.scene_world_info.create.local",
+            "writing.scene_world_info.list.local",
+            "writing.scene_world_info.delete.local",
+            "writing.citations.create.local",
+            "writing.citations.list.local",
+            "writing.citations.delete.local",
+            "writing.research.launch.local",
+            "writing.analysis.launch.local",
+            "writing.analysis.list.local",
+        ],
+    },
+]
+
 _SERVER_UNSUPPORTED_CAPABILITIES = [
     {
         "operation_id": "writing.scenes.direct_manuscript_level.server",
@@ -111,8 +160,16 @@ class WritingScopeService:
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == WritingBackend.LOCAL:
-            return []
+            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+
+    def _require_method(self, service: Any, method_name: str, mode: WritingBackend) -> Any:
+        method = getattr(service, method_name, None)
+        if callable(method):
+            return method
+        raise NotImplementedError(
+            f"{mode.value} writing backend does not implement {method_name}."
+        )
 
     async def list_projects(
         self,
@@ -464,6 +521,738 @@ class WritingScopeService:
                 )
             )
         )
+
+    async def create_character(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        name: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("characters", "create", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "create_character", normalized_mode)(project_id, name=name, **kwargs)
+        )
+        return self._normalize_result(normalized_mode, "character", result)
+
+    async def list_characters(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        role: str | None = None,
+        cast_group: str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("characters", "list", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "list_characters", normalized_mode)(
+                project_id,
+                role=role,
+                cast_group=cast_group,
+            )
+        )
+        return self._normalize_result(normalized_mode, "character", result)
+
+    async def get_character(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        character_id: str,
+    ) -> dict[str, Any] | None:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("characters", "detail", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "get_character", normalized_mode)(character_id)
+        )
+        return self._normalize_result(normalized_mode, "character", result)
+
+    async def update_character(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        character_id: str,
+        expected_version: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("characters", "update", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "update_character", normalized_mode)(
+                character_id,
+                expected_version=expected_version,
+                **kwargs,
+            )
+        )
+        return self._normalize_result(normalized_mode, "character", result)
+
+    async def delete_character(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        character_id: str,
+        expected_version: int | None = None,
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("characters", "delete", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        return bool(
+            await self._maybe_await(
+                self._require_method(service, "delete_character", normalized_mode)(
+                    character_id,
+                    expected_version=expected_version,
+                )
+            )
+        )
+
+    async def create_relationship(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("relationships", "create", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "create_relationship", normalized_mode)(project_id, **kwargs)
+        )
+        return self._normalize_result(normalized_mode, "relationship", result)
+
+    async def list_relationships(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("relationships", "list", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "list_relationships", normalized_mode)(project_id)
+        )
+        return self._normalize_result(normalized_mode, "relationship", result)
+
+    async def delete_relationship(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        relationship_id: str,
+        expected_version: int | None = None,
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("relationships", "delete", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        return bool(
+            await self._maybe_await(
+                self._require_method(service, "delete_relationship", normalized_mode)(
+                    relationship_id,
+                    expected_version=expected_version,
+                )
+            )
+        )
+
+    async def create_world_info(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        kind: str,
+        name: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("world_info", "create", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "create_world_info", normalized_mode)(
+                project_id,
+                kind=kind,
+                name=name,
+                **kwargs,
+            )
+        )
+        return self._normalize_result(normalized_mode, "world_info", result)
+
+    async def list_world_info(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        kind: str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("world_info", "list", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "list_world_info", normalized_mode)(project_id, kind=kind)
+        )
+        return self._normalize_result(normalized_mode, "world_info", result)
+
+    async def get_world_info(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        item_id: str,
+    ) -> dict[str, Any] | None:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("world_info", "detail", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "get_world_info", normalized_mode)(item_id)
+        )
+        return self._normalize_result(normalized_mode, "world_info", result)
+
+    async def update_world_info(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        item_id: str,
+        expected_version: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("world_info", "update", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "update_world_info", normalized_mode)(
+                item_id,
+                expected_version=expected_version,
+                **kwargs,
+            )
+        )
+        return self._normalize_result(normalized_mode, "world_info", result)
+
+    async def delete_world_info(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        item_id: str,
+        expected_version: int | None = None,
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("world_info", "delete", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        return bool(
+            await self._maybe_await(
+                self._require_method(service, "delete_world_info", normalized_mode)(
+                    item_id,
+                    expected_version=expected_version,
+                )
+            )
+        )
+
+    async def create_plot_line(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        title: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_lines", "create", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "create_plot_line", normalized_mode)(project_id, title=title, **kwargs)
+        )
+        return self._normalize_result(normalized_mode, "plot_line", result)
+
+    async def list_plot_lines(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_lines", "list", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "list_plot_lines", normalized_mode)(project_id)
+        )
+        return self._normalize_result(normalized_mode, "plot_line", result)
+
+    async def update_plot_line(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        plot_line_id: str,
+        expected_version: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_lines", "update", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "update_plot_line", normalized_mode)(
+                plot_line_id,
+                expected_version=expected_version,
+                **kwargs,
+            )
+        )
+        return self._normalize_result(normalized_mode, "plot_line", result)
+
+    async def delete_plot_line(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        plot_line_id: str,
+        expected_version: int | None = None,
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_lines", "delete", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        return bool(
+            await self._maybe_await(
+                self._require_method(service, "delete_plot_line", normalized_mode)(
+                    plot_line_id,
+                    expected_version=expected_version,
+                )
+            )
+        )
+
+    async def create_plot_event(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        plot_line_id: str,
+        title: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_events", "create", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "create_plot_event", normalized_mode)(
+                plot_line_id,
+                title=title,
+                **kwargs,
+            )
+        )
+        return self._normalize_result(normalized_mode, "plot_event", result)
+
+    async def list_plot_events(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        plot_line_id: str,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_events", "list", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "list_plot_events", normalized_mode)(plot_line_id)
+        )
+        return self._normalize_result(normalized_mode, "plot_event", result)
+
+    async def update_plot_event(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        plot_event_id: str,
+        expected_version: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_events", "update", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "update_plot_event", normalized_mode)(
+                plot_event_id,
+                expected_version=expected_version,
+                **kwargs,
+            )
+        )
+        return self._normalize_result(normalized_mode, "plot_event", result)
+
+    async def delete_plot_event(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        plot_event_id: str,
+        expected_version: int | None = None,
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_events", "delete", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        return bool(
+            await self._maybe_await(
+                self._require_method(service, "delete_plot_event", normalized_mode)(
+                    plot_event_id,
+                    expected_version=expected_version,
+                )
+            )
+        )
+
+    async def create_plot_hole(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        title: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_holes", "create", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "create_plot_hole", normalized_mode)(project_id, title=title, **kwargs)
+        )
+        return self._normalize_result(normalized_mode, "plot_hole", result)
+
+    async def list_plot_holes(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_holes", "list", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "list_plot_holes", normalized_mode)(project_id, status=status)
+        )
+        return self._normalize_result(normalized_mode, "plot_hole", result)
+
+    async def update_plot_hole(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        plot_hole_id: str,
+        expected_version: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_holes", "update", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "update_plot_hole", normalized_mode)(
+                plot_hole_id,
+                expected_version=expected_version,
+                **kwargs,
+            )
+        )
+        return self._normalize_result(normalized_mode, "plot_hole", result)
+
+    async def delete_plot_hole(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        plot_hole_id: str,
+        expected_version: int | None = None,
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("plot_holes", "delete", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        return bool(
+            await self._maybe_await(
+                self._require_method(service, "delete_plot_hole", normalized_mode)(
+                    plot_hole_id,
+                    expected_version=expected_version,
+                )
+            )
+        )
+
+    async def link_scene_character(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        scene_id: str,
+        character_id: str,
+        is_pov: bool = False,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("scene_characters", "create", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "link_scene_character", normalized_mode)(
+                scene_id,
+                character_id=character_id,
+                is_pov=is_pov,
+            )
+        )
+        return self._normalize_result(normalized_mode, "scene_character_link", result)
+
+    async def list_scene_characters(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        scene_id: str,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("scene_characters", "list", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "list_scene_characters", normalized_mode)(scene_id)
+        )
+        return self._normalize_result(normalized_mode, "scene_character_link", result)
+
+    async def unlink_scene_character(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        scene_id: str,
+        character_id: str,
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("scene_characters", "delete", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        return bool(
+            await self._maybe_await(
+                self._require_method(service, "unlink_scene_character", normalized_mode)(scene_id, character_id)
+            )
+        )
+
+    async def link_scene_world_info(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        scene_id: str,
+        world_info_id: str,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("scene_world_info", "create", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "link_scene_world_info", normalized_mode)(
+                scene_id,
+                world_info_id=world_info_id,
+            )
+        )
+        return self._normalize_result(normalized_mode, "scene_world_info_link", result)
+
+    async def list_scene_world_info(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        scene_id: str,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("scene_world_info", "list", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "list_scene_world_info", normalized_mode)(scene_id)
+        )
+        return self._normalize_result(normalized_mode, "scene_world_info_link", result)
+
+    async def unlink_scene_world_info(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        scene_id: str,
+        world_info_id: str,
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("scene_world_info", "delete", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        return bool(
+            await self._maybe_await(
+                self._require_method(service, "unlink_scene_world_info", normalized_mode)(scene_id, world_info_id)
+            )
+        )
+
+    async def create_citation(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        scene_id: str,
+        source_type: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("citations", "create", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "create_citation", normalized_mode)(
+                scene_id,
+                source_type=source_type,
+                **kwargs,
+            )
+        )
+        return self._normalize_result(normalized_mode, "citation", result)
+
+    async def list_citations(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        scene_id: str,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("citations", "list", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "list_citations", normalized_mode)(scene_id)
+        )
+        return self._normalize_result(normalized_mode, "citation", result)
+
+    async def delete_citation(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        citation_id: str,
+        expected_version: int | None = None,
+    ) -> bool:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("citations", "delete", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        return bool(
+            await self._maybe_await(
+                self._require_method(service, "delete_citation", normalized_mode)(
+                    citation_id,
+                    expected_version=expected_version,
+                )
+            )
+        )
+
+    async def research_scene(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        scene_id: str,
+        query: str,
+        top_k: int = 5,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("research", "launch", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "research_scene", normalized_mode)(scene_id, query=query, top_k=top_k)
+        )
+        if isinstance(result, dict):
+            payload = dict(result)
+            payload["results"] = self._normalize_result(
+                normalized_mode,
+                "research_result",
+                list(payload.get("results", [])),
+            )
+            return payload
+        return result
+
+    async def analyze_scene(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        scene_id: str,
+        analysis_types: list[str],
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("analysis", "launch", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "analyze_scene", normalized_mode)(
+                scene_id,
+                analysis_types=analysis_types,
+                provider=provider,
+                model=model,
+            )
+        )
+        return self._normalize_result(normalized_mode, "analysis", result)
+
+    async def analyze_chapter(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        chapter_id: str,
+        analysis_types: list[str],
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("analysis", "launch", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "analyze_chapter", normalized_mode)(
+                chapter_id,
+                analysis_types=analysis_types,
+                provider=provider,
+                model=model,
+            )
+        )
+        return self._normalize_result(normalized_mode, "analysis", result)
+
+    async def analyze_project_plot_holes(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        analysis_types: list[str] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("analysis", "launch", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "analyze_project_plot_holes", normalized_mode)(
+                project_id,
+                analysis_types=analysis_types,
+                provider=provider,
+                model=model,
+            )
+        )
+        return self._normalize_result(normalized_mode, "analysis", result)
+
+    async def analyze_project_consistency(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        analysis_types: list[str] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("analysis", "launch", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "analyze_project_consistency", normalized_mode)(
+                project_id,
+                analysis_types=analysis_types,
+                provider=provider,
+                model=model,
+            )
+        )
+        return self._normalize_result(normalized_mode, "analysis", result)
+
+    async def list_analyses(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        project_id: str,
+        scope_type: str | None = None,
+        analysis_type: str | None = None,
+        include_stale: bool = False,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("analysis", "list", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            self._require_method(service, "list_analyses", normalized_mode)(
+                project_id,
+                scope_type=scope_type,
+                analysis_type=analysis_type,
+                include_stale=include_stale,
+            )
+        )
+        if isinstance(result, dict):
+            payload = dict(result)
+            payload["analyses"] = self._normalize_result(
+                normalized_mode,
+                "analysis",
+                list(payload.get("analyses", [])),
+            )
+            return payload
+        return {"analyses": self._normalize_result(normalized_mode, "analysis", list(result or []))}
 
     async def create_version(
         self,

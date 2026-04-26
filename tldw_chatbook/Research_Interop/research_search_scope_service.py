@@ -65,6 +65,18 @@ class ResearchSearchScopeService:
             "display_name": "Semantic Scholar",
             "capabilities": ["paper_search"],
         },
+        "biorxiv": {
+            "display_name": "bioRxiv",
+            "capabilities": ["paper_search"],
+        },
+        "medrxiv": {
+            "display_name": "medRxiv",
+            "capabilities": ["paper_search"],
+        },
+        "pubmed": {
+            "display_name": "PubMed",
+            "capabilities": ["paper_search"],
+        },
     }
 
     def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
@@ -225,3 +237,53 @@ class ResearchSearchScopeService:
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(service.search_semantic_scholar(**kwargs))
         return self._with_backend(normalized_mode, result)
+
+    async def _call_provider_method(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None,
+        method_name: str,
+        kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("launch", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        method = getattr(service, method_name, None)
+        if not callable(method):
+            raise ValueError(
+                f"{method_name} is unavailable for {normalized_mode.value} research search backend."
+            )
+        result = await self._maybe_await(method(**kwargs))
+        return self._with_backend(normalized_mode, result)
+
+    async def search_biorxiv(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call_provider_method(mode=mode, method_name="search_biorxiv", kwargs=kwargs)
+
+    async def get_biorxiv_by_doi(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call_provider_method(mode=mode, method_name="get_biorxiv_by_doi", kwargs=kwargs)
+
+    async def search_pubmed(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call_provider_method(mode=mode, method_name="search_pubmed", kwargs=kwargs)
+
+    async def get_pubmed_by_id(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call_provider_method(mode=mode, method_name="get_pubmed_by_id", kwargs=kwargs)

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tldw_chatbook.tldw_api.chat_loop_schemas import ChatLoopApprovalDecisionRequest, ChatLoopStartRequest
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api.chat_conversation_schemas import ConversationUpdateRequest
 
@@ -212,3 +213,59 @@ class TestChatConversationClient:
             await client.list_chat_conversations(state="maybe")
 
         assert mocked.await_count == 0
+
+    async def test_chat_loop_client_routes_run_events_approval_and_cancel(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(
+            side_effect=[
+                {"run_id": "run_123"},
+                {"run_id": "run_123", "events": []},
+                {"ok": True},
+                {"ok": True},
+                {"ok": True},
+            ]
+        )
+        monkeypatch.setattr(client, "_request", mocked)
+
+        started = await client.start_chat_loop_run(ChatLoopStartRequest(messages=[{"role": "user", "content": "Hi"}]))
+        events = await client.list_chat_loop_events("run_123", after_seq=4)
+        approved = await client.approve_chat_loop_call(
+            "run_123",
+            ChatLoopApprovalDecisionRequest(approval_id="approval-1", decision="approve"),
+        )
+        rejected = await client.reject_chat_loop_call(
+            "run_123",
+            ChatLoopApprovalDecisionRequest(approval_id="approval-2", decision="reject"),
+        )
+        cancelled = await client.cancel_chat_loop_run("run_123")
+
+        _assert_request_call(
+            mocked.await_args_list[0],
+            "POST",
+            "/api/v1/chat/loop/start",
+            {"json_data": {"messages": [{"role": "user", "content": "Hi"}]}},
+        )
+        _assert_request_call(
+            mocked.await_args_list[1],
+            "GET",
+            "/api/v1/chat/loop/run_123/events",
+            {"params": {"after_seq": 4}},
+        )
+        _assert_request_call(
+            mocked.await_args_list[2],
+            "POST",
+            "/api/v1/chat/loop/run_123/approve",
+            {"json_data": {"approval_id": "approval-1", "decision": "approve"}},
+        )
+        _assert_request_call(
+            mocked.await_args_list[3],
+            "POST",
+            "/api/v1/chat/loop/run_123/reject",
+            {"json_data": {"approval_id": "approval-2", "decision": "reject"}},
+        )
+        _assert_request_call(mocked.await_args_list[4], "POST", "/api/v1/chat/loop/run_123/cancel", {})
+        assert started.run_id == "run_123"
+        assert events.events == []
+        assert approved.ok is True
+        assert rejected.ok is True
+        assert cancelled.ok is True
