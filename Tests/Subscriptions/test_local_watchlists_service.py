@@ -236,6 +236,90 @@ async def test_local_watchlists_service_executes_url_list_sources_with_default_u
 
 
 @pytest.mark.asyncio
+async def test_local_watchlists_service_executes_sitemap_sources_with_default_url_monitor(tmp_path, monkeypatch):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    fetched_sitemaps = []
+    seen_urls = []
+
+    class FakeResponse:
+        text = """<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <url><loc>https://example.com/page-a</loc></url>
+            <url><loc>https://example.com/page-b</loc></url>
+        </urlset>
+        """
+
+        def raise_for_status(self):
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url):
+            fetched_sitemaps.append(url)
+            return FakeResponse()
+
+    class FakeURLMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            seen_urls.append(subscription["source"])
+            return {
+                "url": subscription["source"],
+                "title": f"Sitemap page {len(seen_urls)}",
+                "content_hash": f"sitemap-hash-{len(seen_urls)}",
+                "published_date": "2026-04-25T00:00:00+00:00",
+            }
+
+    monkeypatch.setattr("httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+        FakeURLMonitor,
+    )
+    source = await service.create_source(
+        {
+            "name": "Docs sitemap",
+            "url": "https://example.com/sitemap.xml",
+            "source_type": "sitemap",
+            "processing_options": {"max_urls": 2},
+        }
+    )
+    launched = await service.launch_run(source_id=source["source_id"])
+
+    completed = await service.execute_run(launched["run_id"])
+
+    stored_items = db.conn.execute(
+        "SELECT url, title, content_hash FROM subscription_items WHERE subscription_id = ? ORDER BY id ASC",
+        (source["source_id"],),
+    ).fetchall()
+    assert fetched_sitemaps == ["https://example.com/sitemap.xml"]
+    assert seen_urls == ["https://example.com/page-a", "https://example.com/page-b"]
+    assert completed["status"] == "completed"
+    assert completed["stats"]["items_found"] == 2
+    assert [dict(row) for row in stored_items] == [
+        {
+            "url": "https://example.com/page-a",
+            "title": "Sitemap page 1",
+            "content_hash": "sitemap-hash-1",
+        },
+        {
+            "url": "https://example.com/page-b",
+            "title": "Sitemap page 2",
+            "content_hash": "sitemap-hash-2",
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_local_watchlists_service_evaluates_completed_run_alerts_into_notifications(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     notification_store = ClientNotificationsDB(tmp_path / "notifications.db")

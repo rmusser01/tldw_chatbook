@@ -548,6 +548,19 @@ class LocalWatchlistsService:
                 )
                 if result:
                     items.append(result)
+        elif source_type == "sitemap":
+            monitor = URLMonitor(db)
+            items = []
+            for url in await self._urls_for_sitemap(subscription_config):
+                result = await monitor.check_url(
+                    {
+                        **subscription_config,
+                        "source": url,
+                        "type": "url",
+                    }
+                )
+                if result:
+                    items.append(result)
         else:
             raise ValueError(f"Unsupported local watchlist source type for execution: {source_type}")
         return {
@@ -577,6 +590,47 @@ class LocalWatchlistsService:
         if not urls:
             urls = cls._coerce_url_list(subscription.get("source"))
 
+        return cls._apply_max_urls(urls, subscription)
+
+    @classmethod
+    async def _urls_for_sitemap(cls, subscription: Mapping[str, Any]) -> list[str]:
+        import httpx
+
+        try:
+            import defusedxml.ElementTree as ET
+        except ImportError:
+            import xml.etree.ElementTree as ET
+
+        source = str(subscription.get("source") or "").strip()
+        if not source:
+            return []
+
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(source)
+            response.raise_for_status()
+
+        root = ET.fromstring(response.text)
+        urls: list[str] = []
+        for url_node in root.iter():
+            if cls._xml_local_name(url_node.tag) != "url":
+                continue
+            for child in list(url_node):
+                if cls._xml_local_name(child.tag) == "loc" and child.text:
+                    normalized_url = child.text.strip()
+                    if normalized_url:
+                        urls.append(normalized_url)
+                    break
+        return cls._apply_max_urls(urls, subscription)
+
+    @staticmethod
+    def _xml_local_name(tag: Any) -> str:
+        text = str(tag)
+        if "}" in text:
+            return text.rsplit("}", 1)[-1]
+        return text
+
+    @staticmethod
+    def _apply_max_urls(urls: list[str], subscription: Mapping[str, Any]) -> list[str]:
         processing_options = subscription.get("processing_options")
         max_urls = None
         if isinstance(processing_options, Mapping) and processing_options.get("max_urls") is not None:
