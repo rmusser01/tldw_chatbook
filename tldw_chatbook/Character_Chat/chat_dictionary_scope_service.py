@@ -86,10 +86,31 @@ class ChatDictionaryScopeService:
     def _statistics_action(mode: str, action: str) -> str:
         return f"chat.dictionary.statistics.{action}.{mode}"
 
+    @staticmethod
+    def _backend_supports(backend: Any, method_names: tuple[str, ...]) -> bool:
+        return all(callable(getattr(backend, method_name, None)) for method_name in method_names)
+
     def list_unsupported_capabilities(self, *, mode: str | None = None) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == "local":
-            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+            reports = [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+            local_backend = self.local_service
+            if local_backend is not None and self._backend_supports(local_backend, ("list_activity",)):
+                reports = [
+                    item
+                    for item in reports
+                    if item["operation_id"] != "chat.dictionary.activity.local"
+                ]
+            if local_backend is not None and self._backend_supports(
+                local_backend,
+                ("list_versions", "get_version", "revert_version"),
+            ):
+                reports = [
+                    item
+                    for item in reports
+                    if item["operation_id"] != "chat.dictionary.versions.local"
+                ]
+            return reports
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def _invoke(
@@ -265,30 +286,34 @@ class ChatDictionaryScopeService:
     async def list_activity(self, dictionary_id: int, mode: str = "local", **kwargs: Any) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._activity_action(normalized_mode, "list"))
-        if normalized_mode == "local":
+        backend = self._backend(normalized_mode)
+        if normalized_mode == "local" and not callable(getattr(backend, "list_activity", None)):
             self._raise_local_activity_unsupported()
-        return await self._maybe_await(self._backend(normalized_mode).list_activity(dictionary_id, **kwargs))
+        return await self._maybe_await(backend.list_activity(dictionary_id, **kwargs))
 
     async def list_versions(self, dictionary_id: int, mode: str = "local", **kwargs: Any) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._version_action(normalized_mode, "list"))
-        if normalized_mode == "local":
+        backend = self._backend(normalized_mode)
+        if normalized_mode == "local" and not callable(getattr(backend, "list_versions", None)):
             self._raise_local_versions_unsupported()
-        return await self._maybe_await(self._backend(normalized_mode).list_versions(dictionary_id, **kwargs))
+        return await self._maybe_await(backend.list_versions(dictionary_id, **kwargs))
 
     async def get_version(self, dictionary_id: int, revision: int, mode: str = "local") -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._version_action(normalized_mode, "detail"))
-        if normalized_mode == "local":
+        backend = self._backend(normalized_mode)
+        if normalized_mode == "local" and not callable(getattr(backend, "get_version", None)):
             self._raise_local_versions_unsupported()
-        return await self._maybe_await(self._backend(normalized_mode).get_version(dictionary_id, revision))
+        return await self._maybe_await(backend.get_version(dictionary_id, revision))
 
     async def revert_version(self, dictionary_id: int, revision: int, mode: str = "local") -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._version_action(normalized_mode, "restore"))
-        if normalized_mode == "local":
+        backend = self._backend(normalized_mode)
+        if normalized_mode == "local" and not callable(getattr(backend, "revert_version", None)):
             self._raise_local_versions_unsupported()
-        return await self._maybe_await(self._backend(normalized_mode).revert_version(dictionary_id, revision))
+        return await self._maybe_await(backend.revert_version(dictionary_id, revision))
 
     async def get_statistics(self, dictionary_id: int, mode: str = "local") -> Any:
         normalized_mode = self._normalize_mode(mode)

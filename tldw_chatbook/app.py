@@ -1507,7 +1507,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
-        self.local_chat_dictionary_service = LocalChatDictionaryService(self.chachanotes_db)
+        self.local_chat_dictionary_service = LocalChatDictionaryService(
+            self.chachanotes_db,
+            history_store_path=get_user_data_dir() / "tldw_chatbook_chat_dictionary_history.json",
+        )
         self.chat_dictionary_scope_service = ChatDictionaryScopeService(
             local_service=self.local_chat_dictionary_service,
             server_service=self.server_chat_dictionary_service,

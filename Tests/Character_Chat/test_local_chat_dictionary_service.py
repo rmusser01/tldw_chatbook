@@ -114,6 +114,31 @@ def test_local_chat_dictionary_service_reports_basic_statistics(dictionary_db):
     }
 
 
+def test_local_chat_dictionary_service_records_activity_versions_and_reverts(dictionary_db, tmp_path):
+    history_path = tmp_path / "chat_dictionary_history.json"
+    service = LocalChatDictionaryService(dictionary_db, history_store_path=history_path)
+
+    created = service.create_dictionary({"name": "Versioned Lore", "description": "v1"})
+    updated = service.update_dictionary(
+        created["id"],
+        {"name": "Versioned Lore v2", "description": "v2"},
+        expected_version=created["version"],
+    )
+    activity = service.list_activity(created["id"], limit=10)
+    versions = service.list_versions(created["id"], limit=10)
+    version_one = service.get_version(created["id"], 1)
+    reverted = service.revert_version(created["id"], 1)
+    reloaded = LocalChatDictionaryService(dictionary_db, history_store_path=history_path)
+
+    assert updated["version"] == 2
+    assert [item["action"] for item in activity["activity"]] == ["update", "create"]
+    assert [item["revision"] for item in versions["versions"]] == [2, 1]
+    assert version_one["snapshot"]["name"] == "Versioned Lore"
+    assert reverted["name"] == "Versioned Lore"
+    assert reverted["reverted_to_revision"] == 1
+    assert reloaded.list_versions(created["id"], limit=10)["total"] == 3
+
+
 def test_local_chat_dictionary_service_repairs_legacy_fts_trigger_before_delete(dictionary_db):
     service = LocalChatDictionaryService(dictionary_db)
     dictionary = service.create_dictionary({"name": "Legacy Trigger Lore"})
