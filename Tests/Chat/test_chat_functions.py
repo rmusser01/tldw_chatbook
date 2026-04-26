@@ -367,7 +367,7 @@ class TestChatHistorySaving:
         updated_conversation = db_instance.get_conversation_by_id(conversation_id)
         assert updated_conversation["assistant_kind"] == "character"
         assert updated_conversation["assistant_id"] == str(char_id)
-        assert updated_conversation["runtime_backend"] == "local"
+        assert updated_conversation["runtime_backend"] == "server"
         assert updated_conversation["discovery_owner"] == "ccp_character"
         assert updated_conversation["discovery_entity_id"] == str(char_id)
         assert updated_conversation["title"] == "Chat with Resaver"

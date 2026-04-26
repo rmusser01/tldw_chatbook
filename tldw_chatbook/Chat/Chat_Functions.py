@@ -1517,13 +1517,9 @@ def save_chat_history_to_db_wrapper(
             conversation_assistant_kind = "persona"
             conversation_assistant_id = explicit_assistant_id
             conversation_persona_memory_mode = explicit_persona_memory_mode
-            conversation_runtime_backend = runtime_backend or (existing_conv_details.get("runtime_backend") if existing_conv_details else "local") or "local"
+            conversation_runtime_backend = runtime_backend or existing_runtime_backend or "local"
             conversation_discovery_owner = discovery_owner or "ccp_persona"
             conversation_discovery_entity_id = discovery_entity_id or explicit_assistant_id
-            if conversation_scope_type is None and existing_conv_details:
-                conversation_scope_type = existing_conv_details.get("scope_type")
-            if conversation_workspace_id is None and existing_conv_details:
-                conversation_workspace_id = existing_conv_details.get("workspace_id")
             final_character_name_for_title = explicit_assistant_id
         else:
             char_lookup_name = character_name_for_chat
@@ -1554,7 +1550,7 @@ def save_chat_history_to_db_wrapper(
                             if discovery_entity_id is not None
                             else str(character['id'])
                         )
-                        conversation_runtime_backend = runtime_backend or "local"
+                        conversation_runtime_backend = runtime_backend or existing_runtime_backend or "local"
                         logging.info(
                             f"Chat will be associated with specific character '{final_character_name_for_title}' (ID: {associated_character_id})."
                         )
@@ -1568,11 +1564,11 @@ def save_chat_history_to_db_wrapper(
                 conversation_assistant_kind = "persona"
                 conversation_assistant_id = str(existing_assistant_id)
                 conversation_persona_memory_mode = existing_conv_details.get("persona_memory_mode")
-                conversation_runtime_backend = existing_conv_details.get("runtime_backend") or "local"
-                conversation_discovery_owner = existing_conv_details.get("discovery_owner") or "ccp_persona"
-                conversation_discovery_entity_id = existing_conv_details.get("discovery_entity_id") or str(existing_assistant_id)
-                conversation_scope_type = existing_conv_details.get("scope_type")
-                conversation_workspace_id = existing_conv_details.get("workspace_id")
+                conversation_runtime_backend = existing_runtime_backend or "local"
+                conversation_discovery_owner = existing_discovery_owner or "ccp_persona"
+                conversation_discovery_entity_id = existing_discovery_entity_id or str(existing_assistant_id)
+                conversation_scope_type = existing_scope_type
+                conversation_workspace_id = existing_workspace_id
                 final_character_name_for_title = str(existing_assistant_id)
             else:
                 logging.info("No specific character resolved for chat. Creating a generic local conversation.")
