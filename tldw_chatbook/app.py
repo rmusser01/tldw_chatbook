@@ -1488,7 +1488,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
-        self.local_character_persona_service = LocalCharacterPersonaService(self.chachanotes_db)
+        self.local_character_persona_service = LocalCharacterPersonaService(
+            self.chachanotes_db,
+            persona_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
+        )
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
             server_service=self.server_character_persona_service,

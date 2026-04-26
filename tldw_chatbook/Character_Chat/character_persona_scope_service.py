@@ -135,10 +135,32 @@ class CharacterPersonaScopeService:
         }.get(action, "detail")
         return CharacterPersonaScopeService._session_action_id(mode, session_action)
 
+    @staticmethod
+    def _backend_supports(backend: Any, method_names: tuple[str, ...]) -> bool:
+        return all(callable(getattr(backend, method_name, None)) for method_name in method_names)
+
     def list_unsupported_capabilities(self, *, mode: str | None = None) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == "local":
-            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+            reports = [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+            local_backend = self.local_service
+            if local_backend is not None and self._backend_supports(
+                local_backend,
+                (
+                    "list_persona_profiles",
+                    "get_persona_profile",
+                    "create_persona_profile",
+                    "update_persona_profile",
+                    "delete_persona_profile",
+                    "restore_persona_profile",
+                ),
+            ):
+                reports = [
+                    item
+                    for item in reports
+                    if item["operation_id"] != "character.persona.profiles.local"
+                ]
+            return reports
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def _invoke_backend_method(

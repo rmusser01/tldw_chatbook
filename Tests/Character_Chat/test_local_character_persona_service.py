@@ -4,6 +4,8 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     CharacterChatSessionUpdate,
     CharacterCreateRequest,
     CharacterUpdateRequest,
+    PersonaProfileCreate,
+    PersonaProfileUpdate,
 )
 
 
@@ -271,3 +273,43 @@ def test_local_character_persona_service_supports_persona_session_metadata():
     assert created["discovery_owner"] == "ccp_persona"
     assert listed["total"] == 1
     assert listed["chats"][0]["id"] == created["id"]
+
+
+def test_local_character_persona_service_persists_persona_profile_crud(tmp_path):
+    db = FakeConversationDB()
+    store_path = tmp_path / "personas.json"
+    service = LocalCharacterPersonaService(db, persona_store_path=store_path)
+
+    created = service.create_persona_profile(
+        PersonaProfileCreate(
+            id="guide",
+            name="Guide",
+            mode="session_scoped",
+            system_prompt="Be precise.",
+        )
+    )
+    listed = service.list_persona_profiles()
+    updated = service.update_persona_profile(
+        "guide",
+        PersonaProfileUpdate(name="Guide v2", is_active=False),
+        expected_version=created["version"],
+    )
+    active_only = service.list_persona_profiles(active_only=True)
+    deleted = service.delete_persona_profile("guide", expected_version=updated["version"])
+    visible_after_delete = service.list_persona_profiles()
+    restored = service.restore_persona_profile("guide", expected_version=updated["version"] + 1)
+    reloaded = LocalCharacterPersonaService(db, persona_store_path=store_path)
+
+    assert created["record_id"] == "local:persona_profile:guide"
+    assert created["backend"] == "local"
+    assert created["version"] == 1
+    assert listed == [created]
+    assert updated["name"] == "Guide v2"
+    assert updated["is_active"] is False
+    assert updated["version"] == 2
+    assert active_only == []
+    assert deleted == {"status": "deleted", "persona_id": "guide"}
+    assert visible_after_delete == []
+    assert restored["deleted"] is False
+    assert restored["version"] == 4
+    assert reloaded.get_persona_profile("guide")["name"] == "Guide v2"

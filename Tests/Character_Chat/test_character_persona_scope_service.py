@@ -445,6 +445,36 @@ class FakeLocalCharacterSessionBackend(FakeLocalCharacterBackend):
         return {"chat_id": chat_id, "format": kwargs.get("format", "json")}
 
 
+class FakeLocalPersonaProfileBackend(FakeLocalCharacterBackend):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def list_persona_profiles(self, **kwargs):
+        self.calls.append(("list_persona_profiles", kwargs))
+        return [{"id": "local-persona-1", "name": "Local Guide"}]
+
+    def get_persona_profile(self, persona_id):
+        self.calls.append(("get_persona_profile", persona_id))
+        return {"id": persona_id, "name": "Local Guide", "version": 1}
+
+    def create_persona_profile(self, request_data):
+        self.calls.append(("create_persona_profile", request_data))
+        return {"id": "local-persona-created", "name": "Created", "version": 1}
+
+    def update_persona_profile(self, persona_id, request_data, **kwargs):
+        self.calls.append(("update_persona_profile", persona_id, request_data, kwargs))
+        return {"id": persona_id, "name": "Updated", "version": kwargs.get("expected_version", 1) + 1}
+
+    def delete_persona_profile(self, persona_id, **kwargs):
+        self.calls.append(("delete_persona_profile", persona_id, kwargs))
+        return {"status": "deleted", "persona_id": persona_id}
+
+    def restore_persona_profile(self, persona_id, expected_version):
+        self.calls.append(("restore_persona_profile", persona_id, expected_version))
+        return {"id": persona_id, "deleted": False, "version": expected_version + 1}
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
         self.denied_reason = denied_reason
@@ -635,6 +665,54 @@ async def test_scope_service_routes_persona_profile_crud_to_server_backend():
     assert deleted == {"status": "deleted", "persona_id": "persona-1"}
     assert restored["id"] == "persona-1"
     assert restored["version"] == 10
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_persona_profile_crud_to_local_backend():
+    local_service = FakeLocalPersonaProfileBackend()
+    policy = FakePolicyEnforcer()
+    scope_service = CharacterPersonaScopeService(
+        local_service=local_service,
+        server_service=FakeCharacterPersonaClient(),
+        policy_enforcer=policy,
+    )
+    create_data = Mock()
+    update_data = Mock()
+
+    listed = await scope_service.list_persona_profiles(mode="local", active_only=True, limit=5, offset=2)
+    detail = await scope_service.get_persona_profile("local-persona-1", mode="local")
+    created = await scope_service.create_persona_profile(create_data, mode="local")
+    updated = await scope_service.update_persona_profile(
+        "local-persona-1",
+        update_data,
+        expected_version=1,
+        mode="local",
+    )
+    deleted = await scope_service.delete_persona_profile("local-persona-1", expected_version=2, mode="local")
+    restored = await scope_service.restore_persona_profile("local-persona-1", expected_version=3, mode="local")
+
+    assert listed[0]["id"] == "local-persona-1"
+    assert detail["id"] == "local-persona-1"
+    assert created["id"] == "local-persona-created"
+    assert updated["version"] == 2
+    assert deleted == {"status": "deleted", "persona_id": "local-persona-1"}
+    assert restored["version"] == 4
+    assert local_service.calls == [
+        ("list_persona_profiles", {"active_only": True, "include_deleted": False, "limit": 5, "offset": 2}),
+        ("get_persona_profile", "local-persona-1"),
+        ("create_persona_profile", create_data),
+        ("update_persona_profile", "local-persona-1", update_data, {"expected_version": 1}),
+        ("delete_persona_profile", "local-persona-1", {"expected_version": 2}),
+        ("restore_persona_profile", "local-persona-1", 3),
+    ]
+    assert policy.calls == [
+        "character.persona.list.local",
+        "character.persona.detail.local",
+        "character.persona.create.local",
+        "character.persona.update.local",
+        "character.persona.delete.local",
+        "character.persona.update.local",
+    ]
 
 
 @pytest.mark.asyncio
@@ -1070,6 +1148,21 @@ def test_scope_service_does_not_report_local_session_crud_when_backend_wraps_it(
 
     assert "character.sessions.admin.local" not in operation_ids
     assert "character.sessions.execution.local" in operation_ids
+
+
+def test_scope_service_does_not_report_local_persona_profiles_when_backend_wraps_them():
+    scope_service = CharacterPersonaScopeService(
+        local_service=FakeLocalPersonaProfileBackend(),
+        server_service=FakeCharacterPersonaClient(),
+    )
+
+    operation_ids = {
+        item["operation_id"]
+        for item in scope_service.list_unsupported_capabilities(mode="local")
+    }
+
+    assert "character.persona.profiles.local" not in operation_ids
+    assert "character.persona.exemplars.local" in operation_ids
 
 
 @pytest.mark.asyncio
