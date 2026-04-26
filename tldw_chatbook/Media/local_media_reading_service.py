@@ -773,6 +773,68 @@ class LocalMediaReadingService:
         )
         return self._mark_local_no_db_processing(payload)
 
+    async def process_mediawiki_dump(
+        self,
+        *,
+        dump_file_path: str,
+        wiki_name: str,
+        namespaces_str: str | None = None,
+        skip_redirects: bool = True,
+        **options: Any,
+    ):
+        del options
+        path = Path(str(dump_file_path or "")).expanduser()
+        if not path.exists() or not path.is_file():
+            yield {
+                "status": "Error",
+                "backend": "local",
+                "persisted": False,
+                "input_ref": str(dump_file_path),
+                "media_type": "mediawiki_dump",
+                "error": "file not found",
+            }
+            return
+
+        try:
+            import xml.etree.ElementTree as ET
+
+            allowed_namespaces = self._parse_mediawiki_namespaces(namespaces_str)
+            for _, page in ET.iterparse(path, events=("end",)):
+                if self._xml_local_name(page.tag) != "page":
+                    continue
+                title = self._xml_child_text(page, "title") or "Untitled"
+                namespace = self._xml_child_text(page, "ns") or "0"
+                if allowed_namespaces is not None and namespace not in allowed_namespaces:
+                    page.clear()
+                    continue
+                if skip_redirects and any(self._xml_local_name(child.tag) == "redirect" for child in page):
+                    page.clear()
+                    continue
+                revision = self._xml_child(page, "revision")
+                text_node = self._xml_child(revision, "text") if revision is not None else None
+                content = text_node.text if text_node is not None and text_node.text is not None else ""
+                yield {
+                    "status": "Success",
+                    "backend": "local",
+                    "persisted": False,
+                    "wiki_name": wiki_name,
+                    "title": title,
+                    "namespace": namespace,
+                    "content": content or "",
+                    "media_type": "mediawiki_dump",
+                    "input_ref": str(dump_file_path),
+                }
+                page.clear()
+        except Exception as exc:
+            yield {
+                "status": "Error",
+                "backend": "local",
+                "persisted": False,
+                "input_ref": str(dump_file_path),
+                "media_type": "mediawiki_dump",
+                "error": str(exc),
+            }
+
     def process_code(
         self,
         *,
@@ -1015,6 +1077,33 @@ class LocalMediaReadingService:
                 }
             ],
         }
+
+    @staticmethod
+    def _parse_mediawiki_namespaces(namespaces_str: str | None) -> set[str] | None:
+        if namespaces_str in (None, ""):
+            return None
+        namespaces = {part.strip() for part in str(namespaces_str).split(",") if part.strip()}
+        return namespaces or None
+
+    @staticmethod
+    def _xml_local_name(tag: str) -> str:
+        return str(tag).rsplit("}", 1)[-1]
+
+    @classmethod
+    def _xml_child(cls, element: Any, name: str) -> Any:
+        if element is None:
+            return None
+        for child in element:
+            if cls._xml_local_name(child.tag) == name:
+                return child
+        return None
+
+    @classmethod
+    def _xml_child_text(cls, element: Any, name: str) -> str | None:
+        child = cls._xml_child(element, name)
+        if child is None or child.text is None:
+            return None
+        return child.text.strip()
 
     @classmethod
     def _parse_local_email_path(cls, path: Path, *, accept_mbox: bool) -> list[dict[str, Any]]:

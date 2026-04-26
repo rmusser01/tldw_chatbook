@@ -150,6 +150,10 @@ class FakeLocalMediaService:
         self.calls.append(("get_media_by_identifier", identifiers))
         return {"items": [{"id": 12, "title": "Local Identifier"}], "total": 1}
 
+    async def process_mediawiki_dump(self, *, dump_file_path, **options):
+        self.calls.append(("process_mediawiki_dump", dump_file_path, options))
+        yield {"title": "Main Page", "content": "Body"}
+
     def download_media_file(self, media_id, *, file_type="original"):
         self.calls.append(("download_media_file", media_id, file_type))
         return {
@@ -1423,7 +1427,7 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
 
     assert [item["operation_id"] for item in local_report] == [
         "media.web_content_ingest.local",
-        "media.processing.mediawiki.local",
+        "media.processing.mediawiki.import.local",
         "media.transcription_models.local",
     ]
     assert all(item["affected_action_ids"] == [] for item in local_report)
@@ -1774,7 +1778,7 @@ async def test_scope_service_routes_direct_media_management_for_local_and_server
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_server_mediawiki_and_media_file_and_blocks_local_mode():
+async def test_scope_service_routes_mediawiki_process_and_blocks_local_import():
     policy = FakePolicyEnforcer()
     local = FakeLocalMediaService()
     server = FakeServerMediaService()
@@ -1804,6 +1808,14 @@ async def test_scope_service_routes_server_mediawiki_and_media_file_and_blocks_l
     file_availability = await scope.check_media_file(mode="server", media_id=41, file_type="original")
     local_file_response = await scope.download_media_file(mode="local", media_id=12, file_type="original")
     local_file_availability = await scope.check_media_file(mode="local", media_id=12, file_type="original")
+    local_pages = [
+        page
+        async for page in scope.process_mediawiki_dump(
+            mode="local",
+            dump_file_path="/tmp/local-dump.xml",
+            wiki_name="Local",
+        )
+    ]
 
     assert pages == [{"title": "Main Page", "content": "Body"}]
     assert events == [{"type": "summary", "processed": 1}]
@@ -1811,13 +1823,15 @@ async def test_scope_service_routes_server_mediawiki_and_media_file_and_blocks_l
     assert file_availability["available"] is True
     assert local_file_response["content"] == b"LOCAL"
     assert local_file_availability["source"] == "stored_content"
-    assert policy.calls[-6:] == [
+    assert local_pages == [{"title": "Main Page", "content": "Body"}]
+    assert policy.calls[-7:] == [
         "media.processing.mediawiki.process.server",
         "media.processing.mediawiki.import.server",
         "media.items.file.detail.server",
         "media.items.file.detail.server",
         "media.items.file.detail.local",
         "media.items.file.detail.local",
+        "media.processing.mediawiki.process.local",
     ]
     assert server.calls[-4:] == [
         ("process_mediawiki_dump", "/tmp/dump.xml", {"wiki_name": "Demo"}),
@@ -1825,13 +1839,14 @@ async def test_scope_service_routes_server_mediawiki_and_media_file_and_blocks_l
         ("download_media_file", 41, "original"),
         ("check_media_file", 41, "original"),
     ]
-    assert local.calls[-2:] == [
+    assert local.calls[-3:] == [
         ("download_media_file", 12, "original"),
         ("check_media_file", 12, "original"),
+        ("process_mediawiki_dump", "/tmp/local-dump.xml", {"wiki_name": "Local"}),
     ]
 
     with pytest.raises(ValueError, match="server-only"):
-        _ = [page async for page in scope.process_mediawiki_dump(mode="local", dump_file_path="/tmp/dump.xml", wiki_name="Demo")]
+        _ = [event async for event in scope.ingest_mediawiki_dump(mode="local", dump_file_path="/tmp/dump.xml", wiki_name="Demo")]
 
 
 @pytest.mark.asyncio

@@ -842,6 +842,54 @@ def test_local_service_processes_audio_and_video_without_persisting(memory_db_fa
     assert service.list_media_items()["pagination"]["total_items"] == 0
 
 
+@pytest.mark.asyncio
+async def test_local_service_processes_mediawiki_dump_without_persisting(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    dump_path = tmp_path / "wiki.xml"
+    dump_path.write_text(
+        """
+        <mediawiki>
+          <page>
+            <title>Main Page</title>
+            <ns>0</ns>
+            <revision><text>Main body</text></revision>
+          </page>
+          <page>
+            <title>Talk Page</title>
+            <ns>1</ns>
+            <revision><text>Talk body</text></revision>
+          </page>
+        </mediawiki>
+        """,
+        encoding="utf-8",
+    )
+    service = LocalMediaReadingService(db)
+
+    pages = [
+        page
+        async for page in service.process_mediawiki_dump(
+            dump_file_path=str(dump_path),
+            wiki_name="Demo",
+            namespaces_str="0",
+        )
+    ]
+
+    assert pages == [
+        {
+            "status": "Success",
+            "backend": "local",
+            "persisted": False,
+            "wiki_name": "Demo",
+            "title": "Main Page",
+            "namespace": "0",
+            "content": "Main body",
+            "media_type": "mediawiki_dump",
+            "input_ref": str(dump_path),
+        }
+    ]
+    assert service.list_media_items()["pagination"]["total_items"] == 0
+
+
 def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(

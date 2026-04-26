@@ -29,11 +29,11 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "affected_action_ids": [],
     },
     {
-        "operation_id": "media.processing.mediawiki.local",
+        "operation_id": "media.processing.mediawiki.import.local",
         "source": "local",
         "supported": False,
         "reason_code": "source_specific_equivalent",
-        "user_message": "The server MediaWiki dump processing endpoints are server-owned; local mode should use local ingestion tooling instead.",
+        "user_message": "MediaWiki dump processing is available locally, but MediaWiki dump import remains server-owned until local persistence semantics are defined.",
         "affected_action_ids": [],
     },
     {
@@ -1436,7 +1436,7 @@ class MediaReadingScopeService:
         **options: Any,
     ):
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_processing_service(normalized_mode, "MediaWiki dump processing")
+        service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._processing_action_id("mediawiki", "process", normalized_mode))
         async for item in service.process_mediawiki_dump(dump_file_path=dump_file_path, **options):
             yield self._to_plain(item)
