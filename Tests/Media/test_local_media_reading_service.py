@@ -890,6 +890,65 @@ async def test_local_service_processes_mediawiki_dump_without_persisting(memory_
     assert service.list_media_items()["pagination"]["total_items"] == 0
 
 
+@pytest.mark.asyncio
+async def test_local_service_ingests_mediawiki_dump_as_persisted_pages(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    dump_path = tmp_path / "wiki.xml"
+    dump_path.write_text(
+        """
+        <mediawiki>
+          <page>
+            <title>Main Page</title>
+            <ns>0</ns>
+            <revision><text>Main body</text></revision>
+          </page>
+          <page>
+            <title>Redirected</title>
+            <ns>0</ns>
+            <redirect title="Main Page" />
+            <revision><text>#REDIRECT [[Main Page]]</text></revision>
+          </page>
+        </mediawiki>
+        """,
+        encoding="utf-8",
+    )
+    service = LocalMediaReadingService(db)
+
+    events = [
+        event
+        async for event in service.ingest_mediawiki_dump(
+            dump_file_path=str(dump_path),
+            wiki_name="Demo Wiki",
+            namespaces_str="0",
+            keywords=["wiki"],
+        )
+    ]
+
+    assert events[0]["status"] == "Success"
+    assert events[0]["backend"] == "local"
+    assert events[0]["persisted"] is True
+    assert events[0]["title"] == "Main Page"
+    assert events[0]["media_type"] == "mediawiki_page"
+    assert events[0]["url"].startswith("mediawiki://Demo%20Wiki/")
+    assert events[0]["media_id"]
+    assert events[-1] == {
+        "type": "summary",
+        "status": "Success",
+        "backend": "local",
+        "persisted": True,
+        "processed": 1,
+        "failed": 0,
+        "input_ref": str(dump_path),
+        "media_type": "mediawiki_page",
+        "wiki_name": "Demo Wiki",
+    }
+
+    listed = service.list_media_items(include_keywords=True)
+    assert listed["pagination"]["total_items"] == 1
+    assert listed["items"][0]["title"] == "Main Page"
+    assert listed["items"][0]["type"] == "mediawiki_page"
+
+
 def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(

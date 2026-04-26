@@ -841,6 +841,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.processing.ebook.process.server
         media.processing.emails.process.local
         media.processing.emails.process.server
+        media.processing.mediawiki.import.local
         media.processing.mediawiki.process.local
         media.processing.mediawiki.import.server
         media.processing.mediawiki.process.server

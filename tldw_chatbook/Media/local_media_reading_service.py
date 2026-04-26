@@ -15,7 +15,7 @@ from pathlib import Path
 import uuid
 import zipfile
 from typing import Any, Mapping, Optional
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -835,6 +835,83 @@ class LocalMediaReadingService:
                 "error": str(exc),
             }
 
+    async def ingest_mediawiki_dump(
+        self,
+        *,
+        dump_file_path: str,
+        wiki_name: str,
+        namespaces_str: str | None = None,
+        skip_redirects: bool = True,
+        **options: Any,
+    ):
+        db = self._require_db()
+        keywords = self._normalize_import_tags(options.get("keywords") or options.get("tags"))
+        overwrite = bool(
+            options.get("overwrite_existing")
+            if options.get("overwrite_existing") is not None
+            else options.get("overwrite")
+        )
+        processed = 0
+        failed = 0
+
+        async for page in self.process_mediawiki_dump(
+            dump_file_path=dump_file_path,
+            wiki_name=wiki_name,
+            namespaces_str=namespaces_str,
+            skip_redirects=skip_redirects,
+        ):
+            if page.get("status") != "Success":
+                failed += 1
+                yield page
+                continue
+
+            title = str(page.get("title") or "Untitled")
+            namespace = str(page.get("namespace") or "0")
+            url = self._mediawiki_page_url(wiki_name=wiki_name, namespace=namespace, title=title)
+            media_id, media_uuid, message = db.add_media_with_keywords(
+                url=url,
+                title=title,
+                media_type="mediawiki_page",
+                content=str(page.get("content") or ""),
+                keywords=keywords,
+                author=str(wiki_name or "") or None,
+                overwrite=overwrite,
+            )
+            if media_id is None:
+                failed += 1
+                yield {
+                    **page,
+                    "status": "Error",
+                    "persisted": False,
+                    "media_type": "mediawiki_page",
+                    "url": url,
+                    "error": str(message or "skipped"),
+                }
+                continue
+
+            processed += 1
+            yield {
+                **page,
+                "persisted": True,
+                "media_type": "mediawiki_page",
+                "url": url,
+                "media_id": self._coerce_media_id(media_id),
+                "media_uuid": media_uuid,
+                "message": message,
+            }
+
+        yield {
+            "type": "summary",
+            "status": "Success" if failed == 0 else ("Partial" if processed else "Error"),
+            "backend": "local",
+            "persisted": processed > 0,
+            "processed": processed,
+            "failed": failed,
+            "input_ref": str(dump_file_path),
+            "media_type": "mediawiki_page",
+            "wiki_name": wiki_name,
+        }
+
     def process_code(
         self,
         *,
@@ -1084,6 +1161,15 @@ class LocalMediaReadingService:
             return None
         namespaces = {part.strip() for part in str(namespaces_str).split(",") if part.strip()}
         return namespaces or None
+
+    @staticmethod
+    def _mediawiki_page_url(*, wiki_name: str, namespace: str, title: str) -> str:
+        return (
+            "mediawiki://"
+            f"{quote(str(wiki_name or 'wiki'), safe='')}/"
+            f"{quote(str(namespace or '0'), safe='')}/"
+            f"{quote(str(title or 'Untitled'), safe='')}"
+        )
 
     @staticmethod
     def _xml_local_name(tag: str) -> str:
