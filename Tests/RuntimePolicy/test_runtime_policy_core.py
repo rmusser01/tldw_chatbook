@@ -783,6 +783,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         media.items.delete.server
         media.items.detail.local
         media.items.detail.server
+        media.items.file.detail.local
         media.items.file.detail.server
         media.items.identifier_lookup.detail.local
         media.items.identifier_lookup.detail.server

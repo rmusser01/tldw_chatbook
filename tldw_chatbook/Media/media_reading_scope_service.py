@@ -140,14 +140,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
         "user_message": "The server transcription-model discovery endpoint is server-owned; local model discovery remains in local transcription settings.",
         "affected_action_ids": [],
     },
-    {
-        "operation_id": "media.items.file.local",
-        "source": "local",
-        "supported": False,
-        "reason_code": "source_specific_equivalent",
-        "user_message": "The server original-media-file endpoint is server-owned; local mode uses local media storage paths instead.",
-        "affected_action_ids": [],
-    },
 ]
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
@@ -1555,8 +1547,6 @@ class MediaReadingScopeService:
         file_type: str = "original",
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            raise ValueError("The server original-media-file endpoint is server-only; use local media storage paths in local mode.")
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._media_item_subresource_action_id(normalized_mode, "file", "detail"))
         return self._to_plain(await self._maybe_await(service.download_media_file(media_id, file_type=file_type)))
@@ -1569,8 +1559,6 @@ class MediaReadingScopeService:
         file_type: str = "original",
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL:
-            raise ValueError("The server original-media-file endpoint is server-only; use local media storage paths in local mode.")
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._media_item_subresource_action_id(normalized_mode, "file", "detail"))
         return self._to_plain(await self._maybe_await(service.check_media_file(media_id, file_type=file_type)))

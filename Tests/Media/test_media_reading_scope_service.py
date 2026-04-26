@@ -150,6 +150,19 @@ class FakeLocalMediaService:
         self.calls.append(("get_media_by_identifier", identifiers))
         return {"items": [{"id": 12, "title": "Local Identifier"}], "total": 1}
 
+    def download_media_file(self, media_id, *, file_type="original"):
+        self.calls.append(("download_media_file", media_id, file_type))
+        return {
+            "content": b"LOCAL",
+            "content_type": "text/plain",
+            "filename": "local.txt",
+            "content_disposition": "attachment; filename=local.txt",
+        }
+
+    def check_media_file(self, media_id, *, file_type="original"):
+        self.calls.append(("check_media_file", media_id, file_type))
+        return {"available": True, "media_id": media_id, "file_type": file_type, "source": "stored_content"}
+
     def delete_media(self, media_id):
         self.calls.append(("delete_media", media_id))
         return True
@@ -1345,7 +1358,6 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
         "media.processing.web_scraping.local",
         "media.processing.mediawiki.local",
         "media.transcription_models.local",
-        "media.items.file.local",
     ]
     assert all(item["affected_action_ids"] == [] for item in local_report)
     assert server_report == [
@@ -1697,9 +1709,10 @@ async def test_scope_service_routes_direct_media_management_for_local_and_server
 @pytest.mark.asyncio
 async def test_scope_service_routes_server_mediawiki_and_media_file_and_blocks_local_mode():
     policy = FakePolicyEnforcer()
+    local = FakeLocalMediaService()
     server = FakeServerMediaService()
     scope = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=server,
         policy_enforcer=policy,
     )
@@ -1722,16 +1735,22 @@ async def test_scope_service_routes_server_mediawiki_and_media_file_and_blocks_l
     ]
     file_response = await scope.download_media_file(mode="server", media_id=41, file_type="original")
     file_availability = await scope.check_media_file(mode="server", media_id=41, file_type="original")
+    local_file_response = await scope.download_media_file(mode="local", media_id=12, file_type="original")
+    local_file_availability = await scope.check_media_file(mode="local", media_id=12, file_type="original")
 
     assert pages == [{"title": "Main Page", "content": "Body"}]
     assert events == [{"type": "summary", "processed": 1}]
     assert file_response["content"] == b"%PDF"
     assert file_availability["available"] is True
-    assert policy.calls[-4:] == [
+    assert local_file_response["content"] == b"LOCAL"
+    assert local_file_availability["source"] == "stored_content"
+    assert policy.calls[-6:] == [
         "media.processing.mediawiki.process.server",
         "media.processing.mediawiki.import.server",
         "media.items.file.detail.server",
         "media.items.file.detail.server",
+        "media.items.file.detail.local",
+        "media.items.file.detail.local",
     ]
     assert server.calls[-4:] == [
         ("process_mediawiki_dump", "/tmp/dump.xml", {"wiki_name": "Demo"}),
@@ -1739,12 +1758,13 @@ async def test_scope_service_routes_server_mediawiki_and_media_file_and_blocks_l
         ("download_media_file", 41, "original"),
         ("check_media_file", 41, "original"),
     ]
+    assert local.calls[-2:] == [
+        ("download_media_file", 12, "original"),
+        ("check_media_file", 12, "original"),
+    ]
 
     with pytest.raises(ValueError, match="server-only"):
         _ = [page async for page in scope.process_mediawiki_dump(mode="local", dump_file_path="/tmp/dump.xml", wiki_name="Demo")]
-
-    with pytest.raises(ValueError, match="server-only"):
-        await scope.check_media_file(mode="local", media_id=41, file_type="original")
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ import hashlib
 import io
 import inspect
 import json
+import mimetypes
 import re
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
@@ -14,6 +15,7 @@ from pathlib import Path
 import uuid
 import zipfile
 from typing import Any, Mapping, Optional
+from urllib.parse import unquote, urlparse
 
 
 class LocalMediaReadingService:
@@ -370,6 +372,60 @@ class LocalMediaReadingService:
             "items": matches,
             "total": len(matches),
             "group_by_media": bool(identifiers.get("group_by_media", True)),
+        }
+
+    def check_media_file(self, media_id: Any, *, file_type: str = "original") -> dict[str, Any]:
+        row = self.get_media_detail(media_id)
+        source = self._resolve_local_media_file_source(row, file_type=file_type)
+        if source is None:
+            return {
+                "available": False,
+                "media_id": self._coerce_media_id(media_id),
+                "file_type": file_type,
+                "source": None,
+                "size": 0,
+                "content_type": None,
+            }
+        source_kind, payload = source
+        if source_kind == "file_path":
+            path = payload
+            size = path.stat().st_size
+            content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        else:
+            size = len(payload)
+            content_type = "text/plain; charset=utf-8"
+        return {
+            "available": True,
+            "media_id": self._coerce_media_id(media_id),
+            "file_type": file_type,
+            "source": source_kind,
+            "size": size,
+            "content_type": content_type,
+        }
+
+    def download_media_file(self, media_id: Any, *, file_type: str = "original") -> dict[str, Any]:
+        row = self.get_media_detail(media_id)
+        source = self._resolve_local_media_file_source(row, file_type=file_type)
+        if source is None:
+            raise FileNotFoundError(f"Local media file is unavailable for media item: {media_id}")
+        source_kind, payload = source
+        if source_kind == "file_path":
+            path = payload
+            content = path.read_bytes()
+            filename = path.name or f"media_{media_id}"
+            content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        else:
+            content = payload
+            filename = self._safe_local_media_filename(row)
+            content_type = "text/plain; charset=utf-8"
+        return {
+            "content": content,
+            "content_type": content_type,
+            "content_disposition": f"attachment; filename={filename}",
+            "filename": filename,
+            "media_id": self._coerce_media_id(media_id),
+            "file_type": file_type,
+            "source": source_kind,
         }
 
     def delete_media(self, media_id: Any) -> Any:
@@ -3093,6 +3149,41 @@ class LocalMediaReadingService:
         if callable(fetch_batch):
             return [str(value).strip().lower() for value in fetch_batch([media_id]).get(media_id, []) if value]
         return []
+
+    def _resolve_local_media_file_source(
+        self,
+        row: Mapping[str, Any],
+        *,
+        file_type: str = "original",
+    ) -> tuple[str, Any] | None:
+        normalized_file_type = str(file_type or "original").strip().lower()
+        if normalized_file_type not in {"original", "content", "text"}:
+            return None
+        url = str(row.get("url") or "").strip()
+        path: Path | None = None
+        if url.startswith("file://"):
+            try:
+                parsed = urlparse(url)
+                path = Path(unquote(parsed.path))
+            except Exception:
+                path = None
+        elif url and not url.startswith(("http://", "https://", "local://")):
+            path = Path(url)
+        if path is not None and path.exists() and path.is_file():
+            return ("file_path", path)
+        content = row.get("content")
+        if content not in (None, ""):
+            return ("stored_content", str(content).encode("utf-8"))
+        return None
+
+    @staticmethod
+    def _safe_local_media_filename(row: Mapping[str, Any]) -> str:
+        title = str(row.get("title") or row.get("id") or "media").strip()
+        safe = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in title)
+        safe = "_".join(part for part in safe.split("_") if part) or "media"
+        if "." not in safe:
+            safe += ".txt"
+        return safe
 
     def _build_local_media_list_response(
         self,

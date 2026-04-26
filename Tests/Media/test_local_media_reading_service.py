@@ -200,6 +200,40 @@ def test_local_service_direct_media_management_round_trips(memory_db_factory):
     assert after_permanent["items"] == []
 
 
+def test_local_service_downloads_local_media_files_and_stored_content(memory_db_factory, tmp_path):
+    db = memory_db_factory()
+    source_file = tmp_path / "source.md"
+    source_file.write_text("# Stored file\n\nBody", encoding="utf-8")
+    file_media_id, _, _ = db.add_media_with_keywords(
+        url=source_file.as_uri(),
+        title="Stored File",
+        content="indexed copy",
+        media_type="document",
+        keywords=[],
+    )
+    content_media_id, _, _ = db.add_media_with_keywords(
+        title="Stored Content",
+        content="Only in database",
+        media_type="document",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+
+    file_check = service.check_media_file(file_media_id)
+    file_download = service.download_media_file(file_media_id)
+    content_check = service.check_media_file(content_media_id)
+    content_download = service.download_media_file(content_media_id)
+
+    assert file_check["available"] is True
+    assert file_check["source"] == "file_path"
+    assert file_download["content"] == b"# Stored file\n\nBody"
+    assert file_download["filename"] == "source.md"
+    assert content_check["available"] is True
+    assert content_check["source"] == "stored_content"
+    assert content_download["content"] == b"Only in database"
+    assert content_download["content_type"] == "text/plain; charset=utf-8"
+
+
 def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_factory):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])

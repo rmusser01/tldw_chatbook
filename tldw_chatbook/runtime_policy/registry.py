@@ -327,7 +327,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("media.items.permanent", actions=(DELETE,)),
             _resource("media.items.metadata_search", actions=(LIST,)),
             _resource("media.items.identifier_lookup", actions=(DETAIL,)),
-            _resource("media.items.file", actions=(DETAIL,), sources=(SERVER_SOURCE,)),
+            _resource("media.items.file", actions=(DETAIL,)),
             _resource("media.processing.video", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
             _resource("media.processing.audio", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
             _resource("media.processing.pdf", actions=(PROCESS,), sources=(SERVER_SOURCE,)),
