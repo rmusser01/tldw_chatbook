@@ -151,3 +151,63 @@ def test_websearch_request_normalizes_aliases_and_rejects_unknown_engines():
 
     with pytest.raises(ValueError):
         WebSearchRequest(query="test", engine="unknown")
+
+
+@pytest.mark.asyncio
+async def test_research_search_client_routes_paper_detail_and_medrxiv_aliases(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {
+                "id": "2401.00001",
+                "title": "Agent Governance",
+                "authors": "A. Researcher",
+            },
+            {
+                "paperId": "abc",
+                "title": "Agent Governance",
+                "authors": [{"name": "A. Researcher"}],
+            },
+            {
+                "query_echo": {"q": "genomics", "server": "medrxiv"},
+                "items": [
+                    {
+                        "doi": "10.1101/2026.01.01.000001",
+                        "title": "Clinical Preprint Governance",
+                    }
+                ],
+                "total_results": 1,
+                "page": 1,
+                "results_per_page": 10,
+                "total_pages": 1,
+            },
+            {
+                "doi": "10.1101/2026.01.01.000001",
+                "title": "Clinical Preprint Governance",
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    arxiv_detail = await client.get_arxiv_paper_by_id(id="2401.00001")
+    semantic_detail = await client.get_semantic_scholar_paper_by_id(paper_id="abc")
+    medrxiv = await client.search_medrxiv_papers(q="genomics", page=1, results_per_page=10)
+    medrxiv_detail = await client.get_medrxiv_paper_by_doi(doi="10.1101/2026.01.01.000001")
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/paper-search/arxiv/by-id")
+    assert mocked.await_args_list[0].kwargs["params"] == {"id": "2401.00001"}
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/paper-search/semantic-scholar/by-id")
+    assert mocked.await_args_list[1].kwargs["params"] == {"paper_id": "abc"}
+    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/paper-search/medrxiv")
+    assert mocked.await_args_list[2].kwargs["params"] == {
+        "q": "genomics",
+        "page": 1,
+        "results_per_page": 10,
+    }
+    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/paper-search/medrxiv/by-doi")
+    assert mocked.await_args_list[3].kwargs["params"] == {"doi": "10.1101/2026.01.01.000001"}
+
+    assert arxiv_detail.id == "2401.00001"
+    assert semantic_detail.paperId == "abc"
+    assert medrxiv.items[0].doi == "10.1101/2026.01.01.000001"
+    assert medrxiv_detail.title == "Clinical Preprint Governance"

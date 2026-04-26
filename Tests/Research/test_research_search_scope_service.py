@@ -28,9 +28,17 @@ class FakeSearchService:
         self.calls.append(("search_arxiv", kwargs))
         return {"items": [{"id": "2401.00001"}], "total_results": 1}
 
+    async def get_arxiv_by_id(self, **kwargs):
+        self.calls.append(("get_arxiv_by_id", kwargs))
+        return {"id": "2401.00001", "title": "Agent Governance"}
+
     async def search_semantic_scholar(self, **kwargs):
         self.calls.append(("search_semantic_scholar", kwargs))
         return {"items": [{"paperId": "abc"}], "total_results": 1}
+
+    async def get_semantic_scholar_by_id(self, **kwargs):
+        self.calls.append(("get_semantic_scholar_by_id", kwargs))
+        return {"paperId": "abc", "title": "Agent Governance"}
 
     async def search_biorxiv(self, **kwargs):
         self.calls.append(("search_biorxiv", kwargs))
@@ -39,6 +47,14 @@ class FakeSearchService:
     async def get_biorxiv_by_doi(self, **kwargs):
         self.calls.append(("get_biorxiv_by_doi", kwargs))
         return {"doi": "10.1101/2026.01.01.000001", "title": "Preprint Governance"}
+
+    async def search_medrxiv(self, **kwargs):
+        self.calls.append(("search_medrxiv", kwargs))
+        return {"items": [{"doi": "10.1101/2026.02.02.000002"}], "total_results": 1}
+
+    async def get_medrxiv_by_doi(self, **kwargs):
+        self.calls.append(("get_medrxiv_by_doi", kwargs))
+        return {"doi": "10.1101/2026.02.02.000002", "title": "Clinical Preprint Governance"}
 
     async def search_pubmed(self, **kwargs):
         self.calls.append(("search_pubmed", kwargs))
@@ -95,7 +111,9 @@ async def test_research_search_scope_service_builds_source_scoped_provider_catal
         "medrxiv",
         "pubmed",
     ]
-    assert all(record["capabilities"] == ["paper_search"] for record in server_catalog[-5:])
+    assert local_catalog[-2]["capabilities"] == ["paper_search"]
+    assert local_catalog[-1]["capabilities"] == ["paper_search"]
+    assert all("paper_detail" in record["capabilities"] for record in server_catalog[-5:])
     assert server_catalog[-1]["backend"] == "server"
 
 
@@ -154,12 +172,24 @@ async def test_research_search_scope_service_routes_server_only_provider_details
         server="biorxiv",
     )
     pubmed_detail = await scope.get_pubmed_by_id(mode="server", pmid="12345678")
+    arxiv_detail = await scope.get_arxiv_by_id(mode="server", id="2401.00001")
+    semantic_detail = await scope.get_semantic_scholar_by_id(mode="server", paper_id="abc")
+    medrxiv = await scope.search_medrxiv(mode="server", q="genomics")
+    medrxiv_detail = await scope.get_medrxiv_by_doi(mode="server", doi="10.1101/2026.02.02.000002")
 
     assert biorxiv_detail["backend"] == "server"
     assert pubmed_detail["backend"] == "server"
+    assert arxiv_detail["backend"] == "server"
+    assert semantic_detail["backend"] == "server"
+    assert medrxiv["backend"] == "server"
+    assert medrxiv_detail["backend"] == "server"
     assert server.calls == [
         ("get_biorxiv_by_doi", {"doi": "10.1101/2026.01.01.000001", "server": "biorxiv"}),
         ("get_pubmed_by_id", {"pmid": "12345678"}),
+        ("get_arxiv_by_id", {"id": "2401.00001"}),
+        ("get_semantic_scholar_by_id", {"paper_id": "abc"}),
+        ("search_medrxiv", {"q": "genomics"}),
+        ("get_medrxiv_by_doi", {"doi": "10.1101/2026.02.02.000002"}),
     ]
 
 

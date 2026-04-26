@@ -78,6 +78,7 @@ class ResearchSearchScopeService:
             "capabilities": ["paper_search"],
         },
     }
+    SERVER_DETAIL_PAPER_PROVIDERS = {"arxiv", "semantic_scholar", "biorxiv", "medrxiv", "pubmed"}
 
     def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
         self.local_service = local_service
@@ -136,6 +137,20 @@ class ResearchSearchScopeService:
             "capabilities": capabilities or [provider_type],
             "config_scope": mode.value,
         }
+
+    @classmethod
+    def _paper_provider_capabilities(
+        cls,
+        *,
+        mode: ResearchSearchBackend,
+        provider_id: str,
+        base_capabilities: list[str] | None = None,
+    ) -> list[str]:
+        capabilities = list(base_capabilities or ["paper_search"])
+        if mode == ResearchSearchBackend.SERVER and provider_id in cls.SERVER_DETAIL_PAPER_PROVIDERS:
+            if "paper_detail" not in capabilities:
+                capabilities.append("paper_detail")
+        return capabilities
 
     @staticmethod
     def _with_backend(mode: ResearchSearchBackend, result: Any) -> Any:
@@ -197,7 +212,11 @@ class ResearchSearchScopeService:
                     provider_type="paper_search",
                     provider_id=str(provider_id),
                     display_name=provider_definition.get("display_name"),
-                    capabilities=provider_definition.get("capabilities", ["paper_search"]),
+                    capabilities=self._paper_provider_capabilities(
+                        mode=normalized_mode,
+                        provider_id=str(provider_id),
+                        base_capabilities=provider_definition.get("capabilities", ["paper_search"]),
+                    ),
                 )
             )
         return records
@@ -238,6 +257,26 @@ class ResearchSearchScopeService:
         result = await self._maybe_await(service.search_semantic_scholar(**kwargs))
         return self._with_backend(normalized_mode, result)
 
+    async def get_arxiv_by_id(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call_provider_method(mode=mode, method_name="get_arxiv_by_id", kwargs=kwargs)
+
+    async def get_semantic_scholar_by_id(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call_provider_method(
+            mode=mode,
+            method_name="get_semantic_scholar_by_id",
+            kwargs=kwargs,
+        )
+
     async def _call_provider_method(
         self,
         *,
@@ -271,6 +310,22 @@ class ResearchSearchScopeService:
         **kwargs: Any,
     ) -> dict[str, Any]:
         return await self._call_provider_method(mode=mode, method_name="get_biorxiv_by_doi", kwargs=kwargs)
+
+    async def search_medrxiv(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call_provider_method(mode=mode, method_name="search_medrxiv", kwargs=kwargs)
+
+    async def get_medrxiv_by_doi(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call_provider_method(mode=mode, method_name="get_medrxiv_by_doi", kwargs=kwargs)
 
     async def search_pubmed(
         self,

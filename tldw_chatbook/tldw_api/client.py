@@ -756,11 +756,13 @@ from .research_runs_schemas import (
     ResearchRunStreamEvent,
 )
 from .research_search_schemas import (
+    ArxivPaper,
     ArxivSearchResponse,
     BioRxivPaper,
     BioRxivSearchResponse,
     PubMedPaper,
     PubMedSearchResponse,
+    SemanticScholarPaper,
     SemanticScholarSearchResponse,
     WebSearchAggregateResponse,
     WebSearchRawResponse,
@@ -5024,6 +5026,14 @@ class TLDWAPIClient:
         )
         return ArxivSearchResponse.model_validate(response)
 
+    async def get_arxiv_paper_by_id(self, *, id: str) -> ArxivPaper:
+        response = await self._request(
+            "GET",
+            "/api/v1/paper-search/arxiv/by-id",
+            params={"id": id},
+        )
+        return ArxivPaper.model_validate(response)
+
     async def search_semantic_scholar_papers(
         self,
         *,
@@ -5052,6 +5062,14 @@ class TLDWAPIClient:
             params={key: value for key, value in params.items() if value is not None},
         )
         return SemanticScholarSearchResponse.model_validate(response)
+
+    async def get_semantic_scholar_paper_by_id(self, *, paper_id: str) -> SemanticScholarPaper:
+        response = await self._request(
+            "GET",
+            "/api/v1/paper-search/semantic-scholar/by-id",
+            params={"paper_id": paper_id},
+        )
+        return SemanticScholarPaper.model_validate(response)
 
     async def search_biorxiv_papers(
         self,
@@ -5094,6 +5112,43 @@ class TLDWAPIClient:
             "GET",
             "/api/v1/paper-search/biorxiv/by-doi",
             params={"doi": doi, "server": server},
+        )
+        return BioRxivPaper.model_validate(response)
+
+    async def search_medrxiv_papers(
+        self,
+        *,
+        q: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        category: str | None = None,
+        recent_days: int | None = None,
+        recent_count: int | None = None,
+        page: int = 1,
+        results_per_page: int = 10,
+    ) -> BioRxivSearchResponse:
+        params = {
+            "q": q,
+            "from_date": from_date,
+            "to_date": to_date,
+            "category": category,
+            "recent_days": recent_days,
+            "recent_count": recent_count,
+            "page": page,
+            "results_per_page": results_per_page,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/paper-search/medrxiv",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return BioRxivSearchResponse.model_validate(response)
+
+    async def get_medrxiv_paper_by_doi(self, *, doi: str) -> BioRxivPaper:
+        response = await self._request(
+            "GET",
+            "/api/v1/paper-search/medrxiv/by-doi",
+            params={"doi": doi},
         )
         return BioRxivPaper.model_validate(response)
 

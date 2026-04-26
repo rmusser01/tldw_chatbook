@@ -18,9 +18,17 @@ class FakeResearchSearchClient:
         self.calls.append(("search_arxiv_papers", kwargs))
         return {"items": [{"id": "2401.00001"}], "total_results": 1}
 
+    async def get_arxiv_paper_by_id(self, **kwargs):
+        self.calls.append(("get_arxiv_paper_by_id", kwargs))
+        return {"id": "2401.00001", "title": "Agent Governance"}
+
     async def search_semantic_scholar_papers(self, **kwargs):
         self.calls.append(("search_semantic_scholar_papers", kwargs))
         return {"items": [{"paperId": "abc"}], "total_results": 1}
+
+    async def get_semantic_scholar_paper_by_id(self, **kwargs):
+        self.calls.append(("get_semantic_scholar_paper_by_id", kwargs))
+        return {"paperId": "abc", "title": "Agent Governance"}
 
     async def search_biorxiv_papers(self, **kwargs):
         self.calls.append(("search_biorxiv_papers", kwargs))
@@ -29,6 +37,14 @@ class FakeResearchSearchClient:
     async def get_biorxiv_paper_by_doi(self, **kwargs):
         self.calls.append(("get_biorxiv_paper_by_doi", kwargs))
         return {"doi": "10.1101/2026.01.01.000001", "title": "Preprint Governance"}
+
+    async def search_medrxiv_papers(self, **kwargs):
+        self.calls.append(("search_medrxiv_papers", kwargs))
+        return {"items": [{"doi": "10.1101/2026.02.02.000002"}], "total_results": 1}
+
+    async def get_medrxiv_paper_by_doi(self, **kwargs):
+        self.calls.append(("get_medrxiv_paper_by_doi", kwargs))
+        return {"doi": "10.1101/2026.02.02.000002", "title": "Clinical Preprint Governance"}
 
     async def search_pubmed_papers(self, **kwargs):
         self.calls.append(("search_pubmed_papers", kwargs))
@@ -97,3 +113,44 @@ async def test_server_research_search_service_hard_stops_denied_ui_policy_decisi
 
     assert exc.value.reason_code == "server_unreachable"
     assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_research_search_service_routes_paper_detail_and_medrxiv_aliases_with_policy():
+    client = FakeResearchSearchClient()
+    policy = Mock()
+    service = ServerResearchSearchService(client=client, policy_enforcer=policy)
+
+    arxiv_detail = await service.get_arxiv_by_id(id="2401.00001")
+    semantic_detail = await service.get_semantic_scholar_by_id(paper_id="abc")
+    medrxiv = await service.search_medrxiv(q="genomics")
+    medrxiv_detail = await service.get_medrxiv_by_doi(doi="10.1101/2026.02.02.000002")
+
+    assert arxiv_detail["id"] == "2401.00001"
+    assert semantic_detail["paperId"] == "abc"
+    assert medrxiv["items"][0]["doi"] == "10.1101/2026.02.02.000002"
+    assert medrxiv_detail["title"] == "Clinical Preprint Governance"
+    assert client.calls[-4:] == [
+        ("get_arxiv_paper_by_id", {"id": "2401.00001"}),
+        ("get_semantic_scholar_paper_by_id", {"paper_id": "abc"}),
+        (
+            "search_medrxiv_papers",
+            {
+                "q": "genomics",
+                "from_date": None,
+                "to_date": None,
+                "category": None,
+                "recent_days": None,
+                "recent_count": None,
+                "page": 1,
+                "results_per_page": 10,
+            },
+        ),
+        ("get_medrxiv_paper_by_doi", {"doi": "10.1101/2026.02.02.000002"}),
+    ]
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list[-4:]] == [
+        "research.search.providers.launch.server",
+        "research.search.providers.launch.server",
+        "research.search.providers.launch.server",
+        "research.search.providers.launch.server",
+    ]
