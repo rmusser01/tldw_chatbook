@@ -187,11 +187,61 @@ class NoteGraphRequest(BaseModel):
         return value
 
 
+class NoteGraphNode(BaseModel):
+    """Server notes graph node payload."""
+
+    id: str
+    type: Literal["note", "tag", "source"]
+    label: str
+    created_at: Optional[str] = None
+    deleted: Optional[bool] = None
+    degree: Optional[int] = None
+    tag_count: Optional[int] = None
+    primary_source_id: Optional[str] = None
+
+
+class NoteGraphEdge(BaseModel):
+    """Server notes graph edge payload."""
+
+    id: str
+    source: str
+    target: str
+    type: NoteGraphEdgeType
+    directed: bool
+    weight: Optional[float] = 1.0
+    label: Optional[str] = None
+
+
+class NoteGraphLimits(BaseModel):
+    """Server-applied graph bounds."""
+
+    max_nodes: int = Field(..., ge=1)
+    max_edges: int = Field(..., ge=0)
+    max_degree: int = Field(..., ge=1)
+
+
+class NoteGraphResponse(BaseModel):
+    """Default server notes graph response."""
+
+    nodes: list[NoteGraphNode] = Field(default_factory=list)
+    edges: list[NoteGraphEdge] = Field(default_factory=list)
+    truncated: bool = False
+    truncated_by: list[str] = Field(default_factory=list)
+    has_more: bool = False
+    cursor: Optional[str] = None
+    limits: NoteGraphLimits
+    radius_cap_applied: bool = False
+
+
 class NoteLinkCreate(BaseModel):
     to_note_id: str = Field(..., min_length=1)
     directed: bool = False
     weight: float | None = Field(1.0, ge=0.0)
     metadata: dict[str, Any] | None = None
+
+
+class NoteLinkCreateRequest(NoteLinkCreate):
+    """Request body for creating a manual server notes graph link."""
 
 
 class WorkspaceCreateRequest(BaseModel):

@@ -12,6 +12,11 @@ def _model_to_dict(value: Any) -> dict[str, Any]:
     return dict(value or {})
 
 
+def build_watchlist_item_id(backend: str, entity_kind: str, source_id: Any) -> str:
+    """Build the canonical local/server watchlist item id."""
+    return f"{backend}:{entity_kind}:{source_id}"
+
+
 def _coerce_tags(value: Any) -> list[str]:
     if value in (None, ""):
         return []
@@ -88,7 +93,7 @@ def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
         status_summary = f"error ({error_count})" if error_count else "error"
 
     return {
-        "id": f"local:subscription:{source_id}",
+        "id": build_watchlist_item_id("local", "subscription", source_id),
         "backend": "local",
         "entity_kind": "subscription",
         "source_id": source_id,
@@ -112,7 +117,7 @@ def normalize_server_watchlist_source(source: Mapping[str, Any] | Any) -> dict[s
     payload = _model_to_dict(source)
     source_id = payload["id"]
     return {
-        "id": f"server:watchlist_source:{source_id}",
+        "id": build_watchlist_item_id("server", "watchlist_source", source_id),
         "backend": "server",
         "entity_kind": "watchlist_source",
         "source_id": source_id,
@@ -136,7 +141,7 @@ def normalize_server_delete_response(response: Mapping[str, Any] | Any, *, sourc
     payload = _model_to_dict(response)
     return {
         "success": bool(payload.get("success", True)),
-        "id": f"server:watchlist_source:{payload.get('source_id', source_id)}",
+        "id": build_watchlist_item_id("server", "watchlist_source", payload.get("source_id", source_id)),
         "backend": "server",
         "entity_kind": "watchlist_source",
         "source_id": payload.get("source_id", source_id),
@@ -154,7 +159,7 @@ def normalize_watchlist_run(source: str, run: Mapping[str, Any] | Any) -> dict[s
     if source_id is None and source == "local":
         source_id = job_id
     return {
-        "id": f"{source}:watchlist_run:{run_id}",
+        "id": build_watchlist_item_id(source, "watchlist_run", run_id),
         "backend": source,
         "entity_kind": "watchlist_run",
         "run_id": run_id,
@@ -193,7 +198,7 @@ def normalize_watchlist_alert_rule(source: str, rule: Mapping[str, Any] | Any) -
     rule_id = payload["id"]
     job_id = payload.get("job_id")
     return {
-        "id": f"{source}:watchlist_alert_rule:{rule_id}",
+        "id": build_watchlist_item_id(source, "watchlist_alert_rule", rule_id),
         "backend": source,
         "entity_kind": "watchlist_alert_rule",
         "rule_id": rule_id,

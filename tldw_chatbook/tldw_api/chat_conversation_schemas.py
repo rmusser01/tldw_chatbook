@@ -415,3 +415,32 @@ class ChatAnalyticsResponse(BaseModel):
     buckets: list[ChatAnalyticsBucket] = Field(default_factory=list)
     pagination: ChatAnalyticsPagination
     bucket_granularity: Literal["day", "week"]
+
+
+class ValidationIssue(BaseModel):
+    """A single dictionary validation issue."""
+
+    code: str
+    field: str
+    message: str
+
+
+class ValidateDictionaryRequest(BaseModel):
+    """Request body for server-side chat dictionary validation."""
+
+    data: dict[str, Any] = Field(..., description="Dictionary JSON data including entries")
+    schema_version: int = Field(1, description="Schema version for validation")
+    strict: bool = Field(False, description="If true, fail import policy while still returning a report")
+
+
+class ValidateDictionaryResponse(BaseModel):
+    """Structured dictionary validation result."""
+
+    ok: bool
+    schema_version: int
+    errors: list[ValidationIssue] = Field(default_factory=list)
+    warnings: list[ValidationIssue] = Field(default_factory=list)
+    entry_stats: dict[str, int] = Field(default_factory=dict)
+    suggested_fixes: list[str] = Field(default_factory=list)
+    partial: bool = False
+    partial_reason: str | None = None

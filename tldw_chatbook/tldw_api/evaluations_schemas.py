@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from enum import Enum
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -499,3 +500,302 @@ class RecipeRunRecord(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     model_config = ConfigDict(from_attributes=True, extra="allow")
+
+
+class ABTestArm(BaseModel):
+    provider: str
+    model: str
+    dimensions: Optional[int] = None
+
+
+class ABTestChunking(BaseModel):
+    method: str
+    size: int = Field(..., ge=1)
+    overlap: int = Field(..., ge=0)
+    language: Optional[str] = None
+
+
+class ABTestReRanker(BaseModel):
+    provider: str
+    model: str
+
+
+class ABTestRetrieval(BaseModel):
+    k: int = Field(..., ge=1, le=1000)
+    search_mode: Optional[Literal["fts", "vector", "hybrid"]] = "vector"
+    hybrid_alpha: Optional[float] = None
+    re_ranker: Optional[ABTestReRanker] = None
+    index_params: Optional[dict[str, str]] = None
+    apply_reranker: Optional[bool] = False
+
+
+class ABTestQuery(BaseModel):
+    text: str
+    expected_ids: Optional[list[int]] = None
+    metadata: Optional[dict[str, str]] = None
+
+
+class ABTestLimits(BaseModel):
+    max_docs: Optional[int] = Field(default=None, ge=1)
+    timeout_s: Optional[int] = Field(default=None, ge=1)
+
+
+class ABTestCleanupPolicy(BaseModel):
+    on_complete: bool = False
+    ttl_hours: Optional[int] = Field(default=None, ge=1)
+
+
+class EmbeddingsABTestConfig(BaseModel):
+    arms: list[ABTestArm] = Field(..., min_length=1)
+    media_ids: list[int] = Field(default_factory=list)
+    chunking: Optional[ABTestChunking] = None
+    retrieval: ABTestRetrieval
+    queries: list[ABTestQuery] = Field(..., min_length=1)
+    metric_level: Optional[Literal["media", "chunk"]] = "media"
+    limits: Optional[ABTestLimits] = None
+    reuse_existing: Optional[bool] = True
+    cleanup_policy: Optional[ABTestCleanupPolicy] = None
+
+
+class EmbeddingsABTestCreateRequest(BaseModel):
+    name: str
+    config: EmbeddingsABTestConfig
+    run_immediately: Optional[bool] = False
+
+
+class EmbeddingsABTestRunRequest(BaseModel):
+    config: EmbeddingsABTestConfig
+
+
+class EmbeddingsABTestCreateResponse(BaseModel):
+    test_id: str
+    status: str = "created"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmbeddingsABTestStatusResponse(BaseModel):
+    test_id: str
+    status: str
+    progress: Optional[dict[str, float]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ArmSummary(BaseModel):
+    arm_id: str
+    provider: str
+    model: str
+    dimensions: Optional[int] = None
+    metrics: dict[str, float] = Field(default_factory=dict)
+    latency_ms: dict[str, float] = Field(default_factory=dict)
+    doc_counts: dict[str, int] = Field(default_factory=dict)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmbeddingsABTestResultSummary(BaseModel):
+    test_id: str
+    status: str
+    arms: list[ArmSummary] = Field(default_factory=list)
+    per_query: Optional[list[dict[str, Any]]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmbeddingsABTestResultRow(BaseModel):
+    result_id: str
+    test_id: str
+    arm_id: str
+    query_id: str
+    ranked_ids: list[str] = Field(default_factory=list)
+    scores: Optional[list[float]] = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    latency_ms: Optional[float] = None
+    ranked_distances: Optional[list[float]] = None
+    ranked_metadatas: Optional[list[dict[str, Any]]] = None
+    ranked_documents: Optional[list[str]] = None
+    rerank_scores: Optional[list[float]] = None
+    created_at: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmbeddingsABTestResultsResponse(BaseModel):
+    summary: EmbeddingsABTestResultSummary
+    results: list[EmbeddingsABTestResultRow] = Field(default_factory=list)
+    page: int = 1
+    page_size: int = 50
+    total: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvaluationBenchmarkListResponse(BaseModel):
+    object: str = "list"
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    total: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvaluationBenchmarkRunRequest(BaseModel):
+    limit: Optional[int] = Field(default=None, ge=1)
+    api_name: str = "openai"
+    parallel: int = Field(default=4, ge=1, le=16)
+    save_results: bool = True
+    filter_categories: Optional[list[str]] = None
+
+
+class EvaluationBenchmarkRunResponse(BaseModel):
+    benchmark: str
+    total_samples: int
+    results_summary: dict[str, Any] = Field(default_factory=dict)
+    evaluation_id: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvaluationRecipeManifest(RecipeManifest):
+    supported_modes: list[Literal["labeled", "unlabeled"]] = Field(default_factory=list)
+
+
+class EvaluationRecipeLaunchReadiness(RecipeLaunchReadiness):
+    runtime_checks: dict[str, bool] = Field(default_factory=dict)
+
+
+class EvaluationRecipeDatasetValidationRequest(BaseModel):
+    dataset_id: Optional[str] = None
+    dataset: Optional[list[dict[str, Any]]] = None
+    run_config: Optional[dict[str, Any]] = None
+
+
+class EvaluationRecipeDatasetValidationResponse(RecipeDatasetValidationResponse):
+    pass
+
+
+class EvaluationRecipeReviewState(str, Enum):
+    NOT_REQUIRED = "not_required"
+    NEEDS_REVIEW = "needs_review"
+    IN_REVIEW = "in_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class EvaluationRecipeConfidenceSummary(BaseModel):
+    kind: Literal["aggregate", "bootstrap", "judge", "heuristic"] = "aggregate"
+    confidence: Optional[float] = None
+    sample_count: int = 0
+    spread: Optional[float] = None
+    margin: Optional[float] = None
+    judge_agreement: Optional[float] = None
+    notes: Optional[str] = None
+
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+
+
+class EvaluationRecipeRecommendationSlot(BaseModel):
+    candidate_run_id: Optional[str] = None
+    reason_code: Optional[str] = None
+    explanation: Optional[str] = None
+    confidence: Optional[float] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+
+
+class EvaluationRecipeRunCreateRequest(BaseModel):
+    dataset_id: Optional[str] = None
+    dataset: Optional[list[dict[str, Any]]] = None
+    run_config: dict[str, Any] = Field(default_factory=dict)
+    force_rerun: bool = False
+
+
+class EvaluationRecipeRunRecord(BaseModel):
+    run_id: str
+    recipe_id: Optional[str] = None
+    recipe_version: Optional[str] = None
+    status: str
+    review_state: EvaluationRecipeReviewState | str = EvaluationRecipeReviewState.NOT_REQUIRED
+    dataset_snapshot_ref: Optional[str] = None
+    dataset_content_hash: Optional[str] = None
+    confidence_summary: Optional[EvaluationRecipeConfidenceSummary] = None
+    recommendation_slots: dict[str, EvaluationRecipeRecommendationSlot] = Field(default_factory=dict)
+    child_run_ids: list[str] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+
+
+class EvaluationRecipeRunReport(BaseModel):
+    run: EvaluationRecipeRunRecord
+    confidence_summary: Optional[EvaluationRecipeConfidenceSummary] = None
+    recommendation_slots: dict[str, EvaluationRecipeRecommendationSlot] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+
+
+class PipelinePresetCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_\-]+$")
+    config: dict[str, Any]
+
+
+class PipelinePresetResponse(BaseModel):
+    name: str
+    config: dict[str, Any]
+    created_at: Optional[int] = None
+    updated_at: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PipelinePresetListResponse(BaseModel):
+    items: list[PipelinePresetResponse] = Field(default_factory=list)
+    total: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PipelineCleanupResponse(BaseModel):
+    expired_count: int
+    deleted_count: int
+    errors: Optional[list[str]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WebhookEventType(str, Enum):
+    EVALUATION_STARTED = "evaluation.started"
+    EVALUATION_PROGRESS = "evaluation.progress"
+    EVALUATION_COMPLETED = "evaluation.completed"
+    EVALUATION_FAILED = "evaluation.failed"
+    EVALUATION_CANCELLED = "evaluation.cancelled"
+    BATCH_STARTED = "batch.started"
+    BATCH_COMPLETED = "batch.completed"
+    BATCH_FAILED = "batch.failed"
+
+
+class EvaluationWebhookRegistrationRequest(BaseModel):
+    url: str
+    events: list[WebhookEventType] = Field(..., min_length=1)
+    secret: Optional[str] = Field(default=None, min_length=32)
+    retry_count: Optional[int] = Field(default=3, ge=0, le=10)
+    timeout_seconds: Optional[int] = Field(default=30, ge=1, le=300)
+
+
+class EvaluationWebhookRegistrationResponse(WebhookRegistrationResponse):
+    pass
+
+
+class EvaluationWebhookStatusResponse(WebhookStatusResponse):
+    pass
+
+
+class EvaluationWebhookTestRequest(WebhookTestRequest):
+    pass
+
+
+class EvaluationWebhookTestResponse(WebhookTestResponse):
+    pass

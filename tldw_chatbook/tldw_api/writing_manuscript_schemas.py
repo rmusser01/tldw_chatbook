@@ -177,6 +177,16 @@ class ManuscriptSceneResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+ManuscriptProjectCreateRequest = ManuscriptProjectCreate
+ManuscriptProjectUpdateRequest = ManuscriptProjectUpdate
+ManuscriptPartCreateRequest = ManuscriptPartCreate
+ManuscriptPartUpdateRequest = ManuscriptPartUpdate
+ManuscriptChapterCreateRequest = ManuscriptChapterCreate
+ManuscriptChapterUpdateRequest = ManuscriptChapterUpdate
+ManuscriptSceneCreateRequest = ManuscriptSceneCreate
+ManuscriptSceneUpdateRequest = ManuscriptSceneUpdate
+
+
 class SceneSummary(BaseModel):
     id: str
     title: str
@@ -210,6 +220,24 @@ class ManuscriptStructureResponse(BaseModel):
     project_id: str
     parts: list[PartSummary] = Field(default_factory=list)
     unassigned_chapters: list[ChapterSummary] = Field(default_factory=list)
+
+
+class ManuscriptSearchResult(BaseModel):
+    id: str
+    title: str
+    chapter_id: str
+    word_count: int = 0
+    status: str = "draft"
+    snippet: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ManuscriptSearchResponse(BaseModel):
+    query: str
+    results: list[ManuscriptSearchResult] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ManuscriptCharacterCreate(BaseModel):

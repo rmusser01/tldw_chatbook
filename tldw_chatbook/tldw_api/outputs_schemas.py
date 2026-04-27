@@ -87,6 +87,12 @@ class TemplatePreviewResponse(BaseModel):
     format: Literal["md", "html"]
 
 
+# Backward-compatible names used by merged server-parity service wrappers.
+OutputTemplateCreateRequest = OutputTemplateCreate
+OutputTemplateUpdateRequest = OutputTemplateUpdate
+OutputTemplatePreviewRequest = TemplatePreviewRequest
+
+
 class OutputCreateRequest(BaseModel):
     template_id: int
     item_ids: list[int] | None = None

@@ -190,6 +190,11 @@ class MediaEmbeddingsBatchResponse(BaseModel):
     failure_reasons: list[str] = Field(default_factory=list)
 
 
+# Backward-compatible names used by the merged server-parity client methods.
+BatchMediaEmbeddingsRequest = MediaEmbeddingsBatchRequest
+BatchMediaEmbeddingsResponse = MediaEmbeddingsBatchResponse
+
+
 class MediaEmbeddingsSearchRequest(BaseModel):
     query: str
     top_k: int = Field(5, gt=0, le=100)
