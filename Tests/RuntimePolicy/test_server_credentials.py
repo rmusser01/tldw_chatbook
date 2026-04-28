@@ -97,7 +97,7 @@ def test_redact_secret_never_returns_original_non_empty_secret_and_handles_empty
     assert redact_secret(None) == "<unset>"
     assert redact_secret("") == "<unset>"
 
-    for secret in ["short", "12345678", "abcdef123456", "ab...3456"]:
+    for secret in ["short", "12345678", "abcdef123456", "ab...3456", "ab...<redacted>...3456"]:
         redacted = redact_secret(secret)
         assert redacted != secret
 
@@ -108,6 +108,10 @@ def test_redact_secret_never_returns_original_non_empty_secret_and_handles_empty
     redacted_collision = redact_secret("ab...3456")
     assert redacted_collision.startswith("ab")
     assert "3456" in redacted_collision
+
+    redacted_marker_collision = redact_secret("ab...<redacted>...3456")
+    assert redacted_marker_collision.startswith("ab")
+    assert "3456" in redacted_marker_collision
 
 
 def test_server_credential_ref_username_uses_server_and_purpose():

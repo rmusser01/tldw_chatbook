@@ -43,7 +43,10 @@ def redact_secret(secret: str | None) -> str:
         return "<unset>"
     if len(secret) <= 8:
         return "<redacted>"
-    return f"{secret[:2]}...<redacted>...{secret[-4:]}"
+    candidate = f"{secret[:2]}...<redacted>...{secret[-4:]}"
+    if candidate == secret:
+        candidate = f"{secret[:2]}...<redacted:x>...{secret[-4:]}"
+    return candidate
 
 
 def _normalize_non_empty(value: str, field_name: str) -> str:
