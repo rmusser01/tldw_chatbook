@@ -4,6 +4,8 @@ from tldw_chatbook.Auth_Account_Interop.auth_account_scope_service import AuthAc
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 from tldw_chatbook.runtime_policy.server_credentials import (
     SERVER_CREDENTIAL_ACCESS_TOKEN,
+    SERVER_CREDENTIAL_API_KEY,
+    SERVER_CREDENTIAL_BEARER_TOKEN,
     SERVER_CREDENTIAL_REFRESH_TOKEN,
     InMemoryServerCredentialStore,
 )
@@ -24,6 +26,14 @@ class FakeAuthAccountService:
     async def logout(self, **kwargs):
         self.calls.append(("logout", kwargs))
         return {"detail": "logged out"}
+
+    async def verify_magic_link(self, **kwargs):
+        self.calls.append(("verify_magic_link", kwargs))
+        return {"access_token": "access-magic", "refresh_token": "refresh-magic", "token_type": "bearer"}
+
+    async def complete_mfa_login(self, **kwargs):
+        self.calls.append(("complete_mfa_login", kwargs))
+        return {"access_token": "access-mfa", "refresh_token": "refresh-mfa", "token_type": "bearer"}
 
     async def list_auth_sessions(self):
         self.calls.append(("list_auth_sessions",))
@@ -81,6 +91,10 @@ class FakeServerContextProvider:
 
     def clear_active_server_credentials(self):
         self.credential_store.clear_server(self.active_server_id)
+
+    def clear_active_server_auth_tokens(self):
+        self.credential_store.delete_secret(self.active_server_id, SERVER_CREDENTIAL_ACCESS_TOKEN)
+        self.credential_store.delete_secret(self.active_server_id, SERVER_CREDENTIAL_REFRESH_TOKEN)
 
 
 @pytest.mark.asyncio
@@ -188,6 +202,35 @@ async def test_logout_clears_active_server_credentials_when_requested():
 
 
 @pytest.mark.asyncio
+async def test_logout_clear_bearer_token_preserves_static_server_credentials():
+    server = FakeAuthAccountService()
+    provider = FakeServerContextProvider()
+    provider.store_auth_tokens(access_token="access-1", refresh_token="refresh-1")
+    provider.credential_store.set_secret("http://server.test", SERVER_CREDENTIAL_API_KEY, "api-key-1")
+    provider.credential_store.set_secret("http://server.test", SERVER_CREDENTIAL_BEARER_TOKEN, "bearer-1")
+    scope = AuthAccountScopeService(server_service=server, server_context_provider=provider)
+
+    await scope.logout(clear_bearer_token=True)
+
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) is None
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) is None
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_API_KEY,
+    ) == "api-key-1"
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) == "bearer-1"
+
+
+@pytest.mark.asyncio
 async def test_logout_preserves_active_server_credentials_when_clear_bearer_token_is_false():
     server = FakeAuthAccountService()
     provider = FakeServerContextProvider()
@@ -204,6 +247,52 @@ async def test_logout_preserves_active_server_credentials_when_clear_bearer_toke
         "http://server.test",
         SERVER_CREDENTIAL_REFRESH_TOKEN,
     ) == "refresh-1"
+
+
+@pytest.mark.asyncio
+async def test_verify_magic_link_persists_tokens_when_context_provider_is_available():
+    server = FakeAuthAccountService()
+    provider = FakeServerContextProvider()
+    scope = AuthAccountScopeService(server_service=server, server_context_provider=provider)
+
+    await scope.verify_magic_link(token="magic-token")
+
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) == "access-magic"
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) == "refresh-magic"
+    assert server.calls == [("verify_magic_link", {"token": "magic-token"})]
+
+
+@pytest.mark.asyncio
+async def test_complete_mfa_login_persists_tokens_when_context_provider_is_available():
+    server = FakeAuthAccountService()
+    provider = FakeServerContextProvider()
+    scope = AuthAccountScopeService(server_service=server, server_context_provider=provider)
+
+    await scope.complete_mfa_login(session_token="session-token", mfa_token="mfa-token")
+
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) == "access-mfa"
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) == "refresh-mfa"
+    assert server.calls == [
+        (
+            "complete_mfa_login",
+            {
+                "session_token": "session-token",
+                "mfa_token": "mfa-token",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

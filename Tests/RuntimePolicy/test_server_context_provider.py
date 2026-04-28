@@ -494,6 +494,39 @@ def test_clear_active_server_credentials_and_clear_server_credentials_clear_per_
     assert credentials.get_secret("server-b", SERVER_CREDENTIAL_BEARER_TOKEN) is None
 
 
+def test_clear_active_server_auth_tokens_preserves_static_credentials(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-1")
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_REFRESH_TOKEN, "refresh-1")
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "api-key-1")
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "bearer-1")
+    credentials.set_secret("https://backup.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "other-access")
+    provider = _provider(tmp_path, credential_store=credentials)
+
+    provider.clear_active_server_auth_tokens()
+
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) is None
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) is None
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_API_KEY,
+    ) == "api-key-1"
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) == "bearer-1"
+    assert credentials.get_secret(
+        "https://backup.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) == "other-access"
+
+
 def test_store_auth_tokens_scopes_tokens_to_active_server(tmp_path):
     credentials = InMemoryServerCredentialStore()
     credentials.set_secret("https://backup.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "other-access")

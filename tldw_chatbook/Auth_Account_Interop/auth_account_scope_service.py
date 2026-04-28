@@ -105,8 +105,8 @@ class AuthAccountScopeService:
         if callable(store):
             store(access_token=access_token, refresh_token=refresh_token)
 
-    def _clear_active_server_credentials(self) -> None:
-        clear = getattr(self.server_context_provider, "clear_active_server_credentials", None)
+    def _clear_active_server_auth_tokens(self) -> None:
+        clear = getattr(self.server_context_provider, "clear_active_server_auth_tokens", None)
         if callable(clear):
             clear()
 
@@ -218,7 +218,7 @@ class AuthAccountScopeService:
             },
         )
         if clear_bearer_token:
-            self._clear_active_server_credentials()
+            self._clear_active_server_auth_tokens()
         return self._with_backend(normalized_mode, "identity_logout", result)
 
     async def list_auth_sessions(self, *, mode: AuthAccountBackend | str | None = None) -> list[dict[str, Any]]:
@@ -400,6 +400,7 @@ class AuthAccountScopeService:
                 **({"set_bearer_token": set_bearer_token} if not set_bearer_token else {}),
             },
         )
+        self._store_auth_tokens(result)
         return self._with_backend(normalized_mode, "identity", result)
 
     async def setup_mfa(self, *, mode: AuthAccountBackend | str | None = None) -> dict[str, Any]:
@@ -446,6 +447,7 @@ class AuthAccountScopeService:
                 **({"set_bearer_token": set_bearer_token} if not set_bearer_token else {}),
             },
         )
+        self._store_auth_tokens(result)
         return self._with_backend(normalized_mode, "identity", result)
 
     async def list_user_api_keys(self, *, mode: AuthAccountBackend | str | None = None) -> list[dict[str, Any]]:

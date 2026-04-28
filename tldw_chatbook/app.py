@@ -2268,6 +2268,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.auth_account_scope_service = AuthAccountScopeService(
             server_service=self.server_auth_account_service,
             policy_enforcer=self.service_policy_enforcer,
+            server_context_provider=self.server_context_provider,
         )
         try:
             self.server_user_governance_service = ServerUserGovernanceService.from_config(

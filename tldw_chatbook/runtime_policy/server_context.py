@@ -93,6 +93,11 @@ class RuntimeServerContextProvider:
     def clear_server_credentials(self, server_id: str) -> None:
         self.credential_store.clear_server(server_id)
 
+    def clear_active_server_auth_tokens(self) -> None:
+        active_server_id = self._require_active_server_id()
+        self.credential_store.delete_secret(active_server_id, SERVER_CREDENTIAL_ACCESS_TOKEN)
+        self.credential_store.delete_secret(active_server_id, SERVER_CREDENTIAL_REFRESH_TOKEN)
+
     def store_auth_tokens(
         self,
         *,
