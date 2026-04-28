@@ -15,6 +15,12 @@ from .server_credentials import (
     ServerCredentialStore,
     redact_secret,
 )
+from .server_context import (
+    ActiveServerContext,
+    RuntimeServerContextProvider,
+    ServerContextUnavailable,
+    ServerCredentialsUnavailable,
+)
 from .types import CapabilityEntry, PolicyDecision, PolicyDeniedError, RuntimeSourceState
 from .unsupported_capabilities import (
     UnsupportedCapabilityReportError,
@@ -47,9 +53,13 @@ __all__ = [
     "get_capability_entry",
     "normalize_runtime_source_state",
     "ActiveServerCapabilityService",
+    "ActiveServerContext",
     "redact_secret",
     "runtime_source_state_from_dict",
     "runtime_source_state_to_dict",
+    "RuntimeServerContextProvider",
+    "ServerContextUnavailable",
+    "ServerCredentialsUnavailable",
     "validate_unsupported_capability_report",
     "validate_registry_completeness",
 ]

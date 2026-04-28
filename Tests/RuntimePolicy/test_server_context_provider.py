@@ -1,0 +1,244 @@
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
+from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
+from tldw_chatbook.runtime_policy.bootstrap import RuntimePolicyContext
+from tldw_chatbook.runtime_policy.server_credentials import (
+    SERVER_CREDENTIAL_ACCESS_TOKEN,
+    SERVER_CREDENTIAL_API_KEY,
+    SERVER_CREDENTIAL_BEARER_TOKEN,
+    InMemoryServerCredentialStore,
+)
+from tldw_chatbook.runtime_policy.server_context import (
+    RuntimeServerContextProvider,
+    ServerContextUnavailable,
+)
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+
+
+class SavingRuntimeStore:
+    def __init__(self) -> None:
+        self.saved_states: list[RuntimeSourceState] = []
+
+    def save(self, state: RuntimeSourceState) -> None:
+        self.saved_states.append(state)
+
+
+def _runtime_context(
+    *,
+    active_source: str = "server",
+    active_server_id: str | None = "https://server.example.com/api",
+    server_configured: bool = True,
+) -> RuntimePolicyContext:
+    return RuntimePolicyContext(
+        state=RuntimeSourceState(
+            active_source=active_source,
+            active_server_id=active_server_id,
+            server_configured=server_configured,
+            last_known_server_label="Server",
+        ),
+        store=SavingRuntimeStore(),
+    )
+
+
+def _target_store(tmp_path, targets: list[ConfiguredServerTarget] | None = None) -> ConfiguredServerTargetStore:
+    store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    if targets is not None:
+        store.save_targets(targets)
+    return store
+
+
+def _provider(
+    tmp_path,
+    *,
+    runtime_context: RuntimePolicyContext | None = None,
+    targets: list[ConfiguredServerTarget] | None = None,
+    credential_store: InMemoryServerCredentialStore | None = None,
+    app_config: dict | None = None,
+) -> RuntimeServerContextProvider:
+    return RuntimeServerContextProvider(
+        runtime_context=runtime_context or _runtime_context(),
+        target_store=_target_store(tmp_path, targets),
+        credential_store=credential_store or InMemoryServerCredentialStore(),
+        app_config=app_config or {},
+    )
+
+
+def test_resolves_matching_target_and_credential_store_secret(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "bearer-secret")
+
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api/",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+    )
+
+    context = provider.get_active_context()
+
+    assert context.active_server_id == "https://server.example.com/api"
+    assert context.label == "Primary"
+    assert context.base_url == "https://server.example.com/api"
+    assert context.auth_method == "bearer"
+    assert context.auth_token == "bearer-secret"
+    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+
+
+def test_rejects_server_mode_without_active_server(tmp_path):
+    provider = _provider(
+        tmp_path,
+        runtime_context=_runtime_context(active_server_id=None, server_configured=True),
+    )
+
+    with pytest.raises(ServerContextUnavailable):
+        provider.get_active_context()
+
+
+def test_legacy_fallback_works_when_no_target_exists_and_app_config_matches_active_server(tmp_path):
+    provider = _provider(
+        tmp_path,
+        app_config={
+            "tldw_api": {
+                "base_url": "https://Server.Example.com/api/",
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    context = provider.get_active_context()
+
+    assert context.active_server_id == "https://server.example.com/api"
+    assert context.label == "server.example.com"
+    assert context.base_url == "https://server.example.com/api"
+    assert context.auth_method == "bearer"
+    assert context.auth_token == "legacy-bearer"
+    assert context.credential_source == "legacy:tldw_api"
+
+
+def test_build_client_uses_active_context_base_url_and_bearer_token(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-secret")
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api/",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+    )
+
+    client = provider.build_client()
+
+    assert client.base_url == "https://server.example.com/api"
+    assert client.bearer_token == "access-secret"
+    assert client.token is None
+
+
+def test_target_store_json_does_not_contain_secret_after_resolving_or_building_client(tmp_path):
+    secret = "store-secret-must-not-leak"
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, secret)
+    target_store = _target_store(
+        tmp_path,
+        [
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api/",
+                auth_mode="api_key",
+                is_default=True,
+            )
+        ],
+    )
+    provider = RuntimeServerContextProvider(
+        runtime_context=_runtime_context(),
+        target_store=target_store,
+        credential_store=credentials,
+        app_config={},
+    )
+
+    assert provider.get_active_context().auth_token == secret
+    assert provider.build_client().token == secret
+
+    payload = json.loads(target_store.path.read_text(encoding="utf-8"))
+    assert secret not in json.dumps(payload)
+
+
+def test_clear_active_server_credentials_and_clear_server_credentials_clear_per_server_secrets(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "active-secret")
+    credentials.set_secret("server-b", SERVER_CREDENTIAL_BEARER_TOKEN, "other-secret")
+    provider = _provider(tmp_path, credential_store=credentials)
+
+    provider.clear_active_server_credentials()
+
+    assert credentials.get_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN) is None
+    assert credentials.get_secret("server-b", SERVER_CREDENTIAL_BEARER_TOKEN) == "other-secret"
+
+    provider.clear_server_credentials("server-b")
+
+    assert credentials.get_secret("server-b", SERVER_CREDENTIAL_BEARER_TOKEN) is None
+
+
+def test_mismatched_runtime_active_server_and_only_legacy_config_raises(tmp_path):
+    provider = _provider(
+        tmp_path,
+        app_config={
+            "tldw_api": {
+                "base_url": "https://other.example.com/api",
+                "api_key": "wrong-server-secret",
+            }
+        },
+    )
+
+    with pytest.raises(ServerContextUnavailable):
+        provider.get_active_context()
+
+
+def test_runtime_state_remains_authoritative_and_unmutated_during_context_resolution(tmp_path):
+    runtime_context = _runtime_context()
+    original_state = runtime_context.state
+    provider = _provider(
+        tmp_path,
+        runtime_context=runtime_context,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://other.example.com/api",
+                label="Other Default",
+                base_url="https://other.example.com/api",
+                auth_mode="api_key",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "api_key": "legacy-secret",
+            }
+        },
+    )
+
+    context = provider.get_active_context()
+
+    assert context.active_server_id == original_state.active_server_id
+    assert context.base_url == "https://server.example.com/api"
+    assert runtime_context.state == original_state
+    assert runtime_context.store.saved_states == []
