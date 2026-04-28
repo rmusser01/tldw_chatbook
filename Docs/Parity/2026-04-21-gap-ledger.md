@@ -10,6 +10,14 @@ Source spec: `Docs/superpowers/specs/2026-04-21-chatbook-server-capability-parit
 - The remaining runtime-policy work is breadth and adoption across more domains and screens, not absence of the authority model itself.
 - The active parity focus should therefore shift to the next user-priority standalone and remote-interop rows rather than treating runtime policy as still missing.
 
+## Server Route Coverage Reassessment
+
+- Reassessment date: 2026-04-28.
+- The API client layer now has explicit REST gateways or typed wrappers for the audited client-relevant non-workflow namespaces, including chat/runtime adjuncts, evaluations, RAG data-plane surfaces, jobs/control-plane surfaces, small utility namespaces, and the full Unified MCP REST route inventory.
+- Current route-audit result: excluding billing/admin/ops, auth/account internals, debug-only surfaces, and workflows by current product decision, there are no true uncovered server routes in the Chatbook client layer.
+- Known raw-audit leftovers: `GET /api/v1/media/debug/schema` is debug/ops and intentionally ignored; `DELETE /api/v1/prompts/keywords/{keyword_text}` is already covered by `delete_prompt_keyword()` but is a static-parser false positive because the implementation URL-encodes the keyword with `quote(...)`.
+- Deferred route group: workflows remain intentionally out of this pass, currently represented by `workflows`, `chat-workflows`, and `scheduler` workflow routes.
+
 ## Critical Gaps
 
 ### Collections: Reading List / Read-it-later: Saved reading collection and read-later item flows
