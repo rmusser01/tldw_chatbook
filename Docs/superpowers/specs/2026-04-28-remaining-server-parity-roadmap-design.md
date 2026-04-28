@@ -54,7 +54,15 @@ This approach is preferred over continuing domain verticals first because many r
 
 ### Server Connection Foundation
 
-This layer owns active-server state and must become the only way domain services acquire server context.
+This layer owns active-server state and must become the only way domain services acquire server context. It must consolidate and extend existing seams rather than create a second active-server authority.
+
+Existing seams to preserve:
+
+- `runtime_policy.bootstrap.RuntimePolicyContext` and `RuntimeSourceState` remain the app-authoritative source for `active_source`, `active_server_id`, reachability, and auth probe state.
+- `runtime_policy.server_capabilities.ActiveServerCapabilityService` remains the capability snapshot seam and should be hardened rather than replaced.
+- `MCP.server_target_store.ConfiguredServerTargetStore` remains the existing persisted server-target/profile registry and should be generalized or wrapped for non-MCP server profile use instead of duplicated.
+- `Auth_Account_Interop.AuthAccountScopeService` remains the policy-gated server auth/account operation seam.
+- Legacy `tldw_api` config remains a compatibility input until migrated.
 
 Responsibilities:
 
@@ -67,7 +75,20 @@ Responsibilities:
 - Server switching invalidation.
 - Credential-bound client creation.
 
-Domain services should not read raw app config or cache server credentials directly. They should ask the connection foundation for an active server context and fail with a typed unavailable/unauthorized result when the server context is invalid.
+Domain services should not read raw app config or cache server credentials directly as the target state. They should ask the connection foundation for an active server context and fail with a typed unavailable/unauthorized result when the server context is invalid.
+
+Migration must be staged. The first implementation should introduce a compatibility client-provider facade that can still build clients from the legacy `tldw_api` config while exposing the new active-server context API. Domain services should then migrate to the provider in audited batches. Do not attempt a big-bang rewrite of every `_require_client()` implementation in the connection/auth tranche.
+
+Credential security requirements:
+
+- Do not persist bearer, API, refresh, OAuth, or BYOK secrets in plaintext JSON profile files.
+- Store secrets per server profile and per credential purpose.
+- Keep server target/profile metadata separate from secret material.
+- Redact secrets from logs, exceptions, debug dumps, exports, and unsupported-capability reports.
+- Refresh tokens must have explicit lifecycle handling and must be cleared on logout, credential removal, and server-profile deletion.
+- Server switching must never reuse a credential from another server profile.
+- Existing config tokens should be treated as legacy inputs; migration should either import them into the credential store and scrub them where safe, or leave them as read-only compatibility credentials until the user explicitly migrates.
+- Tests need fake or in-memory credential stores so no real OS keychain or local secret backend is required in CI.
 
 ### Source Authority Foundation
 
@@ -97,6 +118,20 @@ Responsibilities:
 
 Local notification state remains Chatbook-owned. Server reminders, server feeds, server claims notifications, and other server-owned event records remain active-server owned.
 
+Normalized event records must include enough identity for reconnect and dedupe:
+
+- Source authority: `local` or `server`.
+- Active server profile ID for server events.
+- Stream name and stream instance ID.
+- Event ID or server cursor when provided.
+- Fallback dedupe key derived from source, stream, event kind, entity ID, timestamp, and payload hash.
+- Emitted timestamp when provided and received timestamp when observed locally.
+- Transport type: local producer, SSE, WebSocket, polling, or manual refresh.
+- Payload kind and normalized entity reference.
+- Delivery state for notification presentation, separate from server-owned read/dismiss state.
+
+Reconnect behavior must be explicit. Observers should resume from the last acknowledged cursor where the server supports it, dedupe repeated events, bound retained event history, and cancel streams immediately when the active server changes or credentials are cleared.
+
 ### Sync/Mirror Foundation
 
 Sync should be explicit, domain-gated, and designed before broad adoption.
@@ -115,7 +150,21 @@ Minimum substrate:
 - Conflict strategy.
 - Last sync result and error state.
 
-Sync must be opt-in per domain. Initial sync candidates should be limited to domains with clear identity and authority rules, such as selected notes, media metadata, and chat metadata. Workspace data should remain isolated and require explicit workspace-aware sync rules.
+Sync must be opt-in per domain. No domain should get write-enabled sync until it passes an identity-readiness checklist. Early sync work should start as dry-run/read-only mirror reporting, not outbox replay.
+
+Identity-readiness checklist:
+
+- Stable local entity IDs.
+- Stable remote entity IDs.
+- Explicit local-to-remote identity map.
+- Defined scope mapping for global, user, server, and workspace records.
+- Clear create/update/delete parity, or explicit unsupported-operation handling.
+- Version, timestamp, hash, or ETag strategy for change detection.
+- Conflict strategy for concurrent local and remote edits.
+- Safe server-switch behavior for queued and pulled state.
+- Redaction policy for synced metadata.
+
+Potential early candidates can include selected notes, media metadata, or chat metadata only after they satisfy the checklist. Chat metadata is not eligible for write-enabled sync until server create/delete and streaming/persist identity limitations are resolved or explicitly modeled as read-only/server-owned edges. Workspace data should remain isolated and require explicit workspace-aware sync rules.
 
 ## Data Flow Rules
 
@@ -164,18 +213,26 @@ This should be the next implementation target.
 
 Deliverables:
 
-- Server profile registry suitable for one active server now and multiple switchable servers later.
-- Durable credential/token storage.
+- Consolidation plan for `RuntimePolicyContext`, `ActiveServerCapabilityService`, `ConfiguredServerTargetStore`, and `AuthAccountScopeService`.
+- Server profile registry suitable for one active server now and multiple switchable servers later, built by extending or wrapping `ConfiguredServerTargetStore` instead of adding an unrelated registry.
+- Secure durable credential/token storage with a testable in-memory backend.
 - Token refresh policy.
 - Logout and credential clearing.
 - Server profile switching with cache invalidation.
-- Active-server capability snapshot service.
+- Active-server capability snapshot hardening through `ActiveServerCapabilityService`.
+- Compatibility client-provider facade for services that still build clients from legacy `tldw_api` config.
+- Audit list of server-backed domain services and their migration status to the provider facade.
 - Consistent unavailable/unauthorized errors.
 - Tests covering token refresh, logout, unreachable server behavior, and server switching invalidation.
 
 Acceptance criteria:
 
-- Domain services obtain server context from one connection foundation.
+- Existing runtime-policy active-server state remains authoritative.
+- No second active-server registry or capability snapshot authority is introduced.
+- Newly migrated domain services obtain server context from the provider facade.
+- Unmigrated domain services are listed and continue to work through compatibility mode.
+- Secrets are not written to plaintext JSON profile files.
+- Logout, server-profile removal, and credential removal clear the right per-server secrets.
 - Switching servers cannot reuse stale capability snapshots or stale clients.
 - Local mode works without credential state.
 - Server mode cannot silently degrade into local writes.
@@ -186,14 +243,16 @@ Deliverables:
 
 - Shared server event-observation service for SSE streams.
 - Transport abstraction that can later support WebSockets.
-- Source-scoped normalized event records.
+- Source-scoped normalized event records with stream IDs, event IDs or cursors, dedupe keys, timestamps, and payload hashes.
 - Local notification routing from local producers.
 - Optional server-event-to-notification presentation without merging server authority into local inbox state.
-- Consistent retry/backoff and cancellation behavior.
+- Consistent retry/backoff, cursor resume, retention, dedupe, and cancellation behavior.
 
 Acceptance criteria:
 
 - Server event observation stops when active server changes.
+- Reconnects do not duplicate already-handled events.
+- Streams resume from supported cursors where the server contract allows it.
 - Local notifications work offline.
 - Server notification/reminder state remains server-owned.
 - Notification producers do not bypass category/global delivery settings.
@@ -209,11 +268,15 @@ Deliverables:
 - Conflict strategy enum and default conflict policy.
 - Per-domain sync eligibility registry.
 - Sync dry-run/reporting API.
+- Identity-readiness checklist enforcement before any write-enabled sync.
+- Read-only mirror/dry-run mode before outbox replay for a domain.
 - Source-aware unsupported reports for unsyncable domains.
 
 Acceptance criteria:
 
 - No domain can enter sync accidentally.
+- No domain can use write-enabled sync until it passes the identity-readiness checklist.
+- Chat metadata remains read-only/server-owned for sync until server create/delete and persist identity limitations are explicitly modeled.
 - Workspace-scoped records preserve workspace boundaries.
 - Server switching cannot replay queued operations against the wrong server.
 - Conflict results are explicit and inspectable.
