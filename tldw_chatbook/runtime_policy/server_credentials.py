@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from keyring.errors import PasswordDeleteError
+
 
 SERVER_CREDENTIAL_ACCESS_TOKEN = "access_token"
 SERVER_CREDENTIAL_REFRESH_TOKEN = "refresh_token"
@@ -56,10 +58,17 @@ def _normalize_non_empty(value: str, field_name: str) -> str:
     return normalized
 
 
+def _normalize_purpose(purpose: str) -> str:
+    normalized = _normalize_non_empty(purpose, "purpose")
+    if ":" in normalized:
+        raise ValueError("purpose must not contain ':'")
+    return normalized
+
+
 def _credential_ref(server_id: str, purpose: str) -> ServerCredentialRef:
     return ServerCredentialRef(
         server_id=_normalize_non_empty(server_id, "server_id"),
-        purpose=_normalize_non_empty(purpose, "purpose"),
+        purpose=_normalize_purpose(purpose),
     )
 
 
@@ -111,7 +120,7 @@ class KeyringServerCredentialStore:
         ref = _credential_ref(server_id, purpose)
         try:
             self._keyring.delete_password(self.service_name, ref.username)
-        except Exception:
+        except PasswordDeleteError:
             return
 
     def clear_server(self, server_id: str) -> None:
