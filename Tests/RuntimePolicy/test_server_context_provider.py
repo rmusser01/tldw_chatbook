@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -82,19 +83,18 @@ def _provider(
 def test_resolves_matching_target_and_credential_store_secret(tmp_path):
     credentials = InMemoryServerCredentialStore()
     credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "bearer-secret")
+    target = ConfiguredServerTarget(
+        server_id="https://server.example.com/api",
+        label="Primary",
+        base_url="https://server.example.com/api/",
+        auth_mode="bearer",
+        is_default=True,
+    )
 
     provider = _provider(
         tmp_path,
         credential_store=credentials,
-        targets=[
-            ConfiguredServerTarget(
-                server_id="https://server.example.com/api",
-                label="Primary",
-                base_url="https://server.example.com/api/",
-                auth_mode="bearer",
-                is_default=True,
-            )
-        ],
+        targets=[target],
     )
 
     context = provider.get_active_context()
@@ -105,6 +105,7 @@ def test_resolves_matching_target_and_credential_store_secret(tmp_path):
     assert context.auth_method == "bearer"
     assert context.auth_token == "bearer-secret"
     assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    assert context.target == target
 
 
 def test_rejects_server_mode_without_active_server(tmp_path):
@@ -137,6 +138,8 @@ def test_legacy_fallback_works_when_no_target_exists_and_app_config_matches_acti
     assert context.auth_method == "bearer"
     assert context.auth_token == "legacy-bearer"
     assert context.credential_source == "legacy:tldw_api"
+    assert context.target.server_id == "https://server.example.com/api"
+    assert context.target.auth_reference == "legacy:tldw_api"
 
 
 def test_legacy_target_prefers_credential_store_token_over_legacy_config(tmp_path):
@@ -226,6 +229,28 @@ def test_bearer_auth_prefers_bearer_token_then_access_token_before_legacy_config
     assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
 
 
+def test_context_computes_bearer_headers_from_effective_auth_token(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "stored-bearer")
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+    )
+
+    context = provider.get_active_context()
+
+    assert context.server_headers == {"Authorization": "Bearer stored-bearer"}
+
+
 def test_api_key_auth_prefers_api_key_credential_before_legacy_config(tmp_path):
     credentials = InMemoryServerCredentialStore()
     credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key")
@@ -256,6 +281,120 @@ def test_api_key_auth_prefers_api_key_credential_before_legacy_config(tmp_path):
 
     assert context.auth_token == "stored-api-key"
     assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_API_KEY}"
+
+
+def test_context_computes_api_key_headers_from_effective_auth_token(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key")
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                is_default=True,
+            )
+        ],
+    )
+
+    context = provider.get_active_context()
+
+    assert context.server_headers == {"X-API-KEY": "stored-api-key"}
+
+
+def test_context_capabilities_reflect_runtime_state_and_target_status(tmp_path):
+    runtime_context = _runtime_context()
+    runtime_context.state = replace(
+        runtime_context.state,
+        server_reachability="reachable",
+        server_auth_state="authenticated",
+        last_known_server_label="Runtime Label",
+    )
+    provider = _provider(
+        tmp_path,
+        runtime_context=runtime_context,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                is_default=True,
+                last_known_reachability="unreachable",
+                last_known_auth_state="auth_required",
+                last_known_server_label="Target Label",
+            )
+        ],
+    )
+
+    context = provider.get_active_context()
+
+    assert context.capabilities == {
+        "server_configured": True,
+        "reachability": "reachable",
+        "auth_state": "authenticated",
+        "last_known_server_label": "Runtime Label",
+        "target_last_known_reachability": "unreachable",
+        "target_last_known_auth_state": "auth_required",
+        "target_last_known_server_label": "Target Label",
+    }
+
+
+def test_context_capabilities_update_when_active_server_runtime_state_changes(tmp_path):
+    runtime_context = _runtime_context()
+    target_store = _target_store(
+        tmp_path,
+        [
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                is_default=True,
+                last_known_reachability="reachable",
+                last_known_auth_state="authenticated",
+                last_known_server_label="Primary Target",
+            ),
+            ConfiguredServerTarget(
+                server_id="https://backup.example.com/api",
+                label="Backup",
+                base_url="https://backup.example.com/api",
+                auth_mode="api_key",
+                last_known_reachability="unreachable",
+                last_known_auth_state="session_invalid",
+                last_known_server_label="Backup Target",
+            ),
+        ],
+    )
+    provider = RuntimeServerContextProvider(
+        runtime_context=runtime_context,
+        target_store=target_store,
+        credential_store=InMemoryServerCredentialStore(),
+        app_config={},
+    )
+
+    first_context = provider.get_active_context()
+    runtime_context.state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="https://backup.example.com/api",
+        server_configured=True,
+        server_reachability="unreachable",
+        server_auth_state="session_invalid",
+        last_known_server_label="Backup Runtime",
+    )
+    second_context = provider.get_active_context()
+
+    assert first_context.target.server_id == "https://server.example.com/api"
+    assert first_context.capabilities["reachability"] == "unknown"
+    assert first_context.capabilities["target_last_known_server_label"] == "Primary Target"
+    assert second_context.target.server_id == "https://backup.example.com/api"
+    assert second_context.capabilities["reachability"] == "unreachable"
+    assert second_context.capabilities["auth_state"] == "session_invalid"
+    assert second_context.capabilities["last_known_server_label"] == "Backup Runtime"
+    assert second_context.capabilities["target_last_known_server_label"] == "Backup Target"
 
 
 def test_profile_target_auth_resolution_does_not_re_resolve_active_target(tmp_path):

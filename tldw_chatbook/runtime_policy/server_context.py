@@ -24,6 +24,9 @@ class ActiveServerContext:
     auth_method: str
     auth_token: str | None
     credential_source: str
+    target: ConfiguredServerTarget
+    server_headers: Mapping[str, str]
+    capabilities: Mapping[str, Any]
 
 
 class ServerContextUnavailable(RuntimeError):
@@ -70,6 +73,9 @@ class RuntimeServerContextProvider:
             auth_method=target.auth_mode,
             auth_token=auth_token,
             credential_source=credential_source,
+            target=target,
+            server_headers=self._build_server_headers(target.auth_mode, auth_token),
+            capabilities=self._build_capabilities(target),
         )
 
     def build_client(self) -> TLDWAPIClient:
@@ -148,6 +154,28 @@ class RuntimeServerContextProvider:
             return {}
         api_config = self.app_config.get("tldw_api", {})
         return api_config if isinstance(api_config, Mapping) else {}
+
+    def _build_capabilities(self, target: ConfiguredServerTarget) -> dict[str, Any]:
+        state = self.runtime_context.state
+        return {
+            "server_configured": state.server_configured,
+            "reachability": state.server_reachability,
+            "auth_state": state.server_auth_state,
+            "last_known_server_label": state.last_known_server_label,
+            "target_last_known_reachability": target.last_known_reachability,
+            "target_last_known_auth_state": target.last_known_auth_state,
+            "target_last_known_server_label": target.last_known_server_label,
+        }
+
+    @staticmethod
+    def _build_server_headers(auth_method: str, auth_token: str | None) -> dict[str, str]:
+        if not auth_token:
+            return {}
+        if auth_method in {"bearer", "custom_token"}:
+            return {"Authorization": f"Bearer {auth_token}"}
+        if auth_method == "api_key":
+            return {"X-API-KEY": auth_token}
+        return {}
 
     @staticmethod
     def _purpose_from_auth_reference(auth_reference: str | None) -> str | None:
