@@ -8812,6 +8812,28 @@ class TLDWAPIClient:
         )
         return SuggestionActionResponse.model_validate(response)
 
+    async def call_server_writing_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "writing",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
     async def list_manuscript_projects(
         self,
         *,

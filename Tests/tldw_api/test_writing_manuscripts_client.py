@@ -350,6 +350,52 @@ async def test_writing_project_routes_wire_and_return_typed_models(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_writing_namespace_gateway_routes_server_only_writing_suite_surfaces(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.call_server_writing_endpoint("GET", "capabilities")
+    await client.call_server_writing_endpoint(
+        "POST",
+        "/api/v1/writing/snapshot/import",
+        payload={"projects": []},
+        headers={"Idempotency-Key": "writing-import-1"},
+    )
+    await client.call_server_writing_endpoint(
+        "PATCH",
+        "templates/three-act",
+        payload={"description": "Updated template"},
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/writing/capabilities")
+    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/writing/snapshot/import")
+    assert mocked.await_args_list[1].kwargs["json_data"] == {"projects": []}
+    assert mocked.await_args_list[1].kwargs["headers"] == {"Idempotency-Key": "writing-import-1"}
+    assert mocked.await_args_list[2].args[:2] == ("PATCH", "/api/v1/writing/templates/three-act")
+    assert mocked.await_args_list[2].kwargs["json_data"] == {"description": "Updated template"}
+
+
+@pytest.mark.asyncio
+async def test_writing_namespace_gateway_rejects_cross_namespace_and_unsafe_routes(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(client, "_request", mocked)
+
+    unsafe_calls = [
+        client.call_server_writing_endpoint("GET", "/api/v1/admin/users"),
+        client.call_server_writing_endpoint("GET", "/api/v1/prompts/templates"),
+        client.call_server_writing_endpoint("GET", "../admin/users"),
+        client.call_server_writing_endpoint("OPTIONS", "capabilities"),
+    ]
+    for call in unsafe_calls:
+        with pytest.raises(ValueError):
+            await call
+
+    mocked.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_writing_hierarchy_routes_wire_and_return_typed_models(monkeypatch):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
