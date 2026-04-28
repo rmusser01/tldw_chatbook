@@ -205,7 +205,7 @@ def derive_configured_server_binding(app_config: Mapping[str, Any] | None) -> Co
     if not isinstance(api_config, Mapping):
         api_config = {}
 
-    raw_url = str(api_config.get("base_url") or api_config.get("api_url") or "").strip()
+    raw_url = str(api_config.get("base_url") or api_config.get("api_url") or api_config.get("url") or "").strip()
     if not raw_url:
         return ConfiguredServerBinding(
             active_server_id=None,

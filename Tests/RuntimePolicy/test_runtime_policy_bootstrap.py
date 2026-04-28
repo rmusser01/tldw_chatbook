@@ -162,6 +162,62 @@ def test_load_runtime_policy_for_app_derives_and_persists_authoritative_server_b
     assert app_like.runtime_backend == "local"
 
 
+def test_load_runtime_policy_for_app_supports_legacy_url_alias_and_provider_resolution(
+    tmp_path,
+):
+    from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
+    from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
+    from tldw_chatbook.runtime_policy.server_credentials import InMemoryServerCredentialStore
+    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
+    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+
+    app_config = {
+        "tldw_api": {
+            "url": "https://Alias.Example.COM:8443/api/",
+            "auth_mode": "bearer",
+            "bearer_token": "legacy-bearer",
+        }
+    }
+    store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
+    store.save(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="https://old.example.com/api",
+            server_configured=True,
+            last_known_server_label="old.example.com",
+        )
+    )
+    app_like = SimpleNamespace(app_config=app_config, app_state=AppState())
+
+    context = load_runtime_policy_for_app(app_like, store=store)
+
+    assert context.state.active_source == "server"
+    assert context.state.active_server_id == "https://alias.example.com:8443/api"
+    assert context.state.server_configured is True
+    assert context.state.last_known_server_label == "alias.example.com:8443"
+    assert store.load() == context.state
+
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    target = target_store.upsert_legacy_config_target(app_config)
+    assert target is not None
+    assert target.server_id == context.state.active_server_id
+
+    provider = RuntimeServerContextProvider(
+        runtime_context=context,
+        target_store=target_store,
+        credential_store=InMemoryServerCredentialStore(),
+        app_config=app_config,
+    )
+
+    active_context = provider.get_active_context()
+
+    assert active_context.active_server_id == "https://alias.example.com:8443/api"
+    assert active_context.base_url == "https://alias.example.com:8443/api"
+    assert active_context.auth_method == "bearer"
+    assert active_context.auth_token == "legacy-bearer"
+    assert active_context.credential_source == "legacy:tldw_api"
+
+
 def test_load_runtime_policy_for_app_rebinds_persisted_runtime_state_to_configured_server_identity(
     tmp_path,
 ):
