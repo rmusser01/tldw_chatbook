@@ -7461,6 +7461,72 @@ class TLDWAPIClient:
         )
         return ChunkingTemplateLearnResponse.model_validate(response)
 
+    async def call_server_embeddings_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "embeddings",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_rag_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "rag",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_vector_stores_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "vector_stores",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
     async def list_embedding_collections(self) -> EmbeddingCollectionListResponse:
         response = await self._request("GET", "/api/v1/embeddings/collections")
         return [EmbeddingCollectionResponse.model_validate(item) for item in response]
