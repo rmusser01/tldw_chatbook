@@ -51,12 +51,18 @@ class RuntimeServerContextProvider:
     def get_active_context(self) -> ActiveServerContext:
         active_server_id = self._require_active_server_id()
         target = self.resolve_target()
+        using_legacy_fallback_target = False
         if target is None:
             target = self._legacy_target_for_active_server(active_server_id)
+            using_legacy_fallback_target = target is not None
         if target is None:
             raise ServerContextUnavailable(f"Active server is not configured: {active_server_id}")
 
-        auth_token, credential_source = self._resolve_auth_token(active_server_id, target)
+        auth_token, credential_source = self._resolve_auth_token(
+            active_server_id,
+            target,
+            allow_legacy_config=using_legacy_fallback_target or target.auth_reference == "legacy:tldw_api",
+        )
         return ActiveServerContext(
             active_server_id=active_server_id,
             label=target.label or None,
@@ -104,7 +110,13 @@ class RuntimeServerContextProvider:
             return None
         return ConfiguredServerTarget.from_legacy_tldw_api_config(self.app_config)
 
-    def _resolve_auth_token(self, server_id: str, target: ConfiguredServerTarget) -> tuple[str | None, str]:
+    def _resolve_auth_token(
+        self,
+        server_id: str,
+        target: ConfiguredServerTarget,
+        *,
+        allow_legacy_config: bool,
+    ) -> tuple[str | None, str]:
         purpose = self._purpose_from_auth_reference(target.auth_reference)
         if purpose is not None:
             secret = self.credential_store.get_secret(server_id, purpose)
@@ -117,7 +129,7 @@ class RuntimeServerContextProvider:
             if secret is not None:
                 return secret, f"credential_store:{candidate_purpose}"
 
-        if target.auth_reference == "legacy:tldw_api" or self.resolve_target() is None:
+        if allow_legacy_config:
             legacy_token = self._legacy_config_token()
             if legacy_token is not None:
                 return legacy_token, "legacy:tldw_api"

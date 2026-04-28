@@ -28,6 +28,17 @@ class SavingRuntimeStore:
         self.saved_states.append(state)
 
 
+class CountingTargetStore(ConfiguredServerTargetStore):
+    def __init__(self, path, targets: list[ConfiguredServerTarget]) -> None:
+        super().__init__(path)
+        self.save_targets(targets)
+        self.get_target_calls = 0
+
+    def get_target(self, server_id: str) -> ConfiguredServerTarget | None:
+        self.get_target_calls += 1
+        return super().get_target(server_id)
+
+
 def _runtime_context(
     *,
     active_source: str = "server",
@@ -180,6 +191,97 @@ def test_legacy_fallback_without_target_prefers_credential_store_token_over_lega
 
     assert context.auth_token == "stored-bearer"
     assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+
+
+def test_bearer_auth_prefers_bearer_token_then_access_token_before_legacy_config(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "stored-access")
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "stored-bearer")
+
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Legacy Profile",
+                base_url="https://server.example.com/api",
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "stale-legacy",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    context = provider.get_active_context()
+
+    assert context.auth_token == "stored-bearer"
+    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+
+
+def test_api_key_auth_prefers_api_key_credential_before_legacy_config(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key")
+
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Legacy API Key Profile",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "api_key": "stale-legacy-api-key",
+                "auth_mode": "api_key",
+            }
+        },
+    )
+
+    context = provider.get_active_context()
+
+    assert context.auth_token == "stored-api-key"
+    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_API_KEY}"
+
+
+def test_profile_target_auth_resolution_does_not_re_resolve_active_target(tmp_path):
+    target_store = CountingTargetStore(
+        tmp_path / "targets.json",
+        [
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                is_default=True,
+            )
+        ],
+    )
+    provider = RuntimeServerContextProvider(
+        runtime_context=_runtime_context(),
+        target_store=target_store,
+        credential_store=InMemoryServerCredentialStore(),
+        app_config={},
+    )
+
+    context = provider.get_active_context()
+
+    assert context.auth_token is None
+    assert target_store.get_target_calls == 1
 
 
 def test_build_client_uses_active_context_base_url_and_bearer_token(tmp_path):
