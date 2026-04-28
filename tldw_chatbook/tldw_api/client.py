@@ -934,11 +934,51 @@ from .watchlists_schemas import (
     SourceListResponse,
     SourceResponse,
     SourceUpdateRequest,
+    WatchlistFiltersPayload,
+    WatchlistGroupCreateRequest,
+    WatchlistGroupListResponse,
+    WatchlistGroupResponse,
+    WatchlistGroupUpdateRequest,
+    WatchlistJobCreateRequest,
+    WatchlistJobDeleteResponse,
+    WatchlistJobListResponse,
+    WatchlistJobResponse,
+    WatchlistJobUpdateRequest,
     WatchlistAlertRuleCreateRequest,
     WatchlistAlertRuleDeleteResponse,
     WatchlistAlertRuleListResponse,
     WatchlistAlertRuleResponse,
     WatchlistAlertRuleUpdateRequest,
+    WatchlistOutputCreateRequest,
+    WatchlistOutputListResponse,
+    WatchlistOutputResponse,
+    WatchlistPreviewResponse,
+    WatchlistScrapedItemListResponse,
+    WatchlistScrapedItemResponse,
+    WatchlistScrapedItemSmartCountsResponse,
+    WatchlistScrapedItemUpdateRequest,
+    WatchlistSourceBulkCreateRequest,
+    WatchlistSourceBulkCreateResponse,
+    WatchlistSourceCheckNowRequest,
+    WatchlistSourceCheckNowResponse,
+    WatchlistSourceImportResponse,
+    WatchlistSourceSeenResetResponse,
+    WatchlistSourceSeenStatsResponse,
+    WatchlistSourceTestRequest,
+    WatchlistTagListResponse,
+    WatchlistTemplateComposerFlowCheckRequest,
+    WatchlistTemplateComposerFlowCheckResponse,
+    WatchlistTemplateComposerSectionRequest,
+    WatchlistTemplateComposerSectionResponse,
+    WatchlistTemplateCreateRequest,
+    WatchlistTemplateDetailResponse,
+    WatchlistTemplateListResponse,
+    WatchlistTemplatePreviewRequest,
+    WatchlistTemplatePreviewResponse,
+    WatchlistTemplateValidationRequest,
+    WatchlistTemplateValidationResponse,
+    WatchlistTemplateVersionsResponse,
+    WatchlistRunCancelResponse,
     WatchlistRunDetailResponse,
     WatchlistRunListResponse,
     WatchlistRunResponse,
@@ -5651,6 +5691,363 @@ class TLDWAPIClient:
             response = {**response, "source_id": source_id}
         return SourceDeleteResponse.model_validate(response)
 
+    async def export_watchlist_sources(
+        self,
+        *,
+        tag: list[str] | None = None,
+        group: list[int] | None = None,
+        source_type: str | None = None,
+        target_user_id: int | None = None,
+    ) -> bytes:
+        response = await self._request_bytes(
+            "GET",
+            "/api/v1/watchlists/sources/export",
+            params={
+                key: value
+                for key, value in {
+                    "tag": tag,
+                    "group": group,
+                    "type": source_type,
+                    "target_user_id": target_user_id,
+                }.items()
+                if value is not None
+            },
+        )
+        return response
+
+    async def import_watchlist_sources(
+        self,
+        content: bytes,
+        *,
+        filename: str = "sources.opml",
+        active: bool = True,
+        tags: list[str] | None = None,
+        group_id: int | None = None,
+    ) -> WatchlistSourceImportResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/sources/import",
+            data={key: value for key, value in {"active": active, "tags": tags, "group_id": group_id}.items() if value is not None},
+            files=[("file", (filename, content, "application/xml"))],
+        )
+        return WatchlistSourceImportResponse.model_validate(response)
+
+    async def bulk_create_watchlist_sources(
+        self,
+        request_data: WatchlistSourceBulkCreateRequest,
+    ) -> WatchlistSourceBulkCreateResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/sources/bulk",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WatchlistSourceBulkCreateResponse.model_validate(response)
+
+    async def check_watchlist_sources_now(
+        self,
+        request_data: WatchlistSourceCheckNowRequest,
+    ) -> WatchlistSourceCheckNowResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/sources/check-now",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return WatchlistSourceCheckNowResponse.model_validate(response)
+
+    async def get_watchlist_source_seen_stats(
+        self,
+        source_id: int,
+        *,
+        target_user_id: int | None = None,
+        keys_limit: int = 0,
+    ) -> WatchlistSourceSeenStatsResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/watchlists/sources/{source_id}/seen",
+            params={
+                key: value
+                for key, value in {"target_user_id": target_user_id, "keys_limit": keys_limit}.items()
+                if value is not None
+            },
+        )
+        return WatchlistSourceSeenStatsResponse.model_validate(response)
+
+    async def clear_watchlist_source_seen_state(
+        self,
+        source_id: int,
+        *,
+        target_user_id: int | None = None,
+        clear_backoff: bool = True,
+    ) -> WatchlistSourceSeenResetResponse:
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/watchlists/sources/{source_id}/seen",
+            params={
+                key: value
+                for key, value in {"target_user_id": target_user_id, "clear_backoff": clear_backoff}.items()
+                if value is not None
+            },
+        )
+        return WatchlistSourceSeenResetResponse.model_validate(response)
+
+    async def test_watchlist_source_draft(
+        self,
+        request_data: WatchlistSourceTestRequest,
+        *,
+        limit: int = 20,
+    ) -> WatchlistPreviewResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/sources/test",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            params={"limit": limit},
+        )
+        return WatchlistPreviewResponse.model_validate(response)
+
+    async def test_watchlist_source(
+        self,
+        source_id: int,
+        *,
+        limit: int = 20,
+    ) -> WatchlistPreviewResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/watchlists/sources/{source_id}/test",
+            params={"limit": limit},
+        )
+        return WatchlistPreviewResponse.model_validate(response)
+
+    async def restore_watchlist_source(self, source_id: int) -> SourceResponse:
+        response = await self._request("POST", f"/api/v1/watchlists/sources/{source_id}/restore")
+        return SourceResponse.model_validate(response)
+
+    async def list_watchlist_tags(
+        self,
+        *,
+        q: str | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> WatchlistTagListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/tags",
+            params={key: value for key, value in {"q": q, "page": page, "size": size}.items() if value is not None},
+        )
+        return WatchlistTagListResponse.model_validate(response)
+
+    async def list_watchlist_groups(
+        self,
+        *,
+        q: str | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> WatchlistGroupListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/groups",
+            params={key: value for key, value in {"q": q, "page": page, "size": size}.items() if value is not None},
+        )
+        return WatchlistGroupListResponse.model_validate(response)
+
+    async def create_watchlist_group(self, request_data: WatchlistGroupCreateRequest) -> WatchlistGroupResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/groups",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WatchlistGroupResponse.model_validate(response)
+
+    async def update_watchlist_group(
+        self,
+        group_id: int,
+        request_data: WatchlistGroupUpdateRequest,
+    ) -> WatchlistGroupResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/watchlists/groups/{group_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WatchlistGroupResponse.model_validate(response)
+
+    async def delete_watchlist_group(self, group_id: int) -> dict[str, Any]:
+        response = await self._request("DELETE", f"/api/v1/watchlists/groups/{group_id}")
+        return dict(response or {"success": True})
+
+    async def get_watchlist_settings(self) -> dict[str, Any]:
+        response = await self._request("GET", "/api/v1/watchlists/settings")
+        return dict(response or {})
+
+    async def record_watchlist_onboarding_telemetry(self, payload: dict[str, Any]) -> dict[str, Any]:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/telemetry/onboarding",
+            json_data=dict(payload),
+        )
+        return dict(response or {})
+
+    async def get_watchlist_onboarding_telemetry_summary(
+        self,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> dict[str, Any]:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/telemetry/onboarding/summary",
+            params={key: value for key, value in {"since": since, "until": until}.items() if value is not None},
+        )
+        return dict(response or {})
+
+    async def record_watchlist_ia_experiment_telemetry(self, payload: dict[str, Any]) -> dict[str, Any]:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/telemetry/ia-experiment",
+            json_data=dict(payload),
+        )
+        return dict(response or {})
+
+    async def get_watchlist_ia_experiment_telemetry_summary(
+        self,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> dict[str, Any]:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/telemetry/ia-experiment/summary",
+            params={key: value for key, value in {"since": since, "until": until}.items() if value is not None},
+        )
+        return dict(response or {})
+
+    async def get_watchlist_rc_telemetry_summary(
+        self,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> dict[str, Any]:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/telemetry/rc-summary",
+            params={key: value for key, value in {"since": since, "until": until}.items() if value is not None},
+        )
+        return dict(response or {})
+
+    async def create_watchlist_job(self, request_data: WatchlistJobCreateRequest) -> WatchlistJobResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/jobs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WatchlistJobResponse.model_validate(response)
+
+    async def preview_watchlist_job(
+        self,
+        job_id: int,
+        *,
+        limit: int = 20,
+        per_source: int = 10,
+        include_content: bool = False,
+    ) -> WatchlistPreviewResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/watchlists/jobs/{job_id}/preview",
+            params={"limit": limit, "per_source": per_source, "include_content": include_content},
+        )
+        return WatchlistPreviewResponse.model_validate(response)
+
+    async def list_watchlist_jobs(
+        self,
+        *,
+        q: str | None = None,
+        target_user_id: int | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> WatchlistJobListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/jobs",
+            params={
+                key: value
+                for key, value in {
+                    "q": q,
+                    "target_user_id": target_user_id,
+                    "page": page,
+                    "size": size,
+                }.items()
+                if value is not None
+            },
+        )
+        return WatchlistJobListResponse.model_validate(response)
+
+    async def get_watchlist_job(
+        self,
+        job_id: int,
+        *,
+        include_internal: bool = False,
+        target_user_id: int | None = None,
+    ) -> WatchlistJobResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/watchlists/jobs/{job_id}",
+            params={
+                key: value
+                for key, value in {
+                    "include_internal": include_internal,
+                    "target_user_id": target_user_id,
+                }.items()
+                if value is not None
+            },
+        )
+        return WatchlistJobResponse.model_validate(response)
+
+    async def update_watchlist_job(
+        self,
+        job_id: int,
+        request_data: WatchlistJobUpdateRequest,
+    ) -> WatchlistJobResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/watchlists/jobs/{job_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WatchlistJobResponse.model_validate(response)
+
+    async def delete_watchlist_job(self, job_id: int) -> WatchlistJobDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/watchlists/jobs/{job_id}")
+        if isinstance(response, dict) and "job_id" not in response:
+            response = {**response, "job_id": job_id}
+        return WatchlistJobDeleteResponse.model_validate(response or {"success": True, "job_id": job_id})
+
+    async def restore_watchlist_job(self, job_id: int) -> WatchlistJobResponse:
+        response = await self._request("POST", f"/api/v1/watchlists/jobs/{job_id}/restore")
+        return WatchlistJobResponse.model_validate(response)
+
+    async def replace_watchlist_job_filters(
+        self,
+        job_id: int,
+        request_data: WatchlistFiltersPayload | dict[str, Any],
+    ) -> WatchlistFiltersPayload:
+        payload = WatchlistFiltersPayload.model_validate(request_data)
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/watchlists/jobs/{job_id}/filters",
+            json_data=payload.model_dump(mode="json"),
+        )
+        return WatchlistFiltersPayload.model_validate(response)
+
+    async def append_watchlist_job_filters(
+        self,
+        job_id: int,
+        request_data: WatchlistFiltersPayload | dict[str, Any],
+    ) -> WatchlistFiltersPayload:
+        payload = WatchlistFiltersPayload.model_validate(request_data)
+        response = await self._request(
+            "POST",
+            f"/api/v1/watchlists/jobs/{job_id}/filters:add",
+            json_data=payload.model_dump(mode="json"),
+        )
+        return WatchlistFiltersPayload.model_validate(response)
+
     async def trigger_watchlist_run(self, job_id: int) -> WatchlistRunResponse:
         response = await self._request("POST", f"/api/v1/watchlists/jobs/{job_id}/run")
         return WatchlistRunResponse.model_validate(response)
@@ -5683,6 +6080,53 @@ class TLDWAPIClient:
             response = {"items": response, "total": len(response), "has_more": False}
         return WatchlistRunListResponse.model_validate(response)
 
+    async def list_watchlist_runs_for_job(
+        self,
+        job_id: int,
+        *,
+        target_user_id: int | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> WatchlistRunListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/watchlists/jobs/{job_id}/runs",
+            params={
+                key: value
+                for key, value in {
+                    "target_user_id": target_user_id,
+                    "page": page,
+                    "size": size,
+                }.items()
+                if value is not None
+            },
+        )
+        return WatchlistRunListResponse.model_validate(response)
+
+    async def list_watchlist_runs_global(
+        self,
+        *,
+        q: str | None = None,
+        target_user_id: int | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> WatchlistRunListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/runs",
+            params={
+                key: value
+                for key, value in {
+                    "q": q,
+                    "target_user_id": target_user_id,
+                    "page": page,
+                    "size": size,
+                }.items()
+                if value is not None
+            },
+        )
+        return WatchlistRunListResponse.model_validate(response)
+
     async def get_watchlist_run(self, run_id: int) -> WatchlistRunResponse:
         response = await self._request("GET", f"/api/v1/watchlists/runs/{run_id}")
         return WatchlistRunResponse.model_validate(response)
@@ -5703,6 +6147,307 @@ class TLDWAPIClient:
             },
         )
         return WatchlistRunDetailResponse.model_validate(response)
+
+    async def export_watchlist_runs_csv(
+        self,
+        *,
+        scope: str = "global",
+        job_id: int | None = None,
+        target_user_id: int | None = None,
+        q: str | None = None,
+        page: int = 1,
+        size: int = 200,
+        include_tallies: bool = False,
+        tallies_mode: str | None = None,
+    ) -> bytes:
+        return await self._request_bytes(
+            "GET",
+            "/api/v1/watchlists/runs/export.csv",
+            params={
+                key: value
+                for key, value in {
+                    "scope": scope,
+                    "job_id": job_id,
+                    "target_user_id": target_user_id,
+                    "q": q,
+                    "page": page if page != 1 else None,
+                    "size": size if size != 200 else None,
+                    "include_tallies": include_tallies,
+                    "tallies_mode": tallies_mode,
+                }.items()
+                if value is not None
+            },
+        )
+
+    async def cancel_watchlist_run(
+        self,
+        run_id: int,
+        *,
+        target_user_id: int | None = None,
+    ) -> WatchlistRunCancelResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/watchlists/runs/{run_id}/cancel",
+            params={key: value for key, value in {"target_user_id": target_user_id}.items() if value is not None},
+        )
+        return WatchlistRunCancelResponse.model_validate(response)
+
+    async def get_watchlist_run_audio(
+        self,
+        run_id: int,
+        *,
+        target_user_id: int | None = None,
+    ) -> dict[str, Any]:
+        response = await self._request(
+            "GET",
+            f"/api/v1/watchlists/runs/{run_id}/audio",
+            params={key: value for key, value in {"target_user_id": target_user_id}.items() if value is not None},
+        )
+        return dict(response or {})
+
+    async def export_watchlist_run_tallies_csv(
+        self,
+        run_id: int,
+        *,
+        target_user_id: int | None = None,
+    ) -> bytes:
+        return await self._request_bytes(
+            "GET",
+            f"/api/v1/watchlists/runs/{run_id}/tallies.csv",
+            params={key: value for key, value in {"target_user_id": target_user_id}.items() if value is not None},
+        )
+
+    async def get_watchlist_item_smart_counts(
+        self,
+        *,
+        run_id: int | None = None,
+        job_id: int | None = None,
+        source_id: int | None = None,
+        status: str | None = None,
+        target_user_id: int | None = None,
+        q: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        queue_run_id: int | None = None,
+    ) -> WatchlistScrapedItemSmartCountsResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/items/smart-counts",
+            params={
+                key: value
+                for key, value in {
+                    "run_id": run_id,
+                    "job_id": job_id,
+                    "source_id": source_id,
+                    "status": status,
+                    "target_user_id": target_user_id,
+                    "q": q,
+                    "since": since,
+                    "until": until,
+                    "queue_run_id": queue_run_id,
+                }.items()
+                if value is not None
+            },
+        )
+        return WatchlistScrapedItemSmartCountsResponse.model_validate(response)
+
+    async def list_watchlist_items(
+        self,
+        *,
+        run_id: int | None = None,
+        job_id: int | None = None,
+        source_id: int | None = None,
+        status: str | None = None,
+        reviewed: bool | None = None,
+        queued_for_briefing: bool | None = None,
+        target_user_id: int | None = None,
+        q: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> WatchlistScrapedItemListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/items",
+            params={
+                key: value
+                for key, value in {
+                    "run_id": run_id,
+                    "job_id": job_id,
+                    "source_id": source_id,
+                    "status": status,
+                    "reviewed": reviewed,
+                    "queued_for_briefing": queued_for_briefing,
+                    "target_user_id": target_user_id,
+                    "q": q,
+                    "since": since,
+                    "until": until,
+                    "page": page,
+                    "size": size,
+                }.items()
+                if value is not None
+            },
+        )
+        return WatchlistScrapedItemListResponse.model_validate(response)
+
+    async def get_watchlist_item(
+        self,
+        item_id: int,
+        *,
+        target_user_id: int | None = None,
+    ) -> WatchlistScrapedItemResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/watchlists/items/{item_id}",
+            params={key: value for key, value in {"target_user_id": target_user_id}.items() if value is not None},
+        )
+        return WatchlistScrapedItemResponse.model_validate(response)
+
+    async def update_watchlist_item(
+        self,
+        item_id: int,
+        request_data: WatchlistScrapedItemUpdateRequest,
+    ) -> WatchlistScrapedItemResponse:
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/watchlists/items/{item_id}",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WatchlistScrapedItemResponse.model_validate(response)
+
+    async def create_watchlist_output(
+        self,
+        request_data: WatchlistOutputCreateRequest,
+    ) -> WatchlistOutputResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/outputs",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WatchlistOutputResponse.model_validate(response)
+
+    async def list_watchlist_outputs(
+        self,
+        *,
+        run_id: int | None = None,
+        job_id: int | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> WatchlistOutputListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/watchlists/outputs",
+            params={
+                key: value
+                for key, value in {"run_id": run_id, "job_id": job_id, "page": page, "size": size}.items()
+                if value is not None
+            },
+        )
+        return WatchlistOutputListResponse.model_validate(response)
+
+    async def get_watchlist_output(self, output_id: int) -> WatchlistOutputResponse:
+        response = await self._request("GET", f"/api/v1/watchlists/outputs/{output_id}")
+        return WatchlistOutputResponse.model_validate(response)
+
+    async def download_watchlist_output(self, output_id: int) -> bytes:
+        return await self._request_bytes("GET", f"/api/v1/watchlists/outputs/{output_id}/download")
+
+    async def list_watchlist_templates(self) -> WatchlistTemplateListResponse:
+        response = await self._request("GET", "/api/v1/watchlists/templates")
+        return WatchlistTemplateListResponse.model_validate(response)
+
+    async def create_watchlist_template(
+        self,
+        request_data: WatchlistTemplateCreateRequest,
+    ) -> WatchlistTemplateDetailResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/templates",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WatchlistTemplateDetailResponse.model_validate(response)
+
+    async def validate_watchlist_template(
+        self,
+        request_data: WatchlistTemplateValidationRequest,
+    ) -> WatchlistTemplateValidationResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/templates/validate",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return WatchlistTemplateValidationResponse.model_validate(response)
+
+    async def preview_watchlist_template(
+        self,
+        request_data: WatchlistTemplatePreviewRequest,
+    ) -> WatchlistTemplatePreviewResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/templates/preview",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return WatchlistTemplatePreviewResponse.model_validate(response)
+
+    async def compose_watchlist_template_section(
+        self,
+        request_data: WatchlistTemplateComposerSectionRequest,
+    ) -> WatchlistTemplateComposerSectionResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/templates/compose/section",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return WatchlistTemplateComposerSectionResponse.model_validate(response)
+
+    async def check_watchlist_template_flow(
+        self,
+        request_data: WatchlistTemplateComposerFlowCheckRequest,
+    ) -> WatchlistTemplateComposerFlowCheckResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/watchlists/templates/compose/flow-check",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return WatchlistTemplateComposerFlowCheckResponse.model_validate(response)
+
+    async def list_watchlist_template_versions(self, template_name: str) -> WatchlistTemplateVersionsResponse:
+        response = await self._request("GET", f"/api/v1/watchlists/templates/{template_name}/versions")
+        return WatchlistTemplateVersionsResponse.model_validate(response)
+
+    async def get_watchlist_template(
+        self,
+        template_name: str,
+        *,
+        version: int | None = None,
+    ) -> WatchlistTemplateDetailResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/watchlists/templates/{template_name}",
+            params={key: value for key, value in {"version": version}.items() if value is not None},
+        )
+        return WatchlistTemplateDetailResponse.model_validate(response)
+
+    async def delete_watchlist_template(self, template_name: str) -> dict[str, Any]:
+        response = await self._request("DELETE", f"/api/v1/watchlists/templates/{template_name}")
+        return dict(response or {"deleted": True})
+
+    async def list_watchlist_clusters(self, watchlist_id: int) -> dict[str, Any]:
+        response = await self._request("GET", f"/api/v1/watchlists/{watchlist_id}/clusters")
+        return dict(response or {})
+
+    async def add_watchlist_cluster(self, watchlist_id: int, cluster_id: int) -> dict[str, Any]:
+        response = await self._request(
+            "POST",
+            f"/api/v1/watchlists/{watchlist_id}/clusters",
+            json_data={"cluster_id": cluster_id},
+        )
+        return dict(response or {})
+
+    async def remove_watchlist_cluster(self, watchlist_id: int, cluster_id: int) -> dict[str, Any]:
+        response = await self._request("DELETE", f"/api/v1/watchlists/{watchlist_id}/clusters/{cluster_id}")
+        return dict(response or {})
 
     async def list_watchlist_alert_rules(self, *, job_id: int | None = None) -> WatchlistAlertRuleListResponse:
         response = await self._request(
