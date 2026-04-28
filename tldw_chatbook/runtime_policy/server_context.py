@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -30,6 +32,15 @@ class ActiveServerContext:
     capabilities: Mapping[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class _CachedClientKey:
+    active_server_id: str
+    base_url: str
+    auth_method: str
+    credential_source: str
+    token_fingerprint: str | None
+
+
 class ServerContextUnavailable(RuntimeError):
     reason_code = "server_context_unavailable"
 
@@ -51,6 +62,9 @@ class RuntimeServerContextProvider:
         self.target_store = target_store
         self.credential_store = credential_store
         self.app_config = app_config or {}
+        self._cached_client_key: _CachedClientKey | None = None
+        self._cached_client: TLDWAPIClient | None = None
+        self._pending_client_close_tasks: set[asyncio.Task[None]] = set()
 
     def get_active_context(self) -> ActiveServerContext:
         active_server_id = self._require_active_server_id()
@@ -81,22 +95,42 @@ class RuntimeServerContextProvider:
 
     def build_client(self) -> TLDWAPIClient:
         context = self.get_active_context()
-        return build_runtime_api_client(
+        cache_key = self._client_cache_key(context)
+        if self._cached_client is not None and self._cached_client_key == cache_key:
+            return self._cached_client
+
+        self._invalidate_cached_client()
+        self._cached_client_key = cache_key
+        self._cached_client = build_runtime_api_client(
             endpoint_url=context.base_url,
             auth_method=context.auth_method,
             auth_token=context.auth_token,
         )
+        return self._cached_client
+
+    async def close_cached_client(self) -> None:
+        cached_client = self._cached_client
+        self._cached_client = None
+        self._cached_client_key = None
+        if cached_client is not None:
+            await cached_client.close()
+        pending_tasks = list(self._pending_client_close_tasks)
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks)
 
     def clear_active_server_credentials(self) -> None:
         self.credential_store.clear_server(self._require_active_server_id())
+        self._invalidate_cached_client()
 
     def clear_server_credentials(self, server_id: str) -> None:
         self.credential_store.clear_server(server_id)
+        self._invalidate_cached_client()
 
     def clear_active_server_auth_tokens(self) -> None:
         active_server_id = self._require_active_server_id()
         self.credential_store.delete_secret(active_server_id, SERVER_CREDENTIAL_ACCESS_TOKEN)
         self.credential_store.delete_secret(active_server_id, SERVER_CREDENTIAL_REFRESH_TOKEN)
+        self._invalidate_cached_client()
 
     def store_auth_tokens(
         self,
@@ -117,6 +151,8 @@ class RuntimeServerContextProvider:
                 SERVER_CREDENTIAL_REFRESH_TOKEN,
                 refresh_token,
             )
+        if access_token or refresh_token:
+            self._invalidate_cached_client()
 
     def resolve_target(self) -> ConfiguredServerTarget | None:
         active_server_id = self._require_active_server_id()
@@ -180,6 +216,43 @@ class RuntimeServerContextProvider:
             return {}
         api_config = self.app_config.get("tldw_api", {})
         return api_config if isinstance(api_config, Mapping) else {}
+
+    def _invalidate_cached_client(self) -> None:
+        cached_client = self._cached_client
+        self._cached_client = None
+        self._cached_client_key = None
+        if cached_client is not None:
+            self._close_client_sync_safe(cached_client)
+
+    def _close_client_sync_safe(self, client: TLDWAPIClient) -> None:
+        async def _close() -> None:
+            await client.close()
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(_close())
+            return
+
+        task = loop.create_task(_close())
+        self._pending_client_close_tasks.add(task)
+        task.add_done_callback(self._pending_client_close_tasks.discard)
+
+    @classmethod
+    def _client_cache_key(cls, context: ActiveServerContext) -> _CachedClientKey:
+        return _CachedClientKey(
+            active_server_id=context.active_server_id,
+            base_url=context.base_url,
+            auth_method=context.auth_method,
+            credential_source=context.credential_source,
+            token_fingerprint=cls._token_fingerprint(context.auth_token),
+        )
+
+    @staticmethod
+    def _token_fingerprint(auth_token: str | None) -> str | None:
+        if not auth_token:
+            return None
+        return hashlib.sha256(auth_token.encode("utf-8")).hexdigest()
 
     def _build_capabilities(self, target: ConfiguredServerTarget) -> dict[str, Any]:
         state = self.runtime_context.state

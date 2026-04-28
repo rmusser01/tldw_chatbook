@@ -64,6 +64,83 @@ class FakeAuthAccountClient:
         return {"user_id": 1, "storage_used_mb": 12.0, "storage_quota_mb": 5120}
 
 
+class FakeCachingProvider:
+    def __init__(self, client_factory):
+        self.client_factory = client_factory
+        self.client = None
+        self.build_calls = 0
+        self.constructed_clients = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        if self.client is None:
+            self.client = self.client_factory()
+            self.constructed_clients += 1
+        return self.client
+
+
+class ExplodingProvider:
+    def __init__(self):
+        self.calls = 0
+
+    def build_client(self):
+        self.calls += 1
+        raise AssertionError("provider should not be used")
+
+
+@pytest.mark.asyncio
+async def test_server_auth_account_service_reuses_provider_cached_client_across_operations():
+    provider = FakeCachingProvider(FakeAuthAccountClient)
+    service = ServerAuthAccountService.from_server_context_provider(provider)
+
+    await service.login(username="ada@example.com", password="secret")
+    await service.list_auth_sessions()
+
+    assert provider.build_calls == 2
+    assert provider.constructed_clients == 1
+    assert provider.client.calls == [
+        ("login", "ada@example.com", "secret", {"set_bearer_token": True}),
+        ("list_auth_sessions",),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_auth_account_service_denied_policy_does_not_build_provider_client():
+    policy = Mock()
+    policy.require_allowed = None
+    policy.require_ui_action_allowed = Mock(
+        return_value=PolicyDecision(
+            allowed=False,
+            reason_code="server_auth_required",
+            user_message="Blocked.",
+            effective_source="server",
+            authority_owner="server",
+        )
+    )
+    provider = ExplodingProvider()
+    service = ServerAuthAccountService.from_server_context_provider(provider, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError):
+        await service.list_auth_sessions()
+
+    assert provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_server_auth_account_service_direct_client_takes_precedence_over_provider():
+    client = FakeAuthAccountClient()
+    provider = ExplodingProvider()
+    service = ServerAuthAccountService(client=client, client_provider=provider)
+
+    token = await service.login(username="ada@example.com", password="secret")
+
+    assert token["access_token"] == "access-1"
+    assert provider.calls == 0
+    assert client.calls == [
+        ("login", "ada@example.com", "secret", {"set_bearer_token": True}),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_server_auth_account_service_routes_representative_account_operations_with_policy():
     client = FakeAuthAccountClient()

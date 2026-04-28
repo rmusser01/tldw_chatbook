@@ -448,6 +448,110 @@ def test_build_client_uses_active_context_base_url_and_bearer_token(tmp_path):
     assert client.token is None
 
 
+def test_build_client_reuses_cached_client_for_same_active_context_and_token(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-secret")
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api/",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+    )
+
+    first_client = provider.build_client()
+    second_client = provider.build_client()
+
+    assert second_client is first_client
+
+
+@pytest.mark.asyncio
+async def test_stored_token_change_replaces_cached_client_and_closes_opened_old_client(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-1")
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api/",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+    )
+
+    first_client = provider.build_client()
+    opened_http_client = await first_client._get_client()
+
+    provider.store_auth_tokens(access_token="access-2")
+    second_client = provider.build_client()
+    cache_key_repr = repr(provider._cached_client_key)
+    await provider.close_cached_client()
+
+    assert second_client is not first_client
+    assert opened_http_client.is_closed
+    assert "access-1" not in cache_key_repr
+    assert "access-2" not in cache_key_repr
+
+
+@pytest.mark.asyncio
+async def test_clear_active_server_auth_tokens_invalidates_cache_and_preserves_static_credentials(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-1")
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_REFRESH_TOKEN, "refresh-1")
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "api-key-1")
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "bearer-1")
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api/",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+    )
+
+    first_client = provider.build_client()
+    opened_http_client = await first_client._get_client()
+
+    provider.clear_active_server_auth_tokens()
+    second_client = provider.build_client()
+    await provider.close_cached_client()
+
+    assert second_client is not first_client
+    assert opened_http_client.is_closed
+    assert second_client.bearer_token == "bearer-1"
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) is None
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) is None
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_API_KEY,
+    ) == "api-key-1"
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) == "bearer-1"
+
+
 def test_target_store_json_does_not_contain_secret_after_resolving_or_building_client(tmp_path):
     secret = "store-secret-must-not-leak"
     credentials = InMemoryServerCredentialStore()

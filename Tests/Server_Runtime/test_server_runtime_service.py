@@ -69,6 +69,30 @@ class FakeProvider:
         return self.client
 
 
+class FakeCachingProvider:
+    def __init__(self, client_factory):
+        self.client_factory = client_factory
+        self.client = None
+        self.build_calls = 0
+        self.constructed_clients = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        if self.client is None:
+            self.client = self.client_factory()
+            self.constructed_clients += 1
+        return self.client
+
+
+class ExplodingProvider:
+    def __init__(self):
+        self.calls = 0
+
+    def build_client(self):
+        self.calls += 1
+        raise AssertionError("provider should not be used")
+
+
 @pytest.mark.asyncio
 async def test_server_runtime_service_can_use_context_provider_client():
     fake_client = FakeServerRuntimeClient()
@@ -80,6 +104,57 @@ async def test_server_runtime_service_can_use_context_provider_client():
     assert health["status"] == "ok"
     assert provider.calls == 1
     assert fake_client.calls[0] == ("get_server_health",)
+
+
+@pytest.mark.asyncio
+async def test_server_runtime_service_reuses_provider_cached_client_across_operations():
+    provider = FakeCachingProvider(FakeServerRuntimeClient)
+    service = ServerRuntimeService.from_server_context_provider(provider)
+
+    await service.get_health()
+    await service.get_readiness()
+
+    assert provider.build_calls == 2
+    assert provider.constructed_clients == 1
+    assert provider.client.calls == [
+        ("get_server_health",),
+        ("get_server_readiness",),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_runtime_service_denied_policy_does_not_build_provider_client():
+    policy = Mock()
+    policy.require_allowed = None
+    policy.require_ui_action_allowed = Mock(
+        return_value=PolicyDecision(
+            allowed=False,
+            reason_code="server_auth_required",
+            user_message="Blocked.",
+            effective_source="server",
+            authority_owner="server",
+        )
+    )
+    provider = ExplodingProvider()
+    service = ServerRuntimeService.from_server_context_provider(provider, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError):
+        await service.get_health()
+
+    assert provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_server_runtime_service_direct_client_takes_precedence_over_provider():
+    client = FakeServerRuntimeClient()
+    provider = ExplodingProvider()
+    service = ServerRuntimeService(client=client, client_provider=provider)
+
+    health = await service.get_health()
+
+    assert health["status"] == "ok"
+    assert provider.calls == 0
+    assert client.calls == [("get_server_health",)]
 
 
 def test_server_runtime_service_from_config_still_builds_direct_client():
