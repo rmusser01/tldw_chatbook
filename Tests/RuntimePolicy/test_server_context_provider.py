@@ -552,8 +552,8 @@ async def test_clear_active_server_auth_tokens_invalidates_cache_and_preserves_s
     ) == "bearer-1"
 
 
-def test_target_store_json_does_not_contain_secret_after_resolving_or_building_client(tmp_path):
-    secret = "store-secret-must-not-leak"
+def test_target_store_json_and_target_metadata_do_not_contain_stored_secret(tmp_path):
+    secret = "literal-provider-token-must-not-leak"
     credentials = InMemoryServerCredentialStore()
     credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, secret)
     target_store = _target_store(
@@ -568,6 +568,7 @@ def test_target_store_json_does_not_contain_secret_after_resolving_or_building_c
             )
         ],
     )
+    reloaded_store = ConfiguredServerTargetStore(target_store.path)
     provider = RuntimeServerContextProvider(
         runtime_context=_runtime_context(),
         target_store=target_store,
@@ -575,11 +576,24 @@ def test_target_store_json_does_not_contain_secret_after_resolving_or_building_c
         app_config={},
     )
 
-    assert provider.get_active_context().auth_token == secret
+    context = provider.get_active_context()
+    reloaded_target = reloaded_store.get_target("https://server.example.com/api")
+
+    assert context.auth_token == secret
     assert provider.build_client().token == secret
 
     payload = json.loads(target_store.path.read_text(encoding="utf-8"))
-    assert secret not in json.dumps(payload)
+    persisted_target_json = json.dumps(payload, sort_keys=True)
+    target_metadata_json = json.dumps(
+        {
+            "context_capabilities": context.capabilities,
+            "context_target": context.target.to_dict(),
+            "reloaded_target": reloaded_target.to_dict() if reloaded_target else None,
+        },
+        sort_keys=True,
+    )
+    assert secret not in persisted_target_json
+    assert secret not in target_metadata_json
 
 
 def test_clear_active_server_credentials_and_clear_server_credentials_clear_per_server_secrets(tmp_path):
