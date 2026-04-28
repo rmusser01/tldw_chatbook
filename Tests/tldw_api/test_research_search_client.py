@@ -3,6 +3,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tldw_chatbook.tldw_api import (
+    PaperSearchDetailRequest,
+    PaperSearchIngestRequest,
+    PaperSearchOperationResponse,
+    PaperSearchRequest,
     WebSearchRequest,
     TLDWAPIClient,
 )
@@ -151,6 +155,142 @@ def test_websearch_request_normalizes_aliases_and_rejects_unknown_engines():
 
     with pytest.raises(ValueError):
         WebSearchRequest(query="test", engine="unknown")
+
+
+def test_paper_search_allowlists_cover_server_provider_contract():
+    server_get_endpoints = {
+        "acm",
+        "acm/by-doi",
+        "arxiv",
+        "arxiv/by-id",
+        "biorxiv",
+        "biorxiv-pubs",
+        "biorxiv-pubs/by-doi",
+        "biorxiv/by-doi",
+        "biorxiv/funder",
+        "biorxiv/pub",
+        "biorxiv/publisher",
+        "biorxiv/raw/details",
+        "biorxiv/raw/funder",
+        "biorxiv/raw/pub",
+        "biorxiv/raw/pubs",
+        "biorxiv/raw/reports/summary",
+        "biorxiv/raw/reports/usage",
+        "biorxiv/reports/summary",
+        "biorxiv/reports/usage",
+        "chemrxiv/categories",
+        "chemrxiv/items",
+        "chemrxiv/items/by-doi",
+        "chemrxiv/items/by-id",
+        "chemrxiv/licenses",
+        "chemrxiv/oai",
+        "chemrxiv/version",
+        "earthrxiv",
+        "earthrxiv/by-doi",
+        "earthrxiv/by-id",
+        "figshare",
+        "figshare/by-doi",
+        "figshare/by-id",
+        "figshare/oai",
+        "hal",
+        "hal/by-id",
+        "hal/raw",
+        "iacr/conf",
+        "iacr/conf/raw",
+        "ieee",
+        "ieee/by-doi",
+        "ieee/by-id",
+        "medrxiv",
+        "medrxiv/by-doi",
+        "medrxiv/raw/details",
+        "medrxiv/raw/pub",
+        "medrxiv/raw/pubs",
+        "osf",
+        "osf/by-doi",
+        "osf/by-id",
+        "osf/raw",
+        "osf/raw/by-id",
+        "pmc-oa/fetch-pdf",
+        "pmc-oa/identify",
+        "pmc-oa/query",
+        "pmc-oai/get-record",
+        "pmc-oai/identify",
+        "pmc-oai/list-identifiers",
+        "pmc-oai/list-records",
+        "pmc-oai/list-sets",
+        "pubmed",
+        "pubmed/by-id",
+        "repec/by-handle",
+        "repec/citations",
+        "scopus",
+        "scopus/by-doi",
+        "semantic-scholar",
+        "semantic-scholar/by-id",
+        "springer",
+        "springer/by-doi",
+        "vixra/by-id",
+        "vixra/search",
+        "wiley",
+        "wiley/by-doi",
+        "zenodo",
+        "zenodo/by-doi",
+        "zenodo/by-id",
+        "zenodo/oai",
+    }
+    server_post_endpoints = {
+        "arxiv/ingest",
+        "earthrxiv/ingest",
+        "figshare/ingest",
+        "figshare/ingest-by-doi",
+        "hal/ingest",
+        "ingest/batch",
+        "ingest/by-doi",
+        "osf/ingest",
+        "pmc-oa/ingest-pdf",
+        "pubmed/ingest",
+        "semantic-scholar/ingest",
+        "vixra/ingest",
+        "zenodo/ingest",
+    }
+
+    for endpoint in server_get_endpoints:
+        assert PaperSearchRequest(endpoint=endpoint).endpoint == endpoint
+        assert PaperSearchDetailRequest(endpoint=endpoint).endpoint == endpoint
+    for endpoint in server_post_endpoints:
+        assert PaperSearchIngestRequest(endpoint=endpoint).endpoint == endpoint
+
+
+@pytest.mark.asyncio
+async def test_research_search_client_routes_generic_paper_search_gateway(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            {"items": [{"id": "cat-1", "name": "Biology"}], "total_results": 1},
+            {"id": "record-1", "title": "OAI Record"},
+            {"media_id": 12, "status": "queued"},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    listed = await client.paper_search(PaperSearchRequest(endpoint="chemrxiv/categories", params={"q": "bio"}))
+    detail = await client.paper_search_detail(
+        PaperSearchDetailRequest(endpoint="pmc-oai/get-record", params={"identifier": "oai:pmc:1"})
+    )
+    ingested = await client.paper_search_ingest(
+        PaperSearchIngestRequest(endpoint="pmc-oa/ingest-pdf", payload={"pmcid": "PMC1"})
+    )
+
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/paper-search/chemrxiv/categories")
+    assert mocked.await_args_list[0].kwargs["params"] == {"q": "bio"}
+    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/paper-search/pmc-oai/get-record")
+    assert mocked.await_args_list[1].kwargs["params"] == {"identifier": "oai:pmc:1"}
+    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/paper-search/pmc-oa/ingest-pdf")
+    assert mocked.await_args_list[2].kwargs["json_data"] == {"pmcid": "PMC1"}
+
+    assert listed.items[0]["name"] == "Biology"
+    assert detail.title == "OAI Record"
+    assert isinstance(ingested, PaperSearchOperationResponse)
+    assert ingested.data["status"] == "queued"
 
 
 @pytest.mark.asyncio

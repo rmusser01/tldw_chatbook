@@ -6890,6 +6890,31 @@ class TLDWAPIClient:
             return WebSearchAggregateResponse.model_validate(response)
         return WebSearchRawResponse.model_validate(response)
 
+    async def paper_search(self, request_data: PaperSearchRequest) -> PaperSearchListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/paper-search/{request_data.endpoint}",
+            params=dict(request_data.params or {}),
+        )
+        return PaperSearchListResponse.model_validate(response)
+
+    async def paper_search_detail(self, request_data: PaperSearchDetailRequest) -> PaperSearchDetailResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/paper-search/{request_data.endpoint}",
+            params=dict(request_data.params or {}),
+        )
+        return PaperSearchDetailResponse.model_validate(response)
+
+    async def paper_search_ingest(self, request_data: PaperSearchIngestRequest) -> PaperSearchOperationResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/paper-search/{request_data.endpoint}",
+            params=dict(request_data.params or {}),
+            json_data=request_data.payload or {},
+        )
+        return PaperSearchOperationResponse.model_validate(response)
+
     async def search_arxiv_papers(
         self,
         *,
