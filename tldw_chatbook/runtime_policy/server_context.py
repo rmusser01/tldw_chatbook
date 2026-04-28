@@ -12,6 +12,7 @@ from .server_credentials import (
     SERVER_CREDENTIAL_ACCESS_TOKEN,
     SERVER_CREDENTIAL_API_KEY,
     SERVER_CREDENTIAL_BEARER_TOKEN,
+    SERVER_CREDENTIAL_REFRESH_TOKEN,
     ServerCredentialStore,
 )
 
@@ -91,6 +92,26 @@ class RuntimeServerContextProvider:
 
     def clear_server_credentials(self, server_id: str) -> None:
         self.credential_store.clear_server(server_id)
+
+    def store_auth_tokens(
+        self,
+        *,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
+    ) -> None:
+        context = self.get_active_context()
+        if access_token:
+            self.credential_store.set_secret(
+                context.active_server_id,
+                SERVER_CREDENTIAL_ACCESS_TOKEN,
+                access_token,
+            )
+        if refresh_token:
+            self.credential_store.set_secret(
+                context.active_server_id,
+                SERVER_CREDENTIAL_REFRESH_TOKEN,
+                refresh_token,
+            )
 
     def resolve_target(self) -> ConfiguredServerTarget | None:
         active_server_id = self._require_active_server_id()

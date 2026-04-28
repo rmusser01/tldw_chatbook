@@ -46,9 +46,16 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
 class AuthAccountScopeService:
     """Route account actions to the active server without creating local account authority."""
 
-    def __init__(self, *, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+        server_context_provider: Any = None,
+    ):
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
+        self.server_context_provider = server_context_provider
 
     def _normalize_mode(self, mode: AuthAccountBackend | str | None) -> AuthAccountBackend:
         if mode is None:
@@ -86,6 +93,22 @@ class AuthAccountScopeService:
         record.setdefault("backend", mode.value)
         record.setdefault("record_id", f"{mode.value}:auth:{kind}")
         return record
+
+    def _store_auth_tokens(self, payload: Any) -> None:
+        if not isinstance(payload, dict):
+            return
+        access_token = payload.get("access_token")
+        refresh_token = payload.get("refresh_token")
+        if not access_token and not refresh_token:
+            return
+        store = getattr(self.server_context_provider, "store_auth_tokens", None)
+        if callable(store):
+            store(access_token=access_token, refresh_token=refresh_token)
+
+    def _clear_active_server_credentials(self) -> None:
+        clear = getattr(self.server_context_provider, "clear_active_server_credentials", None)
+        if callable(clear):
+            clear()
 
     @staticmethod
     def _normalize_session(mode: AuthAccountBackend, payload: dict[str, Any]) -> dict[str, Any]:
@@ -156,6 +179,7 @@ class AuthAccountScopeService:
                 **({"set_bearer_token": set_bearer_token} if not set_bearer_token else {}),
             },
         )
+        self._store_auth_tokens(result)
         return self._with_backend(normalized_mode, "identity", result)
 
     async def refresh_auth_token(
@@ -174,6 +198,7 @@ class AuthAccountScopeService:
                 **({"set_bearer_token": set_bearer_token} if not set_bearer_token else {}),
             },
         )
+        self._store_auth_tokens(result)
         return self._with_backend(normalized_mode, "identity", result)
 
     async def logout(
@@ -192,6 +217,8 @@ class AuthAccountScopeService:
                 **({"clear_bearer_token": clear_bearer_token} if not clear_bearer_token else {}),
             },
         )
+        if clear_bearer_token:
+            self._clear_active_server_credentials()
         return self._with_backend(normalized_mode, "identity_logout", result)
 
     async def list_auth_sessions(self, *, mode: AuthAccountBackend | str | None = None) -> list[dict[str, Any]]:

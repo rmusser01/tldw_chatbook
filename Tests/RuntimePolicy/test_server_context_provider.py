@@ -12,6 +12,7 @@ from tldw_chatbook.runtime_policy.server_credentials import (
     SERVER_CREDENTIAL_ACCESS_TOKEN,
     SERVER_CREDENTIAL_API_KEY,
     SERVER_CREDENTIAL_BEARER_TOKEN,
+    SERVER_CREDENTIAL_REFRESH_TOKEN,
     InMemoryServerCredentialStore,
 )
 from tldw_chatbook.runtime_policy.server_context import (
@@ -491,6 +492,59 @@ def test_clear_active_server_credentials_and_clear_server_credentials_clear_per_
     provider.clear_server_credentials("server-b")
 
     assert credentials.get_secret("server-b", SERVER_CREDENTIAL_BEARER_TOKEN) is None
+
+
+def test_store_auth_tokens_scopes_tokens_to_active_server(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://backup.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "other-access")
+    credentials.set_secret("https://backup.example.com/api", SERVER_CREDENTIAL_REFRESH_TOKEN, "other-refresh")
+    target_store = _target_store(
+        tmp_path,
+        [
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api/",
+                auth_mode="bearer",
+                is_default=True,
+            ),
+            ConfiguredServerTarget(
+                server_id="https://backup.example.com/api",
+                label="Backup",
+                base_url="https://backup.example.com/api/",
+                auth_mode="bearer",
+            ),
+        ],
+    )
+    provider = RuntimeServerContextProvider(
+        runtime_context=_runtime_context(),
+        target_store=target_store,
+        credential_store=credentials,
+        app_config={},
+    )
+
+    provider.store_auth_tokens(access_token="access-1", refresh_token="refresh-1")
+
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) == "access-1"
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) == "refresh-1"
+    assert credentials.get_secret(
+        "https://backup.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) == "other-access"
+    assert credentials.get_secret(
+        "https://backup.example.com/api",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) == "other-refresh"
+
+    payload = json.loads(target_store.path.read_text(encoding="utf-8"))
+    assert "access-1" not in json.dumps(payload)
+    assert "refresh-1" not in json.dumps(payload)
 
 
 def test_mismatched_runtime_active_server_and_only_legacy_config_raises(tmp_path):

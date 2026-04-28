@@ -2,6 +2,11 @@ import pytest
 
 from tldw_chatbook.Auth_Account_Interop.auth_account_scope_service import AuthAccountScopeService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
+from tldw_chatbook.runtime_policy.server_credentials import (
+    SERVER_CREDENTIAL_ACCESS_TOKEN,
+    SERVER_CREDENTIAL_REFRESH_TOKEN,
+    InMemoryServerCredentialStore,
+)
 
 
 class FakeAuthAccountService:
@@ -11,6 +16,14 @@ class FakeAuthAccountService:
     async def login(self, **kwargs):
         self.calls.append(("login", kwargs))
         return {"access_token": "access-1", "token_type": "bearer"}
+
+    async def refresh_auth_token(self, **kwargs):
+        self.calls.append(("refresh_auth_token", kwargs))
+        return {"access_token": "access-2", "refresh_token": "refresh-2", "token_type": "bearer"}
+
+    async def logout(self, **kwargs):
+        self.calls.append(("logout", kwargs))
+        return {"detail": "logged out"}
 
     async def list_auth_sessions(self):
         self.calls.append(("list_auth_sessions",))
@@ -44,6 +57,30 @@ class FakePolicyEnforcer:
                 effective_source="server",
                 authority_owner="server",
             )
+
+
+class FakeServerContextProvider:
+    active_server_id = "http://server.test"
+
+    def __init__(self):
+        self.credential_store = InMemoryServerCredentialStore()
+
+    def store_auth_tokens(self, *, access_token=None, refresh_token=None):
+        if access_token:
+            self.credential_store.set_secret(
+                self.active_server_id,
+                SERVER_CREDENTIAL_ACCESS_TOKEN,
+                access_token,
+            )
+        if refresh_token:
+            self.credential_store.set_secret(
+                self.active_server_id,
+                SERVER_CREDENTIAL_REFRESH_TOKEN,
+                refresh_token,
+            )
+
+    def clear_active_server_credentials(self):
+        self.credential_store.clear_server(self.active_server_id)
 
 
 @pytest.mark.asyncio
@@ -88,6 +125,110 @@ async def test_auth_account_scope_service_routes_remote_account_surfaces_and_nor
         "auth.provider_keys.list.server",
         "auth.storage.list.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_login_persists_tokens_when_context_provider_is_available():
+    class FakeTokenAuthAccountService(FakeAuthAccountService):
+        async def login(self, **kwargs):
+            self.calls.append(("login", kwargs))
+            return {"access_token": "access-1", "refresh_token": "refresh-1", "token_type": "bearer"}
+
+    server = FakeTokenAuthAccountService()
+    provider = FakeServerContextProvider()
+    scope = AuthAccountScopeService(server_service=server, server_context_provider=provider)
+
+    await scope.login(username="ada@example.com", password="secret")
+
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) == "access-1"
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) == "refresh-1"
+
+
+@pytest.mark.asyncio
+async def test_refresh_persists_updated_tokens_when_context_provider_is_available():
+    server = FakeAuthAccountService()
+    provider = FakeServerContextProvider()
+    scope = AuthAccountScopeService(server_service=server, server_context_provider=provider)
+
+    await scope.refresh_auth_token(request_data={"refresh_token": "refresh-1"})
+
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) == "access-2"
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) == "refresh-2"
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_active_server_credentials_when_requested():
+    server = FakeAuthAccountService()
+    provider = FakeServerContextProvider()
+    provider.store_auth_tokens(access_token="access-1", refresh_token="refresh-1")
+    scope = AuthAccountScopeService(server_service=server, server_context_provider=provider)
+
+    await scope.logout(clear_bearer_token=True)
+
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) is None
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_logout_preserves_active_server_credentials_when_clear_bearer_token_is_false():
+    server = FakeAuthAccountService()
+    provider = FakeServerContextProvider()
+    provider.store_auth_tokens(access_token="access-1", refresh_token="refresh-1")
+    scope = AuthAccountScopeService(server_service=server, server_context_provider=provider)
+
+    await scope.logout(clear_bearer_token=False)
+
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) == "access-1"
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) == "refresh-1"
+
+
+@pytest.mark.asyncio
+async def test_no_provider_or_no_token_response_does_not_fail():
+    class FakeNoTokenAuthAccountService(FakeAuthAccountService):
+        async def login(self, **kwargs):
+            self.calls.append(("login", kwargs))
+            return {"detail": "logged in"}
+
+    no_provider_scope = AuthAccountScopeService(server_service=FakeNoTokenAuthAccountService())
+    provider_scope = AuthAccountScopeService(
+        server_service=FakeNoTokenAuthAccountService(),
+        server_context_provider=FakeServerContextProvider(),
+    )
+
+    assert await no_provider_scope.login(username="ada@example.com", password="secret") == {
+        "detail": "logged in",
+        "backend": "server",
+        "record_id": "server:auth:identity",
+    }
+    assert await provider_scope.login(username="ada@example.com", password="secret") == {
+        "detail": "logged in",
+        "backend": "server",
+        "record_id": "server:auth:identity",
+    }
 
 
 @pytest.mark.asyncio
