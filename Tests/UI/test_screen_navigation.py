@@ -148,6 +148,8 @@ def test_app_uses_screen_navigation_and_wires_media_services():
     assert isinstance(app.media_reading_scope_service, MediaReadingScopeService)
     assert app.media_runtime_state.runtime_backend == "local"
     assert app.auth_account_scope_service.server_context_provider is app.server_context_provider
+    assert app.server_runtime_service.client_provider is app.server_context_provider
+    assert app.server_auth_account_service.client_provider is app.server_context_provider
 
 
 def test_app_initializes_watchlists_and_notifications_services():

@@ -2194,16 +2194,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_sync_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.server_runtime_service = ServerRuntimeService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_runtime_service = ServerRuntimeService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        self.server_runtime_service = ServerRuntimeService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.server_runtime_scope_service = ServerRuntimeScopeService(
             server_service=self.server_runtime_service,
             policy_enforcer=self.service_policy_enforcer,
@@ -2255,16 +2249,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_audio_services_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.server_auth_account_service = ServerAuthAccountService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_auth_account_service = ServerAuthAccountService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        self.server_auth_account_service = ServerAuthAccountService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.auth_account_scope_service = AuthAccountScopeService(
             server_service=self.server_auth_account_service,
             policy_enforcer=self.service_policy_enforcer,

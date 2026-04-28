@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Auth_Account_Interop.auth_account_scope_service import AuthAccountScopeService
+from tldw_chatbook.Auth_Account_Interop.server_auth_account_service import ServerAuthAccountService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 from tldw_chatbook.runtime_policy.server_credentials import (
     SERVER_CREDENTIAL_ACCESS_TOKEN,
@@ -52,6 +53,25 @@ class FakeAuthAccountService:
         return {"items": [{"id": 9, "filename": "digest.md"}], "total": 1}
 
 
+class FakeProviderBackedAuthClient:
+    def __init__(self):
+        self.calls = []
+
+    async def login(self, username, password, *, set_bearer_token=True):
+        self.calls.append(("login", username, password, {"set_bearer_token": set_bearer_token}))
+        return {"access_token": "access-provider", "refresh_token": "refresh-provider", "token_type": "bearer"}
+
+
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.calls = 0
+
+    def build_client(self):
+        self.calls += 1
+        return self.client
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
         self.denied_reason = denied_reason
@@ -95,6 +115,41 @@ class FakeServerContextProvider:
     def clear_active_server_auth_tokens(self):
         self.credential_store.delete_secret(self.active_server_id, SERVER_CREDENTIAL_ACCESS_TOKEN)
         self.credential_store.delete_secret(self.active_server_id, SERVER_CREDENTIAL_REFRESH_TOKEN)
+
+
+@pytest.mark.asyncio
+async def test_server_auth_account_service_can_use_context_provider_client():
+    fake_client = FakeProviderBackedAuthClient()
+    provider = FakeClientProvider(fake_client)
+    service = ServerAuthAccountService.from_server_context_provider(provider)
+
+    token = await service.login(username="ada@example.com", password="secret", set_bearer_token=False)
+
+    assert token["access_token"] == "access-provider"
+    assert provider.calls == 1
+    assert fake_client.calls == [
+        ("login", "ada@example.com", "secret", {"set_bearer_token": False}),
+    ]
+
+
+def test_server_auth_account_service_from_config_still_builds_direct_client():
+    service = ServerAuthAccountService.from_config(
+        {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
+    )
+
+    assert service.client is not None
+    assert service.client_provider is None
+    assert service.client.base_url == "https://example.com"
+
+
+def test_server_auth_account_service_from_app_config_keeps_config_compatibility():
+    service = ServerAuthAccountService.from_app_config(
+        {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
+    )
+
+    assert service.client is not None
+    assert service.client_provider is None
+    assert service.client.base_url == "https://example.com"
 
 
 @pytest.mark.asyncio

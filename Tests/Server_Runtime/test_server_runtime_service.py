@@ -59,6 +59,49 @@ class FakeServerRuntimeClient:
         return {"provider": request_data.provider, "valid": True, "error": None}
 
 
+class FakeProvider:
+    def __init__(self, client):
+        self.client = client
+        self.calls = 0
+
+    def build_client(self):
+        self.calls += 1
+        return self.client
+
+
+@pytest.mark.asyncio
+async def test_server_runtime_service_can_use_context_provider_client():
+    fake_client = FakeServerRuntimeClient()
+    provider = FakeProvider(fake_client)
+    service = ServerRuntimeService.from_server_context_provider(provider)
+
+    health = await service.get_health()
+
+    assert health["status"] == "ok"
+    assert provider.calls == 1
+    assert fake_client.calls[0] == ("get_server_health",)
+
+
+def test_server_runtime_service_from_config_still_builds_direct_client():
+    service = ServerRuntimeService.from_config(
+        {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
+    )
+
+    assert service.client is not None
+    assert service.client_provider is None
+    assert service.client.base_url == "https://example.com"
+
+
+def test_server_runtime_service_from_app_config_keeps_config_compatibility():
+    service = ServerRuntimeService.from_app_config(
+        {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
+    )
+
+    assert service.client is not None
+    assert service.client_provider is None
+    assert service.client.base_url == "https://example.com"
+
+
 @pytest.mark.asyncio
 async def test_server_runtime_service_routes_runtime_config_surface_with_policy_actions():
     client = FakeServerRuntimeClient()
