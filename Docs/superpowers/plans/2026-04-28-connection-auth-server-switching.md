@@ -260,6 +260,13 @@ class KeyringServerCredentialStore:
     def __init__(self, *, service_name: str = DEFAULT_KEYRING_SERVICE_NAME, keyring_backend=None) -> None:
         if keyring_backend is None:
             import keyring as keyring_backend
+            self._password_delete_error = keyring_backend.errors.PasswordDeleteError
+        else:
+            self._password_delete_error = getattr(
+                getattr(keyring_backend, "errors", None),
+                "PasswordDeleteError",
+                None,
+            )
         self.service_name = service_name
         self.keyring = keyring_backend
 
@@ -272,8 +279,10 @@ class KeyringServerCredentialStore:
     def delete_secret(self, server_id: str, purpose: str) -> None:
         try:
             self.keyring.delete_password(self.service_name, ServerCredentialRef(_normalize(server_id), _normalize(purpose)).username)
-        except Exception:
-            return
+        except Exception as exc:
+            if self._password_delete_error is not None and isinstance(exc, self._password_delete_error):
+                return
+            raise
 
     def clear_server(self, server_id: str) -> None:
         for purpose in (
