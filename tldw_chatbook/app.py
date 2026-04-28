@@ -248,6 +248,12 @@ from tldw_chatbook.Media import (
     ServerMediaReadingService,
 )
 from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService
+from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+from tldw_chatbook.MCP.local_store import LocalMCPStore
+from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
+from tldw_chatbook.MCP.server_unified_service import ServerUnifiedMCPService
+from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore
+from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     ClientNotificationsService,
@@ -295,6 +301,7 @@ from tldw_chatbook.Evaluations_Interop import (
 )
 from tldw_chatbook.runtime_policy.bootstrap import (
     add_runtime_policy_snapshot,
+    build_runtime_api_client,
     build_server_chatbook_service,
     load_runtime_policy_for_app,
     reconcile_saved_screen_state,
@@ -306,6 +313,7 @@ from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
 from tldw_chatbook.state import AppState
+from tldw_chatbook.tldw_api import MCPUnifiedClient
 from tldw_chatbook.Auth_Account_Interop import AuthAccountScopeService, ServerAuthAccountService
 from tldw_chatbook.Audio_Services_Interop import (
     AudioServicesScopeService,
@@ -2107,6 +2115,47 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.mcp_governance_scope_service = MCPGovernanceScopeService(
             server_service=self.server_mcp_governance_service,
             policy_enforcer=self.service_policy_enforcer,
+        )
+        self.local_mcp_store = LocalMCPStore(
+            get_user_data_dir() / "local_mcp_store.json",
+        )
+        self.local_mcp_control_service = LocalMCPControlService(
+            store=self.local_mcp_store,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.unified_mcp_target_store = ConfiguredServerTargetStore(
+            get_user_data_dir() / "mcp_server_targets.json",
+        )
+        self.unified_mcp_target_store.bootstrap_from_legacy_config(self.app_config)
+        self.unified_mcp_context_store = UnifiedMCPContextStore(
+            get_user_data_dir() / "unified_mcp_context.json",
+        )
+
+        def _build_unified_mcp_client_for_target(target: Any) -> MCPUnifiedClient:
+            if getattr(target, "auth_reference", None) == "legacy:tldw_api":
+                root_client = build_runtime_api_client(
+                    app_config=self.app_config,
+                    endpoint_url=target.base_url,
+                    auth_method=target.auth_mode,
+                )
+            else:
+                root_client = build_runtime_api_client(
+                    endpoint_url=target.base_url,
+                    auth_token=target.auth_reference,
+                    auth_method=target.auth_mode,
+                )
+            return MCPUnifiedClient(root_client)
+
+        self.server_unified_mcp_service = ServerUnifiedMCPService(
+            client_factory=_build_unified_mcp_client_for_target,
+            policy_enforcer=self.service_policy_enforcer,
+            target_store=self.unified_mcp_target_store,
+        )
+        self.unified_mcp_service = UnifiedMCPControlPlaneService(
+            target_store=self.unified_mcp_target_store,
+            context_store=self.unified_mcp_context_store,
+            local_service=self.local_mcp_control_service,
+            server_service=self.server_unified_mcp_service,
         )
         try:
             self.server_text2sql_service = ServerText2SQLService.from_config(

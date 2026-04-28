@@ -30,6 +30,12 @@ from tldw_chatbook.Media import (
     ServerMediaReadingService,
 )
 from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService
+from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+from tldw_chatbook.MCP.local_store import LocalMCPStore
+from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
+from tldw_chatbook.MCP.server_unified_service import ServerUnifiedMCPService
+from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore
+from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     ClientNotificationsService,
@@ -102,6 +108,8 @@ from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabil
 
 
 def _build_test_app() -> TldwCli:
+    user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-test-"))
+
     def fake_runtime_policy(app):
         context = SimpleNamespace(
             state=RuntimeSourceState(active_source="local", server_configured=True),
@@ -126,7 +134,8 @@ def _build_test_app() -> TldwCli:
                                                 with patch("tldw_chatbook.app.get_subscriptions_db_path", return_value=":memory:"):
                                                     with patch("tldw_chatbook.app.get_research_db_path", return_value=":memory:"):
                                                         with patch("tldw_chatbook.app.get_writing_db_path", return_value=":memory:"):
-                                                            return TldwCli()
+                                                            with patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir):
+                                                                return TldwCli()
 
 
 def test_app_uses_screen_navigation_and_wires_media_services():
@@ -196,6 +205,20 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.tools_scope_service, ToolsScopeService)
     assert isinstance(app.server_mcp_governance_service, ServerMCPGovernanceService)
     assert isinstance(app.mcp_governance_scope_service, MCPGovernanceScopeService)
+    assert isinstance(app.local_mcp_store, LocalMCPStore)
+    assert isinstance(app.local_mcp_control_service, LocalMCPControlService)
+    assert isinstance(app.unified_mcp_target_store, ConfiguredServerTargetStore)
+    assert isinstance(app.unified_mcp_context_store, UnifiedMCPContextStore)
+    assert isinstance(app.server_unified_mcp_service, ServerUnifiedMCPService)
+    assert isinstance(app.unified_mcp_service, UnifiedMCPControlPlaneService)
+    assert app.unified_mcp_service.local_service is app.local_mcp_control_service
+    assert app.unified_mcp_service.server_service is app.server_unified_mcp_service
+    target = app.unified_mcp_target_store.resolve_active_target(None)
+    assert target is not None
+    assert target.auth_reference == "legacy:tldw_api"
+    unified_client = app.server_unified_mcp_service.client_factory(target)
+    assert unified_client.root_client.base_url == "http://localhost:8000"
+    assert unified_client.root_client.token != "legacy:tldw_api"
     assert isinstance(app.server_text2sql_service, ServerText2SQLService)
     assert isinstance(app.text2sql_scope_service, Text2SQLScopeService)
     assert isinstance(app.server_sync_service, ServerSyncService)
