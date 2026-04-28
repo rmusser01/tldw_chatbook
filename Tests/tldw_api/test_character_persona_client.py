@@ -638,3 +638,65 @@ class TestCharacterPersonaClient:
             "persona_id": "persona-1",
             "project_id": "project-1",
         }
+
+    async def test_character_namespace_gateway_routes_server_only_surfaces(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.call_server_characters_endpoint(
+            "get",
+            "/api/v1/characters/world-books/42/export",
+            params={"format": "json"},
+            headers={"accept": "application/json"},
+        )
+        await client.call_server_characters_endpoint(
+            "POST",
+            "world-books/entries/bulk",
+            payload={"operation": "delete", "entry_ids": [1, 2]},
+            data={"audit": "client"},
+            files=[("attachment", ("bulk.json", b"{}"))],
+        )
+
+        assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/characters/world-books/42/export")
+        assert mocked.await_args_list[0].kwargs["params"] == {"format": "json"}
+        assert mocked.await_args_list[0].kwargs["headers"] == {"accept": "application/json"}
+        assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/characters/world-books/entries/bulk")
+        assert mocked.await_args_list[1].kwargs["json_data"] == {"operation": "delete", "entry_ids": [1, 2]}
+        assert mocked.await_args_list[1].kwargs["data"] == {"audit": "client"}
+        assert mocked.await_args_list[1].kwargs["files"] == [("attachment", ("bulk.json", b"{}"))]
+
+    async def test_persona_namespace_gateway_routes_server_only_surfaces(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.call_server_persona_endpoint("GET", "catalog", params={"active_only": "true"})
+        await client.call_server_persona_endpoint(
+            "put",
+            "/api/v1/persona/profiles/persona-1/scope-rules",
+            payload={"rules": [{"scope": "workspace"}]},
+        )
+
+        assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/persona/catalog")
+        assert mocked.await_args_list[0].kwargs["params"] == {"active_only": "true"}
+        assert mocked.await_args_list[1].args[:2] == ("PUT", "/api/v1/persona/profiles/persona-1/scope-rules")
+        assert mocked.await_args_list[1].kwargs["json_data"] == {"rules": [{"scope": "workspace"}]}
+
+    async def test_character_and_persona_namespace_gateways_reject_unsafe_routes(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        unsafe_calls = [
+            client.call_server_characters_endpoint("GET", "/api/v1/persona/catalog"),
+            client.call_server_characters_endpoint("GET", "../persona/catalog"),
+            client.call_server_persona_endpoint("GET", "/api/v1/characters/world-books"),
+            client.call_server_persona_endpoint("GET", "../characters/world-books"),
+            client.call_server_persona_endpoint("OPTIONS", "catalog"),
+        ]
+        for call in unsafe_calls:
+            with pytest.raises(ValueError):
+                await call
+
+        mocked.assert_not_awaited()
