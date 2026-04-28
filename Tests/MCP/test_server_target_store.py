@@ -76,6 +76,93 @@ def test_legacy_config_does_not_overwrite_existing_registry(tmp_path):
     assert store.list_targets() == [saved_target]
 
 
+def test_upsert_legacy_config_target_adds_current_configured_server_as_default(tmp_path):
+    store = ConfiguredServerTargetStore(tmp_path / "server_targets.json")
+    store.save_targets(
+        [
+            ConfiguredServerTarget(
+                server_id="https://old.example/api",
+                label="Old",
+                base_url="https://old.example/api",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            ),
+            ConfiguredServerTarget(
+                server_id="manual-target",
+                label="Manual",
+                base_url="https://manual.example/api",
+                auth_reference="manual:keychain",
+            ),
+        ]
+    )
+
+    synced = store.upsert_legacy_config_target(
+        {
+            "tldw_api": {
+                "base_url": "https://New.EXAMPLE:9443/api/",
+                "api_key": "new-secret",
+            }
+        }
+    )
+
+    assert synced is not None
+    assert synced.server_id == "https://new.example:9443/api"
+    assert synced.is_default is True
+
+    targets = store.list_targets()
+    assert [target.server_id for target in targets] == [
+        "https://old.example/api",
+        "manual-target",
+        "https://new.example:9443/api",
+    ]
+    assert [target.is_default for target in targets] == [False, False, True]
+    assert store.resolve_active_target().server_id == "https://new.example:9443/api"
+
+    raw_payload = (tmp_path / "server_targets.json").read_text(encoding="utf-8")
+    assert "new-secret" not in raw_payload
+
+
+def test_upsert_legacy_config_target_preserves_existing_status_metadata(tmp_path):
+    store = ConfiguredServerTargetStore(tmp_path / "server_targets.json")
+    connected_at = datetime(2026, 4, 22, 10, 30, tzinfo=timezone.utc)
+    updated_at = datetime(2026, 4, 22, 10, 31, tzinfo=timezone.utc)
+    store.save_targets(
+        [
+            ConfiguredServerTarget(
+                server_id="https://example.com/api",
+                label="Example",
+                base_url="https://example.com/api",
+                auth_reference="legacy:tldw_api",
+                is_default=False,
+                last_known_server_label="Example Server",
+                last_known_reachability="reachable",
+                last_known_auth_state="authenticated",
+                last_connected_at=connected_at,
+                updated_at=updated_at,
+            )
+        ]
+    )
+
+    synced = store.upsert_legacy_config_target(
+        {
+            "tldw_api": {
+                "base_url": "https://example.com/api/",
+                "bearer_token": "secret-token",
+            }
+        }
+    )
+
+    assert synced is not None
+    assert synced.auth_mode == "bearer"
+    assert synced.auth_reference == "legacy:tldw_api"
+    assert synced.is_default is True
+    assert synced.last_known_server_label == "Example Server"
+    assert synced.last_known_reachability == "reachable"
+    assert synced.last_known_auth_state == "authenticated"
+    assert synced.last_connected_at == connected_at
+    assert synced.updated_at == updated_at
+
+
 def test_target_store_loads_safe_default_on_invalid_json(tmp_path):
     path = tmp_path / "server_targets.json"
     path.write_text("{not-json", encoding="utf-8")

@@ -155,6 +155,42 @@ class ConfiguredServerTargetStore:
         self.save_targets([target])
         return True
 
+    def upsert_legacy_config_target(
+        self,
+        app_config: Mapping[str, Any] | None,
+    ) -> ConfiguredServerTarget | None:
+        legacy_target = ConfiguredServerTarget.from_legacy_tldw_api_config(app_config or {})
+        if legacy_target is None:
+            return None
+
+        current_targets = self.list_targets()
+        updated_targets: list[ConfiguredServerTarget] = []
+        synced_target: ConfiguredServerTarget | None = None
+
+        for target in current_targets:
+            if target.server_id != legacy_target.server_id:
+                updated_targets.append(replace(target, is_default=False))
+                continue
+
+            synced_target = replace(
+                legacy_target,
+                is_default=True,
+                last_known_server_label=target.last_known_server_label or legacy_target.last_known_server_label,
+                last_known_reachability=target.last_known_reachability or legacy_target.last_known_reachability,
+                last_known_auth_state=target.last_known_auth_state or legacy_target.last_known_auth_state,
+                last_connected_at=target.last_connected_at or legacy_target.last_connected_at,
+                updated_at=target.updated_at or legacy_target.updated_at,
+            )
+            updated_targets.append(synced_target)
+
+        if synced_target is None:
+            synced_target = legacy_target
+            updated_targets.append(synced_target)
+
+        if updated_targets != current_targets:
+            self.save_targets(updated_targets)
+        return synced_target
+
     def _read_payload(self) -> Any:
         try:
             with self.path.open("r", encoding="utf-8") as handle:

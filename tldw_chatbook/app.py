@@ -2126,7 +2126,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.unified_mcp_target_store = ConfiguredServerTargetStore(
             get_user_data_dir() / "mcp_server_targets.json",
         )
-        self.unified_mcp_target_store.bootstrap_from_legacy_config(self.app_config)
+        self.unified_mcp_target_store.upsert_legacy_config_target(self.app_config)
         self.unified_mcp_context_store = UnifiedMCPContextStore(
             get_user_data_dir() / "unified_mcp_context.json",
         )
