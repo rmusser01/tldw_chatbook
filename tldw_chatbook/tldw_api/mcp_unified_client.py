@@ -159,6 +159,100 @@ class MCPUnifiedClient:
         payload = await self.root_client._request("GET", "/api/v1/mcp/metrics", params=None)
         return MCPMetricsResponse.from_payload(payload)
 
+    async def get_prometheus_metrics(self) -> str:
+        request_bytes = getattr(self.root_client, "_request_bytes", None)
+        if callable(request_bytes):
+            payload = await request_bytes("GET", "/api/v1/mcp/metrics/prometheus")
+            return payload.decode("utf-8") if isinstance(payload, bytes) else str(payload)
+        payload = await self.root_client._request("GET", "/api/v1/mcp/metrics/prometheus", params=None)
+        return payload if isinstance(payload, str) else str(payload)
+
+    async def create_auth_token(
+        self,
+        *,
+        username: str,
+        password: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ) -> MCPPayloadEnvelope:
+        json_data = {"username": username}
+        if password is not None:
+            json_data["password"] = password
+        if api_key is not None:
+            json_data["api_key"] = api_key
+        payload = await self.root_client._request(
+            "POST",
+            "/api/v1/mcp/auth/token",
+            json_data=json_data,
+        )
+        return MCPPayloadEnvelope.from_payload(payload)
+
+    async def refresh_auth_token(
+        self,
+        *,
+        refresh_token: str,
+        token_id: Optional[str] = None,
+    ) -> MCPPayloadEnvelope:
+        json_data = {"refresh_token": refresh_token}
+        if token_id is not None:
+            json_data["token_id"] = token_id
+        payload = await self.root_client._request(
+            "POST",
+            "/api/v1/mcp/auth/refresh",
+            json_data=json_data,
+        )
+        return MCPPayloadEnvelope.from_payload(payload)
+
+    async def send_request(
+        self,
+        request: Dict[str, Any],
+        *,
+        client_id: Optional[str] = None,
+        mcp_session_id: Optional[str] = None,
+        config: Optional[str] = None,
+    ) -> MCPPayloadEnvelope:
+        params: Dict[str, Any] = {}
+        if client_id is not None:
+            params["client_id"] = client_id
+        if config is not None:
+            params["config"] = config
+        headers = {"mcp-session-id": mcp_session_id} if mcp_session_id is not None else None
+        payload = await self.root_client._request(
+            "POST",
+            "/api/v1/mcp/request",
+            json_data=dict(request),
+            params=params or None,
+            headers=headers,
+        )
+        return MCPPayloadEnvelope.from_payload(payload)
+
+    async def send_request_batch(
+        self,
+        requests: List[Dict[str, Any]],
+        *,
+        client_id: Optional[str] = None,
+        mcp_session_id: Optional[str] = None,
+        config: Optional[str] = None,
+    ) -> MCPListEnvelope:
+        params: Dict[str, Any] = {}
+        if client_id is not None:
+            params["client_id"] = client_id
+        if config is not None:
+            params["config"] = config
+        headers = {"mcp-session-id": mcp_session_id} if mcp_session_id is not None else None
+        payload = await self.root_client._request(
+            "POST",
+            "/api/v1/mcp/request/batch",
+            json_data=[dict(item) for item in requests],
+            params=params or None,
+            headers=headers,
+        )
+        return MCPListEnvelope.from_payload(payload)
+
+    async def list_catalog(self, *, archetype_key: Optional[str] = None) -> MCPListEnvelope:
+        params = {"archetype_key": archetype_key} if archetype_key is not None else None
+        payload = await self.root_client._request("GET", "/api/v1/mcp/catalog", params=params)
+        return MCPListEnvelope.from_payload(payload)
+
     async def list_modules(
         self,
         *,
@@ -1327,6 +1421,20 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(payload)
 
+    async def get_profile_slot_credential_binding_status(
+        self,
+        *,
+        profile_id: Union[str, int],
+        server_id: str,
+        slot_name: str,
+    ) -> MCPPayloadEnvelope:
+        payload = await self.root_client._request(
+            "GET",
+            f"/api/v1/mcp/hub/permission-profiles/{profile_id}/credential-bindings/{server_id}/{slot_name}/status",
+            params=None,
+        )
+        return MCPPayloadEnvelope.from_payload(payload)
+
     async def list_assignment_credential_bindings(
         self,
         *,
@@ -1405,6 +1513,20 @@ class MCPUnifiedClient:
         payload = await self.root_client._request(
             "GET",
             f"/api/v1/mcp/hub/policy-assignments/{assignment_id}/credential-bindings/status/{server_id}/{slot_name}",
+            params=None,
+        )
+        return MCPPayloadEnvelope.from_payload(payload)
+
+    async def get_assignment_slot_credential_binding_status(
+        self,
+        *,
+        assignment_id: Union[str, int],
+        server_id: str,
+        slot_name: str,
+    ) -> MCPPayloadEnvelope:
+        payload = await self.root_client._request(
+            "GET",
+            f"/api/v1/mcp/hub/policy-assignments/{assignment_id}/credential-bindings/{server_id}/{slot_name}/status",
             params=None,
         )
         return MCPPayloadEnvelope.from_payload(payload)

@@ -26,6 +26,7 @@ def _assert_request_call(call_args, expected_method, expected_endpoint, expected
 class _DummyRootClient:
     def __init__(self):
         self._request = AsyncMock()
+        self._request_bytes = AsyncMock()
 
 
 @pytest.mark.asyncio
@@ -174,6 +175,69 @@ async def test_test_catalog_connection_posts_to_test_connection_endpoint(monkeyp
             }
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_unified_client_routes_remaining_mcp_runtime_contract_edges():
+    root = _DummyRootClient()
+    client = MCPUnifiedClient(root)
+    mocked = AsyncMock(return_value={"ok": True})
+    root._request = mocked
+
+    await client.create_auth_token(username="admin", api_key="demo-secret")
+    await client.refresh_auth_token(refresh_token="refresh-token", token_id="token-id")
+    await client.list_catalog(archetype_key="research_assistant")
+    await client.send_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, client_id="chatbook")
+    await client.send_request_batch(
+        [{"jsonrpc": "2.0", "id": 2, "method": "resources/list"}],
+        client_id="chatbook",
+        mcp_session_id="session-1",
+        config="encoded-config",
+    )
+    await client.get_profile_slot_credential_binding_status(
+        profile_id=7,
+        server_id="docs",
+        slot_name="token_readonly",
+    )
+    await client.get_assignment_slot_credential_binding_status(
+        assignment_id=11,
+        server_id="docs",
+        slot_name="token_write",
+    )
+
+    assert [call.args[:2] for call in mocked.await_args_list] == [
+        ("POST", "/api/v1/mcp/auth/token"),
+        ("POST", "/api/v1/mcp/auth/refresh"),
+        ("GET", "/api/v1/mcp/catalog"),
+        ("POST", "/api/v1/mcp/request"),
+        ("POST", "/api/v1/mcp/request/batch"),
+        ("GET", "/api/v1/mcp/hub/permission-profiles/7/credential-bindings/docs/token_readonly/status"),
+        ("GET", "/api/v1/mcp/hub/policy-assignments/11/credential-bindings/docs/token_write/status"),
+    ]
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "username": "admin",
+        "api_key": "demo-secret",
+    }
+    assert mocked.await_args_list[1].kwargs["json_data"] == {
+        "refresh_token": "refresh-token",
+        "token_id": "token-id",
+    }
+    assert mocked.await_args_list[2].kwargs["params"] == {"archetype_key": "research_assistant"}
+    assert mocked.await_args_list[3].kwargs["params"] == {"client_id": "chatbook"}
+    assert mocked.await_args_list[4].kwargs["params"] == {"client_id": "chatbook", "config": "encoded-config"}
+    assert mocked.await_args_list[4].kwargs["headers"] == {"mcp-session-id": "session-1"}
+
+
+@pytest.mark.asyncio
+async def test_unified_client_fetches_prometheus_metrics_as_text():
+    root = _DummyRootClient()
+    client = MCPUnifiedClient(root)
+    root._request_bytes = AsyncMock(return_value=b"mcp_requests_total 1\n")
+
+    metrics = await client.get_prometheus_metrics()
+
+    assert metrics == "mcp_requests_total 1\n"
+    root._request_bytes.assert_awaited_once_with("GET", "/api/v1/mcp/metrics/prometheus")
 
 
 def test_access_context_bootstrap_helper_normalizes_scope_options():
