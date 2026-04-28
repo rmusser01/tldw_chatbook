@@ -128,6 +128,60 @@ def test_legacy_fallback_works_when_no_target_exists_and_app_config_matches_acti
     assert context.credential_source == "legacy:tldw_api"
 
 
+def test_legacy_target_prefers_credential_store_token_over_legacy_config(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "stored-access")
+
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Legacy Profile",
+                base_url="https://server.example.com/api",
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "stale-legacy",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    context = provider.get_active_context()
+
+    assert context.auth_token == "stored-access"
+    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_ACCESS_TOKEN}"
+
+
+def test_legacy_fallback_without_target_prefers_credential_store_token_over_legacy_config(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "stored-bearer")
+
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "stale-legacy",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    context = provider.get_active_context()
+
+    assert context.auth_token == "stored-bearer"
+    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+
+
 def test_build_client_uses_active_context_base_url_and_bearer_token(tmp_path):
     credentials = InMemoryServerCredentialStore()
     credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-secret")

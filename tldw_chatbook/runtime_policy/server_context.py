@@ -105,12 +105,6 @@ class RuntimeServerContextProvider:
         return ConfiguredServerTarget.from_legacy_tldw_api_config(self.app_config)
 
     def _resolve_auth_token(self, server_id: str, target: ConfiguredServerTarget) -> tuple[str | None, str]:
-        if target.auth_reference == "legacy:tldw_api":
-            legacy_token = self._legacy_config_token()
-            if legacy_token is not None:
-                return legacy_token, "legacy:tldw_api"
-            return None, "none"
-
         purpose = self._purpose_from_auth_reference(target.auth_reference)
         if purpose is not None:
             secret = self.credential_store.get_secret(server_id, purpose)
@@ -123,7 +117,7 @@ class RuntimeServerContextProvider:
             if secret is not None:
                 return secret, f"credential_store:{candidate_purpose}"
 
-        if self.resolve_target() is None:
+        if target.auth_reference == "legacy:tldw_api" or self.resolve_target() is None:
             legacy_token = self._legacy_config_token()
             if legacy_token is not None:
                 return legacy_token, "legacy:tldw_api"
