@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from keyring.errors import PasswordDeleteError
 
 from tldw_chatbook.runtime_policy import (
     DEFAULT_KEYRING_SERVICE_NAME,
@@ -39,9 +38,13 @@ class RaisingDeleteKeyring(FakeKeyring):
 
 
 class MissingDeleteKeyring(FakeKeyring):
+    class errors:
+        class PasswordDeleteError(Exception):
+            pass
+
     def delete_password(self, service_name: str, username: str) -> None:
         self.deleted.append((service_name, username))
-        raise PasswordDeleteError("missing secret")
+        raise self.errors.PasswordDeleteError("missing secret")
 
 
 def test_in_memory_credentials_are_scoped_by_server_and_purpose():

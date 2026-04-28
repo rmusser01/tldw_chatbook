@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from keyring.errors import PasswordDeleteError
-
 
 SERVER_CREDENTIAL_ACCESS_TOKEN = "access_token"
 SERVER_CREDENTIAL_REFRESH_TOKEN = "refresh_token"
@@ -106,6 +104,10 @@ class KeyringServerCredentialStore:
             import keyring
 
             keyring_backend = keyring
+            self._password_delete_error = keyring.errors.PasswordDeleteError
+        else:
+            backend_errors = getattr(keyring_backend, "errors", None)
+            self._password_delete_error = getattr(backend_errors, "PasswordDeleteError", None)
         self._keyring = keyring_backend
 
     def set_secret(self, server_id: str, purpose: str, secret: str) -> None:
@@ -120,8 +122,10 @@ class KeyringServerCredentialStore:
         ref = _credential_ref(server_id, purpose)
         try:
             self._keyring.delete_password(self.service_name, ref.username)
-        except PasswordDeleteError:
-            return
+        except Exception as exc:
+            if self._password_delete_error is not None and isinstance(exc, self._password_delete_error):
+                return
+            raise
 
     def clear_server(self, server_id: str) -> None:
         normalized_server_id = _normalize_non_empty(server_id, "server_id")
