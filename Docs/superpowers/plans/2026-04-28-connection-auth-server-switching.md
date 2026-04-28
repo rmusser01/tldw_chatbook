@@ -277,12 +277,10 @@ class KeyringServerCredentialStore:
         return self.keyring.get_password(self.service_name, ServerCredentialRef(_normalize(server_id), _normalize(purpose)).username)
 
     def delete_secret(self, server_id: str, purpose: str) -> None:
-        try:
-            self.keyring.delete_password(self.service_name, ServerCredentialRef(_normalize(server_id), _normalize(purpose)).username)
-        except Exception as exc:
-            if self._password_delete_error is not None and isinstance(exc, self._password_delete_error):
-                return
-            raise
+        username = ServerCredentialRef(_normalize(server_id), _normalize(purpose)).username
+        if self.keyring.get_password(self.service_name, username) is None:
+            return
+        self.keyring.delete_password(self.service_name, username)
 
     def clear_server(self, server_id: str) -> None:
         for purpose in (
