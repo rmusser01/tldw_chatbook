@@ -220,6 +220,41 @@ def test_load_runtime_policy_for_app_clears_stale_capability_state_when_server_i
     assert store.load() == context.state
 
 
+def test_set_authoritative_runtime_source_clears_probe_state_on_server_identity_change(
+    tmp_path,
+):
+    from tldw_chatbook.runtime_policy.bootstrap import (
+        RuntimePolicyContext,
+        set_authoritative_runtime_source,
+    )
+    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+
+    store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
+    app_like = _make_app_like(base_url="https://new.example.com/v1/")
+    old_state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="https://old.example.com/api",
+        server_configured=True,
+        server_reachability="reachable",
+        server_reachability_checked_at=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+        server_auth_state="authenticated",
+        server_auth_checked_at=datetime(2026, 4, 21, 12, 5, tzinfo=timezone.utc),
+        last_known_server_label="old.example.com",
+    )
+    app_like.runtime_policy = RuntimePolicyContext(state=old_state, store=store)
+
+    updated_state = set_authoritative_runtime_source(app_like, "server")
+
+    assert updated_state.active_source == "server"
+    assert updated_state.active_server_id == "https://new.example.com/v1"
+    assert updated_state.server_configured is True
+    assert updated_state.server_reachability == "unknown"
+    assert updated_state.server_reachability_checked_at is None
+    assert updated_state.server_auth_state == "unknown"
+    assert updated_state.server_auth_checked_at is None
+    assert store.load() == updated_state
+
+
 def test_load_runtime_policy_for_app_downgrades_stale_server_mode_when_server_config_is_missing(
     tmp_path,
 ):

@@ -105,6 +105,7 @@ from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+from tldw_chatbook.runtime_policy import KeyringServerCredentialStore, RuntimeServerContextProvider
 
 
 def _build_test_app() -> TldwCli:
@@ -226,6 +227,10 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.server_runtime_service, ServerRuntimeService)
     assert isinstance(app.server_runtime_scope_service, ServerRuntimeScopeService)
     assert isinstance(app.active_server_capability_service, ActiveServerCapabilityService)
+    assert isinstance(app.server_credential_store, KeyringServerCredentialStore)
+    assert isinstance(app.server_context_provider, RuntimeServerContextProvider)
+    assert app.server_context_provider.runtime_context is app.runtime_policy
+    assert app.server_context_provider.target_store is app.unified_mcp_target_store
     assert isinstance(app.local_llm_provider_catalog_service, LocalLLMProviderCatalogService)
     assert isinstance(app.server_llm_provider_catalog_service, ServerLLMProviderCatalogService)
     assert isinstance(app.llm_provider_catalog_scope_service, LLMProviderCatalogScopeService)

@@ -117,6 +117,43 @@ async def test_active_server_capabilities_refreshes_snapshot_and_policy_state():
 
 
 @pytest.mark.asyncio
+async def test_active_server_capabilities_refresh_uses_current_runtime_policy_server_identity():
+    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+
+    context = _context(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="https://old.example.com/api",
+            server_configured=True,
+            server_reachability="reachable",
+            server_auth_state="authenticated",
+        )
+    )
+    runtime_scope = FakeServerRuntimeScope()
+    service = ActiveServerCapabilityService(
+        runtime_context=context,
+        server_runtime_scope_service=runtime_scope,
+    )
+    context.state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="https://new.example.com/v1",
+        server_configured=True,
+        server_reachability="unknown",
+        server_auth_state="unknown",
+        last_known_server_label="new.example.com",
+    )
+
+    snapshot = await service.refresh()
+
+    assert snapshot["record_id"] == "server:capability_snapshot:https://new.example.com/v1"
+    assert snapshot["active_server_id"] == "https://new.example.com/v1"
+    assert snapshot["reachability"] == "reachable"
+    assert snapshot["auth_state"] == "authenticated"
+    assert context.state.active_server_id == "https://new.example.com/v1"
+    assert context.state.last_known_server_label == "new.example.com"
+
+
+@pytest.mark.asyncio
 async def test_active_server_capabilities_uses_ungated_probes_to_recover_stale_auth_state():
     from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
 
