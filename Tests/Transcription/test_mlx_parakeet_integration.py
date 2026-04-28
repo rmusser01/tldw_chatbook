@@ -128,8 +128,8 @@ class TestMLXParakeetIntegration:
     def transcription_service(self):
         """Create a real TranscriptionService instance."""
         # Only mock the model download, everything else is real
-        service = TranscriptionService()
-        return service
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.PARAKEET_MLX_AVAILABLE', True):
+            yield TranscriptionService()
     
     def test_basic_transcription(self, transcription_service, create_wav_file, mock_model_download):
         """Test basic transcription functionality."""

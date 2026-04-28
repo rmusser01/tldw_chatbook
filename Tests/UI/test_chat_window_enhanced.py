@@ -428,10 +428,13 @@ class TestChatWindowShellBarMounting:
                 chat_window = app.query_one(ChatWindowEnhanced)
                 main_content = chat_window.query_one("#chat-main-content", Container)
                 shell_bar = chat_window.get_shell_bar()
+                task_surface = main_content.query_one("#chat-task-surface", Container)
+                chat_log = main_content.query_one("#chat-log", VerticalScroll)
+                children = list(main_content.children)
 
                 assert shell_bar is main_content.query_one("#chat-shell-bar", ChatShellBar)
-                assert main_content.children[0].id == "chat-shell-bar"
-                assert main_content.children[1].id == "chat-log"
+                assert children[0].id == "chat-shell-bar"
+                assert children.index(task_surface) < children.index(chat_log)
 
     @pytest.mark.asyncio
     async def test_shell_bar_mounted_above_tabbed_content(self):
@@ -447,12 +450,14 @@ class TestChatWindowShellBarMounting:
             async with app.run_test(size=(120, 40)):
                 chat_window = app.query_one(ChatWindowEnhanced)
                 main_content = chat_window.query_one("#chat-main-content", Container)
+                task_surface = main_content.query_one("#chat-task-surface", Container)
                 tab_container = main_content.query_one(ChatTabContainer)
                 shell_bar = chat_window.get_shell_bar()
+                children = list(main_content.children)
 
                 assert shell_bar is main_content.query_one("#chat-shell-bar", ChatShellBar)
-                assert main_content.children[0].id == "chat-shell-bar"
-                assert main_content.children[1] is tab_container
+                assert children[0].id == "chat-shell-bar"
+                assert children.index(task_surface) < children.index(tab_container)
 
     @pytest.mark.asyncio
     async def test_chat_screen_receives_live_active_session_message_in_mounted_tree(self):

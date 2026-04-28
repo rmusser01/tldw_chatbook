@@ -80,7 +80,7 @@ class ResearchSearchScopeService:
     }
     SERVER_DETAIL_PAPER_PROVIDERS = {"arxiv", "semantic_scholar", "biorxiv", "medrxiv", "pubmed"}
 
-    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
+    def __init__(self, *, local_service: Any = None, server_service: Any = None, policy_enforcer: Any = None):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
@@ -153,10 +153,12 @@ class ResearchSearchScopeService:
         return capabilities
 
     @staticmethod
-    def _with_backend(mode: ResearchSearchBackend, result: Any) -> Any:
+    def _with_backend(mode: ResearchSearchBackend, result: Any, *, entity_kind: str | None = None) -> Any:
         if isinstance(result, dict):
             payload = dict(result)
             payload.setdefault("backend", mode.value)
+            if entity_kind is not None:
+                payload.setdefault("entity_kind", entity_kind)
             return payload
         return result
 
@@ -228,10 +230,71 @@ class ResearchSearchScopeService:
         **kwargs: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == ResearchSearchBackend.LOCAL and self.local_service is None:
+            raise ValueError("websearch is server-only when no local research search backend is configured.")
         self._enforce_policy(self._action_id("launch", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(service.websearch(**kwargs))
-        return self._with_backend(normalized_mode, result)
+        return self._with_backend(normalized_mode, result, entity_kind="research_websearch")
+
+    async def _call_server_only_provider_method(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None,
+        method_name: str,
+        action: str,
+        entity_kind: str,
+        kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != ResearchSearchBackend.SERVER:
+            raise ValueError(f"{method_name} is server-only.")
+        self._enforce_policy(self._action_id(action, normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(getattr(service, method_name)(**kwargs))
+        return self._with_backend(normalized_mode, result, entity_kind=entity_kind)
+
+    async def paper_search(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call_server_only_provider_method(
+            mode=mode,
+            method_name="paper_search",
+            action="launch",
+            entity_kind="paper_search",
+            kwargs=kwargs,
+        )
+
+    async def paper_detail(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call_server_only_provider_method(
+            mode=mode,
+            method_name="paper_detail",
+            action="observe",
+            entity_kind="paper_search_detail",
+            kwargs=kwargs,
+        )
+
+    async def paper_ingest(
+        self,
+        *,
+        mode: ResearchSearchBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call_server_only_provider_method(
+            mode=mode,
+            method_name="paper_ingest",
+            action="launch",
+            entity_kind="paper_search_ingest",
+            kwargs=kwargs,
+        )
 
     async def search_arxiv(
         self,

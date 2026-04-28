@@ -31,11 +31,11 @@ class MainNavigationBar(Container):
 
     # Navigation items organized by visual group
     NAV_GROUPS = [
-        ("Workspace", [("chat", "Chat"), ("coding", "Coding"), ("chatbooks", "Chatbooks")]),
+        ("Workspace", [("chat", "Chat"), ("chatbooks", "Chatbooks")]),
         ("Content", [("notes", "Notes"), ("media", "Media"), ("ingest", "Ingest"), ("search", "Search"), ("subscriptions", "Subscriptions")]),
-        ("Characters", [("ccp", "Conv/Char"), ("study", "Study")]),
+        ("Characters", [("ccp", "Library"), ("study", "Study")]),
         ("AI Config", [("llm", "LLM"), ("stts", "S/TT/S"), ("evals", "Evals")]),
-        ("System", [("tools_settings", "Settings"), ("customize", "Customize"), ("logs", "Logs"), ("stats", "Stats")]),
+        ("System", [("tools_settings", "Settings"), ("customize", "Customize"), ("logs", "Logs"), ("stats", "Stats"), ("coding", "Coding")]),
     ]
 
     DEFAULT_CSS = """

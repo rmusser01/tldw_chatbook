@@ -382,7 +382,10 @@ class ChatbookImporter:
             except Exception as e:
                 status.failed_items += 1
                 status.add_error(f"Error importing conversation {conv_id}: {str(e)}")
-                logger.error(f"ChatbookImporter._import_conversations: Error importing conversation {conv_id}: {e}", exc_info=True)
+                logger.opt(exception=True).error(
+                    "ChatbookImporter._import_conversations: Error importing conversation {}",
+                    conv_id,
+                )
     
     def _import_notes(
         self,
@@ -487,7 +490,10 @@ class ChatbookImporter:
             except Exception as e:
                 status.failed_items += 1
                 status.add_error(f"Error importing note {note_id}: {str(e)}")
-                logger.error(f"ChatbookImporter._import_notes: Error importing note {note_id}: {e}", exc_info=True)
+                logger.opt(exception=True).error(
+                    "ChatbookImporter._import_notes: Error importing note {}",
+                    note_id,
+                )
     
     def _import_characters(
         self,
@@ -611,7 +617,10 @@ class ChatbookImporter:
             except Exception as e:
                 status.failed_items += 1
                 status.add_error(f"Error importing character {char_id}: {str(e)}")
-                logger.error(f"ChatbookImporter._import_characters: Error importing character {char_id}: {e}", exc_info=True)
+                logger.opt(exception=True).error(
+                    "ChatbookImporter._import_characters: Error importing character {}",
+                    char_id,
+                )
     
     def _import_prompts(
         self,

@@ -133,6 +133,10 @@ class ClientNotificationsDB(BaseDB):
             conn.commit()
         return self.get_notification(notification_id)
 
+    def insert(self, **kwargs: Any) -> dict[str, Any]:
+        """Compatibility alias for older inbox/controller call sites."""
+        return self.insert_notification(**kwargs)
+
     def get_notification(self, notification_id: int) -> dict[str, Any]:
         """Return a notification by id."""
         with self._get_connection() as conn:
@@ -150,6 +154,11 @@ class ClientNotificationsDB(BaseDB):
         limit: int = 100,
         include_dismissed: bool = False,
         category: str | None = None,
+        severity: str | None = None,
+        source_backend: str | None = None,
+        source_entity_kind: str | None = None,
+        source_entity_id: str | None = None,
+        is_read: bool | None = None,
     ) -> list[dict[str, Any]]:
         """List inbox notifications newest-first."""
         clauses = []
@@ -159,6 +168,21 @@ class ClientNotificationsDB(BaseDB):
         if category:
             clauses.append("category = ?")
             params.append(category)
+        if severity:
+            clauses.append("severity = ?")
+            params.append(severity)
+        if source_backend:
+            clauses.append("source_backend = ?")
+            params.append(source_backend)
+        if source_entity_kind:
+            clauses.append("source_entity_kind = ?")
+            params.append(source_entity_kind)
+        if source_entity_id:
+            clauses.append("source_entity_id = ?")
+            params.append(source_entity_id)
+        if is_read is not None:
+            clauses.append("is_read = ?")
+            params.append(int(bool(is_read)))
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(max(int(limit), 1))
@@ -237,6 +261,21 @@ class ClientNotificationsDB(BaseDB):
             settings[row["key"]] = value
         return settings
 
+    def get_preferences(self) -> dict[str, Any]:
+        """Compatibility preferences view used by the inbox controller."""
+        settings = self.get_settings()
+        category_preferences = settings.get("category_preferences") or {}
+        muted_categories = [
+            category
+            for category, preferences in category_preferences.items()
+            if isinstance(preferences, Mapping) and preferences.get("enabled") is False
+        ]
+        return {
+            "delivery_enabled": bool(settings.get("enabled", True)),
+            "muted_categories": sorted(muted_categories),
+            "muted_severities": [],
+        }
+
     def update_settings(self, **settings: Any) -> dict[str, Any]:
         """Persist known local notification settings and return the effective set."""
         unknown = set(settings) - set(DEFAULT_NOTIFICATION_SETTINGS)
@@ -257,6 +296,29 @@ class ClientNotificationsDB(BaseDB):
                 )
             conn.commit()
         return self.get_settings()
+
+    def update_preferences(
+        self,
+        *,
+        delivery_enabled: bool | None = None,
+        muted_categories: list[str] | tuple[str, ...] | set[str] | None = None,
+        muted_severities: list[str] | tuple[str, ...] | set[str] | None = None,
+    ) -> dict[str, Any]:
+        """Compatibility preferences writer used by the inbox controller."""
+        settings: dict[str, Any] = {}
+        if delivery_enabled is not None:
+            settings["enabled"] = bool(delivery_enabled)
+        if muted_categories is not None:
+            settings["category_preferences"] = {
+                str(category): {"enabled": False}
+                for category in muted_categories
+                if str(category).strip()
+            }
+        self.update_settings(**settings)
+        preferences = self.get_preferences()
+        if muted_severities is not None:
+            preferences["muted_severities"] = sorted(str(item) for item in muted_severities)
+        return preferences
 
     @staticmethod
     def _normalize_category_preferences(value: Any) -> dict[str, dict[str, bool]]:

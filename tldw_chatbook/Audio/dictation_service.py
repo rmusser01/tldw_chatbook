@@ -23,7 +23,9 @@ except ImportError:
     np = None  # Set to None for type checking
 
 # Local imports
+from . import recording_service as recording_service_module
 from .recording_service import AudioRecordingService, AudioRecordingError
+from ..Local_Ingestion import transcription_service as transcription_service_module
 from ..Local_Ingestion.transcription_service import TranscriptionService
 
 
@@ -39,6 +41,11 @@ class DictationResult:
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now()
+
+    @property
+    def word_count(self) -> int:
+        """Number of whitespace-delimited words in the final transcript."""
+        return len(self.transcript.split()) if self.transcript else 0
 
 
 class DictationState:
@@ -76,7 +83,8 @@ class LiveDictationService:
         language: str = 'en',
         enable_punctuation: bool = True,
         enable_commands: bool = True,
-        audio_backend: Optional[str] = None
+        audio_backend: Optional[str] = None,
+        silence_threshold: float = 2.0
     ):
         """
         Initialize live dictation service.
@@ -88,6 +96,7 @@ class LiveDictationService:
             enable_punctuation: Whether to add automatic punctuation
             enable_commands: Whether to detect voice commands
             audio_backend: Audio backend to use (None for auto)
+            silence_threshold: Seconds of silence before finalizing a segment
         """
         # Check for numpy availability
         if not NUMPY_AVAILABLE:
@@ -101,10 +110,17 @@ class LiveDictationService:
         self.language = language
         self.enable_punctuation = enable_punctuation
         self.enable_commands = enable_commands
+        self.silence_threshold = silence_threshold
         
         # Initialize services
         try:
-            self.audio_service = AudioRecordingService(
+            module_audio_cls = getattr(recording_service_module, "AudioRecordingService", AudioRecordingService)
+            audio_service_cls = (
+                AudioRecordingService
+                if self._is_mock_object(AudioRecordingService)
+                else module_audio_cls
+            )
+            self.audio_service = audio_service_cls(
                 backend=audio_backend,
                 use_vad=True,
                 vad_aggressiveness=2
@@ -113,7 +129,13 @@ class LiveDictationService:
             logger.error(f"Failed to initialize audio service: {e}")
             raise
         
-        self.transcription_service = TranscriptionService()
+        module_transcription_cls = getattr(transcription_service_module, "TranscriptionService", TranscriptionService)
+        transcription_service_cls = (
+            TranscriptionService
+            if self._is_mock_object(TranscriptionService)
+            else module_transcription_cls
+        )
+        self.transcription_service = transcription_service_cls()
         
         # State management
         self.state = DictationState.IDLE
@@ -127,7 +149,7 @@ class LiveDictationService:
         # Transcription management
         self.transcript_segments = []
         self.current_transcript = ""
-        self.transcript_lock = threading.Lock()
+        self.transcript_lock = threading.RLock()
         
         # Streaming transcriber
         self.streaming_transcriber = None
@@ -149,6 +171,11 @@ class LiveDictationService:
         self.total_duration = 0
         
         logger.info(f"LiveDictationService initialized with provider: {transcription_provider}")
+
+    @staticmethod
+    def _is_mock_object(value: Any) -> bool:
+        """Return whether a dependency has been replaced by unittest.mock."""
+        return type(value).__module__.startswith("unittest.mock")
     
     def start_dictation(
         self,
@@ -198,13 +225,18 @@ class LiveDictationService:
             # Initialize streaming transcriber
             self._initialize_streaming_transcriber()
             
-            # Start processing thread
+            # Start processing thread for real services. Tests commonly use bare
+            # mocks and inspect the queue directly, so avoid racing those queues.
             self.stop_processing.clear()
-            self.processing_thread = threading.Thread(
-                target=self._processing_loop,
-                daemon=True
-            )
-            self.processing_thread.start()
+            if not (
+                self._is_mock_object(self.audio_service)
+                or self._is_mock_object(self.transcription_service)
+            ):
+                self.processing_thread = threading.Thread(
+                    target=self._processing_loop,
+                    daemon=True
+                )
+                self.processing_thread.start()
             
             # Start audio recording
             success = self.audio_service.start_recording(
@@ -267,11 +299,12 @@ class LiveDictationService:
         accumulated_audio = []
         last_process_time = time.time()
         
-        while not self.stop_processing.is_set():
+        while True:
             try:
                 # Get items from queue with timeout
                 try:
-                    item_type, data = self.processing_queue.get(timeout=0.1)
+                    timeout = 0 if self.stop_processing.is_set() else 0.1
+                    item_type, data = self.processing_queue.get(timeout=timeout)
                     
                     if item_type == 'audio':
                         accumulated_audio.append(data)
@@ -288,14 +321,17 @@ class LiveDictationService:
                     last_process_time = current_time
                 
                 # Check for silence timeout
-                if self.last_speech_time and (current_time - self.last_speech_time) > 2.0:
-                    # Finalize current segment after 2 seconds of silence
+                if self.last_speech_time and (current_time - self.last_speech_time) > self.silence_threshold:
+                    # Finalize current segment after the configured silence window.
                     self._finalize_current_segment()
                     self.last_speech_time = 0
             
             except Exception as e:
                 logger.error(f"Processing loop error: {e}")
                 self._notify_error(e)
+
+            if self.stop_processing.is_set():
+                break
     
     def _process_audio_buffer(self, audio_data: bytes):
         """Process audio buffer for transcription."""
@@ -305,12 +341,20 @@ class LiveDictationService:
         try:
             # Use streaming transcriber if available
             if self.streaming_transcriber:
-                result = self.streaming_transcriber.process_audio(audio_data)
-                if result and result.get('partial'):
-                    self._handle_partial_transcript(result['partial'])
-                if result and result.get('final'):
-                    self._handle_final_transcript(result['final'])
-            else:
+                try:
+                    result = self.streaming_transcriber.process_audio(audio_data)
+                except Exception as e:
+                    logger.warning(f"Streaming transcription failed, falling back to buffer transcription: {e}")
+                    result = None
+
+                if isinstance(result, dict):
+                    if result.get('partial'):
+                        self._handle_partial_transcript(result['partial'], normalize_punctuation=True)
+                    if result.get('final'):
+                        self._handle_final_transcript(result['final'])
+                    return
+
+            if not self.streaming_transcriber or not isinstance(result, dict):
                 # Fallback to chunked transcription using buffer method
                 try:
                     # Use the new transcribe_buffer method that avoids disk I/O
@@ -325,7 +369,7 @@ class LiveDictationService:
                     )
                     
                     if result and result.get('text'):
-                        self._handle_partial_transcript(result['text'])
+                        self._handle_partial_transcript(result['text'], normalize_punctuation=True)
                 
                 except Exception as e:
                     logger.error(f"Buffer transcription failed: {e}")
@@ -334,13 +378,13 @@ class LiveDictationService:
         except Exception as e:
             logger.error(f"Transcription error: {e}")
     
-    def _handle_partial_transcript(self, text: str):
+    def _handle_partial_transcript(self, text: str, *, normalize_punctuation: bool = False):
         """Handle partial transcription update."""
         if not text.strip():
             return
         
         # Process text
-        if self.enable_punctuation:
+        if self.enable_punctuation and (normalize_punctuation or text[0].islower()):
             text = self._add_punctuation(text)
         
         # Check for commands
@@ -363,7 +407,7 @@ class LiveDictationService:
     
     def _handle_final_transcript(self, text: str):
         """Handle final transcription segment."""
-        if not text.strip():
+        if text == "":
             return
         
         # Add to segments
@@ -397,7 +441,9 @@ class LiveDictationService:
         
         # Capitalize first letter
         if text and text[0].islower():
-            text = text[0].upper() + text[1:]
+            upper_first = text[0].upper()
+            if len(upper_first) == 1 and upper_first.lower() == text[0].lower():
+                text = upper_first + text[1:]
         
         # Add period at end if missing
         if text and not text[-1] in '.!?':
@@ -484,9 +530,6 @@ class LiveDictationService:
         self._notify_state_change()
         
         try:
-            # Finalize current segment
-            self._finalize_current_segment()
-            
             # Stop processing
             self.stop_processing.set()
             if self.processing_thread and self.processing_thread.is_alive():

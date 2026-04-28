@@ -11,6 +11,11 @@ from ..tldw_api import (
     TLDWAPIClient,
     WebSearchRequest,
 )
+from ..tldw_api.research_search_schemas import (
+    PaperSearchDetailRequest,
+    PaperSearchIngestRequest,
+    PaperSearchRequest,
+)
 
 
 class ServerResearchSearchService:
@@ -68,6 +73,10 @@ class ServerResearchSearchService:
             return response.model_dump(mode="json")
         return dict(response or {})
 
+    @staticmethod
+    def _params(**kwargs: Any) -> dict[str, Any]:
+        return {key: value for key, value in kwargs.items() if value is not None}
+
     async def list_supported_websearch_engines(self) -> list[str]:
         self._enforce("research.search.providers.list.server")
         return sorted(SUPPORTED_WEBSEARCH_ENGINES)
@@ -93,7 +102,58 @@ class ServerResearchSearchService:
             aggregate=aggregate,
             **kwargs,
         )
-        return self._dump(await self._require_client().research_websearch(request))
+        client = self._require_client()
+        method = getattr(client, "run_research_websearch", None) or getattr(client, "research_websearch")
+        return self._dump(await method(request))
+
+    async def paper_search(self, *, endpoint: str, **params: Any) -> dict[str, Any]:
+        self._enforce("research.search.providers.launch.server")
+        request = PaperSearchRequest(endpoint=endpoint, params=self._params(**params))
+        client = self._require_client()
+        method = getattr(client, "run_paper_search", None)
+        if callable(method):
+            return self._dump(await method(request))
+        response = await client._request(
+            "GET",
+            f"/api/v1/paper-search/{request.endpoint}",
+            params=request.params,
+        )
+        return self._dump(response)
+
+    async def paper_detail(self, *, endpoint: str, **params: Any) -> dict[str, Any]:
+        self._enforce("research.search.providers.observe.server")
+        request = PaperSearchDetailRequest(endpoint=endpoint, params=self._params(**params))
+        client = self._require_client()
+        method = getattr(client, "get_paper_search_detail", None)
+        if callable(method):
+            return self._dump(await method(request))
+        response = await client._request(
+            "GET",
+            f"/api/v1/paper-search/{request.endpoint}",
+            params=request.params,
+        )
+        return self._dump(response)
+
+    async def paper_ingest(
+        self,
+        *,
+        endpoint: str,
+        payload: dict[str, Any] | None = None,
+        **params: Any,
+    ) -> dict[str, Any]:
+        self._enforce("research.search.providers.launch.server")
+        request = PaperSearchIngestRequest(endpoint=endpoint, params=self._params(**params), payload=payload)
+        client = self._require_client()
+        method = getattr(client, "run_paper_search_ingest", None)
+        if callable(method):
+            return self._dump(await method(request))
+        response = await client._request(
+            "POST",
+            f"/api/v1/paper-search/{request.endpoint}",
+            params=request.params,
+            json_data=request.payload,
+        )
+        return self._dump(response)
 
     async def search_arxiv(
         self,

@@ -41,6 +41,19 @@ def _assert_request_call(call_args, expected_method, expected_endpoint, expected
         assert kwargs[key] == value
 
 
+def _server_media_list_payload() -> dict:
+    return {
+        "items": [],
+        "pagination": {
+            "page": 1,
+            "results_per_page": 25,
+            "total_pages": 0,
+            "total_items": 0,
+        },
+        "keywords_available": False,
+    }
+
+
 class _FakeHTTPClient:
     def __init__(self, response):
         self.response = response
@@ -127,7 +140,7 @@ class TestNotesWorkspaceClient:
 
     async def test_notes_graph_endpoint_wiring(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")
-        mocked = AsyncMock(return_value={"ok": True})
+        mocked = AsyncMock(return_value=_server_media_list_payload())
         monkeypatch.setattr(client, "_request", mocked)
 
         await client.get_notes_graph(
@@ -540,7 +553,7 @@ class TestNotesWorkspaceClient:
         expected_kwargs,
     ):
         client = TLDWAPIClient("http://localhost:8000")
-        mocked = AsyncMock(return_value={"ok": True})
+        mocked = AsyncMock(return_value=_server_media_list_payload())
         monkeypatch.setattr(client, "_request", mocked)
 
         await getattr(client, method_name)(*call_args, **call_kwargs)

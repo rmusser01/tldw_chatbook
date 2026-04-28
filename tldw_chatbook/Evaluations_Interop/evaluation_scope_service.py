@@ -125,8 +125,16 @@ class EvaluationScopeService:
         self.policy_enforcer.require_allowed(action_id=action_id)
 
     @staticmethod
+    def _evaluation_action_id(mode: EvaluationBackend, action: str) -> str:
+        return f"evaluations.evaluation.{action}.{mode.value}"
+
+    @staticmethod
     def _dataset_action_id(mode: EvaluationBackend, action: str) -> str:
         return f"evaluations.dataset.{action}.{mode.value}"
+
+    @staticmethod
+    def _target_action_id(mode: EvaluationBackend, action: str) -> str:
+        return f"evaluations.target.{action}.{mode.value}"
 
     @staticmethod
     def _run_action_id(mode: EvaluationBackend, action: str) -> str:
@@ -139,6 +147,10 @@ class EvaluationScopeService:
     @staticmethod
     def _abtest_action_id(mode: EvaluationBackend, action: str) -> str:
         return f"evaluations.embeddings_abtest.{action}.{mode.value}"
+
+    @staticmethod
+    def _immediate_action_id(mode: EvaluationBackend, action: str) -> str:
+        return f"evaluations.immediate.{action}.{mode.value}"
 
     @staticmethod
     def _synthetic_action_id(mode: EvaluationBackend, action: str) -> str:
@@ -231,7 +243,7 @@ class EvaluationScopeService:
         eval_type: str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._dataset_action_id(normalized_mode, "list"))
+        self._enforce_policy(self._evaluation_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         if normalized_mode == EvaluationBackend.LOCAL:
             records = await self._maybe_await(
@@ -253,7 +265,7 @@ class EvaluationScopeService:
         eval_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._dataset_action_id(normalized_mode, "detail"))
+        self._enforce_policy(self._evaluation_action_id(normalized_mode, "detail"))
         record = await self._maybe_await(self._service_for_mode(normalized_mode).get_evaluation(eval_id))
         return normalize_evaluation_record(normalized_mode.value, record)
 
@@ -270,7 +282,7 @@ class EvaluationScopeService:
         metadata: Any = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._dataset_action_id(normalized_mode, "create"))
+        self._enforce_policy(self._evaluation_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.create_evaluation(
@@ -296,7 +308,7 @@ class EvaluationScopeService:
         metadata: Any = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._dataset_action_id(normalized_mode, "update"))
+        self._enforce_policy(self._evaluation_action_id(normalized_mode, "update"))
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
             service.update_evaluation(
@@ -316,7 +328,7 @@ class EvaluationScopeService:
         eval_id: str,
     ) -> None:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._dataset_action_id(normalized_mode, "delete"))
+        self._enforce_policy(self._evaluation_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
         await self._maybe_await(service.delete_evaluation(eval_id))
 
@@ -363,11 +375,10 @@ class EvaluationScopeService:
         self._enforce_policy(self._dataset_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
         if normalized_mode == EvaluationBackend.LOCAL:
-            if not source_path:
-                raise ValueError("source_path is required when creating a local evaluation dataset.")
             record = await self._maybe_await(
                 service.create_dataset(
                     name=name,
+                    samples=samples or [],
                     format=format,
                     source_path=source_path,
                     description=description,
@@ -389,6 +400,37 @@ class EvaluationScopeService:
             resolved = await self._resolve_record(record, service.get_dataset, name)
         return normalize_evaluation_dataset_record(normalized_mode.value, resolved)
 
+    async def update_dataset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        dataset_id: str,
+        name: str | None = None,
+        samples: list[Any] | None = None,
+        format: str | None = None,
+        source_path: str | None = None,
+        description: str | None = None,
+        metadata: Any = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == EvaluationBackend.SERVER:
+            raise ValueError("Server evaluation dataset update is not available from the current server API.")
+        self._enforce_policy(self._dataset_action_id(normalized_mode, "update"))
+        service = self._service_for_mode(normalized_mode)
+        record = await self._maybe_await(
+            service.update_dataset(
+                dataset_id,
+                name=name,
+                samples=samples,
+                description=description,
+                metadata=metadata,
+                format=format,
+                source_path=source_path,
+            )
+        )
+        resolved = await self._resolve_record(record, service.get_dataset, dataset_id)
+        return normalize_evaluation_dataset_record(normalized_mode.value, resolved)
+
     async def delete_dataset(
         self,
         *,
@@ -408,10 +450,10 @@ class EvaluationScopeService:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._run_action_id(normalized_mode, "list"))
-        if normalized_mode == EvaluationBackend.SERVER:
-            self._raise_server_targets_unsupported()
+        self._enforce_policy(self._target_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
+        if normalized_mode == EvaluationBackend.SERVER and hasattr(service, "list_targets"):
+            self._raise_server_targets_unsupported()
         if not hasattr(service, "list_targets"):
             return []
         records = await self._maybe_await(
@@ -509,7 +551,7 @@ class EvaluationScopeService:
         run_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._run_action_id(normalized_mode, "observe"))
+        self._enforce_policy(self._run_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         if hasattr(service, "get_run_artifacts"):
             payload = await self._maybe_await(service.get_run_artifacts(run_id))
@@ -549,6 +591,45 @@ class EvaluationScopeService:
         result.setdefault("backend", normalized_mode.value)
         result.setdefault("id", run_id)
         return result
+
+    async def evaluate_geval(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        source_text: str,
+        summary: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Immediate evaluation controls",
+        )
+        self._enforce_policy(self._immediate_action_id(normalized_mode, "launch"))
+        service = self._service_for_mode(normalized_mode)
+        if hasattr(service, "evaluate_geval"):
+            return dict(
+                await self._maybe_await(
+                    service.evaluate_geval(source_text=source_text, summary=summary, **kwargs)
+                )
+                or {}
+            )
+        return {}
+
+    async def get_evaluation_history(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any] | list[dict[str, Any]]:
+        normalized_mode = self._require_server_only_mode(
+            mode,
+            capability_name="Immediate evaluation controls",
+        )
+        self._enforce_policy(self._immediate_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        if hasattr(service, "get_evaluation_history"):
+            return await self._maybe_await(service.get_evaluation_history(**kwargs))
+        return []
 
     async def create_or_update_rag_pipeline_preset(
         self,
@@ -629,6 +710,51 @@ class EvaluationScopeService:
         service = self._service_for_mode(normalized_mode)
         return dict(await self._maybe_await(service.cleanup_rag_pipeline()) or {})
 
+    async def save_pipeline_preset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self.create_or_update_rag_pipeline_preset(
+            mode=mode,
+            name=name,
+            config=config,
+        )
+
+    async def list_pipeline_presets(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        return await self.list_rag_pipeline_presets(mode=mode, limit=limit, offset=offset)
+
+    async def get_pipeline_preset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+    ) -> dict[str, Any]:
+        return await self.get_rag_pipeline_preset(mode=mode, name=name)
+
+    async def delete_pipeline_preset(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        name: str,
+    ) -> None:
+        await self.delete_rag_pipeline_preset(mode=mode, name=name)
+
+    async def cleanup_pipeline_collections(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+    ) -> dict[str, Any]:
+        return await self.cleanup_rag_pipeline(mode=mode)
+
     async def create_embeddings_abtest(
         self,
         *,
@@ -682,6 +808,14 @@ class EvaluationScopeService:
         self._enforce_policy(self._abtest_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         return dict(await self._maybe_await(service.get_embeddings_abtest_status(test_id)) or {})
+
+    async def get_embeddings_abtest_summary(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        test_id: str,
+    ) -> dict[str, Any]:
+        return await self.get_embeddings_abtest_status(mode=mode, test_id=test_id)
 
     async def get_embeddings_abtest_results(
         self,
@@ -1033,6 +1167,21 @@ class EvaluationScopeService:
         self._enforce_policy(self._recipe_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         return dict(await self._maybe_await(service.get_recipe_manifest(recipe_id)) or {})
+
+    async def list_recipes(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self.list_recipe_manifests(mode=mode)
+
+    async def get_recipe(
+        self,
+        *,
+        mode: EvaluationBackend | str | None = None,
+        recipe_id: str,
+    ) -> dict[str, Any]:
+        return await self.get_recipe_manifest(mode=mode, recipe_id=recipe_id)
 
     async def get_recipe_launch_readiness(
         self,

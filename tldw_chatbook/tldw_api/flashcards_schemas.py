@@ -757,8 +757,8 @@ class StudyAssistantContextResponse(BaseModel):
     messages: list[StudyAssistantMessage] = Field(default_factory=list)
     context_snapshot: dict[str, Any] = Field(default_factory=dict)
     available_actions: list[StudyAssistantAction] = Field(default_factory=list)
-    citations: list[FlashcardCitationResponse] = Field(default_factory=list)
-    primary_citation: Optional[FlashcardCitationResponse] = None
+    citations: list[FlashcardCitationResponse | dict[str, Any]] = Field(default_factory=list)
+    primary_citation: Optional[FlashcardCitationResponse | dict[str, Any]] = None
     deep_dive_target: Optional[FlashcardDeepDiveTarget] = None
     study_pack: Optional[StudyPackSummaryResponse] = None
 

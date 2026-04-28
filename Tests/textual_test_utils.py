@@ -70,6 +70,25 @@ class MultiWidgetTestApp(App[None]):
         yield from self._compose_func()
 
 
+class AwaitableAsyncContextManager:
+    """Adapter that supports both `async with cm` and `async with await cm`."""
+
+    def __init__(self, context_manager):
+        self._context_manager = context_manager
+
+    def __await__(self):
+        async def _return_context_manager():
+            return self._context_manager
+
+        return _return_context_manager().__await__()
+
+    async def __aenter__(self):
+        return await self._context_manager.__aenter__()
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        return await self._context_manager.__aexit__(exc_type, exc_value, traceback)
+
+
 # Pytest fixtures for common testing patterns
 
 @pytest_asyncio.fixture
@@ -85,10 +104,10 @@ async def widget_pilot():
     """
     created_apps = []
     
-    async def _create_pilot(widget_class: Type[W], **widget_kwargs):
+    def _create_pilot(widget_class: Type[W], **widget_kwargs):
         app = WidgetTestApp(widget_class, **widget_kwargs)
         created_apps.append(app)
-        return app.run_test()
+        return AwaitableAsyncContextManager(app.run_test())
     
     yield _create_pilot
     
@@ -117,10 +136,10 @@ async def app_pilot():
     """
     created_apps = []
     
-    async def _create_pilot(app_class: Type[A], **app_kwargs):
+    def _create_pilot(app_class: Type[A], **app_kwargs):
         app = app_class(**app_kwargs)
         created_apps.append(app)
-        return app.run_test()
+        return AwaitableAsyncContextManager(app.run_test())
     
     yield _create_pilot
     

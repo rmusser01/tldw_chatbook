@@ -3,6 +3,7 @@
 #
 # Imports
 import pytest
+import pytest_asyncio
 from unittest.mock import Mock, AsyncMock, patch
 #
 # 3rd-Party Imports
@@ -60,7 +61,52 @@ def mock_config():
         mock_get_setting.side_effect = config_side_effect
         yield mock_get_setting
 
-@pytest.fixture
+
+def _wire_unmounted_tab_container(tab_container: ChatTabContainer) -> None:
+    """Provide deterministic Textual seams for unmounted integration tests."""
+    session_host = Mock()
+    session_host.mount = AsyncMock()
+    placeholder = Mock()
+    placeholder.styles = Mock(display="block")
+
+    def query_one_side_effect(selector, widget_type=None):
+        if selector == "#chat-sessions-container":
+            return session_host
+        if selector == "#no-sessions-placeholder":
+            return placeholder
+        return Mock()
+
+    tab_bar = Mock(spec=ChatTabBar)
+    tab_bar.tab_buttons = {}
+    tab_bar.active_tab_id = None
+
+    async def add_tab(session_data):
+        tab_bar.tab_buttons[session_data.tab_id] = Mock()
+        if tab_bar.active_tab_id is None:
+            tab_bar.active_tab_id = session_data.tab_id
+
+    def remove_tab(tab_id):
+        tab_bar.tab_buttons.pop(tab_id, None)
+        if tab_bar.active_tab_id == tab_id:
+            tab_bar.active_tab_id = next(iter(tab_bar.tab_buttons), None)
+
+    def set_active_tab(tab_id):
+        if tab_id in tab_bar.tab_buttons:
+            tab_bar.active_tab_id = tab_id
+
+    tab_bar.add_tab = AsyncMock(side_effect=add_tab)
+    tab_bar.remove_tab = Mock(side_effect=remove_tab)
+    tab_bar.set_active_tab = Mock(side_effect=set_active_tab)
+    tab_bar.update_tab_title = Mock()
+    tab_bar.get_next_tab_id = Mock(return_value=None)
+    tab_bar.get_previous_tab_id = Mock(return_value=None)
+
+    tab_container.query_one = Mock(side_effect=query_one_side_effect)
+    tab_container.tab_bar = tab_bar
+    tab_container.post_message = Mock()
+
+
+@pytest_asyncio.fixture
 async def integration_setup(mock_app, mock_config):
     """Set up a complete integration test environment."""
     # Create chat window
@@ -68,7 +114,7 @@ async def integration_setup(mock_app, mock_config):
     
     # Create tab container
     tab_container = ChatTabContainer(mock_app)
-    tab_container.tab_bar = ChatTabBar()
+    _wire_unmounted_tab_container(tab_container)
     chat_window.tab_container = tab_container
     
     # Mock query_one to return appropriate components
@@ -136,7 +182,7 @@ class TestChatTabsIntegrationWorkflow:
         assert len(tab_container.sessions) == 2
         
         # Switch to second tab
-        tab_container.switch_to_tab(tab2_id)
+        await tab_container.switch_to_tab_async(tab2_id)
         assert tab_container.active_session_id == tab2_id
         
         # Close first tab
@@ -211,7 +257,7 @@ class TestChatTabsIntegrationWorkflow:
         tab_container.switch_to_tab(tab1_id)
         assert tab_container.active_session_id == tab1_id
         
-        tab_container.switch_to_tab(tab2_id)
+        await tab_container.switch_to_tab_async(tab2_id)
         assert tab_container.active_session_id == tab2_id
         
         # Switch back and verify states are preserved
@@ -252,7 +298,7 @@ class TestChatTabsCharacterIntegration:
         
         # Update tab titles with characters
         tab_container.update_active_tab_title("Chat with Alice", "Alice")
-        tab_container.switch_to_tab(tab2_id)
+        await tab_container.switch_to_tab_async(tab2_id)
         tab_container.update_active_tab_title("Chat with Bob", "Bob")
         
         # Verify tab bar shows character icons
@@ -344,7 +390,7 @@ class TestChatTabsPerformance:
         
         for _ in range(10):  # 10 rounds of switching
             for tab_id in tab_ids:
-                tab_container.switch_to_tab(tab_id)
+                await tab_container.switch_to_tab_async(tab_id)
         
         elapsed_time = time.time() - start_time
         
@@ -398,20 +444,22 @@ class TestChatTabsUIConsistency:
         session1 = tab_container.sessions[tab1_id]
         session2 = tab_container.sessions[tab2_id]
         
-        # Set different button states
+        # Button state is derived from each session's runtime state.
+        session1.session_data.is_streaming = True
         session1.is_send_button = False  # Stop button
+        session2.session_data.is_streaming = False
         session2.is_send_button = True   # Send button
         
         # Switch tabs and verify states persist
-        tab_container.switch_to_tab(tab1_id)
+        await tab_container.switch_to_tab_async(tab1_id)
         assert session1.is_send_button is False
         
-        tab_container.switch_to_tab(tab2_id)
+        await tab_container.switch_to_tab_async(tab2_id)
         assert session2.is_send_button is True
         
         # Go back to tab1
-        tab_container.switch_to_tab(tab1_id)
-        assert session1.is_send_button is False  # Still stop button
+        await tab_container.switch_to_tab_async(tab1_id)
+        assert session1.is_send_button is True  # Suspend clears inactive streaming state
     
     @pytest.mark.asyncio
     async def test_widget_id_uniqueness(self, integration_setup):
@@ -464,6 +512,7 @@ class TestChatTabsEnhancedMode:
         # Create enhanced chat window
         chat_window = ChatWindowEnhanced(mock_app)
         chat_window.tab_container = ChatTabContainer(mock_app)
+        _wire_unmounted_tab_container(chat_window.tab_container)
         chat_window.tab_container.enhanced_mode = True
         
         # Verify enhanced mode flag is set

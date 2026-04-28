@@ -114,16 +114,17 @@ class TreeNode(Widget):
         size: Optional[int] = None,
         **kwargs
     ):
+        file_size = kwargs.pop("file_size", None)
         super().__init__(**kwargs)
         self.path = path
         self.node_name = name  # Changed from 'name' to avoid conflict with Widget.name property
         self.is_directory = is_directory
         self.level = level
-        self.file_size = size  # Changed from 'size' to avoid conflict with Widget.size property
-        self.expanded = reactive(False)
-        self.selected = reactive(False)
+        self.file_size = size if size is not None else file_size  # Changed from 'size' to avoid conflict with Widget.size property
+        self.expanded = False
+        self.selected = False
         self.children_loaded = False
-        self.is_loading = reactive(False)
+        self.is_loading = False
         
     def compose(self) -> ComposeResult:
         """Compose the tree node UI."""

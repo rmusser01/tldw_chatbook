@@ -381,17 +381,19 @@ class TestNotesToolbar:
             
             # Initial state
             assert toolbar.preview_mode is False
-            assert "👁️ Preview" in preview_button.label
+            assert "👁️ Preview" in str(preview_button.label)
             
             # Click to enable preview
-            await pilot.click("#toolbar-preview")
+            preview_button.press()
+            await pilot.pause()
             assert toolbar.preview_mode is True
-            assert "📝 Edit" in preview_button.label
+            assert "📝 Edit" in str(preview_button.label)
             
             # Click to disable preview
-            await pilot.click("#toolbar-preview")
+            preview_button.press()
+            await pilot.pause()
             assert toolbar.preview_mode is False
-            assert "👁️ Preview" in preview_button.label
+            assert "👁️ Preview" in str(preview_button.label)
     
     @pytest.mark.asyncio
     async def test_button_state_management(self):
@@ -465,7 +467,10 @@ class TestWidgetIntegration:
                 yield NotesStatusBar()
             
             def on_editor_content_changed(self, msg: EditorContentChanged):
-                status_bar = self.query_one(NotesStatusBar)
+                try:
+                    status_bar = self.query_one(NotesStatusBar)
+                except Exception:
+                    return
                 status_bar.update_counts(
                     word_count=msg.word_count,
                     char_count=len(msg.content)

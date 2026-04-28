@@ -6,6 +6,24 @@ import pytest
 import tldw_chatbook.tldw_api as api
 from tldw_chatbook.tldw_api import (
     BatchMediaProcessResponse,
+    CancelMediaIngestBatchResponse,
+    CancelMediaIngestJobResponse,
+    DocumentAnnotationCreateRequest,
+    DocumentAnnotationListResponse,
+    DocumentAnnotationResponse,
+    DocumentAnnotationSyncRequest,
+    DocumentAnnotationSyncResponse,
+    DocumentAnnotationUpdateRequest,
+    DocumentFiguresResponse,
+    DocumentInsightsRequest,
+    DocumentInsightsResponse,
+    DocumentOutlineResponse,
+    DocumentReferencesResponse,
+    DocumentVersionAdvancedUpsertRequest,
+    DocumentVersionCreateRequest,
+    DocumentVersionDetailResponse,
+    DocumentVersionMetadataPatchRequest,
+    DocumentVersionRollbackRequest,
     FileArtifactsPurgeRequest,
     FileCreateOptions,
     FileCreateRequest,
@@ -19,12 +37,26 @@ from tldw_chatbook.tldw_api import (
     IngestWebContentRequest,
     IngestWebContentResponse,
     AddMediaRequest,
+    MediaDetailResponse,
+    MediaIdentifierLookupResponse,
+    MediaIngestJobListResponse,
+    MediaIngestJobStatus,
+    MediaIngestJobStreamEvent,
+    MediaIngestJobSubmitRequest,
+    MediaKeywordListResponse,
+    MediaKeywordsResponse,
     MediaNavigationContentResponse,
     MediaNavigationResponse,
+    MediaMetadataSearchResponse,
     MediaItemUpdateRequest,
     MediaKeywordsUpdateRequest,
+    MediaSearchRequest,
+    MediaTranscriptionModelsResponse,
+    MediaTrashEmptyResponse,
+    MediaUpdateRequest,
     ProcessMediaWikiRequest,
     ProcessCodeRequest,
+    ProcessEmailRequest,
     ProcessEmailsRequest,
     ProcessWebScrapingRequest,
     ReadingProgressUpdate,
@@ -37,6 +69,7 @@ from tldw_chatbook.tldw_api import (
     ReadingDigestScheduleUpdateRequest,
     ReadingDigestSuggestionsConfig,
     ReadingExportResponse,
+    ReadingExportRequest,
     ReadingImportJobResponse,
     ReadingImportJobStatus,
     ReadingImportJobsListResponse,
@@ -1276,7 +1309,7 @@ async def test_document_workspace_routes_wire_and_return_typed_responses(monkeyp
     assert isinstance(annotations, DocumentAnnotationListResponse)
     assert isinstance(created, DocumentAnnotationResponse)
     assert isinstance(updated, DocumentAnnotationResponse)
-    assert deleted == {"deleted": True}
+    assert deleted == {}
     assert isinstance(synced, DocumentAnnotationSyncResponse)
 
 

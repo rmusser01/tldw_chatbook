@@ -261,7 +261,7 @@ class TestKokoroValidation:
         assert len(chunks) > 1
         # Verify chunks respect token limit
         for chunk in chunks:
-            assert len(chunk.split()) <= 10
+            assert len(chunk.text.split()) <= 10
     
     @pytest.mark.asyncio
     async def test_voice_mapping(self):

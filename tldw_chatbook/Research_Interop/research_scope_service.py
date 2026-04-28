@@ -283,6 +283,21 @@ class ResearchScopeService:
         )
         return self._normalize_result(normalized_mode, "run", result)
 
+    async def create_run(
+        self,
+        *,
+        mode: ResearchBackend | str | None = None,
+        query: str,
+        **kwargs: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        action = "create" if normalized_mode == ResearchBackend.LOCAL else "launch"
+        self._enforce_policy(self._action_id("runs", action, normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        method_name = "create_run" if hasattr(service, "create_run") else "launch_run"
+        result = await self._call_service(service, method_name, query=query, **kwargs)
+        return self._normalize_result(normalized_mode, "run", result)
+
     async def list_runs(
         self,
         *,
@@ -311,9 +326,9 @@ class ResearchScopeService:
 
     async def get_run(
         self,
+        run_id: str,
         *,
         mode: ResearchBackend | str | None = None,
-        run_id: str,
     ) -> dict[str, Any] | None:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("runs", "detail", normalized_mode))
@@ -322,9 +337,9 @@ class ResearchScopeService:
 
     async def pause_run(
         self,
+        run_id: str,
         *,
         mode: ResearchBackend | str | None = None,
-        run_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("runs", "update", normalized_mode))
@@ -333,20 +348,21 @@ class ResearchScopeService:
 
     async def resume_run(
         self,
+        run_id: str,
         *,
         mode: ResearchBackend | str | None = None,
-        run_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("runs", "update", normalized_mode))
+        action = "launch" if normalized_mode == ResearchBackend.SERVER else "update"
+        self._enforce_policy(self._action_id("runs", action, normalized_mode))
         result = await self._call_service(self._service_for_mode(normalized_mode), "resume_run", run_id)
         return self._normalize_result(normalized_mode, "run", result)
 
     async def cancel_run(
         self,
+        run_id: str,
         *,
         mode: ResearchBackend | str | None = None,
-        run_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("runs", "update", normalized_mode))
@@ -396,14 +412,49 @@ class ResearchScopeService:
         ]
         return self._normalize_result(normalized_mode, "event", items)
 
-    async def get_bundle(
+    async def stream_run_events(
         self,
+        run_id: str,
         *,
         mode: ResearchBackend | str | None = None,
-        run_id: str,
-    ) -> dict[str, Any]:
+        after_id: int = 0,
+    ):
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("runs", "detail", normalized_mode))
+        self._enforce_policy(self._action_id("runs", "observe", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        method = getattr(service, "stream_run_events", None)
+        if method is None:
+            method = getattr(service, "observe_run_events", None)
+        if method is None:
+            method = getattr(service, "list_run_events")
+        result = method(run_id, after_id=after_id)
+        if inspect.isasyncgen(result):
+            async for item in result:
+                yield item
+            return
+        for item in list(await self._maybe_await(result)):
+            yield item
+
+    async def get_bundle(
+        self,
+        *args: str,
+        mode: ResearchBackend | str | None = None,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        used_positional_run_id = bool(args)
+        if args:
+            if len(args) != 1:
+                raise TypeError("get_bundle accepts a single run_id positional argument")
+            run_id = args[0]
+        if run_id is None:
+            raise TypeError("get_bundle requires run_id")
+        normalized_mode = self._normalize_mode(mode)
+        action = (
+            "observe"
+            if normalized_mode == ResearchBackend.SERVER and used_positional_run_id
+            else "detail"
+        )
+        self._enforce_policy(self._action_id("runs", action, normalized_mode))
         result = await self._call_service(self._service_for_mode(normalized_mode), "get_bundle", run_id)
         return self._normalize_bundle(normalized_mode, result, run_id=run_id)
 
@@ -425,3 +476,25 @@ class ResearchScopeService:
         if isinstance(result, dict):
             result = {**result, "run_id": result.get("run_id") or run_id}
         return self._normalize_result(normalized_mode, "artifact", result) if result else result
+
+    async def patch_and_approve_checkpoint(
+        self,
+        run_id: str,
+        checkpoint_id: str,
+        *,
+        mode: ResearchBackend | str | None = None,
+        patch_payload: dict[str, Any] | None = None,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("runs", "update", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        method = getattr(service, "patch_and_approve_checkpoint", None)
+        if method is None:
+            raise NotImplementedError("Research checkpoint approval is only available on supported server backends.")
+        return await self._maybe_await(
+            method(
+                run_id,
+                checkpoint_id,
+                patch_payload=patch_payload,
+            )
+        )

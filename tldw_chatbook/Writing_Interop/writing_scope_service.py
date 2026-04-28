@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import inspect
+from types import SimpleNamespace
 from enum import Enum
 from typing import Any
 
+from .server_writing_service import (
+    REASON_DIRECT_MANUSCRIPT_SCENE,
+    REASON_SCENE_REPARENT,
+    REASON_TRASH_RESTORE,
+    REASON_VERSION_HISTORY,
+)
 from .writing_normalizers import normalize_writing_record, normalize_writing_structure
 
 
@@ -19,7 +26,7 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "source": "server",
         "supported": False,
         "reason_code": "server_contract_missing",
-        "user_message": "Direct manuscript-level scenes are not exposed by the current server writing contract.",
+        "user_message": REASON_DIRECT_MANUSCRIPT_SCENE,
         "affected_action_ids": [
             "writing.scenes.create.server",
             "writing.scenes.list.server",
@@ -30,7 +37,7 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "source": "server",
         "supported": False,
         "reason_code": "server_contract_missing",
-        "user_message": "Server writing version history is not exposed by the current server writing contract.",
+        "user_message": REASON_VERSION_HISTORY,
         "affected_action_ids": [
             "writing.versions.create.server",
             "writing.versions.list.server",
@@ -43,7 +50,7 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "source": "server",
         "supported": False,
         "reason_code": "server_contract_missing",
-        "user_message": "Server writing trash listing and restore are not exposed by the current server writing contract.",
+        "user_message": REASON_TRASH_RESTORE,
         "affected_action_ids": [
             "writing.trash.list.server",
             "writing.trash.restore.server",
@@ -115,6 +122,39 @@ class WritingScopeService:
         if normalized_mode == WritingBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+
+    def get_capability(
+        self,
+        *,
+        mode: WritingBackend | str | None = None,
+        action: str,
+        entity_kind: str,
+        parent_kind: str | None = None,
+        **metadata: Any,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        reason = None
+        if normalized_mode == WritingBackend.SERVER:
+            if action == "create_version":
+                reason = REASON_VERSION_HISTORY
+            elif action == "restore_deleted":
+                reason = REASON_TRASH_RESTORE
+            elif action == "reparent" and entity_kind == "scene":
+                reason = REASON_SCENE_REPARENT
+            elif action in {"create", "move"} and entity_kind == "scene" and parent_kind == "manuscript":
+                reason = REASON_DIRECT_MANUSCRIPT_SCENE
+        capability_metadata = {
+            "mode": normalized_mode.value,
+            "action": action,
+            "entity_kind": entity_kind,
+            "parent_kind": parent_kind,
+            **metadata,
+        }
+        return SimpleNamespace(
+            supported=reason is None,
+            reason=reason,
+            metadata=capability_metadata,
+        )
 
     def _require_method(self, service: Any, method_name: str, mode: WritingBackend) -> Any:
         method = getattr(service, method_name, None)

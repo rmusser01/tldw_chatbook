@@ -130,6 +130,7 @@ class ChatShellBar(Container):
     def compose(self) -> ComposeResult:
         from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
+        app_instance = self.app_instance or self.app
         yield Static(
             self.context.session_label,
             id="chat-shell-context",
@@ -138,8 +139,9 @@ class ChatShellBar(Container):
             shrink=True,
         )
         yield CompactModelBar(
-            self.app_instance,
+            app_instance,
             on_sidebar_toggle_requested=self.on_sidebar_toggle_requested,
+            id="compact-model-bar",
             classes="chat-shell-controls",
         )
 

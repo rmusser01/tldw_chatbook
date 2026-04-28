@@ -294,7 +294,7 @@ class TestBehaviorEngine:
         
         # Test tired pet modifier  
         tired_stats = {'happiness': 50, 'hunger': 50, 'energy': 15, 'health': 100}
-        result = engine.process_action('play', tired_stats)
+        result = engine.process_action('play', tired_stats, force=True)
         # Play should be less effective when tired
         assert 'happiness' in result['changes']
         assert result['changes']['happiness'] < 20
@@ -442,7 +442,6 @@ class TestBaseTamagotchi:
             sprite_theme="emoji",
             size="normal"
         )
-        pet.app = mock_app
         
         assert pet.pet_name == "Pixel"
         assert pet.personality_type == "balanced"
@@ -476,8 +475,9 @@ class TestBaseTamagotchi:
             enable_rate_limiting=True,
             global_cooldown=1.0
         )
-        pet.app = mock_app
         pet.notify = MagicMock()
+        pet.post_message = MagicMock()
+        pet._play_animation = MagicMock()
         
         # Mock time
         with patch('tldw_chatbook.Widgets.Tamagotchi.base_tamagotchi.time.time') as mock_time:
@@ -504,7 +504,8 @@ class TestBaseTamagotchi:
             name="Pixel",
             enable_rate_limiting=False
         )
-        pet.app = mock_app
+        pet.post_message = MagicMock()
+        pet._play_animation = MagicMock()
         
         # Set extreme initial values
         pet.happiness = 95
@@ -530,7 +531,6 @@ class TestBaseTamagotchi:
         
         # Create and save pet
         pet1 = BaseTamagotchi(name="Pixel", storage=storage)
-        pet1.app = mock_app
         pet1.id = "test_pet"
         pet1.happiness = 75
         pet1.hunger = 25
@@ -538,7 +538,6 @@ class TestBaseTamagotchi:
         
         # Create new pet with same storage and load
         pet2 = BaseTamagotchi(name="Different", storage=storage)
-        pet2.app = mock_app
         pet2.id = "test_pet"
         pet2._load_state()
         
@@ -565,7 +564,8 @@ class TestIntegration:
                 update_interval=1.0,
                 enable_rate_limiting=False
             )
-            pet.app = MagicMock()
+            pet.post_message = MagicMock()
+            pet._play_animation = MagicMock()
             pet.id = "lifecycle_pet"
             
             # Initial state
@@ -587,7 +587,6 @@ class TestIntegration:
                 name="Different",
                 storage=storage
             )
-            pet2.app = MagicMock()
             pet2.id = "lifecycle_pet"
             pet2._load_state()
             
@@ -622,7 +621,6 @@ class TestIntegration:
                 name="Recovery",
                 storage=storage
             )
-            pet.app = MagicMock()
             pet.id = "corrupt_pet"
             
             # Should recover and load with defaults

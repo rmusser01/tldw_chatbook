@@ -34,8 +34,13 @@ class ServicePolicyEnforcer:
             return state
         return None
 
-    def require_allowed(self, *, action_id: str) -> None:
-        state = self.current_state()
+    def require_allowed(
+        self,
+        *,
+        action_id: str,
+        runtime_state_override: RuntimeSourceState | None = None,
+    ) -> None:
+        state = runtime_state_override if isinstance(runtime_state_override, RuntimeSourceState) else self.current_state()
         if state is None:
             raise PolicyDeniedError(
                 action_id=action_id,

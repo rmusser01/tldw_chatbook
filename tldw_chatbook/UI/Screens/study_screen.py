@@ -41,7 +41,11 @@ class StudyScreen(BaseAppScreen):
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "study", **kwargs)
-        self.scope_state = StudyScopeState(backend=self._runtime_backend())
+        pending_scope = getattr(app_instance, "pending_study_scope_context", None)
+        if isinstance(pending_scope, StudyScopeContext):
+            self.scope_state = self._derive_scope_state(pending_scope)
+        else:
+            self.scope_state = StudyScopeState(backend=self._runtime_backend())
         self._effective_scope_key: tuple[str, Optional[str], str, bool] = self._scope_key(self.scope_state)
         self.study_dashboard: Optional[StudyDashboard] = None
         self.quiz_session_widget: Optional[QuizSessionWidget] = None
@@ -408,7 +412,13 @@ class StudyScreen(BaseAppScreen):
             if callable(scheduler):
                 scheduler()
 
-    async def _apply_scope_context(self, scope_context: StudyScopeContext, *, study_window: Any) -> None:
+    async def _apply_scope_context(
+        self,
+        scope_context: StudyScopeContext,
+        *,
+        study_window: Any,
+        force_controller_notify: bool = False,
+    ) -> None:
         next_state = self._derive_scope_state(scope_context)
         previous_key = self._effective_scope_key
         next_key = self._scope_key(next_state)
@@ -416,7 +426,7 @@ class StudyScreen(BaseAppScreen):
         self.scope_state = next_state
         self._effective_scope_key = next_key
 
-        if previous_key == next_key:
+        if previous_key == next_key and not force_controller_notify:
             return
 
         for controller_name in ("flashcards_controller", "quizzes_controller"):
@@ -431,8 +441,18 @@ class StudyScreen(BaseAppScreen):
 
         await self._reload_scoped_study_data(study_window)
 
-    async def _apply_scope_context_and_refresh(self, scope_context: StudyScopeContext, *, study_window: Any) -> None:
-        await self._apply_scope_context(scope_context, study_window=study_window)
+    async def _apply_scope_context_and_refresh(
+        self,
+        scope_context: StudyScopeContext,
+        *,
+        study_window: Any,
+        force_controller_notify: bool = False,
+    ) -> None:
+        await self._apply_scope_context(
+            scope_context,
+            study_window=study_window,
+            force_controller_notify=force_controller_notify,
+        )
         sync_scope_banner = getattr(study_window, "_sync_scope_banner", None)
         if callable(sync_scope_banner):
             sync_scope_banner()
@@ -446,8 +466,13 @@ class StudyScreen(BaseAppScreen):
 
         study_window = self.query_one(StudyWindow)
 
-        scope_context = self._consume_pending_scope_context() or self._current_scope_context()
-        await self._apply_scope_context_and_refresh(scope_context, study_window=study_window)
+        pending_scope_context = self._consume_pending_scope_context()
+        scope_context = pending_scope_context or self._current_scope_context()
+        await self._apply_scope_context_and_refresh(
+            scope_context,
+            study_window=study_window,
+            force_controller_notify=pending_scope_context is not None,
+        )
 
         if hasattr(study_window, 'load_saved_sessions'):
             await study_window.load_saved_sessions()

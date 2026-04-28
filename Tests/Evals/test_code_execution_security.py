@@ -61,7 +61,8 @@ class TestCodeExecutionSecurity:
         
         # Check that dangerous builtins are disabled
         assert "dangerous_builtins = ['eval', 'exec', 'compile'" in test_code
-        assert "setattr(builtins, name, lambda *args, **kwargs: None)" in test_code
+        assert "def _blocked_builtin(*args, **kwargs):" in test_code
+        assert "setattr(builtins, name, _blocked_builtin)" in test_code
     
     def test_code_execution_with_limits(self, code_runner):
         """Test that code execution respects limits."""

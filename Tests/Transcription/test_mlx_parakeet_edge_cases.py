@@ -47,14 +47,27 @@ class TestMLXParakeetEdgeCases:
     @pytest.fixture
     def mock_service(self):
         """Create a mocked transcription service."""
+        real_exists = os.path.exists
+        real_getsize = os.path.getsize
+
+        def mocked_exists(path):
+            return str(path).endswith(".wav") or real_exists(path)
+
+        def mocked_getsize(path):
+            if str(path).endswith(".wav") and not real_exists(path):
+                return 1024
+            return real_getsize(path)
+
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.PARAKEET_MLX_AVAILABLE', True), \
              patch('tldw_chatbook.Local_Ingestion.transcription_service.SOUNDFILE_AVAILABLE', True), \
              patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.exists', side_effect=mocked_exists), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.getsize', side_effect=mocked_getsize), \
              patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             
             mock_settings.return_value = None  # Use defaults
             service = TranscriptionService()
-            return service
+            yield service
     
     @pytest.fixture
     def corrupted_audio_file(self):
@@ -214,9 +227,7 @@ class TestMLXParakeetEdgeCases:
             # Test very long audio (1 hour)
             with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                 # Don't actually create 1 hour of data, just simulate it
-                long_audio_samples = 16000 * 3600  # 1 hour
                 mock_sf.read.return_value = (np.zeros(100), 16000)  # Return small array
-                mock_sf.read.return_value[0].__len__ = lambda: long_audio_samples  # Mock length
                 mock_sf.info.return_value = MockAudioInfo(duration=3600.0)
                 
                 # Mock multiple chunk transcriptions
@@ -563,22 +574,37 @@ class TestMLXParakeetRobustness:
     @pytest.fixture
     def mock_service(self):
         """Create a mocked transcription service."""
+        real_exists = os.path.exists
+        real_getsize = os.path.getsize
+
+        def mocked_exists(path):
+            return str(path).endswith(".wav") or real_exists(path)
+
+        def mocked_getsize(path):
+            if str(path).endswith(".wav") and not real_exists(path):
+                return 1024
+            return real_getsize(path)
+
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.PARAKEET_MLX_AVAILABLE', True), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.SOUNDFILE_AVAILABLE', True), \
              patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.exists', side_effect=mocked_exists), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.getsize', side_effect=mocked_getsize), \
              patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             
             mock_settings.return_value = None  # Use defaults
             service = TranscriptionService()
-            return service
+            yield service
     
     def test_model_download_interruption(self, mock_service):
         """Test handling of interrupted model downloads."""
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained') as mock_pretrained:
+            success_model = MagicMock()
             # Simulate download interruption
             mock_pretrained.side_effect = [
                 ConnectionError("Download interrupted"),
                 TimeoutError("Connection timeout"),
-                MagicMock()  # Third attempt succeeds
+                success_model  # Third attempt succeeds
             ]
             
             with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
@@ -598,7 +624,7 @@ class TestMLXParakeetRobustness:
                 # Third attempt should succeed
                 result_obj = MagicMock()
                 result_obj.text = 'Success'
-                mock_pretrained.return_value.transcribe.return_value = result_obj
+                success_model.transcribe.return_value = result_obj
                 result = mock_service._transcribe_with_parakeet_mlx(
                     audio_path="test.wav",
                     model='mlx-community/parakeet-tdt-0.6b-v2'

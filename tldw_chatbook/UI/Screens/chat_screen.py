@@ -33,6 +33,11 @@ if TYPE_CHECKING:
 logger = logger.bind(module="ChatScreen")
 
 
+def _is_empty_select_value(value: Any) -> bool:
+    """Return True for Textual's blank/null select sentinels."""
+    return value is None or value == Select.BLANK or str(value).startswith("Select.")
+
+
 def _derive_tab_title(tab_state: TabState) -> str:
     assistant_name = None
     if tab_state.assistant_kind == "character":
@@ -88,7 +93,7 @@ class ChatScreen(BaseAppScreen):
                         logger.info("No models available, set to BLANK")
 
                     model_select.prompt = "Select Model..." if available_models else "No models available"
-                    selected_model = None if model_select.value == Select.BLANK else str(model_select.value)
+                    selected_model = None if _is_empty_select_value(model_select.value) else str(model_select.value)
                     self._sync_compact_shell_controls(
                         provider=new_provider,
                         model=selected_model,
@@ -113,7 +118,7 @@ class ChatScreen(BaseAppScreen):
     @on(Select.Changed, "#chat-api-model")
     def on_chat_api_model_changed(self, event: Select.Changed) -> None:
         """Mirror sidebar model changes into the compact shell controls."""
-        model = None if event.value == Select.BLANK else str(event.value)
+        model = None if _is_empty_select_value(event.value) else str(event.value)
         self._sync_compact_shell_controls(model=model)
 
     @on(Input.Changed, "#chat-temperature")
@@ -385,14 +390,14 @@ class ChatScreen(BaseAppScreen):
 
         try:
             provider_select = self.chat_window.query_one("#chat-api-provider", Select)
-            if provider_select.value != Select.BLANK:
+            if not _is_empty_select_value(provider_select.value):
                 provider = str(provider_select.value)
         except Exception:
             logger.debug("Sidebar provider select unavailable for compact sync")
 
         try:
             model_select = self.chat_window.query_one("#chat-api-model", Select)
-            if model_select.value != Select.BLANK:
+            if not _is_empty_select_value(model_select.value):
                 model = str(model_select.value)
         except Exception:
             logger.debug("Sidebar model select unavailable for compact sync")

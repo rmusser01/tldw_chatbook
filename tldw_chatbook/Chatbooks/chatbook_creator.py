@@ -10,6 +10,7 @@ Handles the creation and packaging of chatbooks from database content.
 
 import json
 import shutil
+import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -47,7 +48,16 @@ class ChatbookCreator:
         user_data_dir = get_user_data_dir()
         self.temp_dir = user_data_dir / "temp" / "chatbooks"
         logger.info(f"ChatbookCreator.__init__: Creating temp directory at {self.temp_dir}")
-        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.temp_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            fallback_root = Path(tempfile.gettempdir()) / "tldw_chatbook" / "chatbooks"
+            logger.warning(
+                f"ChatbookCreator.__init__: Failed to create configured temp directory "
+                f"{self.temp_dir}: {exc}. Falling back to {fallback_root}"
+            )
+            self.temp_dir = fallback_root
+            self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.missing_dependencies: Set[int] = set()
         self.auto_included_characters: Set[int] = set()
         self._selected_characters: Set[str] = set()  # Track explicitly selected characters
@@ -102,8 +112,7 @@ class ChatbookCreator:
             
             # Create temporary working directory
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            work_dir = self.temp_dir / f"chatbook_{timestamp}"
-            work_dir.mkdir(parents=True, exist_ok=True)
+            work_dir = Path(tempfile.mkdtemp(prefix=f"chatbook_{timestamp}_", dir=self.temp_dir))
             logger.info(f"ChatbookCreator.create_chatbook: Working directory created at {work_dir}")
             
             # Initialize manifest
@@ -188,7 +197,8 @@ class ChatbookCreator:
             manifest.total_notes = len(content.notes)
             manifest.total_characters = len(content.characters)
             manifest.total_media_items = len(content.media_items)
-            logger.info(f"ChatbookCreator.create_chatbook: Final stats - conversations={manifest.total_conversations}, notes={manifest.total_notes}, characters={manifest.total_characters}, media={manifest.total_media_items}")
+            manifest.total_prompts = len(content.prompts)
+            logger.info(f"ChatbookCreator.create_chatbook: Final stats - conversations={manifest.total_conversations}, notes={manifest.total_notes}, characters={manifest.total_characters}, media={manifest.total_media_items}, prompts={manifest.total_prompts}")
             
             # Write manifest
             manifest_path = work_dir / "manifest.json"
@@ -235,7 +245,7 @@ class ChatbookCreator:
             return True, message, dependency_info
             
         except Exception as e:
-            logger.error(f"ChatbookCreator.create_chatbook: Error - {e}", exc_info=True)
+            logger.opt(exception=True).error("ChatbookCreator.create_chatbook: Error creating chatbook")
             dependency_info = {
                 "missing_dependencies": list(self.missing_dependencies),
                 "auto_included": list(self.auto_included_characters)
@@ -728,6 +738,8 @@ class ChatbookCreator:
                 f.write(f"- **Characters:** {manifest.total_characters}\n")
             if manifest.total_media_items > 0:
                 f.write(f"- **Media Items:** {manifest.total_media_items}\n")
+            if manifest.total_prompts > 0:
+                f.write(f"- **Prompts:** {manifest.total_prompts}\n")
             
             if manifest.tags:
                 f.write(f"\n## Tags\n\n")
@@ -749,6 +761,8 @@ class ChatbookCreator:
             if manifest.total_media_items > 0:
                 f.write("    ├── media/          # Media files and content\n")
                 f.write("    │   └── metadata/   # Media metadata JSON files\n")
+            if manifest.total_prompts > 0:
+                f.write("    ├── prompts/        # Prompts\n")
             f.write("```\n")
             
             f.write("\n## License\n\n")

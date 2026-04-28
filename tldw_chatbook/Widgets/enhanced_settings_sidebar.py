@@ -638,8 +638,56 @@ class EnhancedSettingsSidebar(Container):
             id=f"{self.id_prefix}-media-collapsible",
             classes="setting-group setting-group-common"
         ):
-            yield Label("Search media content", classes="setting-label")
+            yield Label("Search Term:", classes="sidebar-label")
+            yield Input(
+                id="chat-media-search-input",
+                placeholder="Search title, content...",
+                classes="sidebar-input",
+            )
+            yield Label("Filter by Keywords (comma-sep):", classes="sidebar-label")
+            yield Input(
+                id="chat-media-keyword-filter-input",
+                placeholder="e.g., python, tutorial",
+                classes="sidebar-input",
+            )
+            yield Button("Search", id="chat-media-search-button", classes="sidebar-button")
             yield ListView(id=f"{self.id_prefix}-media-search-results-listview", classes="sidebar-listview")
+
+            with Horizontal(classes="pagination-controls", id="chat-media-pagination-controls"):
+                yield Button("Prev", id="chat-media-prev-page-button", disabled=True)
+                yield Label("Page 1/1", id="chat-media-page-label")
+                yield Button("Next", id="chat-media-next-page-button", disabled=True)
+
+            yield Static("--- Selected Media Details ---", classes="sidebar-label", id="chat-media-details-header")
+
+            with VerticalScroll(id="chat-media-details-view"):
+                with Horizontal(classes="detail-field-container"):
+                    yield Label("Title:", classes="detail-label")
+                    yield Button("Copy", id="chat-media-copy-title-button", classes="copy-button", disabled=True)
+                title_display = TextArea("", id="chat-media-title-display", read_only=True, classes="detail-textarea")
+                title_display.styles.height = 3
+                yield title_display
+
+                with Horizontal(classes="detail-field-container"):
+                    yield Label("Author:", classes="detail-label")
+                    yield Button("Copy", id="chat-media-copy-author-button", classes="copy-button", disabled=True)
+                author_display = TextArea("", id="chat-media-author-display", read_only=True, classes="detail-textarea")
+                author_display.styles.height = 3
+                yield author_display
+
+                with Horizontal(classes="detail-field-container"):
+                    yield Label("URL:", classes="detail-label")
+                    yield Button("Copy", id="chat-media-copy-url-button", classes="copy-button", disabled=True)
+                url_display = TextArea("", id="chat-media-url-display", read_only=True, classes="detail-textarea")
+                url_display.styles.height = 3
+                yield url_display
+
+                with Horizontal(classes="detail-field-container"):
+                    yield Label("Content:", classes="detail-label")
+                    yield Button("Copy", id="chat-media-copy-content-button", classes="copy-button", disabled=True)
+                content_display = TextArea("", id="chat-media-content-display", read_only=True, classes="detail-textarea")
+                content_display.styles.height = 10
+                yield content_display
     
     async def _load_advanced_tab(self) -> None:
         """Lazy load the advanced tab content."""

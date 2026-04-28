@@ -662,8 +662,9 @@ def create_unavailable_feature_handler(feature_name: str, suggestion: str = "") 
 # Initialize dependency checks
 def reset_dependency_checks():
     """Reset all dependency checks - useful for testing."""
-    global DEPENDENCIES_AVAILABLE, MODULES
-    DEPENDENCIES_AVAILABLE = {
+    global MODULES
+    DEPENDENCIES_AVAILABLE.clear()
+    DEPENDENCIES_AVAILABLE.update({
         'torch': False,
         'transformers': False,
         'numpy': False,
@@ -745,7 +746,7 @@ def reset_dependency_checks():
         # Web server
         'web': False,
         'textual_serve': False,
-    }
+    })
     MODULES = {}
     logger.debug("Reset dependency checks")
 

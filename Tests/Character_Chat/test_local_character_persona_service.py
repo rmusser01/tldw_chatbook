@@ -256,7 +256,7 @@ def test_local_character_persona_service_routes_character_card_crud():
     assert created["description"] == "created"
     assert updated["name"] == "Local New v2"
     assert updated["version"] == 2
-    assert deleted == {"status": "deleted", "character_id": 8}
+    assert deleted == {"deleted": True, "id": "8"}
     assert restored["id"] == 8
     assert restored["deleted"] == 0
     assert restored["version"] == 4

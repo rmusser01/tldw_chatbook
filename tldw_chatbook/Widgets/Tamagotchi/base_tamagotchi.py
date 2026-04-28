@@ -186,6 +186,14 @@ class BaseTamagotchi(Static):
         # Apply size class
         if validated_size in ["compact", "minimal"]:
             self.add_class(validated_size)
+
+    def _safe_log(self, level: str, message: str) -> None:
+        """Log when mounted, but keep unmounted unit/persistence paths usable."""
+        try:
+            log_method = getattr(self.log, level)
+            log_method(message)
+        except Exception:
+            pass
     
     def on_mount(self) -> None:
         """
@@ -510,9 +518,9 @@ class BaseTamagotchi(Static):
                 self._is_alive = state.get('is_alive', True)
                 self._total_interactions = max(0, state.get('total_interactions', 0))
                 
-                self.log.info(f"Loaded state for {self.pet_name}")
+                self._safe_log("info", f"Loaded state for {self.pet_name}")
         except Exception as e:
-            self.log.error(f"Failed to load tamagotchi state: {e}")
+            self._safe_log("error", f"Failed to load tamagotchi state: {e}")
             # Continue with default values
     
     def _save_state(self) -> None:
@@ -531,7 +539,7 @@ class BaseTamagotchi(Static):
             }
             self.storage.save(self.id or self.pet_name, state)
         except Exception as e:
-            self.log.error(f"Failed to save tamagotchi state: {e}")
+            self._safe_log("error", f"Failed to save tamagotchi state: {e}")
     
     def validate_happiness(self, value: float) -> float:
         """Validate happiness value stays in bounds."""

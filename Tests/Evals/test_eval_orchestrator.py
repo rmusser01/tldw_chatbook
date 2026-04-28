@@ -286,19 +286,20 @@ class TestOrchestratorIntegration:
                         'model_id': 'test',
                         'name': 'Test Model'
                     }
-                    
-                    # Should raise error due to concurrent run conflict
-                    # The ValidationError gets wrapped as EvaluationError
-                    with pytest.raises((ValidationError, EvaluationError)) as exc_info:
-                        await orchestrator.run_evaluation(
-                            task_id='test',
-                            model_id='test',
-                            max_samples=10
-                        )
-                    
-                    # Check that the error is related to concurrent runs
-                    error_msg = str(exc_info.value).lower()
-                    assert "already running" in error_msg or "evaluation failed" in error_msg
+
+                    with patch.object(orchestrator.db, 'create_run', return_value='test-run'):
+                        # Should raise error due to concurrent run conflict
+                        # The ValidationError gets wrapped as EvaluationError
+                        with pytest.raises((ValidationError, EvaluationError)) as exc_info:
+                            await orchestrator.run_evaluation(
+                                task_id='test',
+                                model_id='test',
+                                max_samples=10
+                            )
+
+                        # Check that the error is related to concurrent runs
+                        error_msg = str(exc_info.value).lower()
+                        assert "already running" in error_msg or "evaluation failed" in error_msg
 
 
 class TestOrchestratorErrorHandling:

@@ -45,7 +45,7 @@ from textual.worker import Worker
 from textual.binding import Binding
 from textual.message import Message
 from textual.timer import Timer
-from textual.css.query import QueryError
+from textual.css.query import NoMatches, QueryError
 from textual.command import Hit, Hits, Provider
 from functools import partial
 from pathlib import Path
@@ -260,6 +260,7 @@ from tldw_chatbook.Personalization_Interop import (
     PersonalizationScopeService,
     ServerPersonalizationService,
 )
+from tldw_chatbook.Prompt_Management.prompt_scope_service import build_prompt_scope_service
 from tldw_chatbook.Prompt_Studio_Interop import PromptStudioScopeService, ServerPromptStudioService
 from tldw_chatbook.Research_Interop import (
     LocalResearchSearchService,
@@ -1062,6 +1063,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     chat_api_provider_value: reactive[Optional[str]] = reactive(_default_chat_provider)
     # Renamed character_api_provider_value to ccp_api_provider_value for clarity with TAB_CCP
     ccp_api_provider_value: reactive[Optional[str]] = reactive(_default_ccp_provider)
+
+    def query_one(self, selector, expect_type=None):
+        """Resolve legacy app-level queries against the active pushed screen when needed."""
+        try:
+            return super().query_one(selector, expect_type)
+        except NoMatches:
+            try:
+                active_screen = self.screen
+            except Exception:
+                raise
+            return active_screen.query_one(selector, expect_type)
+
     # RAG expansion provider reactive
     rag_expansion_provider_value: reactive[Optional[str]] = reactive(_default_chat_provider)
 
@@ -1716,6 +1729,54 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             policy_enforcer=self.service_policy_enforcer,
         )
 
+    def _wire_research_services(self) -> None:
+        """Initialize source-aware research services if the broad parity wiring has not already done so."""
+        if hasattr(self, "research_scope_service") and hasattr(self, "research_search_scope_service"):
+            return
+
+        try:
+            self.local_research_service = LocalResearchService(
+                get_research_db_path(),
+                notification_dispatcher=self.notification_dispatch_service,
+                notification_app=self,
+            )
+        except Exception:
+            logger.warning("Local research service unavailable during app wiring", exc_info=True)
+            self.local_research_service = None
+        try:
+            self.server_research_service = ServerResearchService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_research_service = ServerResearchService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.research_scope_service = ResearchScopeService(
+            local_service=self.local_research_service,
+            server_service=self.server_research_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.local_research_search_service = LocalResearchSearchService(
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_research_search_service = ServerResearchSearchService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_research_search_service = ServerResearchSearchService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.research_search_scope_service = ResearchSearchScopeService(
+            local_service=self.local_research_search_service,
+            server_service=self.server_research_search_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
     def _wire_watchlists_and_notifications_services(self) -> None:
         """Initialize source-aware watchlists and local notification services."""
         self.local_watchlists_service = LocalWatchlistsService(
@@ -1741,10 +1802,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
-        self.client_notifications_db = ClientNotificationsDB(
-            get_notifications_db_path(),
-            CLI_APP_CLIENT_ID,
-        )
+        try:
+            self.client_notifications_db = ClientNotificationsDB(
+                get_notifications_db_path(),
+                CLI_APP_CLIENT_ID,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to initialize client notifications DB; using in-memory store: {}",
+                exc,
+                exc_info=True,
+            )
+            self.client_notifications_db = ClientNotificationsDB(
+                ":memory:",
+                CLI_APP_CLIENT_ID,
+            )
         self.client_notifications_service = ClientNotificationsService(
             store=self.client_notifications_db,
             policy_enforcer=self.service_policy_enforcer,
@@ -2229,11 +2301,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         *,
         action_id: str,
         scope_type: str | None = None,
+        runtime_state_override: RuntimeSourceState | None = None,
     ) -> PolicyDecision:
-        state = None
-        policy_enforcer = getattr(self, "service_policy_enforcer", None)
-        if policy_enforcer is not None and hasattr(policy_enforcer, "current_state"):
-            state = policy_enforcer.current_state()
+        _ = scope_type
+        state = runtime_state_override if isinstance(runtime_state_override, RuntimeSourceState) else None
+        if state is None:
+            policy_enforcer = getattr(self, "service_policy_enforcer", None)
+            if policy_enforcer is not None and hasattr(policy_enforcer, "current_state"):
+                state = policy_enforcer.current_state()
         if not isinstance(state, RuntimeSourceState):
             runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
             if isinstance(runtime_state, RuntimeSourceState):
@@ -2260,7 +2335,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         decision = engine.evaluate(
             action_id=action_id,
             state=state,
-            scope_type=scope_type,
         )
         if not decision.allowed:
             notifier = getattr(self, "notify", None)
@@ -2711,6 +2785,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             "stats": StatsScreen,
             "stts": STTSScreen,
             "study": StudyScreen,
+            "writing": WritingScreen,
+            "research": ResearchScreen,
             "chatbooks": ChatbooksScreen,
             "subscription": SubscriptionScreen,
             "subscriptions": SubscriptionScreen,
@@ -3728,9 +3804,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # Only schedule post-mount setup if splash screen is not active
         if not self.splash_screen_active:
-            # Schedule setup to run after initial rendering
-            self.call_after_refresh(self._post_mount_setup)
-            self.call_after_refresh(self.hide_inactive_windows)
+            # Schedule setup to run after initial rendering.
+            asyncio.create_task(self._run_no_splash_post_mount_setup())
 
         # Theme registration
         theme_start = time.perf_counter()
@@ -3791,6 +3866,35 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.loguru_logger.info("Setting initial tab via call_later.")
         self.current_tab = self._initial_tab_value
         self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
+
+    async def _push_initial_screen(self) -> None:
+        """Push the configured initial screen for screen-based navigation startup."""
+        if getattr(self, "_initial_screen_pushed", False):
+            return
+
+        initial_tab = getattr(self, "_initial_tab_value", TAB_CHAT)
+        resolved_screen_name, resolved_tab, screen_class = self._resolve_screen_navigation_target(initial_tab)
+        if screen_class is None:
+            resolved_screen_name = TAB_CHAT
+            resolved_tab = TAB_CHAT
+            screen_class = ChatScreen
+
+        await self.push_screen(screen_class(self))
+        self.current_tab = resolved_tab
+        self._initial_screen_pushed = True
+        logger.info(
+            f"Screen navigation: Pushed initial {screen_class.__name__}"
+            f" (target={resolved_screen_name})"
+        )
+
+    async def _run_no_splash_post_mount_setup(self) -> None:
+        """Run screen startup and post-mount setup when the splash screen is disabled."""
+        try:
+            await self._push_initial_screen()
+            await self._post_mount_setup()
+            self.hide_inactive_windows()
+        except Exception as e:
+            logger.error(f"No-splash post-mount setup failed: {e}", exc_info=True)
 
     async def _post_mount_setup(self) -> None:
         """Operations to perform after the main UI is expected to be fully mounted."""
@@ -5658,18 +5762,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if widgets_to_mount:
             await self.mount(*widgets_to_mount)
 
-        initial_tab = getattr(self, "_initial_tab_value", "chat")
-        resolved_screen_name, _resolved_tab, screen_class = self._resolve_screen_navigation_target(initial_tab)
-        if screen_class is None:
-            resolved_screen_name = "chat"
-            screen_class = ChatScreen
-
         # Push the initial screen after the shared navigation is mounted.
-        await self.push_screen(screen_class(self))
-        logger.info(
-            f"Screen navigation: Pushed initial {screen_class.__name__} after splash"
-            f" (target={resolved_screen_name})"
-        )
+        await self._push_initial_screen()
 
         # Screen navigation uses buffered logging until the Logs screen is ready.
         self._setup_buffered_logging()

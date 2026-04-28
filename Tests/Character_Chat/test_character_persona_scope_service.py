@@ -11,6 +11,7 @@ from tldw_chatbook.Character_Chat.character_persona_scope_service import (
 from tldw_chatbook.Character_Chat.server_character_persona_service import (
     ServerCharacterPersonaService,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
 
 
@@ -57,12 +58,15 @@ class FakeCharacterPersonaClient:
         self.update_character_chat_session_calls = []
         self.delete_character_chat_session_calls = []
         self.restore_character_chat_session_calls = []
+        self.session_calls = []
         self.list_character_messages_calls = []
         self.get_character_message_calls = []
         self.create_character_message_calls = []
         self.update_character_message_calls = []
         self.delete_character_message_calls = []
         self.search_character_messages_calls = []
+        self.message_calls = []
+        self.memory_calls = []
         self.get_chat_settings_calls = []
         self.update_chat_settings_calls = []
         self.export_chat_history_calls = []
@@ -318,57 +322,93 @@ class FakeCharacterPersonaClient:
 
     async def create_character_chat_session(self, request_data, **kwargs):
         self.create_character_chat_session_calls.append({"request_data": request_data, "kwargs": kwargs})
+        self.session_calls.append(("create", request_data, kwargs))
         return {"id": "chat-1", "title": "New Chat"}
 
     async def list_character_chat_sessions(self, **kwargs):
         self.list_character_chat_sessions_calls.append(kwargs)
+        self.session_calls.append(("list", kwargs))
         return {"chats": [{"id": "chat-1"}], "total": 1, "limit": kwargs.get("limit"), "offset": kwargs.get("offset")}
 
     async def get_character_chat_session(self, chat_id, **kwargs):
         self.get_character_chat_session_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        self.session_calls.append(("detail", chat_id, kwargs))
         return {"id": chat_id, "title": "Existing Chat"}
 
     async def update_character_chat_session(self, chat_id, request_data, **kwargs):
         self.update_character_chat_session_calls.append(
             {"chat_id": chat_id, "request_data": request_data, "kwargs": kwargs}
         )
+        self.session_calls.append(("update", chat_id, request_data, kwargs))
         return {"id": chat_id, "title": "Updated Chat"}
 
     async def delete_character_chat_session(self, chat_id, **kwargs):
         self.delete_character_chat_session_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        self.session_calls.append(("delete", chat_id, kwargs))
         return {"status": "deleted", "chat_id": chat_id}
 
     async def restore_character_chat_session(self, chat_id, **kwargs):
         self.restore_character_chat_session_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        self.session_calls.append(("restore", chat_id, kwargs))
         return {"id": chat_id, "deleted": False}
 
     async def list_character_messages(self, chat_id, **kwargs):
         self.list_character_messages_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        self.message_calls.append(("list", chat_id, kwargs))
         return {"messages": [{"id": "msg-1", "conversation_id": chat_id}], "total": 1}
 
     async def get_character_message(self, message_id, **kwargs):
         self.get_character_message_calls.append({"message_id": message_id, "kwargs": kwargs})
+        self.message_calls.append(("detail", message_id, kwargs))
         return {"id": message_id, "conversation_id": "chat-1", "content": "Hello"}
 
     async def create_character_message(self, chat_id, request_data, **kwargs):
         self.create_character_message_calls.append(
             {"chat_id": chat_id, "request_data": request_data, "kwargs": kwargs}
         )
+        self.message_calls.append(("create", chat_id, request_data, kwargs))
         return {"id": "msg-new", "conversation_id": chat_id, "content": "Hello"}
 
     async def update_character_message(self, message_id, request_data, **kwargs):
         self.update_character_message_calls.append(
             {"message_id": message_id, "request_data": request_data, "kwargs": kwargs}
         )
+        self.message_calls.append(("update", message_id, request_data, kwargs))
         return {"id": message_id, "conversation_id": "chat-1", "content": "Updated"}
 
     async def delete_character_message(self, message_id, **kwargs):
         self.delete_character_message_calls.append({"message_id": message_id, "kwargs": kwargs})
+        self.message_calls.append(("delete", message_id, kwargs))
         return {"status": "deleted", "message_id": message_id}
 
     async def search_character_messages(self, chat_id, query, **kwargs):
         self.search_character_messages_calls.append({"chat_id": chat_id, "query": query, "kwargs": kwargs})
+        self.message_calls.append(("search", chat_id, query, kwargs))
         return {"messages": [{"id": "msg-1", "conversation_id": chat_id}], "total": 1}
+
+    async def list_character_memories(self, character_id, **kwargs):
+        self.memory_calls.append(("list", character_id, kwargs))
+        return {"memories": [{"id": "mem-1", "character_id": character_id, "content": "likes tea"}], "total": 1}
+
+    async def create_character_memory(self, character_id, request_data, **kwargs):
+        self.memory_calls.append(("create", character_id, request_data, kwargs))
+        return {"id": "mem-1", "character_id": character_id, "content": request_data.get("content")}
+
+    async def update_character_memory(self, character_id, memory_id, request_data, **kwargs):
+        self.memory_calls.append(("update", character_id, memory_id, request_data, kwargs))
+        return {"id": memory_id, "character_id": character_id, "content": request_data.get("content")}
+
+    async def archive_character_memory(self, character_id, memory_id, request_data, **kwargs):
+        self.memory_calls.append(("archive", character_id, memory_id, request_data, kwargs))
+        return {"id": memory_id, "character_id": character_id, "archived": request_data.get("archived", True)}
+
+    async def delete_character_memory(self, character_id, memory_id, **kwargs):
+        self.memory_calls.append(("delete", character_id, memory_id, kwargs))
+        return {"deleted": True, "id": memory_id, "character_id": character_id}
+
+    async def extract_character_memories(self, character_id, request_data, **kwargs):
+        self.memory_calls.append(("extract", character_id, request_data, kwargs))
+        return {"extracted": 1, "skipped_duplicates": 0, "memories": []}
 
     async def get_chat_settings(self, chat_id, **kwargs):
         self.get_chat_settings_calls.append({"chat_id": chat_id, "kwargs": kwargs})
@@ -608,14 +648,15 @@ class FakeLocalChatExecutionBackend(FakeLocalCharacterExemplarBackend):
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
         self.denied_reason = denied_reason
-        self.calls = []
+        self.actions = []
+        self.calls = self.actions
 
     @classmethod
     def deny(cls, reason_code: str) -> "FakePolicyEnforcer":
         return cls(denied_reason=reason_code)
 
     def require_allowed(self, *, action_id: str) -> None:
-        self.calls.append(action_id)
+        self.actions.append(action_id)
         if self.denied_reason is None:
             return
         raise PolicyDeniedError(
@@ -625,14 +666,6 @@ class FakePolicyEnforcer:
             effective_source="local",
             authority_owner="server",
         )
-
-
-class FakePolicyEnforcer:
-    def __init__(self):
-        self.actions = []
-
-    def require_allowed(self, *, action_id):
-        self.actions.append(action_id)
 
 
 @pytest.mark.asyncio
@@ -1247,7 +1280,7 @@ async def test_scope_service_routes_server_ccp_sessions_messages_and_memory_with
         "character.sessions.detail.server",
         "character.sessions.update.server",
         "character.sessions.delete.server",
-        "character.sessions.update.server",
+        "character.sessions.restore.server",
         "character.sessions.detail.server",
         "character.sessions.update.server",
         "character.messages.create.server",

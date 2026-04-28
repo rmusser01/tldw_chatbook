@@ -289,7 +289,7 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "remote_mcp_control_plane_governance": {
         "expected_domain_ids": {"mcp_governance"},
         "expected_action_kinds_by_source": {
-            "server": _action_kinds("browse", "detail", "create", "update", "delete", "observe"),
+            "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
         },
     },
     "sharing": {
@@ -827,6 +827,17 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         evaluations.run.update.server
     """),
     "local_mcp_runtime": _action_ids("""
+        mcp.external_profiles.configure.local
+        mcp.external_profiles.launch.local
+        mcp.external_profiles.list.local
+        mcp.external_profiles.observe.local
+        mcp.external_profiles.trigger.local
+        mcp.governance.approve.local
+        mcp.governance.configure.local
+        mcp.governance.list.local
+        mcp.governance.observe.local
+        mcp.inventory.list.local
+        mcp.inventory.observe.local
         mcp.runtime.configure.local
         mcp.runtime.launch.local
         mcp.runtime.list.local
@@ -1096,6 +1107,18 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         rag.template.update.server
     """),
     "remote_mcp_control_plane_governance": _action_ids("""
+        mcp.advanced.configure.server
+        mcp.advanced.list.server
+        mcp.advanced.observe.server
+        mcp.advanced.trigger.server
+        mcp.catalogs.configure.server
+        mcp.catalogs.list.server
+        mcp.credentials.configure.server
+        mcp.credentials.list.server
+        mcp.effective_access.observe.server
+        mcp.external_servers.configure.server
+        mcp.external_servers.list.server
+        mcp.governance.approve.server
         mcp.governance.approval_decisions.approve.server
         mcp.governance.approval_policies.create.server
         mcp.governance.approval_policies.delete.server
@@ -1111,6 +1134,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         mcp.governance.catalogs.create.server
         mcp.governance.catalogs.delete.server
         mcp.governance.catalogs.list.server
+        mcp.governance.configure.server
         mcp.governance.effective_policy.detail.server
         mcp.governance.events.observe.server
         mcp.governance.external_servers.create.server
@@ -1118,6 +1142,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         mcp.governance.external_servers.list.server
         mcp.governance.external_servers.secrets.update.server
         mcp.governance.external_servers.update.server
+        mcp.governance.list.server
+        mcp.governance.observe.server
         mcp.governance.permission_profiles.create.server
         mcp.governance.permission_profiles.delete.server
         mcp.governance.permission_profiles.list.server
@@ -1128,6 +1154,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         mcp.governance.policy_assignments.update.server
         mcp.governance.tool_registry.detail.server
         mcp.governance.tool_registry.list.server
+        mcp.inventory.list.server
+        mcp.runtime.observe.server
     """),
     "research_search_provider_surfaces": _action_ids("""
         research.search.providers.configure.local

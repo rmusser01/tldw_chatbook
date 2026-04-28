@@ -16,6 +16,7 @@ import asyncio
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union, Callable
 import json
+from types import SimpleNamespace
 from loguru import logger
 import requests
 
@@ -42,6 +43,7 @@ try:
     from faster_whisper import WhisperModel
     FASTER_WHISPER_AVAILABLE = True
 except ImportError:
+    WhisperModel = None
     FASTER_WHISPER_AVAILABLE = False
     logger.warning("faster-whisper not available. Install with: pip install faster-whisper")
 
@@ -52,9 +54,13 @@ try:
     else:
         LIGHTNING_WHISPER_AVAILABLE = False
 except ImportError:
+    LightningWhisperMLX = None
     LIGHTNING_WHISPER_AVAILABLE = False
     if sys.platform == 'darwin':
         logger.warning("lightning-whisper-mlx not available. Install with: pip install lightning-whisper-mlx")
+else:
+    if sys.platform != 'darwin':
+        LightningWhisperMLX = None
 
 try:
     if sys.platform == 'darwin':
@@ -64,15 +70,22 @@ try:
     else:
         PARAKEET_MLX_AVAILABLE = False
 except ImportError:
+    parakeet_from_pretrained = None
     PARAKEET_MLX_AVAILABLE = False
     if sys.platform == 'darwin':
         logger.warning("parakeet-mlx not available. Install with: pip install parakeet-mlx")
+else:
+    if sys.platform != 'darwin':
+        parakeet_from_pretrained = None
 
 try:
     import torch
     from transformers import AutoProcessor, Qwen2AudioForConditionalGeneration
     QWEN2AUDIO_AVAILABLE = True
 except ImportError:
+    torch = None
+    AutoProcessor = None
+    Qwen2AudioForConditionalGeneration = None
     QWEN2AUDIO_AVAILABLE = False
     logger.warning("Qwen2Audio not available. Install transformers and torch for Qwen2Audio support.")
 
@@ -80,6 +93,7 @@ try:
     import soundfile as sf
     SOUNDFILE_AVAILABLE = True
 except ImportError:
+    sf = None
     SOUNDFILE_AVAILABLE = False
     logger.warning("soundfile not available. Install with: pip install soundfile")
 
@@ -87,6 +101,7 @@ try:
     from scipy.io import wavfile
     SCIPY_AVAILABLE = True
 except ImportError:
+    wavfile = None
     SCIPY_AVAILABLE = False
     logger.warning("scipy not available. Some audio processing features may be limited.")
 
@@ -94,6 +109,7 @@ try:
     import nemo.collections.asr as nemo_asr
     NEMO_AVAILABLE = True
 except ImportError:
+    nemo_asr = None
     NEMO_AVAILABLE = False
     logger.warning("NeMo toolkit not available. Install with: pip install nemo-toolkit[asr]")
 
@@ -260,6 +276,7 @@ class TranscriptionService:
         
         # Lightning Whisper MLX model (lazy loaded, macOS only)
         self._lightning_whisper_model = None
+        self._lightning_whisper_model_lock = threading.RLock()
         self._lightning_whisper_config = {
             'batch_size': get_cli_setting('transcription.lightning_batch_size', 12) or 12,
             'quant': get_cli_setting('transcription.lightning_quant', None),  # None, '4bit', '8bit'
@@ -711,12 +728,28 @@ class TranscriptionService:
             logger.info(f"No model specified, using default: {model}")
         
         logger.info(f"Starting faster-whisper transcription: model={model}, language={language}, source_lang={source_lang}, target_lang={target_lang}")
-        logger.info(f"Audio file path: {audio_path}, exists: {os.path.exists(audio_path)}, size: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 'N/A'} bytes")
+        audio_exists = os.path.exists(audio_path)
+        try:
+            audio_size = os.path.getsize(audio_path) if audio_exists else "N/A"
+        except OSError as e:
+            logger.debug(f"Could not read audio file size for {audio_path}: {e}")
+            audio_size = "N/A"
+        logger.info(f"Audio file path: {audio_path}, exists: {audio_exists}, size: {audio_size} bytes")
         logger.debug(f"VAD filter: {vad_filter}, additional kwargs: {kwargs}")
         
         # Verify audio file exists and is readable
-        if not os.path.exists(audio_path):
+        if not audio_exists:
             raise TranscriptionError(f"Audio file not found: {audio_path}")
+
+        if progress_callback:
+            try:
+                progress_callback(
+                    0,
+                    f"Starting transcription with {model}...",
+                    {"stage": "starting", "model": model, "provider": "faster-whisper"}
+                )
+            except Exception as e:
+                _handle_progress_callback_error(e)
         
         # Get or create model instance with thread safety
         cache_key = (model, self.config['device'], self.config['compute_type'])
@@ -1503,34 +1536,41 @@ class TranscriptionService:
         logger.info(f"Source language: {source_lang}, Target language: {target_lang}")
         transcribe_start = time.time()
         
-        # Lazy load Lightning Whisper MLX model
-        if self._lightning_whisper_model is None or \
-           getattr(self._lightning_whisper_model, '_model_name', None) != model or \
-           getattr(self._lightning_whisper_model, '_batch_size', None) != batch_size or \
-           getattr(self._lightning_whisper_model, '_quant', None) != quant:
-            
-            logger.info(f"Loading Lightning Whisper MLX model: {model}")
-            model_load_start = time.time()
-            
-            try:
-                self._lightning_whisper_model = LightningWhisperMLX(
-                    model=model,
-                    batch_size=batch_size,
-                    quant=quant
-                )
-                # Store config for cache comparison
-                self._lightning_whisper_model._model_name = model
-                self._lightning_whisper_model._batch_size = batch_size
-                self._lightning_whisper_model._quant = quant
-                
-                model_load_time = time.time() - model_load_start
-                logger.info(f"Lightning Whisper MLX model loaded successfully in {model_load_time:.2f} seconds")
-                
-            except Exception as e:
-                logger.error(f"Failed to load Lightning Whisper MLX model: {str(e)}", exc_info=True)
-                raise TranscriptionError(
-                    f"Failed to load Lightning Whisper MLX model: {str(e)}"
-                ) from e
+        # Lazy load Lightning Whisper MLX model with thread safety.
+        lightning_model = self._lightning_whisper_model
+        if lightning_model is None or \
+           getattr(lightning_model, '_model_name', None) != model or \
+           getattr(lightning_model, '_batch_size', None) != batch_size or \
+           getattr(lightning_model, '_quant', None) != quant:
+            with self._lightning_whisper_model_lock:
+                lightning_model = self._lightning_whisper_model
+                if lightning_model is None or \
+                   getattr(lightning_model, '_model_name', None) != model or \
+                   getattr(lightning_model, '_batch_size', None) != batch_size or \
+                   getattr(lightning_model, '_quant', None) != quant:
+                    logger.info(f"Loading Lightning Whisper MLX model: {model}")
+                    model_load_start = time.time()
+
+                    try:
+                        lightning_model = LightningWhisperMLX(
+                            model=model,
+                            batch_size=batch_size,
+                            quant=quant
+                        )
+                        # Store config for cache comparison
+                        lightning_model._model_name = model
+                        lightning_model._batch_size = batch_size
+                        lightning_model._quant = quant
+                        self._lightning_whisper_model = lightning_model
+
+                        model_load_time = time.time() - model_load_start
+                        logger.info(f"Lightning Whisper MLX model loaded successfully in {model_load_time:.2f} seconds")
+
+                    except Exception as e:
+                        logger.error(f"Failed to load Lightning Whisper MLX model: {str(e)}", exc_info=True)
+                        raise TranscriptionError(
+                            f"Failed to load Lightning Whisper MLX model: {str(e)}"
+                        ) from e
         
         try:
             # Report progress
@@ -1546,7 +1586,7 @@ class TranscriptionService:
             
             # Transcribe the audio
             # Lightning Whisper MLX returns a dict with 'text' and possibly other fields
-            result_dict = self._lightning_whisper_model.transcribe(audio_path)
+            result_dict = lightning_model.transcribe(audio_path)
             
             transcribe_audio_time = time.time() - transcribe_audio_start
             logger.info(f"Lightning Whisper MLX transcription completed in {transcribe_audio_time:.2f} seconds")
@@ -1673,6 +1713,9 @@ class TranscriptionService:
         if not PARAKEET_MLX_AVAILABLE:
             logger.error("[PARAKEET] parakeet-mlx is not installed or not available")
             raise TranscriptionError("parakeet-mlx is not installed")
+
+        if sf is None and not SOUNDFILE_AVAILABLE and not os.path.exists(audio_path):
+            raise TranscriptionError(f"Parakeet MLX transcription failed: Audio file not found: {audio_path}")
         
         # Use configured settings or provided parameters
         model = model or self._parakeet_mlx_config['model']
@@ -1683,6 +1726,16 @@ class TranscriptionService:
         logger.debug(f"Using model: {model}, precision: {precision}")
         logger.info(f"Starting Parakeet MLX transcription: model={model}, precision={precision}")
         transcribe_start = time.time()
+
+        if progress_callback:
+            try:
+                progress_callback(
+                    0,
+                    f"Starting transcription with Parakeet MLX model: {model}...",
+                    {"stage": "starting", "model": model, "provider": "parakeet-mlx"}
+                )
+            except Exception as e:
+                _handle_progress_callback_error(e)
         
         # Lazy load Parakeet MLX model with thread safety
         logger.info("[PARAKEET] Checking if model needs to be loaded...")
@@ -1691,12 +1744,16 @@ class TranscriptionService:
         
         with self._parakeet_mlx_model_lock:
             if self._parakeet_mlx_model is None or \
-               getattr(self._parakeet_mlx_model, '_model_name', None) != model:
+               getattr(self._parakeet_mlx_model, '_model_name', None) != model or \
+               getattr(self._parakeet_mlx_model, '_precision', None) != precision or \
+               getattr(self._parakeet_mlx_model, '_attention_type', None) != attention_type:
                 
                 logger.info(f"[PARAKEET] Need to load model: {model}")
                 logger.info(f"[PARAKEET] Model is None: {self._parakeet_mlx_model is None}")
                 if self._parakeet_mlx_model is not None:
                     logger.info(f"[PARAKEET] Current model name: {getattr(self._parakeet_mlx_model, '_model_name', 'Unknown')}")
+                    logger.info(f"[PARAKEET] Current precision: {getattr(self._parakeet_mlx_model, '_precision', 'Unknown')}")
+                    logger.info(f"[PARAKEET] Current attention type: {getattr(self._parakeet_mlx_model, '_attention_type', 'Unknown')}")
                 
                 model_load_start = time.time()
                 
@@ -1716,17 +1773,33 @@ class TranscriptionService:
                         model = 'mlx-community/parakeet-tdt-0.6b-v2'
                         logger.warning(f"[PARAKEET] Using default model: {model}")
                     
-                    # Map precision to MLX dtype
-                    import mlx.core as mx
-                    dtype_map = {
-                        'fp32': mx.float32,
-                        'fp16': mx.float16,
-                        'bf16': mx.bfloat16,
-                        'bfloat16': mx.bfloat16,
-                        'float32': mx.float32,
-                        'float16': mx.float16
-                    }
-                    dtype = dtype_map.get(precision, mx.bfloat16)
+                    # Map precision to MLX dtype. In real Parakeet MLX installs, mlx is
+                    # present; mocked unit tests can exercise the provider seam without it.
+                    try:
+                        import mlx.core as mx
+                        dtype_map = {
+                            'fp32': mx.float32,
+                            'fp16': mx.float16,
+                            'bf16': mx.bfloat16,
+                            'bfloat16': mx.bfloat16,
+                            'float32': mx.float32,
+                            'float16': mx.float16
+                        }
+                        dtype = dtype_map.get(precision, mx.bfloat16)
+                    except ImportError:
+                        logger.warning("mlx.core is not available; passing precision as a string to the Parakeet loader")
+                        class _FallbackMLXDType(str):
+                            pass
+
+                        dtype_map = {
+                            'fp32': _FallbackMLXDType('float32'),
+                            'fp16': _FallbackMLXDType('float16'),
+                            'bf16': _FallbackMLXDType('bfloat16'),
+                            'bfloat16': _FallbackMLXDType('bfloat16'),
+                            'float32': _FallbackMLXDType('float32'),
+                            'float16': _FallbackMLXDType('float16')
+                        }
+                        dtype = dtype_map.get(precision, _FallbackMLXDType('bfloat16'))
                     
                     logger.info(f"About to call parakeet_from_pretrained with model='{model}', dtype={dtype}")
                     logger.info("Note: First time model loading may take several minutes to download from HuggingFace...")
@@ -1759,6 +1832,8 @@ class TranscriptionService:
                     
                     # Store model name for cache comparison
                     self._parakeet_mlx_model._model_name = model
+                    self._parakeet_mlx_model._precision = precision
+                    self._parakeet_mlx_model._attention_type = attention_type
                     
                     model_load_time = time.time() - model_load_start
                     logger.info(f"Parakeet MLX model loaded successfully in {model_load_time:.2f} seconds")
@@ -1792,29 +1867,61 @@ class TranscriptionService:
             # Check audio duration if soundfile is available
             audio_duration = None
             audio_sample_rate = None
-            chunk_duration = kwargs.get('chunk_duration', self._parakeet_mlx_config['chunk_duration'])
-            overlap_duration = kwargs.get('overlap_duration', self._parakeet_mlx_config['overlap_duration'])
+            chunk_duration = kwargs.get('chunk_duration', kwargs.get('chunk_size', self._parakeet_mlx_config['chunk_duration']))
+            overlap_duration = kwargs.get('overlap_duration', kwargs.get('overlap', self._parakeet_mlx_config['overlap_duration']))
             auto_chunk_threshold = kwargs.get('auto_chunk_threshold', self._parakeet_mlx_config['auto_chunk_threshold'])
+            audio_data = None
             
-            if SOUNDFILE_AVAILABLE:
+            if sf is not None:
                 try:
-                    import soundfile as sf
                     audio_info = sf.info(audio_path)
-                    audio_duration = audio_info.duration
-                    audio_sample_rate = audio_info.samplerate
-                    try:
-                        logger.info(f"  Audio duration: {audio_duration:.2f} seconds")
-                    except (TypeError, ValueError):
-                        logger.info(f"  Audio duration: {audio_duration} seconds")
-                    logger.info(f"  Sample rate: {audio_sample_rate} Hz")
+                    raw_duration = getattr(audio_info, 'duration', None)
+                    raw_sample_rate = getattr(audio_info, 'samplerate', None)
+                    if isinstance(raw_duration, (int, float)):
+                        audio_duration = float(raw_duration)
+                    if isinstance(raw_sample_rate, (int, float)):
+                        audio_sample_rate = int(raw_sample_rate)
                 except Exception as e:
                     logger.warning(f"Could not get audio info: {e}")
+
+                try:
+                    audio_data, read_sample_rate = sf.read(audio_path)
+                    if isinstance(read_sample_rate, (int, float)):
+                        audio_sample_rate = int(read_sample_rate)
+                    if audio_duration is None and audio_sample_rate:
+                        try:
+                            audio_duration = len(audio_data) / audio_sample_rate
+                        except (TypeError, ValueError, ZeroDivisionError):
+                            audio_duration = None
+                except Exception as e:
+                    raise TranscriptionError(f"Could not load audio file: {e}") from e
+            
+            if audio_duration is not None:
+                logger.info(f"  Audio duration: {audio_duration:.2f} seconds")
+            if audio_sample_rate is not None:
+                logger.info(f"  Sample rate: {audio_sample_rate} Hz")
             
             transcribe_audio_start = time.time()
             
             # Determine if we should use chunking
             use_chunking = False
-            if audio_duration and audio_duration > auto_chunk_threshold:
+            try:
+                chunk_duration = float(chunk_duration)
+            except (TypeError, ValueError):
+                chunk_duration = float(self._parakeet_mlx_config['chunk_duration'])
+            try:
+                overlap_duration = float(overlap_duration)
+            except (TypeError, ValueError):
+                overlap_duration = float(self._parakeet_mlx_config['overlap_duration'])
+            if chunk_duration <= 0:
+                chunk_duration = float(self._parakeet_mlx_config['chunk_duration'])
+            if overlap_duration < 0:
+                overlap_duration = 0.0
+            if overlap_duration >= chunk_duration:
+                overlap_duration = max(0.0, chunk_duration - 1.0)
+
+            chunk_threshold = min(float(auto_chunk_threshold), chunk_duration)
+            if audio_duration and audio_duration > chunk_threshold:
                 use_chunking = True
                 # Use safe formatting for potentially mocked values
                 try:
@@ -1824,25 +1931,76 @@ class TranscriptionService:
             
             # Transcribe the audio
             logger.info(f"Starting actual transcription of audio file: {audio_path}")
-            logger.info(f"File exists: {os.path.exists(audio_path)}, size: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 'N/A'} bytes")
+            audio_exists = os.path.exists(audio_path)
+            try:
+                audio_size = os.path.getsize(audio_path) if audio_exists else "N/A"
+            except OSError as e:
+                logger.debug(f"Could not read audio file size for {audio_path}: {e}")
+                audio_size = "N/A"
+            logger.info(f"File exists: {audio_exists}, size: {audio_size} bytes")
             
             if use_chunking and hasattr(self._parakeet_mlx_model, 'transcribe'):
-                # Check if the model supports chunking parameters
+                logger.info(f"Attempting chunked transcription with chunk_duration={chunk_duration}, overlap={overlap_duration}")
+                step_duration = max(0.001, chunk_duration - overlap_duration)
+                chunk_starts = []
+                current_start = 0.0
+                while current_start < float(audio_duration):
+                    chunk_starts.append(current_start)
+                    if current_start + chunk_duration >= float(audio_duration):
+                        break
+                    current_start += step_duration
+
+                chunk_texts = []
+                chunk_sentences = []
+                temp_paths = []
                 try:
-                    # Try with chunking parameters first
-                    logger.info(f"Attempting chunked transcription with chunk_duration={chunk_duration}, overlap={overlap_duration}")
-                    result = self._parakeet_mlx_model.transcribe(
-                        audio_path,
-                        chunk_duration=chunk_duration,
-                        overlap_duration=overlap_duration
-                    )
-                    logger.info("Chunked transcription completed successfully")
-                except TypeError as e:
-                    # If chunking not supported, fall back to regular transcription
-                    logger.warning(f"Chunking parameters not supported by model, using regular transcription: {e}")
-                    logger.info("Starting regular transcription without chunking...")
-                    result = self._parakeet_mlx_model.transcribe(audio_path)
-                    logger.info("Regular transcription completed successfully")
+                    for index, start_time in enumerate(chunk_starts):
+                        end_time = min(float(audio_duration), start_time + chunk_duration)
+                        chunk_path = audio_path
+                        if audio_data is not None and sf is not None and hasattr(sf, 'write') and audio_sample_rate:
+                            start_sample = max(0, int(start_time * audio_sample_rate))
+                            end_sample = max(start_sample, int(end_time * audio_sample_rate))
+                            chunk_audio = audio_data[start_sample:end_sample]
+                            temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                            temp_file.close()
+                            temp_paths.append(temp_file.name)
+                            try:
+                                sf.write(temp_file.name, chunk_audio, audio_sample_rate)
+                                chunk_path = temp_file.name
+                            except Exception as e:
+                                logger.warning(f"Could not write temporary chunk {index}, using original audio path: {e}")
+                                chunk_path = audio_path
+
+                        chunk_result = self._parakeet_mlx_model.transcribe(chunk_path)
+                        chunk_text = chunk_result.text if hasattr(chunk_result, 'text') else str(chunk_result)
+                        if chunk_text is None:
+                            chunk_text = ""
+                        chunk_texts.append(chunk_text)
+                        chunk_sentences.append(SimpleNamespace(start=start_time, end=end_time, text=chunk_text))
+
+                        if progress_callback:
+                            try:
+                                progress = 10 + ((index + 1) / max(1, len(chunk_starts))) * 80
+                                progress_callback(
+                                    progress,
+                                    f"Transcribed chunk {index + 1}/{len(chunk_starts)}",
+                                    {"stage": "chunk_transcribed", "chunk": index + 1, "total_chunks": len(chunk_starts)}
+                                )
+                            except Exception as e:
+                                _handle_progress_callback_error(e)
+                finally:
+                    for temp_path in temp_paths:
+                        try:
+                            os.unlink(temp_path)
+                        except OSError:
+                            pass
+
+                result = SimpleNamespace(
+                    text=" ".join(text for text in chunk_texts if text),
+                    sentences=chunk_sentences,
+                    duration=audio_duration
+                )
+                logger.info("Chunked transcription completed successfully")
             else:
                 # Regular transcription
                 logger.info("Starting regular transcription...")
@@ -1865,8 +2023,9 @@ class TranscriptionService:
             
             # Parakeet MLX provides sentence-level timestamps
             segments = []
-            if hasattr(result, 'sentences') and result.sentences:
-                for sentence in result.sentences:
+            result_sentences = getattr(result, 'sentences', None)
+            if isinstance(result_sentences, (list, tuple)) and result_sentences:
+                for sentence in result_sentences:
                     segment_dict = {
                         "start": sentence.start if hasattr(sentence, 'start') else 0.0,
                         "end": sentence.end if hasattr(sentence, 'end') else 0.0,
@@ -1877,14 +2036,16 @@ class TranscriptionService:
                     }
                     segments.append(segment_dict)
             else:
-                # No sentence-level timing, create single segment only if there's text
-                if text:
+                # No sentence-level timing, create a single segment for any model result.
+                # This preserves short/empty audio as an addressable transcription span.
+                if text or audio_duration is not None:
+                    segment_end = float(audio_duration) if isinstance(audio_duration, (int, float)) else 0.0
                     segments = [{
                         "start": 0.0,
-                        "end": 0.0,
+                        "end": segment_end,
                         "text": text,
                         "Time_Start": 0.0,
-                        "Time_End": 0.0,
+                        "Time_End": segment_end,
                         "Text": text
                     }]
                 else:

@@ -266,10 +266,13 @@ class MediaItemProcessResult(BaseModel):
 
 class BatchMediaProcessResponse(BaseModel):
     processed_count: int
-    errors_count: int
-    errors: List[str]
-    results: List[MediaItemProcessResult]
+    errors_count: int = 0
+    errors: List[str] = Field(default_factory=list)
+    results: List[MediaItemProcessResult] = Field(default_factory=list)
     confabulation_results: Optional[Any] = None
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 # Simplified XML response if it's different
 class ProcessXMLResponseItem(BaseModel): # Based on your description of process_xml_task

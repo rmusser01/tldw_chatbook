@@ -18,7 +18,24 @@ from tldw_chatbook.Chatbooks.server_chatbook_service import (
     record_server_job,
 )
 from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
-from tldw_chatbook.tldw_api import ReadingExportResponse
+from tldw_chatbook.tldw_api import (
+    ChatbookCleanupResponse,
+    ChatbookContinueExportRequest,
+    ChatbookExportJobListResponse,
+    ChatbookExportJobResponse,
+    ChatbookImportJobListResponse,
+    ChatbookImportJobResponse,
+    ChatbookJobMutationResponse,
+    ReadingExportResponse,
+)
+
+
+class FakePolicyEnforcer:
+    def __init__(self):
+        self.calls = []
+
+    def require_allowed(self, *, action_id: str):
+        self.calls.append(action_id)
 
 
 def test_service_rejects_server_unsupported_import_content_types():
@@ -312,15 +329,15 @@ async def test_server_chatbook_service_enforces_policy_actions():
         "chatbooks.export.server",
         "chatbooks.export.server",
         "chatbooks.import.server",
-        "chatbooks.detail.server",
-        "chatbooks.export.server",
-        "chatbooks.detail.server",
-        "chatbooks.list.server",
-        "chatbooks.list.server",
-        "chatbooks.update.server",
-        "chatbooks.update.server",
-        "chatbooks.delete.server",
-        "chatbooks.delete.server",
+        "chatbooks.export_jobs.detail.server",
+        "chatbooks.export_jobs.export.server",
+        "chatbooks.import_jobs.detail.server",
+        "chatbooks.export_jobs.list.server",
+        "chatbooks.import_jobs.list.server",
+        "chatbooks.export_jobs.update.server",
+        "chatbooks.import_jobs.update.server",
+        "chatbooks.export_jobs.delete.server",
+        "chatbooks.import_jobs.delete.server",
     ]
 
 

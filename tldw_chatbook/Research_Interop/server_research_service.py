@@ -11,6 +11,7 @@ from ..tldw_api import (
     ResearchRunCreateRequest,
     TLDWAPIClient,
 )
+from .research_normalizers import ResearchRecord, ResearchRecordList
 
 
 class ServerResearchService:
@@ -62,14 +63,31 @@ class ServerResearchService:
                 )
 
     @staticmethod
-    def _dump(response: Any) -> dict[str, Any]:
+    def _dump(response: Any) -> ResearchRecord:
         if hasattr(response, "model_dump"):
-            return response.model_dump(mode="json")
-        return dict(response or {})
+            payload = response.model_dump(mode="json")
+        else:
+            payload = dict(response or {})
+        payload.setdefault("source", "server")
+        return ResearchRecord(payload)
 
     @staticmethod
-    def _dump_list(response: Any) -> list[dict[str, Any]]:
-        return [ServerResearchService._dump(item) for item in list(response or [])]
+    def _dump_list(response: Any) -> ResearchRecordList:
+        return ResearchRecordList(ServerResearchService._dump(item) for item in list(response or []))
+
+    @staticmethod
+    def _dump_event(response: Any) -> ResearchRecord:
+        if hasattr(response, "model_dump"):
+            payload = response.model_dump(mode="json")
+        else:
+            payload = dict(response or {})
+        event_id = payload.pop("event_id", None)
+        if event_id is not None:
+            payload["id"] = event_id
+        return ResearchRecord(payload)
+
+    async def create_run(self, **kwargs: Any) -> ResearchRecord:
+        return await self.launch_run(**kwargs)
 
     async def launch_run(
         self,
@@ -110,7 +128,16 @@ class ServerResearchService:
     ) -> AsyncGenerator[dict[str, Any], None]:
         self._enforce("research.runs.observe.server")
         async for event in self._require_client().stream_research_run_events(session_id, after_id=after_id):
-            yield self._dump(event)
+            yield self._dump_event(event)
+
+    async def stream_run_events(
+        self,
+        session_id: str,
+        *,
+        after_id: int = 0,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        async for event in self.observe_run_events(session_id, after_id=after_id):
+            yield event
 
     async def pause_run(self, session_id: str) -> dict[str, Any]:
         self._enforce("research.runs.update.server")

@@ -271,6 +271,23 @@ class MediaWindow(Container):
         )
         return True
 
+    def _normalize_saved_view_context(self) -> bool:
+        """Normalize restored/current saved-view state for the active backend/type."""
+        reset = self._reset_invalid_saved_view_for_context()
+        if not reset:
+            self._sync_saved_view_controls()
+        return not reset
+
+    def _sync_saved_view_context_on_entry(self) -> None:
+        """Normalize saved-view state after mount and refresh from a valid context."""
+        normalized = self._normalize_saved_view_context()
+        if not normalized and self.active_media_type:
+            self._perform_search(
+                self.active_media_type,
+                self.search_panel.search_term,
+                self.search_panel.keyword_filter,
+            )
+
     def _record_backend(self, record: Optional[Dict[str, Any]] = None) -> str:
         """Resolve backend from a normalized record or current runtime state."""
         if isinstance(record, dict) and record.get("backend"):

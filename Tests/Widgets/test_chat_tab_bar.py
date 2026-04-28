@@ -33,7 +33,7 @@ def session_data():
     )
 
 @pytest.fixture
-async def tab_bar(mock_app):
+def tab_bar(mock_app):
     """Create a ChatTabBar instance."""
     tab_bar = ChatTabBar()
     # Mock the query_one method to return mock widgets

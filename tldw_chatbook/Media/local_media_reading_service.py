@@ -38,8 +38,10 @@ class LocalMediaReadingService:
         video_processor_factory: Any = None,
         notification_dispatcher: Any = None,
         notification_app: Any = None,
+        app_config: Any = None,
     ):
         self.media_db = media_db
+        self.app_config = app_config
         self.tts_audio_generator = tts_audio_generator
         self.url_article_scraper = url_article_scraper
         self.url_file_downloader = url_file_downloader

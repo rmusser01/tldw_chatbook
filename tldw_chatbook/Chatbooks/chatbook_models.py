@@ -118,6 +118,7 @@ class ChatbookManifest:
     total_notes: int = 0
     total_characters: int = 0
     total_media_items: int = 0
+    total_prompts: int = 0
     total_size_bytes: int = 0
     
     # Metadata
@@ -145,6 +146,7 @@ class ChatbookManifest:
                 "total_notes": self.total_notes,
                 "total_characters": self.total_characters,
                 "total_media_items": self.total_media_items,
+                "total_prompts": self.total_prompts,
                 "total_size_bytes": self.total_size_bytes
             },
             "tags": self.tags,
@@ -186,6 +188,7 @@ class ChatbookManifest:
         manifest.total_notes = stats.get("total_notes", 0)
         manifest.total_characters = stats.get("total_characters", 0)
         manifest.total_media_items = stats.get("total_media_items", 0)
+        manifest.total_prompts = stats.get("total_prompts", 0)
         manifest.total_size_bytes = stats.get("total_size_bytes", 0)
         
         # Load metadata

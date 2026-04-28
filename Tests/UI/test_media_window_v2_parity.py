@@ -11,6 +11,9 @@ from textual.widgets import Button, Collapsible, Select, Static
 
 from tldw_chatbook.Event_Handlers.media_events import (
     MediaAnalysisSaveEvent,
+    MediaReadingHighlightCreateEvent,
+    MediaReadingHighlightDeleteEvent,
+    MediaReadingHighlightUpdateEvent,
     MediaReadItLaterToggleEvent,
 )
 from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow

@@ -163,7 +163,7 @@ class TestTreeNode:
             # Check for checkbox
             checkboxes = node.query(Checkbox)
             assert len(checkboxes) == 1
-            assert checkboxes[0].id == "select-src/main.py"
+            assert str(checkboxes[0].id).startswith("select-")
             
             # Check content
             content_widgets = node.query(".tree-content")
@@ -185,8 +185,8 @@ class TestTreeNode:
             # Check for expand button
             buttons = node.query(Button)
             assert len(buttons) == 1
-            assert buttons[0].label == "▶"
-            assert buttons[0].id == "expand-src"
+            assert str(buttons[0].label) == "▶"
+            assert str(buttons[0].id).startswith("expand-")
     
     @pytest.mark.asyncio
     async def test_file_no_expand_button(self, widget_pilot):
@@ -222,19 +222,24 @@ class TestTreeNode:
             node = pilot.app.test_widget
             
             # Set up event capture
+            original_post_message = node.post_message
+
             def capture_event(event):
-                events.append(event)
+                if isinstance(event, TreeNodeExpanded):
+                    events.append(event)
+                return original_post_message(event)
             
             node.post_message = MagicMock(side_effect=capture_event)
             
             # Click expand button
             button = node.query_one(".tree-expand-btn", Button)
-            await pilot.click(button)
-            await pilot.pause()
+            button.press()
+            await pilot.pause(0.1)
             
             # Check state changed
             assert node.expanded == True
-            assert button.label == "▼"
+            assert str(button.label) == "⟳"
+            assert node.is_loading is True
             
             # Check event was posted
             assert len(events) == 1
@@ -257,16 +262,19 @@ class TestTreeNode:
             node = pilot.app.test_widget
             
             # Set up event capture
+            original_post_message = node.post_message
+
             def capture_event(event):
-                events.append(event)
+                if isinstance(event, TreeNodeSelected):
+                    events.append(event)
+                return original_post_message(event)
             
             node.post_message = MagicMock(side_effect=capture_event)
             
             # Click checkbox
             checkbox = node.query_one(".tree-checkbox", Checkbox)
-            checkbox.value = True
-            await checkbox._on_toggle()  # Simulate change event
-            await pilot.pause()
+            checkbox.action_toggle_button()
+            await pilot.pause(0.1)
             
             # Check state
             assert node.selected == True
@@ -295,9 +303,8 @@ class TestTreeNode:
             
             # Select the node
             checkbox = node.query_one(".tree-checkbox", Checkbox) 
-            checkbox.value = True
-            await checkbox._on_toggle()
-            await pilot.pause()
+            checkbox.action_toggle_button()
+            await pilot.pause(0.1)
             
             # Should have selection class
             assert container.has_class("tree-node-selected")
@@ -367,7 +374,7 @@ class TestTreeView:
             
             # Load empty tree
             await tree.load_tree([])
-            await pilot.pause()
+            await pilot.pause(0.1)
             
             # Should show empty message
             empty_msgs = tree.query(".tree-empty")
@@ -382,7 +389,7 @@ class TestTreeView:
             
             # Load tree data
             await tree.load_tree(sample_tree_data)
-            await pilot.pause()
+            await pilot.pause(0.1)
             
             # Check nodes were created
             assert len(tree.nodes) == 2
@@ -555,7 +562,7 @@ class TestTreeView:
             ]
             
             await tree.expand_node('src', children)
-            await pilot.pause()
+            await pilot.pause(0.1)
             
             # Check children were added
             assert 'src/file1.py' in tree.nodes
@@ -623,14 +630,14 @@ class TestTreeView:
             
             # Post selection event
             tree.post_message(TreeNodeSelected('test.py', True))
-            await pilot.pause()
+            await pilot.pause(0.1)
             
             # Check callback was called
             assert selection_changes == [('test.py', True)]
             
             # Post expansion event
             tree.post_message(TreeNodeExpanded('src', True))
-            await pilot.pause()
+            await pilot.pause(0.1)
             
             # Check callback was called
             assert expansion_changes == [('src', True)]

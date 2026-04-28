@@ -65,17 +65,19 @@ def test_character_chat_without_optional_deps():
 
 
 @pytest.mark.integration
-def test_chunking_without_optional_deps():
+def test_chunking_without_optional_deps(tmp_path):
     """Test chunking functionality works without optional language-specific deps."""
     from tldw_chatbook.Chunking.Chunk_Lib import Chunker
+    from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
     
     # Basic English text chunking should work without jieba/fugashi
+    template_manager = ChunkingTemplateManager(user_templates_dir=tmp_path / "chunking_templates")
     chunker = Chunker({
         'method': 'words',
         'max_size': 100,
         'overlap': 20,
         'language': 'en'
-    })
+    }, template_manager=template_manager)
     
     test_text = "This is a test text for chunking. It should work without optional dependencies."
     chunks = chunker.chunk_text(test_text)

@@ -273,6 +273,9 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
     except NoMatches:
         logger.debug("RAG checkboxes not found, RAG disabled")
         return None
+    except Exception as e:
+        logger.error(f"Error reading RAG enable state: {e}")
+        return None
     
     if not rag_enabled and not plain_rag_enabled:
         logger.debug("RAG is disabled")

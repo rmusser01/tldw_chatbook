@@ -182,7 +182,6 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                                     "Click 'Generate Compilation' to aggregate selected files",
                                     id="aggregated-text",
                                     read_only=True,
-                                    language="markdown"
                                 )
                         
                         # File preview (bottom half)
@@ -396,6 +395,8 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         
         self.loading_message = "Loading repository..."
         self.is_loading = True
+        previous_repo = self.current_repo
+        previous_is_local_repo = self.is_local_repo
         
         try:
             # Check if it's a local path
@@ -423,9 +424,13 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                 await self.load_tree()
             
         except GitHubAPIError as e:
+            self.current_repo = previous_repo
+            self.is_local_repo = previous_is_local_repo
             self.notify(str(e), severity="error")
             logger.error(f"GitHub API error: {e}")
         except Exception as e:
+            self.current_repo = previous_repo
+            self.is_local_repo = previous_is_local_repo
             self.notify(f"Failed to load repository: {e}", severity="error")
             logger.error(f"Failed to load repository: {e}")
         finally:
@@ -746,8 +751,9 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             return
         
         try:
-            # Copy to clipboard (this would need platform-specific implementation)
-            # For now, we'll dismiss with the content
+            import pyperclip
+
+            pyperclip.copy(aggregated_text)
             self.notify("Copied compilation to clipboard", severity="success")
             self.dismiss((self.selected_files, aggregated_text))
             

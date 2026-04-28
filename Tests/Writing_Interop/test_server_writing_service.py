@@ -216,9 +216,18 @@ async def test_server_writing_service_maps_chatbook_manuscripts_to_server_parts(
             {
                 "title": "Scene 1",
                 "content": {
-                    "type": "chatbook-markdown",
-                    "schema_version": 1,
-                    "markdown": "Opening line.",
+                    "type": "doc",
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "attrs": {
+                                "tldw_chatbook_markdown": True,
+                                "format": "markdown",
+                                "version": 1,
+                            },
+                            "content": [{"type": "text", "text": "Opening line."}],
+                        }
+                    ],
                 },
                 "content_plain": "Opening line.",
                 "sort_order": 0.0,

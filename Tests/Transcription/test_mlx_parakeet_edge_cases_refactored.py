@@ -71,7 +71,8 @@ class TestMLXParakeetEdgeCases:
     @pytest.fixture
     def service(self):
         """Create a real transcription service."""
-        return TranscriptionService()
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.PARAKEET_MLX_AVAILABLE', True):
+            yield TranscriptionService()
     
     def test_corrupted_wav_header(self, service, mock_model_minimal):
         """Test handling of WAV files with corrupted headers."""

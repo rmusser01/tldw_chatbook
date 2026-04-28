@@ -159,9 +159,9 @@ class GitHubAPIClient:
                 raise GitHubAPIError(f"Repository not found: {owner}/{repo}")
             elif e.response.status_code == 403:
                 # Check if it's rate limit or permission issue
-                remaining = e.response.headers.get('X-RateLimit-Remaining', '0')
-                if remaining == '0':
-                    reset_time = e.response.headers.get('X-RateLimit-Reset', '0')
+                remaining = self._header_value(e.response, 'X-RateLimit-Remaining')
+                if remaining == '0' or "rate limit" in str(e).lower() or "rate limited" in str(e).lower():
+                    reset_time = self._header_value(e.response, 'X-RateLimit-Reset') or '0'
                     raise GitHubAPIError(f"API rate limit exceeded. Resets at {reset_time}")
                 else:
                     raise GitHubAPIError("Access denied. Private repository requires authentication.")
@@ -206,6 +206,15 @@ class GitHubAPIClient:
         if params:
             cache_str += str(sorted(params.items()))
         return hashlib.md5(cache_str.encode()).hexdigest()
+
+    @staticmethod
+    def _header_value(response: httpx.Response, key: str) -> str | None:
+        headers = getattr(response, "headers", None)
+        getter = getattr(headers, "get", None)
+        if not callable(getter):
+            return None
+        value = getter(key)
+        return value if isinstance(value, str) else None
     
     def _is_cache_valid(self, cache_entry: Dict[str, Any]) -> bool:
         """Check if a cache entry is still valid."""

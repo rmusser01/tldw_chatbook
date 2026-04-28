@@ -19,8 +19,14 @@ FileType = Literal["ical", "markdown_table", "html_table", "xlsx", "data_table",
 ExportFormat = Literal["ics", "md", "html", "xlsx", "csv", "json", "png", "jpg", "webp"]
 ExportMode = Literal["url", "inline"]
 AsyncMode = Literal["auto", "sync", "async"]
+MediaIngestMediaType = str
 ReadingHighlightAnchorStrategy = Literal["fuzzy_quote", "exact_offset"]
 ReadingHighlightState = Literal["active", "stale"]
+ReadingDigestFormat = Literal["md", "html"]
+ReadingExportFormat = Literal["jsonl", "csv", "md", "html", "pdf", "zip"]
+ReadingSavedSearchSort = str
+ReadingTTSResponseFormat = Literal["mp3", "wav", "opus", "flac"]
+ReadingTTSTextSource = Literal["text", "summary", "archive"]
 ReadingImportJobState = Literal[
     "queued",
     "processing",
@@ -40,7 +46,60 @@ ItemsBulkAction = Literal[
 MediaNavigationFormat = Literal["auto", "plain", "markdown", "html"]
 MediaNavigationTargetType = Literal["page", "char_range", "time_range", "href"]
 WebContentScrapeMethod = Literal["individual", "sitemap", "url_level", "recursive_scraping"]
+WebScrapeMethod = WebContentScrapeMethod
 MediaKeywordsUpdateMode = Literal["add", "remove", "set"]
+
+
+def _normalize_nonempty_string(value: Any, *, field_name: str) -> str:
+    text = str(value).strip()
+    if not text:
+        raise ValueError(f"{field_name}_must_not_be_blank")
+    return text
+
+
+def _normalize_saved_search_query(value: Any) -> dict[str, Any]:
+    if value in (None, "", [], ()):
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("query_must_be_object")
+    allowed_keys = {
+        "status",
+        "tags",
+        "favorite",
+        "sort",
+        "q",
+        "domain",
+        "date_from",
+        "date_to",
+        "limit",
+    }
+    normalized: dict[str, Any] = {}
+    for key, item in value.items():
+        normalized_key = str(key).strip()
+        if normalized_key not in allowed_keys:
+            raise ValueError(f"unsupported_query_key: {normalized_key}")
+        if normalized_key in {"status", "tags"}:
+            if isinstance(item, str):
+                normalized[normalized_key] = item.strip()
+            elif isinstance(item, list):
+                normalized[normalized_key] = [
+                    entry.strip() if isinstance(entry, str) else entry
+                    for entry in item
+                    if not isinstance(entry, str) or entry.strip()
+                ]
+            else:
+                normalized[normalized_key] = item
+        elif normalized_key == "sort":
+            normalized[normalized_key] = _normalize_saved_search_sort(item)
+        elif isinstance(item, str):
+            normalized[normalized_key] = item.strip()
+        else:
+            normalized[normalized_key] = item
+    return normalized
+
+
+def _normalize_saved_search_sort(value: Any) -> str:
+    return _normalize_nonempty_string(value, field_name="sort").lower()
 
 
 class FileExportRequest(BaseModel):
@@ -151,8 +210,8 @@ class MediaContentDetail(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     metadata: dict[str, Any] = Field(default_factory=dict)
-    text: str
-    word_count: int = Field(..., ge=0)
+    text: str = ""
+    word_count: int = Field(default=0, ge=0)
 
 
 class MediaUpdateRequest(BaseModel):
@@ -442,6 +501,9 @@ class WebScrapedItemResult(BaseModel):
     metadata: dict[str, Any] | None = None
     extraction_successful: bool | None = None
 
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
 
 class IngestWebContentResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -451,6 +513,9 @@ class IngestWebContentResponse(BaseModel):
     count: int | None = None
     results: list[WebScrapedItemResult] = Field(default_factory=list)
     media_ids: list[int | str] | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 
 class MediaItemUpdateRequest(BaseModel):
@@ -470,6 +535,13 @@ class MediaKeywordsUpdateRequest(BaseModel):
     keywords: list[str]
     mode: MediaKeywordsUpdateMode = "add"
 
+    @field_validator("keywords", mode="before")
+    @classmethod
+    def _normalize_keywords(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            raise ValueError("keywords_must_be_list")
+        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+
 
 class MediaIngestJobStatus(BaseModel):
     id: int
@@ -484,7 +556,7 @@ class MediaIngestJobStatus(BaseModel):
     cancellation_reason: str | None = None
     progress_percent: float | None = None
     progress_message: str | None = None
-    result: dict[str, Any] | None = None
+    result: ReadingImportResponse | None = None
     error_message: str | None = None
     media_type: str | None = None
     source: str | None = None
@@ -632,7 +704,7 @@ class MediaIngestJobStatus(BaseModel):
     cancellation_reason: str | None = None
     progress_percent: float | None = None
     progress_message: str | None = None
-    result: dict[str, Any] | None = None
+    result: ReadingImportResponse | None = None
     error_message: str | None = None
     media_type: str | None = None
     source: str | None = None
@@ -653,6 +725,11 @@ class MediaIngestJobStreamEvent(BaseModel):
     event: str
     data: dict[str, Any] | str | None = None
     id: str | None = None
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, dict):
+            return self.model_dump(exclude_none=True, mode="json") == other
+        return super().__eq__(other)
 
 
 class CancelMediaIngestJobResponse(BaseModel):
@@ -748,6 +825,9 @@ class WebScrapedItemResult(BaseModel):
     ingested_at: str | None = None
     metadata: dict[str, Any] | None = None
     extraction_successful: bool | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 
 class WebProcessResponse(BaseModel):
@@ -1129,12 +1209,44 @@ class ItemsBulkResult(BaseModel):
     success: bool
     error: str | None = None
 
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
 
 class ItemsBulkResponse(BaseModel):
     total: int
     succeeded: int
     failed: int
     results: list[ItemsBulkResult] = Field(default_factory=list)
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
+
+class UnifiedItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    content_item_id: int | None = None
+    media_id: int | None = None
+    title: str | None = None
+    url: str | None = None
+    domain: str | None = None
+    summary: str | None = None
+    published_at: str | None = None
+    status: str | None = None
+    favorite: bool = False
+    tags: list[str] = Field(default_factory=list)
+    type: str | None = None
+
+
+class UnifiedItemsListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[UnifiedItem] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    size: int | None = None
 
 
 class ReadingArchiveCreateRequest(BaseModel):
@@ -1394,6 +1506,9 @@ class ReadingItem(BaseModel):
     updated_at: str | None = None
     read_at: str | None = None
 
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
 
 class ReadingItemDetail(ReadingItem):
     text: str | None = None
@@ -1470,6 +1585,9 @@ class ReadingSavedSearchResponse(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
 
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
 
 class ReadingSavedSearchListResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1478,6 +1596,9 @@ class ReadingSavedSearchListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 
 class ReadingNoteLinkCreateRequest(BaseModel):
@@ -1496,12 +1617,18 @@ class ReadingNoteLinkResponse(BaseModel):
     note_id: str
     created_at: str | None = None
 
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
 
 class ReadingNoteLinksListResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     item_id: int
     links: list[ReadingNoteLinkResponse] = Field(default_factory=list)
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 
 ReadingImportJobState = Literal[
@@ -1523,6 +1650,9 @@ class ReadingImportResponse(BaseModel):
     skipped: int
     errors: list[str] = Field(default_factory=list)
 
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
 
 class ReadingImportJobResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1530,6 +1660,9 @@ class ReadingImportJobResponse(BaseModel):
     job_id: int
     job_uuid: str | None = None
     status: ReadingImportJobState
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 
 class ReadingImportJobStatus(BaseModel):
@@ -1544,7 +1677,10 @@ class ReadingImportJobStatus(BaseModel):
     progress_percent: float | None = None
     progress_message: str | None = None
     error_message: str | None = None
-    result: dict[str, Any] | None = None
+    result: ReadingImportResponse | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 
 class ReadingImportJobsListResponse(BaseModel):
@@ -1554,6 +1690,9 @@ class ReadingImportJobsListResponse(BaseModel):
     total: int
     limit: int | None = None
     offset: int | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 
 class ReadingDigestSuggestionsConfig(BaseModel):
@@ -1657,6 +1796,9 @@ class ReadingDigestScheduleResponse(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
 
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
 
 class ReadingDigestOutput(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1671,6 +1813,9 @@ class ReadingDigestOutput(BaseModel):
     item_count: int | None = None
     metadata: dict[str, Any] | None = None
 
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
 
 class ReadingDigestOutputsListResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1679,6 +1824,9 @@ class ReadingDigestOutputsListResponse(BaseModel):
     total: int
     limit: int | None = None
     offset: int | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 
 class ReadingArchiveCreateRequest(BaseModel):
@@ -1699,6 +1847,9 @@ class ReadingArchiveResponse(BaseModel):
     created_at: str | None = None
     retention_until: str | None = None
     download_url: str
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 
 class ReadingExportRequest(BaseModel):
@@ -1744,6 +1895,9 @@ class ReadingSummaryResponse(BaseModel):
     model: str | None = None
     citations: list[ReadingCitation] = Field(default_factory=list)
     generated_at: str | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
 
 
 class ReadingTTSRequest(BaseModel):
@@ -1819,6 +1973,15 @@ class ReadingHighlight(BaseModel):
     state: ReadingHighlightState = "active"
 
 
+class ReadingHighlightDeleteResponse(BaseModel):
+    success: bool = True
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, dict):
+            return self.model_dump(mode="json") == other
+        return super().__eq__(other)
+
+
 class DocumentAnnotationColor(str, Enum):
     yellow = "yellow"
     green = "green"
@@ -1868,7 +2031,7 @@ class DocumentAnnotationListResponse(BaseModel):
 
 
 class DocumentAnnotationSyncRequest(BaseModel):
-    annotations: list[DocumentAnnotationCreate]
+    annotations: list[DocumentAnnotationCreate | DocumentAnnotationCreateRequest]
     client_ids: list[str] | None = None
 
 
@@ -2101,12 +2264,19 @@ __all__ = [
     "AsyncMode",
     "DocumentAnnotationColor",
     "DocumentAnnotationCreate",
+    "DocumentAnnotationCreateRequest",
     "DocumentAnnotationListResponse",
     "DocumentAnnotationResponse",
     "DocumentAnnotationSyncRequest",
     "DocumentAnnotationSyncResponse",
     "DocumentAnnotationType",
     "DocumentAnnotationUpdate",
+    "DocumentAnnotationUpdateRequest",
+    "DocumentVersionAdvancedUpsertRequest",
+    "DocumentVersionCreateRequest",
+    "DocumentVersionDetailResponse",
+    "DocumentVersionMetadataPatchRequest",
+    "DocumentVersionRollbackRequest",
     "DocumentFigure",
     "DocumentFiguresResponse",
     "DocumentInsightCategory",
@@ -2130,6 +2300,14 @@ __all__ = [
     "FileType",
     "FileValidationIssue",
     "FileValidationResult",
+    "MediaDetailResponse",
+    "MediaIdentifierLookupResponse",
+    "MediaKeywordListResponse",
+    "MediaKeywordsResponse",
+    "MediaMetadataSearchResponse",
+    "MediaTranscriptionModelsResponse",
+    "MediaTrashEmptyResponse",
+    "MediaUpdateRequest",
     "IngestWebContentRequest",
     "WebScrapingRequest",
     "IngestionSourceCreateRequest",
@@ -2145,6 +2323,11 @@ __all__ = [
     "ItemsBulkRequest",
     "ItemsBulkResponse",
     "ItemsBulkResult",
+    "CancelMediaIngestBatchResponse",
+    "CancelMediaIngestJobResponse",
+    "MediaIngestJobStreamEvent",
+    "MediaIngestJobSubmitRequest",
+    "MediaIngestMediaType",
     "MediaIngestBatchCancelResponse",
     "MediaIngestJobCancelResponse",
     "MediaIngestJobItem",
@@ -2152,6 +2335,7 @@ __all__ = [
     "MediaIngestJobStatus",
     "MediaIngestSubmitRequest",
     "MediaIngestSubmitResponse",
+    "SubmitMediaIngestJobsResponse",
     "MediaAdvancedVersionUpsertRequest",
     "MediaFileAvailabilityResponse",
     "MediaNavigationContentResponse",
@@ -2176,10 +2360,12 @@ __all__ = [
     "ReadingDigestScheduleResponse",
     "ReadingDigestScheduleUpdateRequest",
     "ReadingDigestSuggestionsConfig",
+    "ReadingExportRequest",
     "ReadingExportResponse",
     "ReadingHighlight",
     "ReadingHighlightAnchorStrategy",
     "ReadingHighlightCreateRequest",
+    "ReadingHighlightDeleteResponse",
     "ReadingHighlightState",
     "ReadingHighlightUpdateRequest",
     "ReadingImportJobResponse",
@@ -2200,6 +2386,7 @@ __all__ = [
     "ReadingSavedSearchCreateRequest",
     "ReadingSavedSearchListResponse",
     "ReadingSavedSearchResponse",
+    "ReadingSavedSearchSort",
     "ReadingSavedSearchUpdateRequest",
     "ReadingSummarizeRequest",
     "ReadingSummaryResponse",
@@ -2210,7 +2397,13 @@ __all__ = [
     "ReferenceImageListResponse",
     "ReprocessMediaRequest",
     "ReprocessMediaResponse",
+    "ServerMediaListItem",
+    "ServerMediaListPagination",
+    "ServerMediaListResponse",
+    "UnifiedItem",
+    "UnifiedItemsListResponse",
     "ViewMode",
     "WebContentScrapeMethod",
+    "WebScrapeMethod",
     "WebScrapedItemResult",
 ]

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
+from ..runtime_policy.bootstrap import build_server_chatbook_service as build_runtime_server_chatbook_service
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     ChatbookContinueExportRequest,
@@ -72,8 +73,11 @@ def build_server_chatbook_service_from_config(
     policy_enforcer: Any = None,
 ) -> tuple["ServerChatbookService", TLDWAPIClient]:
     """Build a server chatbook service plus its owned API client from application config."""
-    client = build_tldw_api_client_from_config(config)
-    return ServerChatbookService(client=client, policy_enforcer=policy_enforcer), client
+    service = build_runtime_server_chatbook_service(
+        app_config=config,
+        policy_enforcer=policy_enforcer,
+    )
+    return service, service.client
 
 
 def build_server_import_selections_from_manifest(
@@ -199,6 +203,10 @@ class ServerChatbookService:
     def _action_id(action: str) -> str:
         return f"chatbooks.{action}.server"
 
+    @staticmethod
+    def _job_action_id(job_kind: str, action: str) -> str:
+        return f"chatbooks.{job_kind}_jobs.{action}.server"
+
     def _normalize_selection_key(self, key: SelectionKey) -> str:
         return _normalize_selection_key(key)
 
@@ -309,12 +317,7 @@ class ServerChatbookService:
     ) -> Dict[str, Any]:
         self._enforce(self._action_id("export"))
         client = self._require_client()
-        return await client.continue_chatbook_export(self._coerce_continue_export_request(request_data))
-
-    async def continue_chatbook_export(self, request_data: ChatbookContinueExportRequest) -> Dict[str, Any]:
-        self._enforce_policy("chatbooks.export.server")
-        client = self._require_client()
-        return _to_plain_dict(await client.continue_chatbook_export(request_data))
+        return _to_plain_dict(await client.continue_chatbook_export(self._coerce_continue_export_request(request_data)))
 
     async def export_chatbook_from_selection(
         self,
@@ -375,7 +378,7 @@ class ServerChatbookService:
         return await self.import_chatbook(chatbook_file_path, request)
 
     async def get_export_job(self, job_id: str) -> Dict[str, Any]:
-        self._enforce(self._action_id("detail"))
+        self._enforce(self._job_action_id("export", "detail"))
         client = self._require_client()
         return _to_plain_dict(await client.get_chatbook_export_job(job_id))
 
@@ -400,7 +403,7 @@ class ServerChatbookService:
         token: str | None = None,
         exp: int | str | None = None,
     ) -> Dict[str, Any]:
-        self._enforce(self._action_id("export"))
+        self._enforce(self._job_action_id("export", "export"))
         client = self._require_client()
         response = await client.download_chatbook_export(job_id, token=token, exp=exp)
         return self._download_response_to_record(job_id, response)
@@ -409,7 +412,7 @@ class ServerChatbookService:
         return await self.get_export_job(job_id)
 
     async def get_import_job(self, job_id: str) -> Dict[str, Any]:
-        self._enforce(self._action_id("detail"))
+        self._enforce(self._job_action_id("import", "detail"))
         client = self._require_client()
         return _to_plain_dict(await client.get_chatbook_import_job(job_id))
 
@@ -417,31 +420,53 @@ class ServerChatbookService:
         return await self.get_import_job(job_id)
 
     async def list_export_jobs(self, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
-        self._enforce(self._action_id("list"))
+        self._enforce(self._job_action_id("export", "list"))
         client = self._require_client()
-        return await client.list_chatbook_export_jobs(limit=limit, offset=offset)
+        return _to_plain_dict(await client.list_chatbook_export_jobs(limit=limit, offset=offset))
 
     async def list_import_jobs(self, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
-        self._enforce(self._action_id("list"))
+        self._enforce(self._job_action_id("import", "list"))
         client = self._require_client()
-        return await client.list_chatbook_import_jobs(limit=limit, offset=offset)
+        return _to_plain_dict(await client.list_chatbook_import_jobs(limit=limit, offset=offset))
 
     async def cancel_export_job(self, job_id: str) -> Dict[str, Any]:
-        self._enforce(self._action_id("update"))
+        self._enforce(self._job_action_id("export", "update"))
         client = self._require_client()
-        return await client.cancel_chatbook_export_job(job_id)
+        return _to_plain_dict(await client.cancel_chatbook_export_job(job_id))
 
     async def cancel_import_job(self, job_id: str) -> Dict[str, Any]:
-        self._enforce(self._action_id("update"))
+        self._enforce(self._job_action_id("import", "update"))
         client = self._require_client()
-        return await client.cancel_chatbook_import_job(job_id)
+        return _to_plain_dict(await client.cancel_chatbook_import_job(job_id))
 
     async def remove_export_job(self, job_id: str) -> Dict[str, Any]:
-        self._enforce(self._action_id("delete"))
+        self._enforce(self._job_action_id("export", "delete"))
         client = self._require_client()
-        return await client.remove_chatbook_export_job(job_id)
+        return _to_plain_dict(await client.remove_chatbook_export_job(job_id))
 
     async def remove_import_job(self, job_id: str) -> Dict[str, Any]:
-        self._enforce(self._action_id("delete"))
+        self._enforce(self._job_action_id("import", "delete"))
         client = self._require_client()
-        return await client.remove_chatbook_import_job(job_id)
+        return _to_plain_dict(await client.remove_chatbook_import_job(job_id))
+
+    async def download_export_job(self, job_id: str, destination: Union[str, Path]) -> Path:
+        self._enforce(self._job_action_id("export", "export"))
+        client = self._require_client()
+        response = await client.download_chatbook_export(job_id)
+        if isinstance(response, bytes):
+            content = response
+        elif isinstance(response, Mapping):
+            content = response.get("content", b"")
+        else:
+            content = response.content
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        destination_path = Path(destination)
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        destination_path.write_bytes(content)
+        return destination_path
+
+    async def cleanup_expired_exports(self) -> Dict[str, Any]:
+        self._enforce(self._job_action_id("export", "delete"))
+        client = self._require_client()
+        return _to_plain_dict(await client.cleanup_chatbook_exports())

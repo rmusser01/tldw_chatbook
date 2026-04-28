@@ -152,6 +152,43 @@ class FakeLocalStudyService:
         self.calls.append(("delete_flashcard", card_id, expected_version, hard_delete))
         return True
 
+    def reset_flashcard_scheduling(self, card_id, *, expected_version):
+        self.calls.append(("reset_flashcard_scheduling", card_id, expected_version))
+        return {
+            "id": card_id,
+            "deck_id": "deck-local-1",
+            "front": "Question",
+            "back": "Answer",
+            "tags": "science biology",
+            "type": "basic",
+            "version": expected_version + 1,
+        }
+
+    def list_flashcard_tag_suggestions(self, *, q=None, limit=50):
+        self.calls.append(("list_flashcard_tag_suggestions", q, limit))
+        return {"items": [{"tag": "biology", "count": 3}], "count": 1}
+
+    def preview_structured_qa_import(self, content, *, max_lines=None, max_line_length=None, max_field_length=None):
+        self.calls.append(("preview_structured_qa_import", content, max_lines, max_line_length, max_field_length))
+        return {
+            "drafts": [{"front": "What powers cells?", "back": "ATP", "tags": ["biology"]}],
+            "errors": [],
+            "detected_format": "qa_labels",
+            "skipped_blocks": 0,
+        }
+
+    def import_flashcards_tsv(self, content, *, delimiter="\t", has_header=False, max_lines=None, max_line_length=None, max_field_length=None):
+        self.calls.append(("import_flashcards_tsv", content, delimiter, has_header, max_lines, max_line_length, max_field_length))
+        return {"imported": 1, "items": [{"uuid": "card-local-1", "deck_id": "deck-local-1"}], "errors": []}
+
+    def import_flashcards_json_file(self, file_path, *, max_items=None, max_field_length=None):
+        self.calls.append(("import_flashcards_json_file", str(file_path), max_items, max_field_length))
+        return {"imported": 1, "items": [{"uuid": "card-local-1", "deck_id": "deck-local-1"}], "errors": []}
+
+    def export_flashcards(self, **kwargs):
+        self.calls.append(("export_flashcards", kwargs))
+        return b"Deck\tFront\tBack\nBiology\tQ\tA\n"
+
     def delete_deck(self, deck_id, *, expected_version=None, hard_delete=False):
         self.calls.append(("delete_deck", deck_id, expected_version, hard_delete))
         return True
@@ -689,10 +726,11 @@ class FakeServerStudyService:
 
     async def create_flashcards_bulk(self, cards):
         self.calls.append(("create_flashcards_bulk", cards))
+        card_uuid = CARD_UUID if "science" in list(cards[0].get("tags") or []) else "card-server-1"
         return {
             "items": [
                 {
-                    "uuid": "card-server-1",
+                    "uuid": card_uuid,
                     "deck_id": cards[0].get("deck_id"),
                     "front": cards[0]["front"],
                     "back": cards[0]["back"],
@@ -773,11 +811,12 @@ class FakeServerStudyService:
         return b"Deck\tFront\tBack\nBiology\tQ\tA\n"
 
     async def upload_flashcard_asset(self, file_path):
-        self.calls.append(("upload_flashcard_asset", str(file_path)))
+        self.calls.append(("upload_flashcard_asset", file_path if isinstance(file_path, tuple) else str(file_path)))
+        asset_uuid = CARD_UUID if isinstance(file_path, tuple) else "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb"
         return {
-            "asset_uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
-            "reference": "flashcard-asset://87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
-            "markdown_snippet": "![cell](flashcard-asset://87ca2b3f-7e3a-47d7-a52f-8debc86c03cb)",
+            "asset_uuid": asset_uuid,
+            "reference": f"flashcard-asset://{asset_uuid}",
+            "markdown_snippet": f"![cell](flashcard-asset://{asset_uuid})",
             "mime_type": "image/png",
             "byte_size": 8,
             "width": 1,
@@ -871,8 +910,9 @@ class FakeServerStudyService:
                 placeholder_definitions,
             )
         )
+        template_id = 3 if name == "Basic science" else 12
         return {
-            "id": 12,
+            "id": template_id,
             "name": name,
             "model_type": model_type,
             "front_template": front_template,
@@ -887,10 +927,11 @@ class FakeServerStudyService:
 
     async def list_flashcard_templates(self, *, limit=100, offset=0):
         self.calls.append(("list_flashcard_templates", limit, offset))
+        template_id = 3 if (limit, offset) == (5, 1) else 12
         return {
             "items": [
                 {
-                    "id": 12,
+                    "id": template_id,
                     "name": "Cloze Drill",
                     "model_type": "cloze",
                     "front_template": "{{statement}}",
@@ -961,6 +1002,46 @@ class FakeServerStudyService:
     async def delete_flashcard_template(self, template_id, *, expected_version):
         self.calls.append(("delete_flashcard_template", template_id, expected_version))
         return {"deleted": True}
+
+    async def generate_study_document(self, payload):
+        self.calls.append(("generate_study_document", payload))
+        return {"job_id": "job-1", "status": "queued"}
+
+    async def get_study_document_job_status(self, job_id):
+        self.calls.append(("get_study_document_job_status", job_id))
+        return {"job_id": job_id, "status": "completed"}
+
+    async def cancel_study_document_job(self, job_id):
+        self.calls.append(("cancel_study_document_job", job_id))
+        return {"job_id": job_id, "status": "cancelled"}
+
+    async def list_study_documents(self, **request):
+        self.calls.append(("list_study_documents", request))
+        return {"items": [{"id": 11, "document_type": "study_guide"}], "count": 1}
+
+    async def get_study_document(self, document_id):
+        self.calls.append(("get_study_document", document_id))
+        return {"id": document_id, "document_type": "study_guide", "content": "Study guide"}
+
+    async def delete_study_document(self, document_id):
+        self.calls.append(("delete_study_document", document_id))
+        return {"deleted": True, "id": document_id}
+
+    async def save_study_document_prompt_config(self, payload):
+        self.calls.append(("save_study_document_prompt_config", payload))
+        return {"id": 5, **payload}
+
+    async def get_study_document_prompt_config(self, document_type):
+        self.calls.append(("get_study_document_prompt_config", document_type))
+        return {"document_type": document_type, "system_prompt": "System", "user_prompt": "User"}
+
+    async def bulk_generate_study_documents(self, payload):
+        self.calls.append(("bulk_generate_study_documents", payload))
+        return {"job_ids": ["job-1"], "count": 1}
+
+    async def get_study_document_statistics(self):
+        self.calls.append(("get_study_document_statistics",))
+        return {"total_documents": 1}
 
     async def end_review_session(self, review_session_id):
         self.calls.append(("end_review_session", review_session_id))
@@ -1355,24 +1436,14 @@ async def test_scope_service_routes_server_flashcard_template_crud_and_normalize
 @pytest.mark.parametrize(
     ("method_name", "kwargs"),
     [
-        ("list_flashcard_tag_suggestions", {"q": "sci"}),
         ("get_flashcard_analytics_summary", {"deck_id": "deck-local-1"}),
-        ("upload_flashcard_asset", {"file": ("cell.png", b"pngdata", "image/png")}),
-        ("get_flashcard_asset_content", {"asset_uuid": "asset-local-1"}),
-        ("preview_structured_qa_import", {"content": "Q: What powers the cell?\nA: ATP"}),
         ("import_flashcards", {"content": "Deck\tFront\tBack\nBio\tQ\tA"}),
         ("import_flashcards_json", {"file": ("cards.json", b"[]", "application/json")}),
         ("import_flashcards_apkg", {"file": ("cards.apkg", b"apkg", "application/octet-stream")}),
-        ("export_flashcards", {}),
         ("list_review_sessions", {"deck_id": "deck-local-1"}),
         ("get_flashcard_assistant", {"card_id": "card-local-1"}),
         ("respond_flashcard_assistant", {"card_id": "card-local-1", "action": "follow_up", "message": "Why?"}),
         ("generate_flashcards", {"text": "Cells divide by mitosis."}),
-        ("list_flashcard_templates", {}),
-        ("create_flashcard_template", {"name": "Basic science", "front_template": "{{question}}"}),
-        ("get_flashcard_template", {"template_id": 3}),
-        ("update_flashcard_template", {"template_id": 3, "name": "Updated science"}),
-        ("delete_flashcard_template", {"template_id": 3, "expected_version": 1}),
     ],
 )
 async def test_scope_service_rejects_remote_only_flashcard_helpers_in_local_mode(method_name, kwargs):
@@ -1803,13 +1874,15 @@ async def test_scope_service_routes_local_flashcard_management_actions():
         (
             "update_deck",
             "deck-local-1",
-            "Biology v2",
-            "Updated",
-            None,
-            "back",
-            "sm2",
-            {"daily_limit": 20},
-            2,
+            {
+                "name": "Biology v2",
+                "description": "Updated",
+                "workspace_id": None,
+                "review_prompt_side": "back",
+                "scheduler_type": "sm2",
+                "scheduler_settings": {"daily_limit": 20},
+                "expected_version": 2,
+            },
         ),
         (
             "create_flashcards_bulk",
@@ -1902,10 +1975,10 @@ async def test_scope_service_routes_server_flashcard_template_actions():
     )
     deleted = await scope.delete_flashcard_template(mode="server", template_id=12, expected_version=2)
 
-    assert created["record_id"] == "server:flashcard_template:12"
+    assert created["record_id"] == "server:study_flashcard_template:12"
     assert listed["source"] == "server"
-    assert listed["items"][0]["record_id"] == "server:flashcard_template:12"
-    assert fetched["record_id"] == "server:flashcard_template:12"
+    assert listed["items"][0]["record_id"] == "server:study_flashcard_template:12"
+    assert fetched["record_id"] == "server:study_flashcard_template:12"
     assert updated["notes_template"] == "Updated focus: {{topic}}"
     assert deleted is True
     assert server.calls == [
@@ -1939,10 +2012,10 @@ async def test_scope_service_routes_local_flashcard_template_actions():
     )
     deleted = await scope.delete_flashcard_template(mode="local", template_id="tmpl-local-1", expected_version=2)
 
-    assert created["record_id"] == "local:flashcard_template:tmpl-local-1"
+    assert created["record_id"] == "local:study_flashcard_template:tmpl-local-1"
     assert listed["source"] == "local"
-    assert listed["items"][0]["record_id"] == "local:flashcard_template:tmpl-local-1"
-    assert fetched["record_id"] == "local:flashcard_template:tmpl-local-1"
+    assert listed["items"][0]["record_id"] == "local:study_flashcard_template:tmpl-local-1"
+    assert fetched["record_id"] == "local:study_flashcard_template:tmpl-local-1"
     assert updated["notes_template"] == "Updated focus: {{topic}}"
     assert deleted is True
     assert local.calls == [

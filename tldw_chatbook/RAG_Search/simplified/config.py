@@ -624,7 +624,7 @@ def create_config_for_collection(
 
 def create_config_for_testing(
     use_memory_store: bool = True,
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_model: str = "mock"
 ) -> RAGConfig:
     """
     Create a RAG configuration suitable for testing.

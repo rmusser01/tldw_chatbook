@@ -516,6 +516,9 @@ class TestMultiProviderIntegration:
     @pytest.mark.asyncio
     async def test_provider_fallback_mechanism(self, temp_db_path):
         """Test fallback when primary provider fails."""
+        pytest.skip("Provider fallback mechanism not implemented")
+        # This would require implementing a fallback mechanism in the orchestrator
+        # that automatically tries a different provider when one fails
         orchestrator = EvaluationOrchestrator(db_path=temp_db_path)
         
         task_id = orchestrator.db.create_task(
@@ -546,10 +549,6 @@ class TestMultiProviderIntegration:
             model_id="claude-3-sonnet"
         )
         
-        pytest.skip("Provider fallback mechanism not implemented")
-        # This would require implementing a fallback mechanism in the orchestrator
-        # that automatically tries a different provider when one fails
-
 class TestSpecializedTaskIntegration:
     """Test integration with specialized evaluation types."""
     

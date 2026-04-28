@@ -3,7 +3,7 @@
 # Provides quick access to Provider, Model, Temperature without opening the sidebar.
 #
 # Imports
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from loguru import logger
 from textual.app import ComposeResult
@@ -30,9 +30,15 @@ class CompactModelBar(Horizontal):
     with sidebar widgets (chat-api-provider, chat-api-model).
     """
 
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+    def __init__(
+        self,
+        app_instance: 'TldwCli',
+        on_sidebar_toggle_requested: Callable[[], Any] | None = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.on_sidebar_toggle_requested = on_sidebar_toggle_requested
 
     def compose(self) -> ComposeResult:
         """Compose the compact model bar."""
@@ -142,6 +148,8 @@ class CompactModelBar(Horizontal):
             sidebar_model.value = event.value
         except NoMatches:
             logger.debug("Sidebar model select not found for sync")
+        except Exception as e:
+            logger.debug(f"Sidebar model select could not accept compact model value {event.value!r}: {e}")
 
     @on(Input.Changed, "#compact-temperature")
     async def handle_compact_temp_change(self, event: Input.Changed) -> None:
@@ -156,6 +164,12 @@ class CompactModelBar(Horizontal):
     async def handle_sidebar_toggle(self, event: Button.Pressed) -> None:
         """Toggle the settings sidebar."""
         event.stop()
+        if self.on_sidebar_toggle_requested:
+            result = self.on_sidebar_toggle_requested()
+            if hasattr(result, "__await__"):
+                await result
+            return
+
         # Find the ChatWindowEnhanced parent and toggle via its handler
         try:
             from ..UI.Chat_Window_Enhanced import ChatWindowEnhanced
@@ -176,12 +190,29 @@ class CompactModelBar(Horizontal):
     def sync_from_sidebar(self, provider: str = None, model: str = None, temperature: str = None) -> None:
         """Sync values from sidebar to compact bar (called when sidebar values change)."""
         try:
+            compact_model = None
+            providers_models = get_cli_providers_and_models()
+            available_models: list[str] | None = None
             if provider is not None:
                 compact_provider = self.query_one("#compact-api-provider", Select)
                 if compact_provider.value != provider:
                     compact_provider.value = provider
-            if model is not None:
+                available_models = providers_models.get(provider, [])
                 compact_model = self.query_one("#compact-api-model", Select)
+                compact_model.set_options([(m, m) for m in available_models])
+            if model is not None:
+                if compact_model is None:
+                    compact_model = self.query_one("#compact-api-model", Select)
+                if available_models is None:
+                    try:
+                        compact_provider = self.query_one("#compact-api-provider", Select)
+                        current_provider = None if compact_provider.value == Select.BLANK else str(compact_provider.value)
+                    except NoMatches:
+                        current_provider = None
+                    available_models = providers_models.get(current_provider, []) if current_provider else []
+                if model not in available_models:
+                    available_models = [*available_models, model]
+                    compact_model.set_options([(m, m) for m in available_models])
                 if compact_model.value != model:
                     compact_model.value = model
             if temperature is not None:

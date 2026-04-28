@@ -462,12 +462,16 @@ class UnifiedMCPPanel(Container):
         if runtime_state is None:
             return False
         app_instance = self.app_instance
-        engine = getattr(app_instance, "ui_policy_engine", None)
-        if engine is None:
-            engine = PolicyEngine(CAPABILITY_REGISTRY)
-            if app_instance is not None:
-                setattr(app_instance, "ui_policy_engine", engine)
-        decision = engine.evaluate(action_id=action_id, runtime_state_override=runtime_state)
+        require_allowed = getattr(app_instance, "require_ui_action_allowed", None)
+        if callable(require_allowed):
+            decision = require_allowed(action_id=action_id, runtime_state_override=runtime_state)
+        else:
+            engine = getattr(app_instance, "ui_policy_engine", None)
+            if engine is None:
+                engine = PolicyEngine(CAPABILITY_REGISTRY)
+                if app_instance is not None:
+                    setattr(app_instance, "ui_policy_engine", engine)
+            decision = engine.evaluate(action_id=action_id, state=runtime_state)
         return bool(decision.allowed)
 
     async def execute_selected_action(self) -> Any:

@@ -489,9 +489,6 @@ class ChatConversationService:
 
         return bool(self.db.update_conversation(conversation_id, dict(normalized_update), expected_version))
 
-    def delete_conversation(self, conversation_id: str, expected_version: int) -> bool:
-        return bool(self.db.soft_delete_conversation(conversation_id, expected_version))
-
     def list_conversations(
         self,
         query: str | None = None,

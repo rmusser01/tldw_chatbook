@@ -37,6 +37,12 @@ CLI_APP_CLIENT_ID = "tldw_cli_local_instance_v1"
 # --- Path to the CLI's configuration file ---
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tldw_cli" / "config.toml"
 
+
+def _get_effective_config_path() -> Path:
+    """Return the active CLI config path, honoring test/runtime overrides."""
+    override = os.environ.get("TLDW_CONFIG_PATH")
+    return Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
+
 # --- Encryption support ---
 _ENCRYPTION_PASSWORD = None  # Cached password for the session
 _ENCRYPTION_MODULE = None    # Lazily loaded encryption module
@@ -527,6 +533,7 @@ def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type 
 
 # Global cache for load_settings to avoid redundant file I/O
 _SETTINGS_CACHE: Optional[Dict[str, Any]] = None
+_SETTINGS_CACHE_SOURCE: Optional[Path] = None
 _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
 
 def load_settings(force_reload: bool = False) -> Dict:
@@ -541,7 +548,8 @@ def load_settings(force_reload: bool = False) -> Dict:
     Returns:
         Dictionary containing all configuration settings.
     """
-    global _SETTINGS_CACHE, _SETTINGS_CACHE_LOCK
+    global _SETTINGS_CACHE, _SETTINGS_CACHE_SOURCE, _SETTINGS_CACHE_LOCK
+    active_config_path = _get_effective_config_path()
     
     # Initialize lock on first use to avoid import issues
     if _SETTINGS_CACHE_LOCK is None:
@@ -550,7 +558,11 @@ def load_settings(force_reload: bool = False) -> Dict:
     
     # Thread-safe cache check
     with _SETTINGS_CACHE_LOCK:
-        if _SETTINGS_CACHE is not None and not force_reload:
+        if (
+            _SETTINGS_CACHE is not None
+            and _SETTINGS_CACHE_SOURCE == active_config_path
+            and not force_reload
+        ):
             logger.debug("load_settings: Returning cached configuration (cache hit)")
             return _SETTINGS_CACHE
 
@@ -580,9 +592,9 @@ def load_settings(force_reload: bool = False) -> Dict:
     except Exception as e:
         logger.error(f"An unexpected error occurred while loading primary TOML {primary_config_toml_path}: {e}. Proceeding with potentially empty base config.", exc_info=True)
 
-    # 2. Load the user-specific CLI config file (as potential overrides or additions)
-    # This is the path DEFAULT_CONFIG_PATH used by load_cli_config()
-    user_cli_config_toml_path = Path.home() / ".config" / "tldw_cli" / "config.toml"
+    # 2. Load the user-specific CLI config file (as potential overrides or additions).
+    # Tests and embedded runtimes can override this path with TLDW_CONFIG_PATH.
+    user_cli_config_toml_path = active_config_path
     logger.info(f"Attempting to load user-specific CLI TOML config for overrides from: {str(user_cli_config_toml_path)}")
     if user_cli_config_toml_path.exists():
         try:
@@ -1285,6 +1297,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     # Cache the configuration before returning
     with _SETTINGS_CACHE_LOCK:
         _SETTINGS_CACHE = config_dict
+        _SETTINGS_CACHE_SOURCE = active_config_path
         logger.debug("load_settings: Configuration cached for future use")
     
     return config_dict
@@ -2600,6 +2613,7 @@ def deep_merge_dicts(base: Dict, update: Dict) -> Dict:
 
 # --- Primary Configuration Loading Logic for the CLI ---
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
+_CONFIG_CACHE_SOURCE: Optional[Path] = None
 
 def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str, Any]: # Renamed from load_cli_config
     """
@@ -2607,26 +2621,27 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
     If the file doesn't exist, it's created with default values from CONFIG_TOML_CONTENT.
     Uses programmatic defaults (from CONFIG_TOML_CONTENT) as a base.
     """
-    global _CONFIG_CACHE
-    if _CONFIG_CACHE is not None and not force_reload:
+    global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE
+    config_path = _get_effective_config_path()
+    if _CONFIG_CACHE is not None and _CONFIG_CACHE_SOURCE == config_path and not force_reload:
         return _CONFIG_CACHE
 
     # Start with the programmatic defaults defined in CONFIG_TOML_CONTENT
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
 
-    if not DEFAULT_CONFIG_PATH.exists():
-        logger.info(f"CLI Config file not found at {DEFAULT_CONFIG_PATH}. Creating with default values from CONFIG_TOML_CONTENT.")
+    if not config_path.exists():
+        logger.info(f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT.")
         try:
-            DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(config_path, "w", encoding="utf-8") as f:
                 f.write(CONFIG_TOML_CONTENT) # Write the raw TOML string
-            logger.info(f"Created default CLI config file at {DEFAULT_CONFIG_PATH}")
+            logger.info(f"Created default CLI config file at {config_path}")
             # Set a flag to notify the user on first run
             loaded_config["_first_run"] = True
             # loaded_config is already correct as it's from DEFAULT_CONFIG_FROM_TOML
         except PermissionError as e:
             # Try alternative location in user's home directory
-            logger.warning(f"Permission denied creating config at {DEFAULT_CONFIG_PATH}: {e}")
+            logger.warning(f"Permission denied creating config at {config_path}: {e}")
             alt_config_path = Path.home() / ".tldw_cli_config.toml"
             logger.info(f"Attempting to create config at alternative location: {alt_config_path}")
             try:
@@ -2634,34 +2649,35 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
                     f.write(CONFIG_TOML_CONTENT)
                 logger.warning(f"Created config file at alternative location: {alt_config_path}")
                 logger.warning("Please move this file to the standard location when possible.")
-                # Note: We don't update DEFAULT_CONFIG_PATH here to maintain consistency
+                # Note: We don't update the active config path here to maintain consistency
             except Exception as alt_e:
                 logger.error(f"Could not create config file at alternative location either: {alt_e}")
                 logger.error("Application will use internal defaults only.")
         except OSError as e:
-            logger.error(f"Could not create default CLI config file {DEFAULT_CONFIG_PATH}: {e}. Using internal defaults.")
+            logger.error(f"Could not create default CLI config file {config_path}: {e}. Using internal defaults.")
             # Log more helpful information for the user
-            logger.info(f"You may need to manually create the directory: {DEFAULT_CONFIG_PATH.parent}")
+            logger.info(f"You may need to manually create the directory: {config_path.parent}")
             logger.info("Or check that you have write permissions to this location.")
     else:
-        logger.info(f"Attempting to load CLI config from: {DEFAULT_CONFIG_PATH}")
+        logger.info(f"Attempting to load CLI config from: {config_path}")
         try:
-            with open(DEFAULT_CONFIG_PATH, "rb") as f:
+            with open(config_path, "rb") as f:
                 user_config_from_file = tomllib.load(f)
             # Merge user's file settings on top of the programmatic defaults
             loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
-            logger.info(f"Successfully loaded and merged CLI config from {DEFAULT_CONFIG_PATH}")
+            logger.info(f"Successfully loaded and merged CLI config from {config_path}")
             
             # Decrypt config if encryption is enabled
             loaded_config = decrypt_config_section(loaded_config)
         except tomllib.TOMLDecodeError as e:
-            logger.error(f"Error decoding CLI TOML config file {DEFAULT_CONFIG_PATH}: {e}. Using internal defaults + any previous successful load.", exc_info=True)
+            logger.error(f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load.", exc_info=True)
             # `loaded_config` remains the programmatic defaults in this case.
         except Exception as e:
-            logger.error(f"An unexpected error occurred while loading CLI config {DEFAULT_CONFIG_PATH}: {e}. Using internal defaults + any previous successful load.", exc_info=True)
+            logger.error(f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load.", exc_info=True)
             # `loaded_config` remains the programmatic defaults.
 
     _CONFIG_CACHE = loaded_config
+    _CONFIG_CACHE_SOURCE = config_path
     # Log the keys of the configuration being returned to verify its structure
     logger.debug(f"load_cli_config_and_ensure_existence returning config with top-level keys: {list(loaded_config.keys())}")
     if "api_settings" in loaded_config:
@@ -3206,7 +3222,11 @@ def get_user_folder_name() -> str:
 def get_user_data_dir() -> Path:
     """Get the user-specific data directory."""
     user_folder = get_user_folder_name()
-    user_dir = BASE_DATA_DIR_CLI / user_folder
+    configured_data_dir = get_cli_setting("paths", "data_dir", None)
+    if configured_data_dir is None:
+        configured_data_dir = get_cli_setting("Paths", "data_dir", None)
+    base_data_dir = Path(configured_data_dir).expanduser() if configured_data_dir else BASE_DATA_DIR_CLI
+    user_dir = base_data_dir / user_folder
     # Create directory if it doesn't exist
     user_dir.mkdir(parents=True, exist_ok=True)
     return user_dir

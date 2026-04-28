@@ -52,7 +52,9 @@ class ConflictResolver:
         Returns:
             Resolution to apply
         """
-        if default_resolution == ConflictResolution.ASK and self.ask_callback:
+        if default_resolution == ConflictResolution.ASK:
+            if not self.ask_callback:
+                return ConflictResolution.SKIP
             # Show conflict details and ask user
             conflict_info = {
                 "type": "conversation",
@@ -90,7 +92,9 @@ class ConflictResolver:
         Returns:
             Resolution to apply
         """
-        if default_resolution == ConflictResolution.ASK and self.ask_callback:
+        if default_resolution == ConflictResolution.ASK:
+            if not self.ask_callback:
+                return ConflictResolution.SKIP
             # Show conflict details and ask user
             conflict_info = {
                 "type": "note",
@@ -129,7 +133,9 @@ class ConflictResolver:
         Returns:
             Resolution to apply
         """
-        if default_resolution == ConflictResolution.ASK and self.ask_callback:
+        if default_resolution == ConflictResolution.ASK:
+            if not self.ask_callback:
+                return ConflictResolution.SKIP
             # Show conflict details and ask user
             conflict_info = {
                 "type": "character",
@@ -162,7 +168,9 @@ class ConflictResolver:
         Returns:
             Resolution to apply
         """
-        if default_resolution == ConflictResolution.ASK and self.ask_callback:
+        if default_resolution == ConflictResolution.ASK:
+            if not self.ask_callback:
+                return ConflictResolution.SKIP
             # Show conflict details and ask user
             conflict_info = {
                 "type": "prompt",

@@ -44,7 +44,7 @@ class ChatLoopStartRequest(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    messages: list[dict[str, Any]] = Field(..., min_length=1)
+    messages: list[dict[str, Any]]
 
     @field_validator("messages")
     @classmethod

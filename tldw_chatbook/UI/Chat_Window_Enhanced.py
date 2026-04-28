@@ -85,6 +85,7 @@ class ChatWindowEnhanced(Container):
     _chat_input: Optional[TextArea] = None
     _send_button: Optional[Button] = None
     _attachment_indicator: Optional[Static] = None
+    _file_path_input: Optional[Input] = None
     _tab_container: Optional['ChatTabContainer'] = None
     _task_cards: Optional[ChatTaskCards] = None
     
@@ -99,6 +100,7 @@ class ChatWindowEnhanced(Container):
         self.app_instance = app_instance
         # Track the sidebar state locally as well
         self._sidebar_collapsed = False
+        self._suppress_attachment_watch = False
         
         # Initialize modular handlers
         self.input_handler = ChatInputHandler(self)
@@ -125,7 +127,7 @@ class ChatWindowEnhanced(Container):
         self._cache_widget_references()
         
         # Initialize local sidebar state from app state
-        self._sidebar_collapsed = self.app_instance.chat_sidebar_collapsed
+        self._sidebar_collapsed = getattr(self.app_instance, "chat_sidebar_collapsed", False)
         logger.info(f"Initialized sidebar state: collapsed={self._sidebar_collapsed}")
         
         # Configure widget visibility based on settings
@@ -215,6 +217,11 @@ class ChatWindowEnhanced(Container):
             self._attachment_indicator = None
 
         try:
+            self._file_path_input = self.query_one("#image-file-path-input", Input)
+        except NoMatches:
+            self._file_path_input = None
+
+        try:
             self._shell_bar = self.query_one("#chat-shell-bar", ChatShellBar)
         except NoMatches:
             self._shell_bar = None
@@ -276,6 +283,11 @@ class ChatWindowEnhanced(Container):
         Returns:
             The attachment indicator widget or None if not found
         """
+        if self._attachment_indicator is None:
+            try:
+                self._attachment_indicator = self.query_one("#image-attachment-indicator")
+            except NoMatches:
+                self._attachment_indicator = None
         return self._attachment_indicator
 
     def get_shell_bar(self) -> Optional[ChatShellBar]:
@@ -639,21 +651,15 @@ class ChatWindowEnhanced(Container):
         """
         await self.attachment_handler.process_file_attachment(file_path)
     
-    @work(exclusive=True, thread=True)
     async def handle_image_path_submitted(self, event):
         """Handle image path submission from file input field.
         
         This method is for backward compatibility with tests that expect
-        the old file input field behavior. Uses proper thread safety.
+        the old file input field behavior.
         
         Args:
             event: The event containing the file path
         """
-        worker = get_current_worker()
-        
-        if worker.is_cancelled:
-            return
-        
         from ..Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
         from ..Utils.path_validation import is_safe_path
         from pathlib import Path
@@ -663,15 +669,10 @@ class ChatWindowEnhanced(Container):
             file_path = event.value
             if not file_path:
                 return
-            
-            # Check for cancellation before validation
-            if worker.is_cancelled:
-                return
-            
+
             # Validate the file path is safe
             if not is_safe_path(file_path, os.path.expanduser("~")):
-                self.call_from_thread(
-                    self.app_instance.notify,
+                self.app_instance.notify(
                     "Error: File path is outside allowed directory",
                     severity="error"
                 )
@@ -681,65 +682,60 @@ class ChatWindowEnhanced(Container):
             
             # Validate file exists
             if not path.exists():
-                self.call_from_thread(
-                    self.app_instance.notify,
+                self.app_instance.notify(
                     f"Error attaching image: Image file not found: {file_path}",
                     severity="error"
                 )
                 return
-            
-            # Check for cancellation before processing
-            if worker.is_cancelled:
-                return
-            
+
             # Process the image
             try:
                 image_data, mime_type = await ChatImageHandler.process_image_file(str(path))
-                
-                # Check for cancellation before updating UI
-                if worker.is_cancelled:
-                    return
-                
+
                 # Store the pending image using thread-safe method
                 image_dict = {
                     'data': image_data,
                     'mime_type': mime_type,
                     'path': str(path)
                 }
-                
-                self.call_from_thread(self._store_pending_image, image_dict)
+
+                self._suppress_attachment_watch = True
+                try:
+                    self._store_pending_image(image_dict)
+                finally:
+                    self._suppress_attachment_watch = False
+                self._update_attachment_ui()
                 
                 # Hide file input if it exists
                 if hasattr(event, 'input') and event.input:
-                    self.call_from_thread(
-                        lambda: setattr(event.input.styles, 'display', 'none')
-                    )
+                    if hasattr(event.input, "add_class"):
+                        event.input.add_class("hidden")
+                    try:
+                        event.input.styles.display = "none"
+                    except Exception:
+                        pass
                 
                 # Notify user
-                self.call_from_thread(
-                    self.app_instance.notify,
+                self.app_instance.notify(
                     f"Image attached: {path.name}"
                 )
                 
             except (IOError, OSError) as e:
                 logger.error(f"Error reading image file: {e}")
-                self.call_from_thread(
-                    self.app_instance.notify,
-                    f"Cannot read image: {e}",
+                self.app_instance.notify(
+                    f"Error reading image: {e}",
                     severity="error"
                 )
             except ValueError as e:
                 logger.error(f"Invalid image data: {e}")
-                self.call_from_thread(
-                    self.app_instance.notify,
+                self.app_instance.notify(
                     "Invalid image format",
                     severity="error"
                 )
                 
         except ValueError as e:
             logger.error(f"Invalid image path: {e}")
-            self.call_from_thread(
-                self.app_instance.notify,
+            self.app_instance.notify(
                 "Invalid file path",
                 severity="error"
             )
@@ -783,8 +779,12 @@ class ChatWindowEnhanced(Container):
 
         # Main Chat Content Area
         with Container(id="chat-main-content"):
-            # Compact model bar - always visible above chat
-            yield CompactModelBar(self.app_instance, id="compact-model-bar")
+            # Combined shell bar - context labels plus compact controls above chat.
+            yield ChatShellBar(
+                app_instance=self.app_instance,
+                on_sidebar_toggle_requested=self.handle_shell_sidebar_toggle_requested,
+                id="chat-shell-bar",
+            )
             yield ChatTaskCards(id="chat-task-surface")
 
             # Check if tabs are enabled
@@ -976,6 +976,8 @@ class ChatWindowEnhanced(Container):
         Args:
             image_data: The new pending image data
         """
+        if getattr(self, "_suppress_attachment_watch", False):
+            return
         self._update_attachment_ui()
     
     def validate_pending_image(self, image_data: Any) -> Optional[Dict[str, Any]]:

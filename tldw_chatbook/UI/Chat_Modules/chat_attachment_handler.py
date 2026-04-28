@@ -39,11 +39,22 @@ class ChatAttachmentHandler:
         Args:
             event: Button.Pressed event
         """
-        # Check if we're in test mode with a mocked file input
-        if self.chat_window._file_path_input:
+        # Check if we're in legacy/test mode with a mocked file input.
+        file_path_input = getattr(self.chat_window, "_file_path_input", None)
+        if file_path_input is None and not getattr(self.chat_window, "is_attached", False):
+            try:
+                file_path_input = self.chat_window.query_one("#image-file-path-input")
+                self.chat_window._file_path_input = file_path_input
+            except Exception:
+                file_path_input = None
+
+        if file_path_input:
             # Legacy mode for tests
-            self.chat_window._file_path_input.styles.display = "block"
-            self.chat_window._file_path_input.focus()
+            if hasattr(file_path_input, "remove_class"):
+                file_path_input.remove_class("hidden")
+            else:
+                file_path_input.styles.display = "block"
+            file_path_input.focus()
             return
         
         from fnmatch import fnmatch
@@ -386,12 +397,18 @@ class ChatAttachmentHandler:
     def update_attachment_ui(self):
         """Update the attachment indicator UI."""
         indicator = self.chat_window._get_attachment_indicator()
+        try:
+            attach_button = self.chat_window.query_one("#attach-image")
+        except Exception:
+            attach_button = None
         if not indicator:
             return
         
         try:
             
             if self.chat_window.pending_image or self.chat_window.pending_attachment:
+                if attach_button is not None:
+                    attach_button.label = "📎✓"
                 # Show attachment indicator
                 attachment = self.chat_window.pending_attachment
                 file_path = (
@@ -409,13 +426,17 @@ class ChatAttachmentHandler:
                     )
                     indicator.update(f"📎 {display_name}")
                     indicator.add_class("has-attachment")
+                    indicator.remove_class("hidden")
                 else:
                     indicator.update("")
                     indicator.remove_class("has-attachment")
             else:
+                if attach_button is not None:
+                    attach_button.label = "📎"
                 # Hide attachment indicator
                 indicator.update("")
                 indicator.remove_class("has-attachment")
+                indicator.add_class("hidden")
                 
         except (AttributeError, RuntimeError) as e:
             logger.debug(f"Could not update attachment indicator: {e}")

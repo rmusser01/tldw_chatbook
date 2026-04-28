@@ -367,19 +367,36 @@ def normalize_reading_summary(
     *,
     backend: str = "server",
 ) -> dict[str, Any]:
-    source_id = str(summary.get("id") or summary.get("summary_id"))
-    return {
+    raw_source_id = summary.get("id") or summary.get("summary_id") or summary.get("item_id") or summary.get("media_id")
+    source_id = str(raw_source_id)
+    item_id = summary.get("item_id", summary.get("media_id"))
+    normalized: dict[str, Any] = {
         "id": build_canonical_media_id(backend, "reading_summary", source_id),
         "backend": backend,
         "entity_kind": "reading_summary",
         "source_id": source_id,
-        "backing_media_id": summary.get("item_id") or summary.get("media_id"),
         "summary": summary.get("summary") or summary.get("text") or "",
-        "model": summary.get("model"),
-        "metadata": _as_mapping(summary.get("metadata")),
-        "created_at": _clean_timestamp(summary.get("created_at")),
-        "updated_at": _clean_timestamp(summary.get("updated_at")),
     }
+    if item_id is not None:
+        normalized["item_id"] = item_id
+    for source_key, normalized_key in (
+        ("provider", "provider"),
+        ("model", "model"),
+        ("citations", "citations"),
+        ("generated_at", "generated_at"),
+    ):
+        if source_key in summary:
+            normalized[normalized_key] = summary.get(source_key)
+    if "metadata" in summary:
+        normalized["metadata"] = _as_mapping(summary.get("metadata"))
+    for source_key, normalized_key in (
+        ("created_at", "created_at"),
+        ("updated_at", "updated_at"),
+    ):
+        timestamp = _clean_timestamp(summary.get(source_key))
+        if timestamp is not None:
+            normalized[normalized_key] = timestamp
+    return normalized
 
 
 def normalize_reading_items_bulk_update(

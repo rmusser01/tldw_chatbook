@@ -41,6 +41,13 @@ from .writing_normalizers import normalize_writing_record, normalize_writing_str
 
 _UNSET = object()
 
+REASON_DIRECT_MANUSCRIPT_SCENE = (
+    "Direct manuscript-level scenes are not exposed by the current server writing contract."
+)
+REASON_VERSION_HISTORY = "Server writing version history is not exposed by the current server writing contract."
+REASON_TRASH_RESTORE = "Server writing trash listing and restore are not exposed by the current server writing contract."
+REASON_SCENE_REPARENT = "Server scene reparenting is not exposed by the current server writing contract."
+
 
 class ServerWritingService:
     """Thin wrapper that maps Chatbook writing terms onto server manuscript endpoints."""
@@ -245,9 +252,7 @@ class ServerWritingService:
     ) -> dict[str, Any]:
         self._enforce(self._action_id("scenes", "create"))
         if chapter_id is None or manuscript_id is not None:
-            raise NotImplementedError(
-                "Direct manuscript-level scenes are not exposed by the current server contract."
-            )
+            raise NotImplementedError(REASON_DIRECT_MANUSCRIPT_SCENE)
         response = await self._require_client().create_manuscript_scene(
             chapter_id,
             ManuscriptSceneCreate(
@@ -267,9 +272,7 @@ class ServerWritingService:
     ) -> list[dict[str, Any]]:
         self._enforce(self._action_id("scenes", "list"))
         if chapter_id is None or manuscript_id is not None:
-            raise NotImplementedError(
-                "Direct manuscript-level scenes are not exposed by the current server contract."
-            )
+            raise NotImplementedError(REASON_DIRECT_MANUSCRIPT_SCENE)
         response = await self._require_client().list_manuscript_scenes(chapter_id)
         return [
             normalize_writing_record("server", "scene", self._model_to_dict(item))

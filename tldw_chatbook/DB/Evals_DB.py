@@ -690,8 +690,9 @@ class EvalsDB:
         # Remove null bytes and other control characters
         query = ''.join(c for c in query if c.isprintable() and ord(c) != 0)
         
-        # For special characters or very short queries, use LIKE instead of FTS
-        if len(query) <= 2 or any(c in query for c in ':*"\'[]()'):
+        # FTS5 tokenization drops punctuation-only terms, so use literal LIKE
+        # for short or non-token-like queries.
+        if len(query) <= 2 or any(not (c.isalnum() or c.isspace()) for c in query):
             cursor = conn.execute("""
                 SELECT * FROM eval_tasks 
                 WHERE (name LIKE ? OR description LIKE ?) AND deleted_at IS NULL
@@ -783,6 +784,66 @@ class EvalsDB:
             datasets.append(dataset)
         
         return datasets
+
+    def update_dataset(
+        self,
+        dataset_id: str,
+        name: str = None,
+        description: str = None,
+        format: str = None,
+        source_path: str = None,
+        metadata: Dict[str, Any] = None,
+    ) -> bool:
+        """Update an evaluation dataset."""
+        if name is not None and not name.strip():
+            raise InputError("Dataset name cannot be empty")
+
+        if format is not None and format not in ['huggingface', 'json', 'csv', 'custom']:
+            raise InputError(f"Invalid format: {format}")
+
+        if source_path is not None and not source_path.strip():
+            raise InputError("Source path cannot be empty")
+
+        updates = []
+        params = []
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name.strip())
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if format is not None:
+            updates.append("format = ?")
+            params.append(format)
+        if source_path is not None:
+            updates.append("source_path = ?")
+            params.append(source_path.strip())
+        if metadata is not None:
+            updates.append("metadata = ?")
+            params.append(json.dumps(metadata or {}))
+
+        if not updates:
+            return self.get_dataset(dataset_id) is not None
+
+        updates.extend([
+            "updated_at = datetime('now', 'utc')",
+            "version = version + 1",
+        ])
+        params.append(dataset_id)
+
+        conn = self._get_connection()
+        try:
+            with conn:
+                cursor = conn.execute(f"""
+                    UPDATE eval_datasets
+                    SET {', '.join(updates)}
+                    WHERE id = ? AND deleted_at IS NULL
+                """, params)
+                return cursor.rowcount > 0
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                raise ConflictError(f"Dataset with name '{name}' already exists", "eval_datasets", name)
+            raise EvalsDBError(f"Failed to update dataset: {e}")
 
     def delete_dataset(self, dataset_id: str) -> bool:
         """Soft delete a dataset."""

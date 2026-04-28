@@ -11,7 +11,9 @@ from ..Utils.NotificationHelper import show_notification
 class NotificationDispatchService:
     """Persist notifications and attempt toast/notify delivery."""
 
-    def __init__(self, *, store: Any, policy_enforcer: Any | None = None):
+    def __init__(self, store: Any = None, *, policy_enforcer: Any | None = None):
+        if store is None:
+            raise ValueError("NotificationDispatchService requires a notification store.")
         self.store = store
         self.policy_enforcer = policy_enforcer
 

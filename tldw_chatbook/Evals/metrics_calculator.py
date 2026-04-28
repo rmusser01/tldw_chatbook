@@ -270,13 +270,15 @@ class MetricsCalculator:
         
         if not predicted or not expected:
             return 0.0
+
+        lexical_fallback = MetricsCalculator._calculate_lexical_semantic_fallback(predicted, expected)
         
         # Try to use sentence transformers if available
         try:
             if embedding_model is None:
                 from sentence_transformers import SentenceTransformer
-                # Use a small, fast model by default
-                embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+                # Use local cache only so offline runs do not attempt network downloads.
+                embedding_model = SentenceTransformer('all-MiniLM-L6-v2', local_files_only=True)
             
             # Get embeddings
             embeddings = embedding_model.encode([predicted, expected])
@@ -300,10 +302,36 @@ class MetricsCalculator:
         except ImportError:
             # Fallback to token overlap if embeddings not available
             logger.debug("Sentence transformers not available, using token overlap for semantic similarity")
-            return MetricsCalculator.calculate_f1_score(predicted, expected)
+            return lexical_fallback
         except Exception as e:
             logger.warning(f"Error calculating semantic similarity: {e}")
-            return MetricsCalculator.calculate_f1_score(predicted, expected)
+            return lexical_fallback
+
+    @staticmethod
+    def _calculate_lexical_semantic_fallback(predicted: str, expected: str) -> float:
+        """Offline semantic fallback for simple lexical and numeric equivalence."""
+        predicted_norm = predicted.strip().lower()
+        expected_norm = expected.strip().lower()
+        if predicted_norm == expected_norm:
+            return 1.0
+
+        number_aliases = {
+            'zero': '0',
+            'one': '1',
+            'two': '2',
+            'three': '3',
+            'four': '4',
+            'five': '5',
+            'six': '6',
+            'seven': '7',
+            'eight': '8',
+            'nine': '9',
+            'ten': '10',
+        }
+        if number_aliases.get(predicted_norm) == expected_norm or number_aliases.get(expected_norm) == predicted_norm:
+            return 0.8
+
+        return MetricsCalculator.calculate_f1_score(predicted, expected)
     
     @staticmethod
     def calculate_perplexity(logprobs: List[float]) -> float:

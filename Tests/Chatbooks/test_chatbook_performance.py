@@ -493,15 +493,18 @@ class TestChatbookPerformance:
             assert success is True
             import_times.append(import_time)
         
-        # Import times should remain consistent
-        avg_time = sum(import_times) / len(import_times)
-        max_deviation = max(abs(t - avg_time) for t in import_times)
+        # Import times should remain consistent after the first warm-up import.
+        # These operations complete in milliseconds, so timer jitter can exceed
+        # a purely relative threshold on otherwise healthy runs.
+        steady_times = import_times[1:] if len(import_times) > 1 else import_times
+        avg_time = sum(steady_times) / len(steady_times)
+        max_deviation = max(abs(t - avg_time) for t in steady_times)
         
         print(f"Incremental imports: times={[f'{t:.3f}' for t in import_times]}, "
               f"avg={avg_time:.3f}s, max_deviation={max_deviation:.3f}s")
         
         # Performance should not degrade significantly
-        assert max_deviation < avg_time * 0.5  # Within 50% of average
+        assert max_deviation < max(avg_time * 0.5, 0.01)  # Within 50% or 10ms jitter floor
     
     @pytest.mark.slow
     def test_stress_test_extreme_scale(self, performance_db_setup, tmp_path):

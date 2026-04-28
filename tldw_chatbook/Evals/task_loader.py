@@ -30,6 +30,8 @@ try:
     HF_DATASETS_AVAILABLE = True
 except ImportError:
     HF_DATASETS_AVAILABLE = False
+    load_dataset = None
+    Dataset = Any
     logger.warning("HuggingFace datasets not available. Install with: pip install datasets")
 
 class ValidationError(Exception):
@@ -490,33 +492,7 @@ class TaskLoader:
         log_counter("eval_task_template_create_attempt", labels={
             "template_name": template_name
         })
-        
-        # Import here to avoid circular imports
-        from .eval_templates import get_eval_templates
-        
-        template_manager = get_eval_templates()
-        
-        # Try to get from extended templates first
-        try:
-            task_config = template_manager.create_task_config(template_name, **kwargs)
-            
-            # Log successful template creation
-            duration = time.time() - start_time
-            log_histogram("eval_task_template_create_duration", duration, labels={
-                "template_name": template_name,
-                "task_type": task_config.task_type
-            })
-            log_counter("eval_task_template_create_success", labels={
-                "template_name": template_name,
-                "task_type": task_config.task_type
-            })
-            
-            return task_config
-            
-        except ValueError:
-            pass
-        
-        # Fallback to basic templates
+
         basic_templates = {
             'simple_qa': {
                 'name': 'Simple Q&A',
@@ -556,7 +532,63 @@ class TaskLoader:
                 'generation_kwargs': {'max_length': 200, 'temperature': 0.2, 'language': 'python'}
             }
         }
+
+        # Preserve legacy TaskLoader template semantics before consulting the
+        # newer package registry, whose template names can overlap with
+        # different task_type/metric meanings.
+        if template_name in basic_templates:
+            template = basic_templates[template_name].copy()
+            template.update(kwargs)
+            return TaskConfig(**template)
         
+        # Import here to avoid circular imports
+        from .eval_templates import get_eval_templates
+        
+        template_manager = get_eval_templates()
+        
+        # Try to get from extended templates first
+        try:
+            if hasattr(template_manager, 'create_task_config'):
+                task_config = template_manager.create_task_config(template_name, **kwargs)
+            else:
+                template = template_manager.get_template(template_name)
+                if not template:
+                    raise ValueError(f"Template not found: {template_name}")
+                config_dict = template.copy()
+                config_dict.update(kwargs)
+                task_config = TaskConfig(
+                    name=config_dict['name'],
+                    description=config_dict.get('description', ''),
+                    task_type=config_dict['task_type'],
+                    dataset_name=config_dict.get('dataset_name', 'custom'),
+                    dataset_config=config_dict.get('dataset_config'),
+                    split=config_dict.get('split', 'test'),
+                    metric=config_dict.get('metric', 'exact_match'),
+                    generation_kwargs=config_dict.get('generation_kwargs', {}),
+                    doc_to_text=config_dict.get('doc_to_text'),
+                    doc_to_target=config_dict.get('doc_to_target'),
+                    doc_to_choice=config_dict.get('doc_to_choice'),
+                    filter_list=config_dict.get('filter_list', []),
+                    metadata=config_dict.get('metadata', {})
+                )
+            
+            # Log successful template creation
+            duration = time.time() - start_time
+            log_histogram("eval_task_template_create_duration", duration, labels={
+                "template_name": template_name,
+                "task_type": task_config.task_type
+            })
+            log_counter("eval_task_template_create_success", labels={
+                "template_name": template_name,
+                "task_type": task_config.task_type
+            })
+            
+            return task_config
+            
+        except ValueError:
+            pass
+        
+        # Fallback to basic templates
         if template_name not in basic_templates:
             raise TaskLoadError(f"Unknown template: {template_name}")
         

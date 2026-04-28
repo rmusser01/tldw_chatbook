@@ -7,6 +7,7 @@ from tldw_chatbook.runtime_policy import PolicyDeniedError
 class FakePolicyEnforcer:
     def __init__(self):
         self.actions = []
+        self.calls = self.actions
 
     def require_allowed(self, *, action_id):
         self.actions.append(action_id)
@@ -205,7 +206,20 @@ class FakeLocalEvaluationService:
         self.calls.append(("cancel_run", run_id))
         return {"status": "cancelled", "id": run_id}
 
-    def create_dataset(self, *, name, format="custom", source_path=None, description=None, metadata=None):
+    def create_dataset(
+        self,
+        *,
+        name,
+        samples=None,
+        description=None,
+        metadata=None,
+        format="custom",
+        source_path=None,
+    ):
+        if samples:
+            self.calls.append(("create_dataset", name, samples, description, metadata, None, None))
+            return "dataset_local"
+
         self.calls.append(("create_dataset", name, format, source_path, description, metadata))
         return {
             "id": "dataset_local_new",
@@ -407,10 +421,11 @@ class FakeServerEvaluationService:
     async def create_dataset(self, *, name, samples, description=None, metadata=None):
         self.calls.append(("create_dataset", name, samples, description, metadata))
         return {
-            "id": "dataset_server_new",
+            "id": "dataset_server_new" if name == "Server Dataset" else "dataset_server",
             "name": name,
             "description": description,
             "sample_count": len(samples),
+            "samples": samples,
             "metadata": metadata or {},
         }
 
@@ -543,6 +558,7 @@ class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
         self.denied_reason = denied_reason
         self.calls = []
+        self.actions = self.calls
 
     @classmethod
     def deny(cls, reason_code: str) -> "FakePolicyEnforcer":
@@ -696,34 +712,34 @@ async def test_scope_service_enforces_policy_for_server_evaluation_adjuncts():
     assert policy.actions == [
         "evaluations.immediate.launch.server",
         "evaluations.immediate.list.server",
-        "evaluations.synthetic.create.server",
+        "evaluations.synthetic.launch.server",
         "evaluations.synthetic.list.server",
         "evaluations.synthetic.update.server",
         "evaluations.synthetic.create.server",
-        "evaluations.abtest.create.server",
-        "evaluations.abtest.launch.server",
-        "evaluations.abtest.detail.server",
-        "evaluations.abtest.detail.server",
-        "evaluations.abtest.detail.server",
-        "evaluations.benchmark.list.server",
-        "evaluations.benchmark.detail.server",
-        "evaluations.benchmark.launch.server",
-        "evaluations.recipe.list.server",
-        "evaluations.recipe.detail.server",
-        "evaluations.recipe.detail.server",
-        "evaluations.recipe.detail.server",
-        "evaluations.recipe.launch.server",
-        "evaluations.recipe.detail.server",
-        "evaluations.recipe.detail.server",
-        "evaluations.pipeline_preset.create.server",
-        "evaluations.pipeline_preset.list.server",
-        "evaluations.pipeline_preset.detail.server",
-        "evaluations.pipeline_preset.delete.server",
-        "evaluations.pipeline_preset.delete.server",
-        "evaluations.webhook.create.server",
-        "evaluations.webhook.list.server",
-        "evaluations.webhook.delete.server",
-        "evaluations.webhook.launch.server",
+        "evaluations.embeddings_abtest.create.server",
+        "evaluations.embeddings_abtest.launch.server",
+        "evaluations.embeddings_abtest.detail.server",
+        "evaluations.embeddings_abtest.observe.server",
+        "evaluations.embeddings_abtest.observe.server",
+        "evaluations.benchmarks.list.server",
+        "evaluations.benchmarks.detail.server",
+        "evaluations.benchmarks.launch.server",
+        "evaluations.recipes.list.server",
+        "evaluations.recipes.detail.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.rag_pipeline.create.server",
+        "evaluations.rag_pipeline.list.server",
+        "evaluations.rag_pipeline.detail.server",
+        "evaluations.rag_pipeline.delete.server",
+        "evaluations.rag_pipeline.launch.server",
+        "evaluations.webhooks.create.server",
+        "evaluations.webhooks.list.server",
+        "evaluations.webhooks.delete.server",
+        "evaluations.webhooks.launch.server",
     ]
 
 
@@ -790,7 +806,7 @@ async def test_scope_service_blocks_server_target_catalog_before_dispatch():
         await scope.list_targets(mode="server")
 
     assert server.calls == []
-    assert policy_enforcer.calls == ["evaluations.run.list.server"]
+    assert policy_enforcer.calls == ["evaluations.target.list.server"]
 
 
 @pytest.mark.asyncio
@@ -810,7 +826,7 @@ async def test_scope_service_forwards_local_dataset_override_and_webhook_url():
         webhook_url="http://127.0.0.1:9000/eval-callback",
     )
 
-    assert local.calls[-1] == (
+    assert (
         "create_run",
         "task_123",
         "model_123",
@@ -819,7 +835,7 @@ async def test_scope_service_forwards_local_dataset_override_and_webhook_url():
         None,
         dataset_override,
         "http://127.0.0.1:9000/eval-callback",
-    )
+    ) in local.calls
 
 
 @pytest.mark.asyncio

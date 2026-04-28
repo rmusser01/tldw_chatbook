@@ -39,9 +39,9 @@ class CCPMessageManager:
         logger.debug("CCPMessageManager initialized")
 
     def _conversation_db(self):
-        """Return the DB used for loading CCP conversation messages."""
+        """Return the app-owned DB used for loading CCP conversation messages."""
         app_attrs = vars(self.app_instance) if hasattr(self.app_instance, "__dict__") else {}
-        return app_attrs.get("chachanotes_db") or get_chachanotes_db_lazy()
+        return app_attrs.get("chachanotes_db")
     
     def clear_messages(self) -> None:
         """Clear all displayed messages."""

@@ -1283,4 +1283,4 @@ class TestSchemaMigration:
             )
             result = cursor.fetchone()
             assert result is not None
-            assert result["version"] == 15
+            assert result["version"] == CharactersRAGDB._CURRENT_SCHEMA_VERSION

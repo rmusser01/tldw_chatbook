@@ -634,7 +634,6 @@ class SubscriptionWindow(Container):
                 yield TextArea(
                     id="briefing-preview",
                     read_only=True,
-                    language="markdown"
                 )
                 
                 with Horizontal(classes="preview-actions"):

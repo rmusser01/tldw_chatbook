@@ -54,6 +54,15 @@ numpy = get_safe_import('numpy')
 torch = get_safe_import('torch')
 transformers = get_safe_import('transformers')
 
+
+def _current_dependencies_available() -> Dict[str, bool]:
+    """Resolve the live optional-deps registry even after test/module reloads."""
+    optional_deps_module = sys.modules.get("tldw_chatbook.Utils.optional_deps")
+    current_registry = getattr(optional_deps_module, "DEPENDENCIES_AVAILABLE", None)
+    if isinstance(current_registry, dict):
+        return current_registry
+    return DEPENDENCIES_AVAILABLE
+
 # Create type aliases that work with or without dependencies
 if torch is not None:
     Tensor = torch.Tensor
@@ -509,7 +518,7 @@ class EmbeddingFactory:
             allow_dynamic_hf: bool = True,
     ) -> None:
         # Check if embeddings/RAG dependencies are available
-        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+        if not _current_dependencies_available().get('embeddings_rag', False):
             raise ImportError(
                 "EmbeddingFactory requires embeddings/RAG dependencies. "
                 "Install with: pip install tldw_chatbook[embeddings_rag]"

@@ -112,6 +112,11 @@ class FakeEvalsDB:
         self.calls.append(("create_dataset", kwargs))
         return "dataset_999"
 
+    def update_dataset(self, dataset_id, **kwargs):
+        self.calls.append(("update_dataset", dataset_id, kwargs))
+        self.dataset.update({key: value for key, value in kwargs.items() if value is not None})
+        return True
+
     def delete_dataset(self, dataset_id):
         self.calls.append(("delete_dataset", dataset_id))
         return True
@@ -220,17 +225,19 @@ def test_create_dataset_stores_inline_samples_in_local_metadata():
     assert dataset_id == "dataset_999"
     assert db.calls[-1] == (
         "create_dataset",
-        "offline_dataset",
-        "custom",
-        "inline:offline_dataset",
-        "Offline dataset",
         {
+            "name": "offline_dataset",
+            "format": "custom",
+            "source_path": "inline:offline_dataset",
+            "description": "Offline dataset",
+            "metadata": {
             "project": "offline-parity",
             "__tldw_eval_samples__": [
                 {"input": "Question", "expected": "Answer", "metadata": {"source": "local"}}
             ],
             "sample_count": 1,
             "inline_samples": True,
+            },
         },
     )
 

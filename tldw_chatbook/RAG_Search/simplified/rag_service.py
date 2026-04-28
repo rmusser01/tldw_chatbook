@@ -101,8 +101,11 @@ class RAGService:
         logger.info(f"Initializing embeddings service with model: {self.config.embedding_model}")
         
         # Get model cache directory from config
-        from tldw_chatbook.config import get_model_cache_dir
-        cache_dir = str(get_model_cache_dir())
+        if str(self.config.embedding_model).lower() in {"mock", "mock-embedding-model", "mock_embedding_model"}:
+            cache_dir = None
+        else:
+            from tldw_chatbook.config import get_model_cache_dir
+            cache_dir = str(get_model_cache_dir())
         
         self.embeddings = EmbeddingsServiceWrapper(
             model_name=self.config.embedding_model,
@@ -627,6 +630,7 @@ class RAGService:
             db_path = None
             from tldw_chatbook.config import get_user_data_dir
             base_dir = get_user_data_dir()
+            possible_paths = [base_dir / "chacha_notes.db"]
             
             if self.config.persist_directory:
                 # Try common locations for the media database

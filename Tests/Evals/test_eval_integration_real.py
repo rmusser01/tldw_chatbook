@@ -379,8 +379,7 @@ class TestUnifiedErrorHandler:
             )
         
         # Should only try once for non-retryable errors
-        # Actually FileNotFoundError will still retry, so it attempts max_retries + 1
-        assert attempt_count == 4  # 1 initial + 3 retries
+        assert attempt_count == 1
 
 
 class TestEndToEndWorkflow:

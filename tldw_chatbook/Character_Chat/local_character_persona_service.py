@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..Chat.chat_conversation_service import ChatConversationService
+from .world_book_manager import WorldBookManager
 from ..tldw_api.character_persona_schemas import (
     ChatSettingsUpdate,
     CharacterChatSessionCreate,
@@ -49,6 +50,7 @@ class LocalCharacterPersonaService:
     def __init__(self, db: Any, *, persona_store_path: str | Path | None = None):
         self.db = db
         self.conversations = ChatConversationService(db)
+        self.world_books = WorldBookManager(db) if db is not None else None
         self.persona_store_path = Path(persona_store_path).expanduser() if persona_store_path is not None else None
         self._persona_profiles: list[dict[str, Any]] = []
         self._persona_exemplars: list[dict[str, Any]] = []
@@ -56,12 +58,18 @@ class LocalCharacterPersonaService:
         self._chat_settings: dict[str, dict[str, Any]] = {}
         self._chat_greeting_selections: dict[str, int] = {}
         self._chat_presets: list[dict[str, Any]] = []
+        self._character_memories: list[dict[str, Any]] = []
         self._load_persona_profiles()
 
     def _require_db(self) -> Any:
         if self.db is None:
             raise ValueError("Local character/persona backend is unavailable.")
         return self.db
+
+    def _require_world_book_manager(self) -> WorldBookManager:
+        if self.world_books is None:
+            self.world_books = WorldBookManager(self._require_db())
+        return self.world_books
 
     @staticmethod
     def _session_record(record: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -108,6 +116,7 @@ class LocalCharacterPersonaService:
             chat_settings_records = payload.get("chat_settings", {})
             chat_greeting_selections = payload.get("chat_greeting_selections", {})
             chat_preset_records = payload.get("chat_presets", [])
+            character_memory_records = payload.get("character_memories", [])
         else:
             profile_records = payload
             exemplar_records = []
@@ -115,6 +124,7 @@ class LocalCharacterPersonaService:
             chat_settings_records = {}
             chat_greeting_selections = {}
             chat_preset_records = []
+            character_memory_records = []
         if not isinstance(profile_records, list):
             self._persona_profiles = []
             return
@@ -144,6 +154,11 @@ class LocalCharacterPersonaService:
             for item in chat_preset_records
             if isinstance(item, dict)
         ] if isinstance(chat_preset_records, list) else []
+        self._character_memories = [
+            dict(item)
+            for item in character_memory_records
+            if isinstance(item, dict)
+        ] if isinstance(character_memory_records, list) else []
 
     def _persist_persona_profiles(self) -> None:
         if self.persona_store_path is None:
@@ -159,6 +174,7 @@ class LocalCharacterPersonaService:
                     "chat_settings": self._chat_settings,
                     "chat_greeting_selections": self._chat_greeting_selections,
                     "chat_presets": self._chat_presets,
+                    "character_memories": self._character_memories,
                 },
                 indent=2,
                 sort_keys=True,
@@ -292,6 +308,38 @@ class LocalCharacterPersonaService:
             return record
         raise ValueError(f"local_chat_preset_not_found:{preset_id}")
 
+    @staticmethod
+    def _character_memory_view(record: Mapping[str, Any]) -> dict[str, Any]:
+        normalized = dict(record)
+        normalized.setdefault("source", "local")
+        normalized.setdefault("archived", False)
+        normalized.setdefault("deleted", False)
+        normalized.setdefault("version", 1)
+        normalized.setdefault(
+            "record_id",
+            f"local:character_memory:{normalized.get('character_id')}:{normalized.get('id')}",
+        )
+        return normalized
+
+    def _find_character_memory(
+        self,
+        character_id: str,
+        memory_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> dict[str, Any]:
+        normalized_character_id = str(character_id)
+        normalized_memory_id = str(memory_id)
+        for record in self._character_memories:
+            if str(record.get("character_id")) != normalized_character_id:
+                continue
+            if str(record.get("id")) != normalized_memory_id:
+                continue
+            if record.get("deleted") and not include_deleted:
+                break
+            return record
+        raise ValueError(f"local_character_memory_not_found:{character_id}:{memory_id}")
+
     def _require_chat_session(self, chat_id: str) -> dict[str, Any]:
         session = self.get_character_chat_session(str(chat_id))
         if session is None:
@@ -342,7 +390,10 @@ class LocalCharacterPersonaService:
         return self._require_db().search_character_cards(query, limit=limit)
 
     def get_character(self, character_id: int) -> Any:
-        return self._require_db().get_character_card_by_id(int(character_id))
+        record = self._require_db().get_character_card_by_id(int(character_id))
+        if record is None:
+            raise ValueError(f"Local character '{character_id}' not found")
+        return record
 
     def create_character(self, request_data: Any) -> dict[str, Any]:
         payload = _model_payload(CharacterCreateRequest.model_validate(_model_payload(request_data)))
@@ -375,7 +426,7 @@ class LocalCharacterPersonaService:
         deleted = self._require_db().soft_delete_character_card(int(character_id), int(expected_version))
         if not deleted:
             raise ValueError(f"Local character '{character_id}' could not be deleted.")
-        return {"status": "deleted", "character_id": int(character_id)}
+        return {"deleted": True, "id": str(character_id)}
 
     def restore_character(self, character_id: int, *, expected_version: int) -> dict[str, Any]:
         restored = self._require_db().restore_character_card(int(character_id), int(expected_version))
@@ -385,6 +436,230 @@ class LocalCharacterPersonaService:
         if record is None:
             raise ValueError(f"Local character '{character_id}' could not be loaded after restore.")
         return record
+
+    @staticmethod
+    def _world_book_payload(request_data: Any) -> dict[str, Any]:
+        payload = _model_payload(request_data, exclude_none=False)
+        return {key: value for key, value in payload.items() if value is not None}
+
+    def list_character_world_books(self, *, include_disabled: bool = False, **_: Any) -> dict[str, Any]:
+        items = self._require_world_book_manager().list_world_books(include_disabled=include_disabled)
+        return {"world_books": items, "total": len(items)}
+
+    def get_character_world_book(self, world_book_id: int, **_: Any) -> dict[str, Any]:
+        record = self._require_world_book_manager().get_world_book(int(world_book_id))
+        if record is None:
+            raise ValueError(f"Local character world book '{world_book_id}' not found")
+        return record
+
+    def create_character_world_book(self, request_data: Any, **_: Any) -> dict[str, Any]:
+        payload = self._world_book_payload(request_data)
+        world_book_id = self._require_world_book_manager().create_world_book(
+            name=payload.get("name"),
+            description=payload.get("description"),
+            scan_depth=int(payload.get("scan_depth", 3) or 3),
+            token_budget=int(payload.get("token_budget", 500) or 500),
+            recursive_scanning=bool(payload.get("recursive_scanning", False)),
+            enabled=bool(payload.get("enabled", True)),
+        )
+        return self.get_character_world_book(world_book_id)
+
+    def update_character_world_book(
+        self,
+        world_book_id: int,
+        request_data: Any,
+        *,
+        expected_version: int | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        payload = self._world_book_payload(request_data)
+        update_fields = {
+            key: payload[key]
+            for key in (
+                "name",
+                "description",
+                "scan_depth",
+                "token_budget",
+                "recursive_scanning",
+                "enabled",
+            )
+            if key in payload
+        }
+        updated = self._require_world_book_manager().update_world_book(
+            int(world_book_id),
+            expected_version=expected_version,
+            **update_fields,
+        )
+        if not updated:
+            raise ValueError(f"Local character world book '{world_book_id}' could not be updated.")
+        return self.get_character_world_book(world_book_id)
+
+    def delete_character_world_book(
+        self,
+        world_book_id: int,
+        *,
+        expected_version: int | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        deleted = self._require_world_book_manager().delete_world_book(
+            int(world_book_id),
+            expected_version=expected_version,
+        )
+        if not deleted:
+            raise ValueError(f"Local character world book '{world_book_id}' could not be deleted.")
+        return {"deleted": True, "id": str(world_book_id)}
+
+    def _get_character_world_book_entry(self, entry_id: int) -> dict[str, Any] | None:
+        query = """
+        SELECT id, world_book_id, keys, content, enabled, position, insertion_order,
+               selective, secondary_keys, case_sensitive, extensions, created_at, last_modified
+        FROM world_book_entries
+        WHERE id = ?
+        """
+        with self._require_db().transaction() as cursor:
+            cursor.execute(query, (int(entry_id),))
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "world_book_id": row[1],
+            "keys": json.loads(row[2]) if row[2] else [],
+            "content": row[3],
+            "enabled": bool(row[4]),
+            "position": row[5],
+            "insertion_order": row[6],
+            "selective": bool(row[7]),
+            "secondary_keys": json.loads(row[8]) if row[8] else [],
+            "case_sensitive": bool(row[9]),
+            "extensions": json.loads(row[10]) if row[10] else {},
+            "created_at": row[11],
+            "last_modified": row[12],
+        }
+
+    def list_character_world_book_entries(
+        self,
+        world_book_id: int,
+        *,
+        include_disabled: bool = True,
+        **_: Any,
+    ) -> dict[str, Any]:
+        entries = self._require_world_book_manager().get_world_book_entries(
+            int(world_book_id),
+            enabled_only=not include_disabled,
+        )
+        return {"entries": entries, "total": len(entries)}
+
+    def get_character_world_book_entry(self, entry_id: int, **_: Any) -> dict[str, Any]:
+        entry = self._get_character_world_book_entry(int(entry_id))
+        if entry is None:
+            raise ValueError(f"Local character world book entry '{entry_id}' not found")
+        return entry
+
+    def create_character_world_book_entry(
+        self,
+        world_book_id: int,
+        request_data: Any,
+        **_: Any,
+    ) -> dict[str, Any]:
+        payload = self._world_book_payload(request_data)
+        entry_id = self._require_world_book_manager().create_world_book_entry(
+            world_book_id=int(world_book_id),
+            keys=list(payload.get("keys") or []),
+            content=payload.get("content"),
+            enabled=bool(payload.get("enabled", True)),
+            position=payload.get("position", "before_char"),
+            insertion_order=int(payload.get("insertion_order", 0) or 0),
+            selective=bool(payload.get("selective", False)),
+            secondary_keys=list(payload.get("secondary_keys") or []),
+            case_sensitive=bool(payload.get("case_sensitive", False)),
+            extensions=dict(payload.get("extensions") or {}),
+        )
+        return self.get_character_world_book_entry(entry_id)
+
+    def update_character_world_book_entry(
+        self,
+        entry_id: int,
+        request_data: Any,
+        **_: Any,
+    ) -> dict[str, Any]:
+        payload = self._world_book_payload(request_data)
+        update_fields = {
+            key: payload[key]
+            for key in (
+                "keys",
+                "content",
+                "enabled",
+                "position",
+                "insertion_order",
+                "selective",
+                "secondary_keys",
+                "case_sensitive",
+                "extensions",
+            )
+            if key in payload
+        }
+        updated = self._require_world_book_manager().update_world_book_entry(int(entry_id), **update_fields)
+        if not updated:
+            raise ValueError(f"Local character world book entry '{entry_id}' could not be updated.")
+        return self.get_character_world_book_entry(entry_id)
+
+    def delete_character_world_book_entry(self, entry_id: int, **_: Any) -> dict[str, Any]:
+        deleted = self._require_world_book_manager().delete_world_book_entry(int(entry_id))
+        if not deleted:
+            raise ValueError(f"Local character world book entry '{entry_id}' could not be deleted.")
+        return {"deleted": True, "id": str(entry_id)}
+
+    def attach_character_world_book_to_session(
+        self,
+        chat_id: str,
+        world_book_id: int,
+        request_data: Any | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        payload = self._world_book_payload(request_data or {})
+        priority = int(payload.get("priority", 0) or 0)
+        attached = self._require_world_book_manager().associate_world_book_with_conversation(
+            str(chat_id),
+            int(world_book_id),
+            priority=priority,
+        )
+        if not attached:
+            raise ValueError(f"Local character world book '{world_book_id}' could not be attached.")
+        return {"chat_id": str(chat_id), "world_book_id": int(world_book_id), "priority": priority}
+
+    def detach_character_world_book_from_session(self, chat_id: str, world_book_id: int, **_: Any) -> dict[str, Any]:
+        self._require_world_book_manager().disassociate_world_book_from_conversation(str(chat_id), int(world_book_id))
+        return {"deleted": True, "chat_id": str(chat_id), "world_book_id": int(world_book_id)}
+
+    def list_session_world_books(
+        self,
+        chat_id: str,
+        *,
+        include_disabled: bool = False,
+        **_: Any,
+    ) -> dict[str, Any]:
+        items = self._require_world_book_manager().get_world_books_for_conversation(
+            str(chat_id),
+            enabled_only=not include_disabled,
+        )
+        return {"world_books": items, "total": len(items)}
+
+    def export_character_world_book(self, world_book_id: int, **_: Any) -> dict[str, Any]:
+        return self._require_world_book_manager().export_world_book(int(world_book_id))
+
+    def import_character_world_book(
+        self,
+        request_data: Any,
+        *,
+        name_override: str | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        world_book_id = self._require_world_book_manager().import_world_book(
+            self._world_book_payload(request_data),
+            name_override=name_override,
+        )
+        return self.get_character_world_book(world_book_id)
 
     def list_persona_profiles(
         self,
@@ -828,6 +1103,117 @@ class LocalCharacterPersonaService:
             raise ValueError(f"Local character chat session '{chat_id}' could not be reloaded after restore.")
         return restored
 
+    def list_character_chat_messages(
+        self,
+        chat_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        **_: Any,
+    ) -> dict[str, Any]:
+        self._require_chat_session(chat_id)
+        messages = [
+            self.conversations.normalize_message_row(message)
+            for message in self._require_db().get_messages_for_conversation(chat_id, limit=limit, offset=offset)
+        ]
+        messages = [message for message in messages if message is not None]
+        return {"messages": messages, "total": len(messages), "limit": limit, "offset": offset, "source": "local"}
+
+    def list_character_messages(self, chat_id: str, **kwargs: Any) -> dict[str, Any]:
+        return self.list_character_chat_messages(chat_id, **kwargs)
+
+    def get_character_chat_message(self, message_id: str, **_: Any) -> dict[str, Any]:
+        message = self.conversations.normalize_message_row(self._require_db().get_message_by_id(message_id))
+        if message is None:
+            raise ValueError(f"local_character_message_not_found:{message_id}")
+        self._require_chat_session(str(message["conversation_id"]))
+        return message
+
+    def get_character_message(self, message_id: str, **kwargs: Any) -> dict[str, Any]:
+        return self.get_character_chat_message(message_id, **kwargs)
+
+    def create_character_chat_message(self, chat_id: str, request_data: Any, **_: Any) -> dict[str, Any]:
+        self._require_chat_session(chat_id)
+        payload = _model_payload(request_data, exclude_none=False)
+        role = payload.get("role") or payload.get("sender") or "user"
+        message_id = self._require_db().add_message(
+            {
+                "conversation_id": str(chat_id),
+                "sender": payload.get("sender") or role,
+                "role": role,
+                "content": payload.get("content", ""),
+                "parent_message_id": payload.get("parent_message_id"),
+            }
+        )
+        return self.get_character_chat_message(str(message_id))
+
+    def create_character_message(self, chat_id: str, request_data: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.create_character_chat_message(chat_id, request_data, **kwargs)
+
+    def update_character_chat_message(
+        self,
+        message_id: str,
+        request_data: Any,
+        *,
+        expected_version: int | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        current = self.get_character_chat_message(message_id)
+        payload = {
+            key: value
+            for key, value in _model_payload(request_data, exclude_none=False).items()
+            if key in {"content", "ranking", "parent_message_id", "image_data", "image_mime_type"}
+        }
+        if not payload:
+            payload = {"content": current.get("content", "")}
+        self._require_db().update_message(
+            message_id,
+            payload,
+            expected_version=int(expected_version if expected_version is not None else current.get("version", 1)),
+        )
+        return self.get_character_chat_message(message_id)
+
+    def update_character_message(self, message_id: str, request_data: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.update_character_chat_message(message_id, request_data, **kwargs)
+
+    def delete_character_chat_message(
+        self,
+        message_id: str,
+        *,
+        expected_version: int | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        current = self.get_character_chat_message(message_id)
+        self._require_db().soft_delete_message(
+            message_id,
+            expected_version=int(expected_version if expected_version is not None else current.get("version", 1)),
+        )
+        return {"status": "deleted", "message_id": message_id}
+
+    def delete_character_message(self, message_id: str, **kwargs: Any) -> dict[str, Any]:
+        return self.delete_character_chat_message(message_id, **kwargs)
+
+    def search_character_messages(
+        self,
+        chat_id: str,
+        query: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        **_: Any,
+    ) -> dict[str, Any]:
+        page = self.list_character_chat_messages(chat_id, limit=limit, offset=offset)
+        normalized_query = str(query or "").lower()
+        messages = [
+            message
+            for message in page["messages"]
+            if normalized_query in str(message.get("content") or "").lower()
+        ]
+        return {"messages": messages, "total": len(messages), "limit": limit, "offset": offset, "source": "local"}
+
+    def search_character_chat_messages(self, chat_id: str, query: str, **kwargs: Any) -> dict[str, Any]:
+        return self.search_character_messages(chat_id, query, **kwargs)
+
     def export_chat_history(
         self,
         chat_id: str,
@@ -872,6 +1258,141 @@ class LocalCharacterPersonaService:
         self._chat_settings[str(chat_id)] = dict(request.settings)
         self._persist_persona_profiles()
         return self.get_chat_settings(chat_id)
+
+    def get_character_chat_settings(self, chat_id: str, **kwargs: Any) -> dict[str, Any]:
+        return self.get_chat_settings(chat_id, **kwargs)
+
+    def update_character_chat_settings(self, chat_id: str, request_data: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.update_chat_settings(chat_id, request_data, **kwargs)
+
+    def list_character_memories(
+        self,
+        character_id: str,
+        *,
+        include_archived: bool = False,
+        include_deleted: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+        **_: Any,
+    ) -> dict[str, Any]:
+        self._require_character(int(character_id))
+        filtered = [
+            self._character_memory_view(record)
+            for record in self._character_memories
+            if str(record.get("character_id")) == str(character_id)
+            and (include_deleted or not record.get("deleted"))
+            and (include_archived or not record.get("archived"))
+        ]
+        page = filtered[offset : offset + limit]
+        return {"memories": page, "total": len(filtered), "limit": limit, "offset": offset, "source": "local"}
+
+    def create_character_memory(self, character_id: str, request_data: Any, **_: Any) -> dict[str, Any]:
+        self._require_character(int(character_id))
+        payload = _model_payload(request_data, exclude_none=False)
+        content = _clean_text(payload.get("content"))
+        if content is None:
+            raise ValueError("local_character_memory_content_required")
+        now = self._now()
+        record = {
+            "id": str(payload.get("id") or uuid.uuid4()),
+            "character_id": str(character_id),
+            "content": content,
+            "memory_type": payload.get("memory_type") or "manual",
+            "archived": bool(payload.get("archived", False)),
+            "deleted": False,
+            "version": 1,
+            "created_at": now,
+            "updated_at": now,
+            "metadata": payload.get("metadata") or {},
+        }
+        self._character_memories.append(record)
+        self._persist_persona_profiles()
+        return self._character_memory_view(record)
+
+    def update_character_memory(
+        self,
+        character_id: str,
+        memory_id: str,
+        request_data: Any,
+        **_: Any,
+    ) -> dict[str, Any]:
+        record = self._find_character_memory(character_id, memory_id)
+        payload = _model_payload(request_data, exclude_none=False)
+        if "content" in payload:
+            content = _clean_text(payload.get("content"))
+            if content is None:
+                raise ValueError("local_character_memory_content_required")
+            record["content"] = content
+        if "metadata" in payload:
+            record["metadata"] = payload.get("metadata") or {}
+        record["version"] = int(record.get("version", 1) or 1) + 1
+        record["updated_at"] = self._now()
+        self._persist_persona_profiles()
+        return self._character_memory_view(record)
+
+    def archive_character_memory(
+        self,
+        character_id: str,
+        memory_id: str,
+        request_data: Any | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        record = self._find_character_memory(character_id, memory_id)
+        payload = _model_payload(request_data or {}, exclude_none=False)
+        record["archived"] = bool(payload.get("archived", True))
+        record["version"] = int(record.get("version", 1) or 1) + 1
+        record["updated_at"] = self._now()
+        self._persist_persona_profiles()
+        return self._character_memory_view(record)
+
+    def delete_character_memory(self, character_id: str, memory_id: str, **_: Any) -> dict[str, Any]:
+        record = self._find_character_memory(character_id, memory_id)
+        record["deleted"] = True
+        record["version"] = int(record.get("version", 1) or 1) + 1
+        record["updated_at"] = self._now()
+        self._persist_persona_profiles()
+        return {"deleted": True}
+
+    def extract_character_memories(self, character_id: str, request_data: Any, **_: Any) -> dict[str, Any]:
+        self._require_character(int(character_id))
+        payload = _model_payload(request_data, exclude_none=False)
+        chat_id = str(payload.get("chat_id") or "")
+        if not chat_id:
+            raise ValueError("local_character_memory_chat_id_required")
+        limit = int(payload.get("message_limit") or 100)
+        messages = self._require_db().get_messages_for_conversation(chat_id, limit=limit, offset=0)
+        extracted: list[dict[str, Any]] = []
+        skipped_duplicates = 0
+        existing = {
+            str(record.get("content") or "").strip().lower()
+            for record in self._character_memories
+            if str(record.get("character_id")) == str(character_id) and not record.get("deleted")
+        }
+        for message in messages:
+            content = str(message.get("content") or "").strip()
+            marker = "remember that "
+            marker_index = content.lower().find(marker)
+            if marker_index < 0:
+                continue
+            memory_content = content[marker_index + len(marker) :].strip()
+            if not memory_content:
+                continue
+            key = memory_content.lower()
+            if key in existing:
+                skipped_duplicates += 1
+                continue
+            memory = self.create_character_memory(
+                character_id,
+                {"content": memory_content, "memory_type": "extracted", "metadata": {"chat_id": chat_id}},
+            )
+            existing.add(key)
+            extracted.append(memory)
+        return {
+            "extracted": len(extracted),
+            "skipped_duplicates": skipped_duplicates,
+            "memories": extracted,
+            "source": "local",
+        }
 
     def export_lorebook_diagnostics(self, chat_id: str, **kwargs: Any) -> dict[str, Any]:
         session = self._require_chat_session(chat_id)

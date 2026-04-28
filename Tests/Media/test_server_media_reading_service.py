@@ -5,9 +5,21 @@ import pytest
 from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api import (
+    AddMediaRequest,
     FileCreateOptions,
     FileCreateRequest,
     FileArtifactsPurgeRequest,
+    ProcessAudioRequest,
+    ProcessCodeRequest,
+    ProcessDocumentRequest,
+    ProcessEbookRequest,
+    ProcessEmailRequest,
+    ProcessPDFRequest,
+    ProcessMediaWikiRequest,
+    ProcessVideoRequest,
+    ReprocessMediaRequest,
+    WebScrapingRequest,
+    ReadingSaveRequest,
     ReadingNoteLinkResponse,
     ReadingNoteLinksListResponse,
     ReadingSavedSearchListResponse,
@@ -22,12 +34,13 @@ from tldw_chatbook.tldw_api import (
     ReadingSummaryResponse,
     ReadingTTSResponse,
 )
-from tldw_chatbook.tldw_api.media_reading_schemas import ItemsBulkResponse
+from tldw_chatbook.tldw_api.media_reading_schemas import ItemsBulkRequest, ItemsBulkResponse
 
 
 class FakeClient:
     def __init__(self):
         self.calls = []
+        self.digest_schedule_id = "digest-1"
 
     async def list_reading_items(self, **kwargs):
         self.calls.append(("list_reading_items", kwargs))
@@ -105,8 +118,9 @@ class FakeClient:
 
     async def save_reading_item(self, request_data):
         self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+        item_id = 50 if request_data.title == "Saved URL" else 77
         return {
-            "id": 77,
+            "id": item_id,
             "media_id": 123,
             "title": request_data.title or "Saved Article",
             "url": str(request_data.url),
@@ -203,15 +217,31 @@ class FakeClient:
 
     async def list_media_items(self, *, page=1, results_per_page=10, include_keywords=False):
         self.calls.append(("list_media_items", page, results_per_page, include_keywords))
-        return {"items": [{"id": 41}], "pagination": {"page": page, "results_per_page": results_per_page}}
+        return {
+            "items": [{"id": 99, "title": "Server Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "pagination": {
+                "page": page,
+                "results_per_page": results_per_page,
+                "total_pages": 1,
+                "total_items": 1,
+            },
+        }
 
     async def list_media_keywords(self, *, query=None, limit=100):
         self.calls.append(("list_media_keywords", query, limit))
-        return {"keywords": ["ai"]}
+        return {"keywords": ["ai", "testing"]}
 
     async def list_media_trash(self, *, page=1, results_per_page=10, include_keywords=False):
         self.calls.append(("list_media_trash", page, results_per_page, include_keywords))
-        return {"items": [{"id": 41}], "pagination": {"page": page, "results_per_page": results_per_page}}
+        return {
+            "items": [{"id": 99, "title": "Trashed Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "pagination": {
+                "page": page,
+                "results_per_page": results_per_page,
+                "total_pages": 1,
+                "total_items": 1,
+            },
+        }
 
     async def empty_media_trash(self):
         self.calls.append(("empty_media_trash",))
@@ -230,11 +260,21 @@ class FakeClient:
 
     async def update_media_item(self, media_id, request_data):
         self.calls.append(("update_media_item", media_id, request_data.model_dump(exclude_none=True, mode="json")))
-        return {"media_id": media_id, "updated": True}
+        return {
+            "media_id": media_id,
+            "source": {"title": request_data.title},
+            "processing": {},
+            "content": {},
+            "keywords": [],
+        }
 
     async def delete_media_item(self, media_id):
         self.calls.append(("delete_media_item", media_id))
         return {}
+
+    async def trash_media_item(self, media_id):
+        self.calls.append(("trash_media_item", media_id))
+        return {"deleted": True}
 
     async def restore_media_item(
         self,
@@ -249,7 +289,7 @@ class FakeClient:
 
     async def permanently_delete_media_item(self, media_id):
         self.calls.append(("permanently_delete_media_item", media_id))
-        return {}
+        return {"deleted": True}
 
     async def update_media_keywords(self, media_id, request_data):
         self.calls.append(("update_media_keywords", media_id, request_data.model_dump(mode="json")))
@@ -257,19 +297,29 @@ class FakeClient:
 
     async def search_media_metadata(self, **kwargs):
         self.calls.append(("search_media_metadata", kwargs))
-        return {"results": [{"media_id": 41}], "pagination": {"total": 1}}
+        return {
+            "results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}],
+            "pagination": {"page": 1, "per_page": 20, "total": 1, "total_pages": 1},
+        }
 
     async def get_media_by_identifier(self, **kwargs):
         self.calls.append(("get_media_by_identifier", kwargs))
-        return {"results": [{"media_id": 41}], "total": 1}
+        return {"results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}], "total": 1}
 
     async def process_mediawiki_dump(self, request_data, dump_file_path):
         self.calls.append(("process_mediawiki_dump", request_data.model_dump(exclude_none=True, mode="json"), dump_file_path))
-        yield {"title": "Main Page", "content": "Body"}
+        if getattr(request_data, "wiki_name", None) == "Example Wiki":
+            yield {"title": "Page One", "content": "Body", "status": "Success", "input_ref": "example.xml"}
+        else:
+            yield {"title": "Main Page", "content": "Body"}
 
     async def ingest_mediawiki_dump(self, request_data, dump_file_path):
         self.calls.append(("ingest_mediawiki_dump", request_data.model_dump(exclude_none=True, mode="json"), dump_file_path))
-        yield {"type": "summary", "processed": 1}
+        if getattr(request_data, "wiki_name", None) == "Example Wiki":
+            yield {"type": "progress", "processed": 1}
+            yield {"type": "item_result", "data": {"title": "Stored Page", "media_id": 42}}
+        else:
+            yield {"type": "summary", "processed": 1}
 
     async def download_media_file(self, media_id, *, file_type="original"):
         self.calls.append(("download_media_file", media_id, file_type))
@@ -281,7 +331,19 @@ class FakeClient:
 
     async def add_media(self, request_data, file_paths=None):
         self.calls.append(("add_media", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-        return {"status": "success", "processed_count": 1}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {
+                    "status": "Success",
+                    "input_ref": "https://example.com/clip",
+                    "media_type": request_data.media_type,
+                    "db_id": 42,
+                }
+            ],
+        }
 
     async def get_reading_progress(self, media_id):
         self.calls.append(("get_reading_progress", media_id))
@@ -378,6 +440,7 @@ class FakeClient:
             "source_id": source_id,
             "normalized_relative_path": "chapter-1.md",
             "sync_status": "sync_managed",
+            "binding": {"media_id": 99},
         }
 
     async def list_media_versions(self, media_id, *, include_content=False, limit=10, page=1):
@@ -410,7 +473,16 @@ class FakeClient:
 
     async def save_reading_item(self, request_data):
         self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
-        return {"id": 50, "title": "Saved URL", "url": "https://example.com", "tags": ["ai"]}
+        item_id = 50 if request_data.title == "Saved URL" else 77
+        return {
+            "id": item_id,
+            "media_id": 123,
+            "title": request_data.title or "Saved Article",
+            "url": str(request_data.url),
+            "status": request_data.status,
+            "favorite": request_data.favorite,
+            "tags": request_data.tags,
+        }
 
     async def create_reading_saved_search(self, request_data):
         self.calls.append(("create_reading_saved_search", request_data.model_dump(exclude_none=True, mode="json")))
@@ -443,14 +515,23 @@ class FakeClient:
         self.calls.append(("link_note_to_reading_item", item_id, note_id))
         return ReadingNoteLinkResponse.model_validate({"item_id": item_id, "note_id": note_id})
 
+    async def link_reading_item_note(self, item_id, request_data):
+        self.calls.append(("link_reading_item_note", item_id, request_data.model_dump(mode="json")))
+        return ReadingNoteLinkResponse.model_validate({"item_id": item_id, "note_id": request_data.note_id})
+
     async def list_reading_item_note_links(self, item_id):
         self.calls.append(("list_reading_item_note_links", item_id))
+        note_id = "note-uuid-1" if item_id == 31 else "note-1"
         return ReadingNoteLinksListResponse.model_validate(
-            {"item_id": item_id, "links": [{"item_id": item_id, "note_id": "note-1"}]}
+            {"item_id": item_id, "links": [{"item_id": item_id, "note_id": note_id}]}
         )
 
     async def unlink_note_from_reading_item(self, item_id, note_id):
         self.calls.append(("unlink_note_from_reading_item", item_id, note_id))
+        return {"ok": True}
+
+    async def unlink_reading_item_note(self, item_id, note_id):
+        self.calls.append(("unlink_reading_item_note", item_id, note_id))
         return {"ok": True}
 
     async def bulk_update_reading_items(self, request_data):
@@ -461,13 +542,14 @@ class FakeClient:
 
     async def create_reading_archive(self, item_id, request_data):
         self.calls.append(("create_reading_archive", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        output_id = 77 if item_id == 31 else 99
         return ReadingArchiveResponse.model_validate(
             {
-                "output_id": 99,
+                "output_id": output_id,
                 "title": "Archive",
                 "format": "md",
                 "storage_path": "outputs/archive.md",
-                "download_url": "/api/v1/outputs/99/download",
+                "download_url": f"/api/v1/outputs/{output_id}/download",
             }
         )
 
@@ -488,9 +570,9 @@ class FakeClient:
         return ReadingImportJobResponse.model_validate({"job_id": 701, "job_uuid": "job-uuid", "status": "queued"})
 
     async def export_reading_items(self, **kwargs):
-        self.calls.append(("export_reading_items", kwargs))
+        self.calls.append(("export_reading_items", {key: value for key, value in kwargs.items() if value is not None}))
         return ReadingExportResponse(
-            content=b'{"id": 1}\n',
+            content=b'{"id":31}\n',
             content_type="application/x-ndjson",
             content_disposition="attachment; filename=reading_export.jsonl",
             filename="reading_export.jsonl",
@@ -514,7 +596,7 @@ class FakeClient:
                     {
                         "job_id": 701,
                         "job_uuid": "job-uuid",
-                        "status": "completed",
+                        "status": status or "completed",
                         "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
                     }
                 ],
@@ -537,14 +619,15 @@ class FakeClient:
 
     async def create_reading_digest_schedule(self, request_data):
         self.calls.append(("create_reading_digest_schedule", request_data.model_dump(exclude_none=True, mode="json")))
-        return {"id": "digest-1"}
+        self.digest_schedule_id = "sched-1" if request_data.name == "Morning Digest" else "digest-1"
+        return {"id": self.digest_schedule_id}
 
     async def list_reading_digest_schedules(self, *, limit=50, offset=0):
         self.calls.append(("list_reading_digest_schedules", limit, offset))
         return [
             ReadingDigestScheduleResponse.model_validate(
                 {
-                    "id": "digest-1",
+                    "id": self.digest_schedule_id,
                     "name": "Morning",
                     "cron": "0 8 * * *",
                     "timezone": "UTC",
@@ -612,7 +695,58 @@ class FakeClient:
             "status": "success",
             "message": "Web content processed",
             "count": 1,
-            "results": [{"url": "https://example.com/article", "title": "Example Article"}],
+            "results": [
+                {
+                    "url": (request_data.urls or ["https://example.com/article"])[0],
+                    "title": (request_data.titles or ["Article"])[0],
+                }
+            ],
+        }
+
+    async def submit_media_ingest_jobs(self, request_data, file_paths=None):
+        self.calls.append(("submit_media_ingest_jobs", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        return {
+            "batch_id": "batch-1",
+            "jobs": [{"id": 7, "source": "https://example.com/document", "source_kind": "url", "status": "queued"}],
+            "errors": [],
+        }
+
+    async def get_media_ingest_job(self, job_id):
+        self.calls.append(("get_media_ingest_job", job_id))
+        return {"id": job_id, "status": "queued", "job_type": "document", "batch_id": "batch-1"}
+
+    async def list_media_ingest_jobs(self, batch_id, *, limit=100):
+        self.calls.append(("list_media_ingest_jobs", batch_id, limit))
+        return {"batch_id": batch_id, "jobs": [{"id": 7, "status": "queued", "job_type": "document"}]}
+
+    def stream_media_ingest_job_events(self, *, batch_id=None, after_id=0):
+        self.calls.append(("stream_media_ingest_job_events", batch_id, after_id))
+
+        async def _events():
+            yield {"event": "snapshot", "data": {"batch_id": batch_id, "jobs": [{"id": 7, "status": "queued"}]}, "id": "1"}
+            await self.get_media_ingest_job(7)
+            yield {
+                "event": "job",
+                "data": {"id": 7, "attrs": {"progress_percent": 50}},
+                "id": "2",
+            }
+
+        return _events()
+
+    async def cancel_media_ingest_job(self, job_id, *, reason=None):
+        self.calls.append(("cancel_media_ingest_job", job_id, reason))
+        return {"success": True, "job_id": job_id, "status": "cancelled", "message": reason}
+
+    async def cancel_media_ingest_batch(self, *, batch_id=None, session_id=None, reason=None):
+        self.calls.append(("cancel_media_ingest_jobs_batch", batch_id, session_id, reason))
+        return {
+            "success": True,
+            "batch_id": batch_id or "batch-1",
+            "requested": 1,
+            "cancelled": 1,
+            "already_terminal": 0,
+            "failed": 0,
+            "message": reason,
         }
 
     async def process_video(self, request_data, file_paths=None):
@@ -659,11 +793,12 @@ class FakeClient:
 
     async def process_web_scraping(self, request_data):
         self.calls.append(("process_web_scraping", request_data.model_dump(exclude_none=True, mode="json")))
+        title = "Post" if str(request_data.url_input).endswith("/post") else "Scraped Article"
         return {
             "status": "success",
             "message": "Web content processed",
             "count": 1,
-            "results": [{"url": "https://example.com/post", "title": "Post"}],
+            "results": [{"url": str(request_data.url_input), "title": title}],
         }
 
     async def get_transcription_models(self):
@@ -1000,8 +1135,8 @@ async def test_server_service_routes_media_listing_search_and_trash_adjuncts_to_
     assert metadata["results"][0]["safe_metadata"]["doi"] == "10/example"
     assert identifier["total"] == 1
     assert client.calls[:7] == [
-        ("list_media_keywords", {"query": "ai", "limit": 5}),
-        ("list_media_items", {"page": 2, "results_per_page": 25, "include_keywords": True}),
+        ("list_media_keywords", "ai", 5),
+        ("list_media_items", 2, 25, True),
         (
             "search_media_items",
             {
@@ -1013,7 +1148,7 @@ async def test_server_service_routes_media_listing_search_and_trash_adjuncts_to_
             2,
             25,
         ),
-        ("list_media_trash", {"page": 1, "results_per_page": 10, "include_keywords": True}),
+        ("list_media_trash", 1, 10, True),
         ("empty_media_trash",),
         (
             "search_media_metadata",
@@ -1062,15 +1197,11 @@ async def test_server_service_routes_media_processing_controls_to_client():
         (
             "reprocess_media",
             99,
-            {
-                "perform_chunking": True,
-                "generate_embeddings": True,
-                "chunk_method": "sentences",
-                "chunk_size": 500,
-                "chunk_overlap": 200,
-                "auto_apply_template": False,
-                "force_regenerate_embeddings": False,
-            },
+            ReprocessMediaRequest(
+                perform_chunking=True,
+                generate_embeddings=True,
+                chunk_method="sentences",
+            ).model_dump(exclude_none=True, mode="json"),
         ),
         ("process_video", ProcessVideoRequest(title="Video").model_dump(exclude_none=True, mode="json"), ["video.mp4"]),
         ("process_audio", ProcessAudioRequest(title="Audio").model_dump(exclude_none=True, mode="json"), ["audio.mp3"]),
@@ -1103,24 +1234,13 @@ async def test_server_service_routes_persistent_add_media():
     assert client.calls == [
         (
             "add_media",
-            {
-                "media_type": "video",
-                "urls": ["https://example.com/clip"],
-                "title": "Clip",
-                "keywords": ["ai", "video"],
-                "overwrite_existing": False,
-                "keep_original_file": True,
-                "perform_analysis": True,
-                "use_cookies": False,
-                "perform_rolling_summarization": False,
-                "summarize_recursively": False,
-                "perform_chunking": True,
-                "use_adaptive_chunking": False,
-                "use_multi_level_chunking": False,
-                "chunk_size": 500,
-                "chunk_overlap": 200,
-                "generate_embeddings": False,
-            },
+            AddMediaRequest(
+                media_type="video",
+                urls=["https://example.com/clip"],
+                title="Clip",
+                keywords=["ai", "video"],
+                keep_original_file=True,
+            ).model_dump(exclude_none=True, mode="json"),
             ["/tmp/clip.mp4"],
         )
     ]
@@ -1228,7 +1348,7 @@ async def test_server_service_routes_media_item_lifecycle_to_true_media_endpoint
     assert restored["media_id"] == 99
     assert purged == {"deleted": True}
     assert keywords == {"media_id": 99, "keywords": ["ai", "ml"]}
-    assert downloaded == b"%PDF"
+    assert downloaded.content == b"%PDF"
     assert client.calls == [
         ("get_media_item", 99, False, False, True),
         (
@@ -1280,8 +1400,17 @@ async def test_server_service_routes_media_navigation_to_server_contract():
     assert navigation["media_id"] == 99
     assert content["node_id"] == "node-1"
     assert client.calls == [
-        ("get_media_navigation", 99, True, 3, 100, "root"),
-        ("get_media_navigation_content", 99, "node-1", "markdown", True),
+        (
+            "get_media_navigation",
+            99,
+            {
+                "include_generated_fallback": True,
+                "max_depth": 3,
+                "max_nodes": 100,
+                "parent_id": "root",
+            },
+        ),
+        ("get_media_navigation_content", 99, "node-1", {"format": "markdown", "include_alternates": True}),
     ]
 
 
@@ -1416,7 +1545,7 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
         ("reattach_ingestion_source_item", 7, 55),
     ]
 
-    with pytest.raises(NotImplementedError, match="not exposed by tldw_server"):
+    with pytest.raises(ValueError, match="Server ingestion source delete is not available yet."):
         await service.delete_ingestion_source(7)
 
 
@@ -1511,9 +1640,9 @@ async def test_server_service_routes_reading_export_summary_and_tts_payloads():
     )
     audio = await service.tts_reading_item(31, model="kokoro", stream=False, text_source="text")
 
-    assert exported == b'{"id":31}\n'
+    assert exported.content == b'{"id":31}\n'
     assert summary["summary"] == "Short summary"
-    assert audio == b"audio-bytes"
+    assert audio.content == b"mp3-bytes"
     assert client.calls[-3:] == [
         (
             "export_reading_items",
@@ -1628,6 +1757,11 @@ async def test_server_service_routes_media_ingest_job_calls_and_payloads():
                 "urls": ["https://example.com/document"],
                 "title": "Example Document",
                 "perform_analysis": False,
+                "chunk_size": 500,
+                "chunk_overlap": 200,
+                "perform_chunking": True,
+                "generate_embeddings": False,
+                "force_regenerate_embeddings": False,
             },
             ["/tmp/document.html"],
         ),
@@ -2298,7 +2432,7 @@ async def test_server_service_routes_direct_media_management_with_policy_actions
     await service.list_media_trash(page=2, results_per_page=25, include_keywords=True)
     await service.empty_media_trash()
     await service.get_media_item(41, include_content=False)
-    await service.update_media_item(41, title="Renamed", keywords=["ai"])
+    await service.update_media_item(41, title="Renamed")
     await service.delete_media_item(41)
     await service.restore_media_item(41, include_content=False)
     await service.permanently_delete_media_item(41)
@@ -2312,7 +2446,7 @@ async def test_server_service_routes_direct_media_management_with_policy_actions
         ("list_media_trash", 2, 25, True),
         ("empty_media_trash",),
         ("get_media_item", 41, False, True, False),
-        ("update_media_item", 41, {"title": "Renamed", "keywords": ["ai"]}),
+        ("update_media_item", 41, {"title": "Renamed"}),
         ("delete_media_item", 41),
         ("restore_media_item", 41, False, True, False),
         ("permanently_delete_media_item", 41),

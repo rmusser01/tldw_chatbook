@@ -9,6 +9,7 @@ from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     FlashcardBulkUpdateItem,
+    FlashcardBulkUpdateItemRequest,
     FlashcardCreateRequest,
     FlashcardDeckCreateRequest,
     FlashcardDeckUpdateRequest,
@@ -620,7 +621,7 @@ class ServerStudyService:
     ) -> dict[str, Any]:
         response = await self._require_client().set_flashcard_tags(
             card_id,
-            FlashcardTagsUpdateRequest(tags=tags),
+            FlashcardTagsUpdate(tags=tags),
         )
         return self._model_to_dict(response)
 
@@ -680,22 +681,24 @@ class ServerStudyService:
         *,
         deck_id: Optional[int] = None,
         workspace_id: Optional[str] = None,
-        include_workspace_items: bool = False,
+        include_workspace_items: Optional[bool] = None,
         tag: Optional[str] = None,
         q: Optional[str] = None,
-        export_format: str = "csv",
-        include_reverse: bool = False,
-        delimiter: str = "\t",
-        include_header: bool = False,
-        extended_header: bool = False,
-    ) -> bytes:
+        format: str = "csv",
+        export_format: Optional[str] = None,
+        include_reverse: Optional[bool] = None,
+        delimiter: Optional[str] = None,
+        include_header: Optional[bool] = None,
+        extended_header: Optional[bool] = None,
+    ) -> Any:
+        requested_format = export_format or format
         return await self._require_client().export_flashcards(
             deck_id=deck_id,
             workspace_id=workspace_id,
             include_workspace_items=include_workspace_items,
             tag=tag,
             q=q,
-            export_format=export_format,
+            format=requested_format,
             include_reverse=include_reverse,
             delimiter=delimiter,
             include_header=include_header,
@@ -770,7 +773,7 @@ class ServerStudyService:
         *,
         deck_id: Optional[int] = None,
         workspace_id: Optional[str] = None,
-        include_workspace_items: bool = False,
+        include_workspace_items: Optional[bool] = None,
     ) -> dict[str, Any]:
         response = await self._require_client().get_flashcard_analytics_summary(
             deck_id=deck_id,

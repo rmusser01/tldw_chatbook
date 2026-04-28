@@ -5,6 +5,32 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
+class ResearchRecord(dict):
+    """Dict record that also supports attribute access and direct awaiting."""
+
+    def __getattr__(self, key: str) -> Any:
+        try:
+            return self[key]
+        except KeyError as exc:
+            raise AttributeError(key) from exc
+
+    def __await__(self):
+        async def _value() -> "ResearchRecord":
+            return self
+
+        return _value().__await__()
+
+
+class ResearchRecordList(list):
+    """List record that can be awaited by async interop callers."""
+
+    def __await__(self):
+        async def _value() -> "ResearchRecordList":
+            return self
+
+        return _value().__await__()
+
+
 _KIND_TO_RECORD_TYPE = {
     "session": "research_session",
     "run": "research_run",
@@ -27,4 +53,4 @@ def normalize_research_record(source: str, kind: str, record: Mapping[str, Any])
     payload["source"] = source
     payload["record_type"] = record_type
     payload["record_id"] = f"{source}:{record_type}:{record_id}"
-    return payload
+    return ResearchRecord(payload)

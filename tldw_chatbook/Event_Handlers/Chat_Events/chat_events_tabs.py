@@ -97,6 +97,8 @@ async def handle_chat_send_button_pressed_with_tabs(app: 'TldwCli', event: Butto
         async with state_manager.tab_context(session_data.tab_id):
             # Update session-specific state before calling handler
             if session_data:
+                app._current_chat_tab_id = session_data.tab_id
+
                 # Update current conversation ID to match this session
                 app.current_chat_conversation_id = session_data.conversation_id
                 app.current_chat_is_ephemeral = session_data.is_ephemeral
@@ -144,6 +146,7 @@ async def handle_stop_chat_generation_pressed_with_tabs(app: 'TldwCli', event: B
         return
     
     # Update app state to match this session before stopping
+    app._current_chat_tab_id = session_data.tab_id
     if session_data.current_worker:
         app.current_chat_worker = session_data.current_worker
     
@@ -184,6 +187,7 @@ async def handle_respond_for_me_button_pressed_with_tabs(app: 'TldwCli', event: 
         async with state_manager.tab_context(session_data.tab_id):
             # Update app state for this session
             if session_data:
+                app._current_chat_tab_id = session_data.tab_id
                 app.current_chat_conversation_id = session_data.conversation_id
                 app.current_chat_is_ephemeral = session_data.is_ephemeral
                 
@@ -217,6 +221,7 @@ async def handle_chat_conversation_search_changed_with_tabs(app: 'TldwCli', even
     
     # Update app state for this session
     if session_data:
+        app._current_chat_tab_id = session_data.tab_id
         app.current_chat_conversation_id = session_data.conversation_id
         app.current_chat_is_ephemeral = session_data.is_ephemeral
     
@@ -254,6 +259,7 @@ async def display_conversation_in_chat_tab_ui_with_tabs(app: 'TldwCli', conversa
         # Update state manager with current tab context
         async with state_manager.tab_context(session_data.tab_id):
             # Update session data before calling handler
+            app._current_chat_tab_id = session_data.tab_id
             session_data.conversation_id = conversation_id
             session_data.is_ephemeral = False
             session_data.has_unsaved_changes = False  # Loading a conversation clears unsaved state

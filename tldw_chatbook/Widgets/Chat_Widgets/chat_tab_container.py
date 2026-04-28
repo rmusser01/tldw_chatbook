@@ -287,8 +287,13 @@ class ChatTabContainer(Container):
         if self.tab_bar:
             self.tab_bar.remove_tab(tab_id)
         
-        # Remove session widget
-        await session.remove()
+        # Remove session widget. In tests and recovery paths a session may
+        # already be detached from a live Textual app; state cleanup should
+        # still proceed.
+        try:
+            await session.remove()
+        except Exception as e:
+            logger.debug(f"Could not remove chat session widget {tab_id}: {e}")
         
         # Remove from sessions dict
         del self.sessions[tab_id]

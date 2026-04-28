@@ -847,6 +847,9 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=LOCAL_ONLY_SOURCES,
         resources=(
             _resource("mcp.runtime", actions=(LIST, CONFIGURE, LAUNCH, TRIGGER, OBSERVE)),
+            _resource("mcp.inventory", actions=(LIST, OBSERVE)),
+            _resource("mcp.external_profiles", actions=(LIST, CONFIGURE, LAUNCH, TRIGGER, OBSERVE)),
+            _resource("mcp.governance", actions=(LIST, CONFIGURE, OBSERVE, APPROVE)),
         ),
     ),
     _capability(
@@ -855,6 +858,14 @@ AUDITED_CAPABILITY_SEEDS = (
         "mcp_governance",
         sources=REMOTE_ONLY_SOURCES,
         resources=(
+            _resource("mcp.runtime", actions=(OBSERVE,)),
+            _resource("mcp.inventory", actions=(LIST,)),
+            _resource("mcp.catalogs", actions=(LIST, CONFIGURE)),
+            _resource("mcp.external_servers", actions=(LIST, CONFIGURE)),
+            _resource("mcp.credentials", actions=(LIST, CONFIGURE)),
+            _resource("mcp.governance", actions=(LIST, CONFIGURE, OBSERVE, APPROVE)),
+            _resource("mcp.effective_access", actions=(OBSERVE,)),
+            _resource("mcp.advanced", actions=(LIST, CONFIGURE, TRIGGER, OBSERVE)),
             _resource("mcp.governance.tool_registry", actions=(LIST, DETAIL)),
             _resource("mcp.governance.capability_mappings", actions=(LIST, PREVIEW, CREATE, UPDATE, DELETE)),
             _resource("mcp.governance.external_servers", actions=(LIST, CREATE, UPDATE, DELETE)),

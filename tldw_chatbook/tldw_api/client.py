@@ -11,6 +11,7 @@ from urllib.parse import quote
 #
 # 3rd-party Libraries
 import httpx
+from pydantic import BaseModel
 #
 # Local Imports
 from .schemas import (
@@ -49,12 +50,19 @@ from .notes_workspace_schemas import (
 )
 from .media_reading_schemas import (
     AsyncMode,
+    DocumentAnnotationCreateRequest,
     DocumentAnnotationCreate,
     DocumentAnnotationListResponse,
     DocumentAnnotationResponse,
     DocumentAnnotationSyncRequest,
     DocumentAnnotationSyncResponse,
+    DocumentAnnotationUpdateRequest,
     DocumentAnnotationUpdate,
+    DocumentVersionAdvancedUpsertRequest,
+    DocumentVersionCreateRequest,
+    DocumentVersionDetailResponse,
+    DocumentVersionMetadataPatchRequest,
+    DocumentVersionRollbackRequest,
     DocumentFiguresResponse,
     DocumentInsightsRequest,
     DocumentInsightsResponse,
@@ -75,17 +83,30 @@ from .media_reading_schemas import (
     IngestWebContentResponse,
     ItemsBulkRequest,
     ItemsBulkResponse,
+    CancelMediaIngestBatchResponse,
+    CancelMediaIngestJobResponse,
     MediaIngestBatchCancelResponse,
     MediaIngestJobCancelResponse,
     MediaIngestJobListResponse,
+    MediaIngestJobStreamEvent,
+    MediaIngestJobSubmitRequest,
     MediaIngestJobStatus,
     MediaIngestSubmitRequest,
     MediaIngestSubmitResponse,
+    SubmitMediaIngestJobsResponse,
     MediaAdvancedVersionUpsertRequest,
     MediaFileAvailabilityResponse,
+    MediaDetailResponse,
+    MediaIdentifierLookupResponse,
     MediaItemUpdateRequest,
+    MediaKeywordListResponse,
+    MediaKeywordsResponse,
     MediaKeywordsUpdateRequest,
+    MediaMetadataSearchResponse,
     MediaMetadataPatchRequest,
+    MediaTranscriptionModelsResponse,
+    MediaTrashEmptyResponse,
+    MediaUpdateRequest,
     MediaNavigationContentResponse,
     MediaNavigationResponse,
     MediaVersionCreateRequest,
@@ -96,12 +117,15 @@ from .media_reading_schemas import (
     ReadingDigestScheduleResponse,
     ReadingDigestScheduleUpdateRequest,
     ReadingExportResponse,
+    ReadingExportRequest,
     ReadingHighlight,
     ReadingHighlightCreateRequest,
+    ReadingHighlightDeleteResponse,
     ReadingHighlightUpdateRequest,
     ReadingImportJobResponse,
     ReadingImportJobStatus,
     ReadingImportJobsListResponse,
+    ReadingItem,
     ReadingNoteLinkCreateRequest,
     ReadingNoteLinkResponse,
     ReadingNoteLinksListResponse,
@@ -120,6 +144,9 @@ from .media_reading_schemas import (
     ReadingUpdateRequest,
     ReprocessMediaRequest,
     ReprocessMediaResponse,
+    ServerMediaListResponse,
+    UnifiedItem,
+    UnifiedItemsListResponse,
 )
 from .prompt_chatbook_schemas import (
     ChatbookContinueExportRequest,
@@ -588,6 +615,7 @@ from .rag_admin_schemas import (
     ChunkingTemplateMatchResponse,
     ChunkingTemplateResponse,
     ChunkingTemplateUpdateRequest,
+    ChunkingTemplateValidationResponse,
     EmbeddingCollectionCreateRequest,
     EmbeddingCollectionListResponse,
     EmbeddingCollectionResponse,
@@ -836,6 +864,20 @@ from .chat_loop_schemas import (
     ChatLoopStartRequest,
     ChatLoopStartResponse,
 )
+from .chat_documents_schemas import (
+    AsyncGenerationResponse,
+    BulkGenerateRequest,
+    BulkGenerateResponse,
+    DocumentListResponse,
+    DocumentType,
+    GenerateDocumentRequest,
+    GenerateDocumentResponse,
+    GeneratedDocument,
+    GenerationStatistics,
+    JobStatusResponse,
+    PromptConfigResponse,
+    SavePromptConfigRequest,
+)
 from .character_persona_schemas import (
     ArchetypePreviewResponse,
     ArchetypeSummary,
@@ -918,6 +960,9 @@ from .notifications_reminders_schemas import (
     ReminderTaskListResponse,
     ReminderTaskResponse,
     ReminderTaskUpdateRequest,
+)
+from .server_notifications_schemas import (
+    ServerNotificationStreamEvent,
 )
 from .outputs_schemas import (
     OutputArtifact,
@@ -1183,6 +1228,27 @@ class TLDWAPIClient:
         except httpx.RequestError as e:
             raise APIConnectionError(f"Connection error to {url}: {e}")
 
+    async def _request_bytes(
+        self,
+        method: str,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        files: Optional[List[tuple]] = None,
+        json_data: Optional[Union[Dict[str, Any], List[Any]]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> bytes:
+        response = await self._binary_request(
+            method,
+            endpoint,
+            data=data,
+            files=files,
+            json_data=json_data,
+            params=params,
+            headers=headers,
+        )
+        return response.content
+
     async def _headers_request(
         self,
         method: str,
@@ -1334,6 +1400,17 @@ class TLDWAPIClient:
         except httpx.RequestError as e:
             raise APIConnectionError(f"Connection error to {url}: {e}")
 
+    async def _stream_sse_request(
+        self,
+        endpoint: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        event_model: type[BaseModel] | None = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> AsyncGenerator[Any, None]:
+        async for event in self._sse_request("GET", endpoint, params=params, headers=headers):
+            yield event_model.model_validate(event) if event_model is not None else event
+
     async def list_server_notes(self, limit: int = 100, offset: int = 0, include_keywords: bool = True) -> Dict[str, Any]:
         return await self._request(
             "GET",
@@ -1428,9 +1505,19 @@ class TLDWAPIClient:
     async def get_note_neighbors(
         self,
         note_id: str,
+        request_data: NoteGraphRequest | Dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        request = NoteGraphRequest(**kwargs)
+        if request_data is None:
+            request = NoteGraphRequest(**kwargs)
+        elif hasattr(request_data, "model_dump"):
+            payload = request_data.model_dump(exclude_none=True, mode="json")
+            payload.update(kwargs)
+            request = NoteGraphRequest(**payload)
+        else:
+            payload = dict(request_data)
+            payload.update(kwargs)
+            request = NoteGraphRequest(**payload)
         return await self._request(
             "GET",
             f"/api/v1/notes/{note_id}/neighbors",
@@ -1759,8 +1846,15 @@ class TLDWAPIClient:
         )
         return MediaKeywordsResponse.model_validate(response)
 
-    async def download_media_file(self, media_id: int, *, file_type: str = "original") -> bytes:
-        return await self._request_bytes(
+    async def download_media_file(self, media_id: int, *, file_type: str = "original") -> ReadingExportResponse | bytes:
+        request_bytes_override = self.__dict__.get("_request_bytes")
+        if request_bytes_override is not None:
+            return await request_bytes_override(
+                "GET",
+                f"/api/v1/media/{media_id}/file",
+                params={"file_type": file_type},
+            )
+        return await self._binary_request(
             "GET",
             f"/api/v1/media/{media_id}/file",
             params={"file_type": file_type},
@@ -1818,11 +1912,12 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
-    async def list_media_keywords(self, *, query: str | None = None, limit: int = 100) -> Dict[str, Any]:
+    async def list_media_keywords(self, *, query: str | None = None, limit: int = 100) -> MediaKeywordListResponse:
         params: Dict[str, Any] = {"limit": limit}
         if query is not None:
             params["query"] = query
-        return await self._request("GET", "/api/v1/media/keywords", params=params)
+        response = await self._request("GET", "/api/v1/media/keywords", params=params)
+        return MediaKeywordListResponse.model_validate(response)
 
     async def list_media_trash(
         self,
@@ -1830,8 +1925,8 @@ class TLDWAPIClient:
         page: int = 1,
         results_per_page: int = 10,
         include_keywords: bool = False,
-    ) -> Dict[str, Any]:
-        return await self._request(
+    ) -> ServerMediaListResponse:
+        response = await self._request(
             "GET",
             "/api/v1/media/trash",
             params={
@@ -1840,9 +1935,11 @@ class TLDWAPIClient:
                 "include_keywords": str(include_keywords).lower(),
             },
         )
+        return ServerMediaListResponse.model_validate(response)
 
-    async def empty_media_trash(self) -> Dict[str, Any]:
-        return await self._request("POST", "/api/v1/media/trash/empty")
+    async def empty_media_trash(self) -> MediaTrashEmptyResponse:
+        response = await self._request("POST", "/api/v1/media/trash/empty")
+        return MediaTrashEmptyResponse.model_validate(response)
 
     async def get_media_item(
         self,
@@ -1851,8 +1948,8 @@ class TLDWAPIClient:
         include_content: bool = True,
         include_versions: bool = True,
         include_version_content: bool = False,
-    ) -> Dict[str, Any]:
-        return await self._request(
+    ) -> MediaDetailResponse:
+        response = await self._request(
             "GET",
             f"/api/v1/media/{media_id}",
             params={
@@ -1861,13 +1958,15 @@ class TLDWAPIClient:
                 "include_version_content": str(include_version_content).lower(),
             },
         )
+        return MediaDetailResponse.model_validate(response)
 
-    async def update_media_item(self, media_id: int, request_data: MediaItemUpdateRequest) -> Dict[str, Any]:
-        return await self._request(
+    async def update_media_item(self, media_id: int, request_data: MediaItemUpdateRequest) -> MediaDetailResponse:
+        response = await self._request(
             "PUT",
             f"/api/v1/media/{media_id}",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
+        return MediaDetailResponse.model_validate(response)
 
     async def delete_media_item(self, media_id: int) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/media/{media_id}")
@@ -1879,8 +1978,8 @@ class TLDWAPIClient:
         include_content: bool = True,
         include_versions: bool = True,
         include_version_content: bool = False,
-    ) -> Dict[str, Any]:
-        return await self._request(
+    ) -> MediaDetailResponse:
+        response = await self._request(
             "POST",
             f"/api/v1/media/{media_id}/restore",
             params={
@@ -1889,27 +1988,30 @@ class TLDWAPIClient:
                 "include_version_content": str(include_version_content).lower(),
             },
         )
+        return MediaDetailResponse.model_validate(response)
 
     async def permanently_delete_media_item(self, media_id: int) -> Dict[str, Any]:
-        return await self._request("DELETE", f"/api/v1/media/{media_id}/permanent")
+        response = await self._request("DELETE", f"/api/v1/media/{media_id}/permanent")
+        return {"deleted": True, **response}
 
     async def update_media_keywords(
         self,
         media_id: int,
         request_data: MediaKeywordsUpdateRequest,
-    ) -> Dict[str, Any]:
-        return await self._request(
+    ) -> MediaKeywordsResponse:
+        response = await self._request(
             "PATCH",
             f"/api/v1/media/{media_id}/keywords",
             json_data=request_data.model_dump(mode="json"),
         )
+        return MediaKeywordsResponse.model_validate(response)
 
     async def search_media_metadata(
         self,
         *,
         filters: list[dict[str, Any]] | None = None,
         field: str | None = None,
-        op: str = "icontains",
+        op: str | None = None,
         value: str | None = None,
         match_mode: str = "all",
         group_by_media: bool = True,
@@ -1922,7 +2024,7 @@ class TLDWAPIClient:
         date_start: str | None = None,
         date_end: str | None = None,
         sort_by: str | None = None,
-    ) -> Dict[str, Any]:
+    ) -> MediaMetadataSearchResponse:
         params: Dict[str, Any] = {
             "match_mode": match_mode,
             "group_by_media": str(group_by_media).lower(),
@@ -1933,6 +2035,8 @@ class TLDWAPIClient:
             params["filters"] = json.dumps(filters)
         if field is not None:
             params["field"] = field
+            if op is None and filters is None:
+                params["op"] = "icontains"
         if op is not None:
             params["op"] = op
         if value is not None:
@@ -1951,7 +2055,8 @@ class TLDWAPIClient:
             params["date_end"] = date_end
         if sort_by is not None:
             params["sort_by"] = sort_by
-        return await self._request("GET", "/api/v1/media/metadata-search", params=params)
+        response = await self._request("GET", "/api/v1/media/metadata-search", params=params)
+        return MediaMetadataSearchResponse.model_validate(response)
 
     async def get_media_by_identifier(
         self,
@@ -1962,7 +2067,7 @@ class TLDWAPIClient:
         arxiv_id: str | None = None,
         s2_paper_id: str | None = None,
         group_by_media: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> MediaIdentifierLookupResponse:
         params: Dict[str, Any] = {"group_by_media": str(group_by_media).lower()}
         for key, value in {
             "doi": doi,
@@ -1973,9 +2078,17 @@ class TLDWAPIClient:
         }.items():
             if value is not None:
                 params[key] = value
-        return await self._request("GET", "/api/v1/media/by-identifier", params=params)
+        response = await self._request("GET", "/api/v1/media/by-identifier", params=params)
+        return MediaIdentifierLookupResponse.model_validate(response)
 
-    async def download_media_file(self, media_id: int, *, file_type: str = "original") -> ReadingExportResponse:
+    async def download_media_file(self, media_id: int, *, file_type: str = "original") -> ReadingExportResponse | bytes:
+        request_bytes_override = self.__dict__.get("_request_bytes")
+        if request_bytes_override is not None:
+            return await request_bytes_override(
+                "GET",
+                f"/api/v1/media/{media_id}/file",
+                params={"file_type": file_type},
+            )
         return await self._binary_request(
             "GET",
             f"/api/v1/media/{media_id}/file",
@@ -4563,18 +4676,23 @@ class TLDWAPIClient:
 
     async def submit_media_ingest_jobs(
         self,
-        request_data: MediaIngestSubmitRequest,
+        request_data: MediaIngestSubmitRequest | MediaIngestJobSubmitRequest,
         file_paths: Optional[List[str]] = None,
-    ) -> MediaIngestSubmitResponse:
+    ) -> SubmitMediaIngestJobsResponse:
         httpx_files = prepare_files_for_httpx(file_paths or []) if file_paths else None
+        form_data = (
+            model_to_form_data(request_data)
+            if httpx_files or isinstance(request_data, MediaIngestJobSubmitRequest)
+            else request_data.model_dump(exclude_none=True, mode="json")
+        )
         try:
             response = await self._request(
                 "POST",
                 "/api/v1/media/ingest/jobs",
-                data=request_data.model_dump(exclude_none=True, mode="json"),
+                data=form_data,
                 files=httpx_files,
             )
-            return MediaIngestSubmitResponse.model_validate(response)
+            return SubmitMediaIngestJobsResponse.model_validate(response)
         finally:
             if httpx_files:
                 cleanup_file_objects(httpx_files)
@@ -4604,22 +4722,25 @@ class TLDWAPIClient:
         *,
         batch_id: str | None = None,
         after_id: int = 0,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+    ) -> AsyncGenerator[MediaIngestJobStreamEvent, None]:
         params = {"batch_id": batch_id, "after_id": after_id}
         async for event in self._sse_request(
             "GET",
             "/api/v1/media/ingest/jobs/events/stream",
             params={key: value for key, value in params.items() if value is not None},
+            headers={"Accept": "text/event-stream"},
         ):
-            yield event
+            if "event_id" in event and "id" not in event:
+                event["id"] = event.pop("event_id")
+            yield MediaIngestJobStreamEvent.model_validate(event)
 
-    async def cancel_media_ingest_job(self, job_id: int, *, reason: str | None = None) -> MediaIngestJobCancelResponse:
+    async def cancel_media_ingest_job(self, job_id: int, *, reason: str | None = None) -> CancelMediaIngestJobResponse:
         response = await self._request(
             "DELETE",
             f"/api/v1/media/ingest/jobs/{job_id}",
             params={key: value for key, value in {"reason": reason}.items() if value is not None},
         )
-        return MediaIngestJobCancelResponse.model_validate(response)
+        return CancelMediaIngestJobResponse.model_validate(response)
 
     async def cancel_media_ingest_batch(
         self,
@@ -4627,7 +4748,7 @@ class TLDWAPIClient:
         batch_id: str | None = None,
         session_id: str | None = None,
         reason: str | None = None,
-    ) -> MediaIngestBatchCancelResponse:
+    ) -> CancelMediaIngestBatchResponse:
         response = await self._request(
             "POST",
             "/api/v1/media/ingest/jobs/cancel",
@@ -4637,7 +4758,20 @@ class TLDWAPIClient:
                 if value is not None
             },
         )
-        return MediaIngestBatchCancelResponse.model_validate(response)
+        return CancelMediaIngestBatchResponse.model_validate(response)
+
+    async def cancel_media_ingest_jobs_batch(
+        self,
+        *,
+        batch_id: str | None = None,
+        session_id: str | None = None,
+        reason: str | None = None,
+    ) -> CancelMediaIngestBatchResponse:
+        return await self.cancel_media_ingest_batch(
+            batch_id=batch_id,
+            session_id=session_id,
+            reason=reason,
+        )
 
     async def reprocess_media(self, media_id: int, request_data: ReprocessMediaRequest) -> ReprocessMediaResponse:
         response = await self._request(
@@ -4739,6 +4873,99 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
 
+    async def list_media_document_versions(
+        self,
+        media_id: int,
+        *,
+        include_content: bool = False,
+        limit: int = 10,
+        page: int = 1,
+    ) -> list[DocumentVersionDetailResponse]:
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/versions",
+            params={
+                "include_content": str(include_content).lower(),
+                "limit": limit,
+                "page": page,
+            },
+        )
+        return [DocumentVersionDetailResponse.model_validate(item) for item in response]
+
+    async def get_media_document_version(
+        self,
+        media_id: int,
+        version_number: int,
+        *,
+        include_content: bool = True,
+    ) -> DocumentVersionDetailResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/media/{media_id}/versions/{version_number}",
+            params={"include_content": str(include_content).lower()},
+        )
+        return DocumentVersionDetailResponse.model_validate(response)
+
+    async def create_media_document_version(
+        self,
+        media_id: int,
+        request_data: DocumentVersionCreateRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/versions",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def delete_media_document_version(self, media_id: int, version_number: int) -> Dict[str, Any]:
+        response = await self._request("DELETE", f"/api/v1/media/{media_id}/versions/{version_number}")
+        return {"deleted": True, **response}
+
+    async def rollback_media_document_version(
+        self,
+        media_id: int,
+        request_data: DocumentVersionRollbackRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/versions/rollback",
+            json_data=request_data.model_dump(mode="json"),
+        )
+
+    async def patch_media_document_metadata(
+        self,
+        media_id: int,
+        request_data: DocumentVersionMetadataPatchRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PATCH",
+            f"/api/v1/media/{media_id}/metadata",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def update_media_document_version_metadata(
+        self,
+        media_id: int,
+        version_number: int,
+        request_data: DocumentVersionMetadataPatchRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/api/v1/media/{media_id}/versions/{version_number}/metadata",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
+    async def upsert_media_document_version(
+        self,
+        media_id: int,
+        request_data: DocumentVersionAdvancedUpsertRequest,
+    ) -> Dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/v1/media/{media_id}/versions/advanced",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+
     async def create_ingestion_source(self, request_data: IngestionSourceCreateRequest) -> IngestionSourceResponse:
         response = await self._request(
             "POST",
@@ -4801,12 +5028,13 @@ class TLDWAPIClient:
         )
         return IngestionSourceItemResponse.model_validate(response)
 
-    async def save_reading_item(self, request_data: ReadingSaveRequest) -> Dict[str, Any]:
-        return await self._request(
+    async def save_reading_item(self, request_data: ReadingSaveRequest) -> ReadingItem:
+        response = await self._request(
             "POST",
             "/api/v1/reading/save",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
+        return ReadingItem.model_validate(response)
 
     async def list_reading_items(
         self,
@@ -4922,10 +5150,62 @@ class TLDWAPIClient:
     async def unlink_note_from_reading_item(self, item_id: int, note_id: str) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/reading/items/{item_id}/links/note/{note_id}")
 
+    async def link_reading_item_note(
+        self,
+        item_id: int,
+        request_data: ReadingNoteLinkCreateRequest,
+    ) -> ReadingNoteLinkResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/reading/items/{item_id}/links/note",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return ReadingNoteLinkResponse.model_validate(response)
+
+    async def unlink_reading_item_note(self, item_id: int, note_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/reading/items/{item_id}/links/note/{note_id}")
+
     async def bulk_update_reading_items(self, request_data: ItemsBulkRequest) -> ItemsBulkResponse:
         response = await self._request(
             "POST",
             "/api/v1/reading/items/bulk",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ItemsBulkResponse.model_validate(response)
+
+    async def list_unified_items(
+        self,
+        *,
+        q: str | None = None,
+        tags: list[str] | None = None,
+        status_filter: list[str] | None = None,
+        origin: str | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> UnifiedItemsListResponse:
+        params = {
+            "q": q,
+            "tags": tags,
+            "status_filter": status_filter,
+            "origin": origin,
+            "page": page,
+            "size": size,
+        }
+        response = await self._request(
+            "GET",
+            "/api/v1/items",
+            params={key: value for key, value in params.items() if value is not None},
+        )
+        return UnifiedItemsListResponse.model_validate(response)
+
+    async def get_unified_item(self, item_id: int) -> UnifiedItem:
+        response = await self._request("GET", f"/api/v1/items/{item_id}")
+        return UnifiedItem.model_validate(response)
+
+    async def bulk_update_unified_items(self, request_data: ItemsBulkRequest) -> ItemsBulkResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/items/bulk",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return ItemsBulkResponse.model_validate(response)
@@ -4960,8 +5240,15 @@ class TLDWAPIClient:
         self,
         item_id: int,
         request_data: ReadingTTSRequest,
-    ) -> ReadingTTSResponse:
+    ) -> ReadingTTSResponse | bytes:
         payload = request_data.model_dump(exclude_none=True, mode="json")
+        request_bytes_override = self.__dict__.get("_request_bytes")
+        if request_bytes_override is not None:
+            return await request_bytes_override(
+                "POST",
+                f"/api/v1/reading/items/{item_id}/tts",
+                json_data=payload,
+            )
         response = await self._binary_request(
             "POST",
             f"/api/v1/reading/items/{item_id}/tts",
@@ -4996,6 +5283,7 @@ class TLDWAPIClient:
 
     async def export_reading_items(
         self,
+        request_data: ReadingExportRequest | None = None,
         *,
         status: list[str] | None = None,
         tags: list[str] | None = None,
@@ -5010,7 +5298,13 @@ class TLDWAPIClient:
         include_highlights: bool = False,
         include_notes: bool = True,
         format: str = "jsonl",
-    ) -> ReadingExportResponse:
+    ) -> ReadingExportResponse | bytes:
+        if request_data is not None:
+            return await self._request_bytes(
+                "GET",
+                "/api/v1/reading/export",
+                params=request_data.model_dump(exclude_none=True, mode="json"),
+            )
         params: dict[str, Any] = {
             "status": status,
             "tags": tags,
@@ -5151,8 +5445,9 @@ class TLDWAPIClient:
         )
         return ReadingHighlight.model_validate(response)
 
-    async def delete_reading_highlight(self, highlight_id: int) -> Dict[str, Any]:
-        return await self._request("DELETE", f"/api/v1/reading/highlights/{highlight_id}")
+    async def delete_reading_highlight(self, highlight_id: int) -> ReadingHighlightDeleteResponse:
+        response = await self._request("DELETE", f"/api/v1/reading/highlights/{highlight_id}")
+        return ReadingHighlightDeleteResponse.model_validate(response)
 
     async def list_document_annotations(self, media_id: int) -> DocumentAnnotationListResponse:
         response = await self._request("GET", f"/api/v1/media/{media_id}/annotations")
@@ -5246,7 +5541,7 @@ class TLDWAPIClient:
         parent_id: str | None = None,
     ) -> MediaNavigationResponse:
         params = {
-            "include_generated_fallback": include_generated_fallback,
+            "include_generated_fallback": "true" if include_generated_fallback else False,
             "max_depth": max_depth,
             "max_nodes": max_nodes,
             "parent_id": parent_id,
@@ -5264,12 +5559,17 @@ class TLDWAPIClient:
         node_id: str,
         *,
         format: str = "auto",
+        content_format: str | None = None,
         include_alternates: bool = False,
     ) -> MediaNavigationContentResponse:
+        selected_format = content_format or format
+        include_alternates_param: bool | str = (
+            str(include_alternates).lower() if content_format is not None else include_alternates
+        )
         response = await self._request(
             "GET",
             f"/api/v1/media/{media_id}/navigation/{node_id}/content",
-            params={"format": format, "include_alternates": include_alternates},
+            params={"format": selected_format, "include_alternates": include_alternates_param},
         )
         return MediaNavigationContentResponse.model_validate(response)
 
@@ -5527,6 +5827,61 @@ class TLDWAPIClient:
             headers=headers,
         ):
             yield NotificationStreamEvent.model_validate(event)
+
+    async def list_server_notifications(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        include_archived: bool = False,
+        only_snoozed: bool = False,
+    ) -> NotificationsListResponse:
+        return await self.list_notifications(
+            limit=limit,
+            offset=offset,
+            include_archived=include_archived,
+            only_snoozed=only_snoozed,
+        )
+
+    async def get_server_notifications_unread_count(self) -> NotificationsUnreadCountResponse:
+        return await self.get_notifications_unread_count()
+
+    async def mark_server_notifications_read(self, ids: list[int]) -> NotificationsMarkReadResponse:
+        return await self.mark_notifications_read(ids)
+
+    async def dismiss_server_notification(self, notification_id: int) -> NotificationDismissResponse:
+        return await self.dismiss_notification(notification_id)
+
+    async def snooze_server_notification(
+        self,
+        notification_id: int,
+        request_data: NotificationSnoozeRequest,
+    ) -> NotificationSnoozeResponse:
+        return await self.snooze_notification(notification_id, request_data)
+
+    async def cancel_server_notification_snooze(self, notification_id: int) -> NotificationCancelSnoozeResponse:
+        return await self.cancel_notification_snooze(notification_id)
+
+    async def get_server_notification_preferences(self) -> NotificationPreferencesResponse:
+        return await self.get_notification_preferences()
+
+    async def update_server_notification_preferences(
+        self,
+        request_data: NotificationPreferencesUpdateRequest,
+    ) -> NotificationPreferencesResponse:
+        return await self.update_notification_preferences(request_data)
+
+    async def stream_server_notifications(
+        self,
+        *,
+        after: int = 0,
+    ) -> AsyncGenerator[ServerNotificationStreamEvent, None]:
+        async for event in self._stream_sse_request(
+            "/api/v1/notifications/stream",
+            params={"after": after},
+            event_model=ServerNotificationStreamEvent,
+        ):
+            yield event
 
     async def create_reminder_task(self, request_data: ReminderTaskCreateRequest) -> ReminderTaskResponse:
         response = await self._request(
@@ -6962,7 +7317,14 @@ class TLDWAPIClient:
         )
         return FlashcardsImportResponse.model_validate(response)
 
-    async def upload_flashcard_asset(self, file_path: Union[str, Path]) -> FlashcardAssetMetadata:
+    async def upload_flashcard_asset(self, file_path: Union[str, Path, tuple[str, bytes, str]]) -> FlashcardAssetMetadata:
+        if isinstance(file_path, tuple):
+            response = await self._request(
+                "POST",
+                "/api/v1/flashcards/assets",
+                files=[("file", file_path)],
+            )
+            return FlashcardAssetMetadata.model_validate(response)
         httpx_files = prepare_files_for_httpx([file_path], upload_field_name="file")
         try:
             response = await self._request(
@@ -6974,8 +7336,8 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
-    async def get_flashcard_asset_content(self, asset_uuid: str) -> bytes:
-        return await self._request_bytes(
+    async def get_flashcard_asset_content(self, asset_uuid: str) -> ReadingExportResponse:
+        return await self._binary_request(
             "GET",
             f"/api/v1/flashcards/assets/{asset_uuid}/content",
         )
@@ -7548,7 +7910,6 @@ class TLDWAPIClient:
 
     async def get_study_suggestion_status(
         self,
-        *,
         anchor_type: str,
         anchor_id: int,
     ) -> SuggestionStatusResponse:
@@ -8423,6 +8784,24 @@ class TLDWAPIClient:
         file_paths: Optional[List[str]] = None,
     ) -> BatchMediaProcessResponse:
         form_data = model_to_form_data(request_data)
+        if file_paths:
+            form_data.update(
+                {
+                    key: form_data.get(key, value)
+                    for key, value in {
+                        "overwrite_existing": "false",
+                        "perform_analysis": "true",
+                        "use_cookies": "false",
+                        "perform_rolling_summarization": "false",
+                        "summarize_recursively": "false",
+                        "perform_chunking": "true",
+                        "use_adaptive_chunking": "false",
+                        "use_multi_level_chunking": "false",
+                        "chunk_size": "500",
+                        "chunk_overlap": "200",
+                    }.items()
+                }
+            )
         httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
         try:
             response_dict = await self._request(
@@ -9752,24 +10131,34 @@ class TLDWAPIClient:
     async def approve_chat_loop_call(
         self,
         run_id: str,
-        request_data: ChatLoopApprovalDecisionRequest | Dict[str, Any],
+        request_data: ChatLoopApprovalDecisionRequest | Dict[str, Any] | str,
     ) -> ChatLoopActionResponse:
+        payload = (
+            ChatLoopApprovalDecisionRequest(approval_id=request_data, decision="approve")
+            if isinstance(request_data, str)
+            else request_data
+        )
         response = await self._request(
             "POST",
             f"/api/v1/chat/loop/{run_id}/approve",
-            json_data=self._dump_request_payload(request_data),
+            json_data=self._dump_request_payload(payload),
         )
         return ChatLoopActionResponse.model_validate(response)
 
     async def reject_chat_loop_call(
         self,
         run_id: str,
-        request_data: ChatLoopApprovalDecisionRequest | Dict[str, Any],
+        request_data: ChatLoopApprovalDecisionRequest | Dict[str, Any] | str,
     ) -> ChatLoopActionResponse:
+        payload = (
+            ChatLoopApprovalDecisionRequest(approval_id=request_data, decision="reject")
+            if isinstance(request_data, str)
+            else request_data
+        )
         response = await self._request(
             "POST",
             f"/api/v1/chat/loop/{run_id}/reject",
-            json_data=self._dump_request_payload(request_data),
+            json_data=self._dump_request_payload(payload),
         )
         return ChatLoopActionResponse.model_validate(response)
 
@@ -9988,7 +10377,7 @@ class TLDWAPIClient:
         params: Dict[str, Any] = {
             "limit": limit,
             "offset": offset,
-            "include_rag_context": include_rag_context,
+            "include_rag_context": str(include_rag_context).lower(),
         }
         if scope_params is not None:
             params.update(scope_params.model_dump(exclude_none=True, mode="json"))
@@ -9998,9 +10387,8 @@ class TLDWAPIClient:
             params=params,
         )
 
-    async def get_chat_conversation_citations(self, conversation_id: str) -> ConversationCitationsResponse:
-        response = await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/citations")
-        return ConversationCitationsResponse.model_validate(response)
+    async def get_chat_conversation_citations(self, conversation_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/api/v1/chat/conversations/{conversation_id}/citations")
 
     async def list_chat_commands(self) -> ChatCommandsListResponse:
         response = await self._request("GET", "/api/v1/chat/commands")
@@ -10029,13 +10417,17 @@ class TLDWAPIClient:
         )
         return ChatQueueActivityResponse.model_validate(response)
 
-    async def save_chat_knowledge(self, request_data: KnowledgeSaveRequest) -> KnowledgeSaveResponse:
+    async def save_chat_knowledge(
+        self,
+        request_data: ChatKnowledgeSaveRequest | Dict[str, Any],
+    ) -> ChatKnowledgeSaveResponse:
+        payload = self._chat_knowledge_save_request(request_data)
         response = await self._request(
             "POST",
             "/api/v1/chat/knowledge/save",
-            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            json_data=payload.model_dump(exclude_none=True, mode="json"),
         )
-        return KnowledgeSaveResponse.model_validate(response)
+        return ChatKnowledgeSaveResponse.model_validate(response)
 
     async def get_chat_analytics(
         self,
@@ -10094,16 +10486,16 @@ class TLDWAPIClient:
         self,
         *,
         conversation_id: Optional[str] = None,
-        document_type: ChatDocumentType | str | None = None,
+        document_type: DocumentType | str | None = None,
         limit: int = 50,
-    ) -> ChatDocumentListResponse:
+    ) -> DocumentListResponse:
         params: Dict[str, Any] = {"limit": limit}
         if conversation_id is not None:
             params["conversation_id"] = conversation_id
         if document_type is not None:
-            params["document_type"] = document_type.value if isinstance(document_type, ChatDocumentType) else document_type
+            params["document_type"] = document_type.value if isinstance(document_type, DocumentType) else document_type
         response = await self._request("GET", "/api/v1/chat/documents", params=params)
-        return ChatDocumentListResponse.model_validate(response)
+        return DocumentListResponse.model_validate(response)
 
     async def get_chat_generated_document(self, document_id: int) -> GeneratedDocument:
         response = await self._request("GET", f"/api/v1/chat/documents/{document_id}")
@@ -10120,8 +10512,8 @@ class TLDWAPIClient:
         )
         return PromptConfigResponse.model_validate(response)
 
-    async def get_chat_document_prompt_config(self, document_type: ChatDocumentType | str) -> PromptConfigResponse:
-        document_type_value = document_type.value if isinstance(document_type, ChatDocumentType) else str(document_type)
+    async def get_chat_document_prompt_config(self, document_type: DocumentType | str) -> PromptConfigResponse:
+        document_type_value = document_type.value if isinstance(document_type, DocumentType) else str(document_type)
         response = await self._request("GET", f"/api/v1/chat/documents/prompts/{document_type_value}")
         return PromptConfigResponse.model_validate(response)
 
@@ -10137,11 +10529,11 @@ class TLDWAPIClient:
         response = await self._request("GET", "/api/v1/chat/documents/statistics")
         return GenerationStatistics.model_validate(response)
 
-    async def start_chat_loop_run(self, request_data: ChatLoopStartRequest) -> ChatLoopStartResponse:
+    async def start_chat_loop_run(self, request_data: ChatLoopStartRequest | Dict[str, Any]) -> ChatLoopStartResponse:
         response = await self._request(
             "POST",
             "/api/v1/chat/loop/start",
-            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            json_data=self._dump_request_payload(request_data),
         )
         return ChatLoopStartResponse.model_validate(response)
 
@@ -10153,21 +10545,37 @@ class TLDWAPIClient:
         )
         return ChatLoopEventsResponse.model_validate(response)
 
-    async def approve_chat_loop_call(self, run_id: str, approval_id: str) -> ChatLoopActionResponse:
-        request_data = ChatLoopApprovalDecisionRequest(approval_id=approval_id, decision="approve")
+    async def approve_chat_loop_call(
+        self,
+        run_id: str,
+        request_data: ChatLoopApprovalDecisionRequest | Dict[str, Any] | str,
+    ) -> ChatLoopActionResponse:
+        payload = (
+            ChatLoopApprovalDecisionRequest(approval_id=request_data, decision="approve")
+            if isinstance(request_data, str)
+            else request_data
+        )
         response = await self._request(
             "POST",
             f"/api/v1/chat/loop/{run_id}/approve",
-            json_data=request_data.model_dump(mode="json"),
+            json_data=self._dump_request_payload(payload),
         )
         return ChatLoopActionResponse.model_validate(response)
 
-    async def reject_chat_loop_call(self, run_id: str, approval_id: str) -> ChatLoopActionResponse:
-        request_data = ChatLoopApprovalDecisionRequest(approval_id=approval_id, decision="reject")
+    async def reject_chat_loop_call(
+        self,
+        run_id: str,
+        request_data: ChatLoopApprovalDecisionRequest | Dict[str, Any] | str,
+    ) -> ChatLoopActionResponse:
+        payload = (
+            ChatLoopApprovalDecisionRequest(approval_id=request_data, decision="reject")
+            if isinstance(request_data, str)
+            else request_data
+        )
         response = await self._request(
             "POST",
             f"/api/v1/chat/loop/{run_id}/reject",
-            json_data=request_data.model_dump(mode="json"),
+            json_data=self._dump_request_payload(payload),
         )
         return ChatLoopActionResponse.model_validate(response)
 
@@ -10191,41 +10599,71 @@ class TLDWAPIClient:
 
     async def create_prompt_collection(
         self,
-        request_data: PromptCollectionCreateRequest,
-    ) -> PromptCollectionCreateResponse:
+        request_data: PromptCollectionCreateRequest | None = None,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        prompt_ids: List[int] | None = None,
+    ) -> PromptCollectionCreateResponse | Dict[str, Any]:
+        payload_model = request_data or PromptCollectionCreateRequest(
+            name=name or "",
+            description=description,
+            prompt_ids=prompt_ids or [],
+        )
         response = await self._request(
             "POST",
             "/api/v1/prompts/collections/create",
-            json_data=request_data.model_dump(mode="json"),
+            json_data=payload_model.model_dump(exclude_none=True, mode="json"),
         )
-        return PromptCollectionCreateResponse.model_validate(response)
+        try:
+            return PromptCollectionCreateResponse.model_validate(response)
+        except Exception:
+            return response
 
-    async def list_prompt_collections(self, limit: int = 200, offset: int = 0) -> PromptCollectionListResponse:
+    async def list_prompt_collections(self, limit: int = 200, offset: int = 0) -> PromptCollectionListResponse | Dict[str, Any]:
         response = await self._request(
             "GET",
             "/api/v1/prompts/collections",
             params={"limit": limit, "offset": offset},
         )
-        return PromptCollectionListResponse.model_validate(response)
+        try:
+            return PromptCollectionListResponse.model_validate(response)
+        except Exception:
+            return response
 
-    async def get_prompt_collection(self, collection_id: int) -> PromptCollectionResponse:
+    async def get_prompt_collection(self, collection_id: int) -> PromptCollectionResponse | Dict[str, Any]:
         response = await self._request(
             "GET",
             f"/api/v1/prompts/collections/{collection_id}",
         )
-        return PromptCollectionResponse.model_validate(response)
+        try:
+            return PromptCollectionResponse.model_validate(response)
+        except Exception:
+            return response
 
     async def update_prompt_collection(
         self,
         collection_id: int,
-        request_data: PromptCollectionUpdateRequest,
-    ) -> PromptCollectionResponse:
+        request_data: PromptCollectionUpdateRequest | None = None,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        prompt_ids: List[int] | None = None,
+    ) -> PromptCollectionResponse | Dict[str, Any]:
+        payload_model = request_data or PromptCollectionUpdateRequest(
+            name=name,
+            description=description,
+            prompt_ids=prompt_ids,
+        )
         response = await self._request(
             "PUT",
             f"/api/v1/prompts/collections/{collection_id}",
-            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            json_data=payload_model.model_dump(exclude_none=True, mode="json"),
         )
-        return PromptCollectionResponse.model_validate(response)
+        try:
+            return PromptCollectionResponse.model_validate(response)
+        except Exception:
+            return response
 
     async def export_chatbook(self, request_data: ChatbookExportRequest) -> Dict[str, Any]:
         return await self._request(
@@ -10339,10 +10777,18 @@ class TLDWAPIClient:
         )
         return ChatbookCleanupResponse.model_validate(response)
 
-    async def download_chatbook_export(self, job_id: str) -> bytes:
-        return await self._request_bytes(
+    async def download_chatbook_export(
+        self,
+        job_id: str,
+        *,
+        token: str | None = None,
+        exp: int | str | None = None,
+    ) -> ReadingExportResponse:
+        params = {key: value for key, value in {"token": token, "exp": exp}.items() if value is not None}
+        return await self._binary_request(
             "GET",
             f"/api/v1/chatbooks/download/{job_id}",
+            params=params or None,
         )
 
     async def remove_chatbook_import_job(self, job_id: str) -> ChatbookJobMutationResponse:

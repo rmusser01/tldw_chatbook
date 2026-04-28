@@ -477,7 +477,13 @@ class ErrorHandler:
                     eval_error = EvaluationError(eval_error, e)
                 
                 # Check if retryable
-                if not eval_error.context.is_retryable or retry_count >= max_retries:
+                if not eval_error.context.is_retryable:
+                    logger.error(f"Operation failed after {retry_count + 1} attempts: {eval_error.context.message}")
+                    if isinstance(e, EvaluationError):
+                        raise eval_error
+                    raise e
+
+                if retry_count >= max_retries:
                     logger.error(f"Operation failed after {retry_count + 1} attempts: {eval_error.context.message}")
                     raise eval_error
                 

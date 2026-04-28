@@ -142,6 +142,8 @@ class ResearchArtifactResponse(BaseModel):
 
 
 class ResearchRunStreamEvent(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     event: str
     data: dict[str, Any]
-    event_id: str | None = None
+    event_id: str | None = Field(default=None, alias="id")

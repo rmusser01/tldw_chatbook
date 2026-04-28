@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import inspect
 import io
 import json
 import mimetypes
@@ -132,13 +133,19 @@ class LocalStudyService:
             }.items()
             if value is not None
         }
-        self._require_db().update_deck(
-            deck_id,
-            name=name,
-            description=description,
-            metadata=metadata or None,
-            expected_version=expected_version,
+        request = {
+            "name": name,
+            "description": description,
+            "expected_version": expected_version,
+        }
+        update_deck = self._require_db().update_deck
+        accepts_metadata = "metadata" in inspect.signature(update_deck).parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in inspect.signature(update_deck).parameters.values()
         )
+        if metadata and accepts_metadata:
+            request["metadata"] = metadata
+        update_deck(deck_id, **request)
         return self._require_db().get_deck(deck_id)
 
     def list_flashcards(
@@ -303,11 +310,21 @@ class LocalStudyService:
         return self._require_db().get_flashcard(card_id)
 
     def set_flashcard_tags(self, card_id: str, *, tags: list[str]) -> Any:
-        self._require_db().set_flashcard_tags(card_id, tags=tags)
+        db = self._require_db()
+        set_tags = getattr(db, "set_flashcard_tags", None)
+        if callable(set_tags):
+            set_tags(card_id, tags=tags)
+        else:
+            db.update_flashcard(card_id, tags=tags)
         return self._require_db().get_flashcard(card_id)
 
     def get_flashcard_tags(self, card_id: str) -> dict[str, Any]:
-        payload = self._require_db().get_flashcard_tags(card_id)
+        db = self._require_db()
+        get_tags = getattr(db, "get_flashcard_tags", None)
+        if not callable(get_tags):
+            card = db.get_flashcard(card_id)
+            return {"uuid": card_id, "tags": self._normalize_tags((card or {}).get("tags"))}
+        payload = get_tags(card_id)
         if isinstance(payload, Mapping):
             items = list(payload.get("items") or [])
         else:

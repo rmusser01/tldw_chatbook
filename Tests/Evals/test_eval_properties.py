@@ -126,7 +126,7 @@ def eval_result_strategy(draw):
         st.none(),
         st.dictionaries(
             keys=st.sampled_from(["error_message", "error_type", "traceback"]),
-            values=st.text(min_size=1, max_size=200),
+            values=st.text(min_size=1, max_size=200).filter(lambda value: bool(value.strip())),
             min_size=1
         )
     ))
@@ -198,7 +198,11 @@ class TestDatabaseProperties:
         assert retrieved_task is not None
         # Database might normalize names by stripping whitespace
         assert retrieved_task['name'].strip() == task_config.name.strip()
-        assert retrieved_task['description'] == task_config.description
+        expected_description = ''.join(
+            c for c in task_config.description
+            if c.isprintable() and ord(c) != 0
+        )
+        assert retrieved_task['description'] == expected_description
         assert retrieved_task['task_type'] == task_config.task_type
         # Config data should preserve the original name
         assert retrieved_task['config_data']['name'] == task_config.name

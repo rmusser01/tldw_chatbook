@@ -1976,6 +1976,36 @@ CREATE TABLE IF NOT EXISTS quiz_attempts (
 CREATE INDEX IF NOT EXISTS idx_quiz_attempts_quiz_id ON quiz_attempts(quiz_id);
 CREATE INDEX IF NOT EXISTS idx_quiz_attempts_started_at ON quiz_attempts(started_at);
 
+CREATE TABLE IF NOT EXISTS flashcard_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    model_type TEXT NOT NULL DEFAULT 'basic',
+    front_template TEXT NOT NULL,
+    back_template TEXT,
+    notes_template TEXT,
+    extra_template TEXT,
+    placeholder_definitions TEXT NOT NULL DEFAULT '[]',
+    client_id TEXT NOT NULL DEFAULT 'unknown',
+    version INTEGER NOT NULL DEFAULT 1,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_flashcard_templates_name ON flashcard_templates(name);
+
+CREATE TABLE IF NOT EXISTS flashcard_assets (
+    asset_uuid TEXT PRIMARY KEY,
+    original_filename TEXT,
+    mime_type TEXT,
+    byte_size INTEGER NOT NULL DEFAULT 0,
+    content BLOB NOT NULL,
+    client_id TEXT NOT NULL DEFAULT 'unknown',
+    deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 UPDATE db_schema_version
    SET version = 15
  WHERE schema_name = 'rag_char_chat_schema'
@@ -1988,6 +2018,36 @@ UPDATE db_schema_version
 -- flashcards_fts is an external-content FTS5 table. Direct DELETE statements
 -- can corrupt the index for multi-token updates; FTS5 requires the special
 -- 'delete' command carrying the old indexed values.
+
+CREATE TABLE IF NOT EXISTS flashcard_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    model_type TEXT NOT NULL DEFAULT 'basic',
+    front_template TEXT NOT NULL,
+    back_template TEXT,
+    notes_template TEXT,
+    extra_template TEXT,
+    placeholder_definitions TEXT NOT NULL DEFAULT '[]',
+    client_id TEXT NOT NULL DEFAULT 'unknown',
+    version INTEGER NOT NULL DEFAULT 1,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_flashcard_templates_name ON flashcard_templates(name);
+
+CREATE TABLE IF NOT EXISTS flashcard_assets (
+    asset_uuid TEXT PRIMARY KEY,
+    original_filename TEXT,
+    mime_type TEXT,
+    byte_size INTEGER NOT NULL DEFAULT 0,
+    content BLOB NOT NULL,
+    client_id TEXT NOT NULL DEFAULT 'unknown',
+    deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 DROP TRIGGER IF EXISTS flashcards_ad;
 DROP TRIGGER IF EXISTS flashcards_au;
@@ -2805,8 +2865,41 @@ UPDATE db_schema_version
         """
         logger.info(f"Migrating schema from V15 to V16 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
         try:
-            conn.executescript(self._MIGRATE_V15_TO_V16_SQL)
-            logger.debug(f"[{self._SCHEMA_NAME} V15→V16] Migration script executed.")
+            existing_flashcard_tables = {
+                row[0]
+                for row in conn.execute(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type IN ('table', 'virtual table')
+                      AND name IN ('flashcards', 'flashcards_fts')
+                    """
+                ).fetchall()
+            }
+            if "flashcards" not in existing_flashcard_tables:
+                logger.info(
+                    f"[{self._SCHEMA_NAME} V15→V16] No flashcards table present; skipping FTS repair."
+                )
+                conn.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 16
+                     WHERE schema_name = ?
+                       AND version = 15
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+            else:
+                if "flashcards_fts" not in existing_flashcard_tables:
+                    conn.execute(
+                        """
+                        CREATE VIRTUAL TABLE IF NOT EXISTS flashcards_fts USING fts5(
+                            front, back, tags, content=flashcards, content_rowid=rowid
+                        )
+                        """
+                    )
+                conn.executescript(self._MIGRATE_V15_TO_V16_SQL)
+                logger.debug(f"[{self._SCHEMA_NAME} V15→V16] Migration script executed.")
 
             final_version = self._get_db_version(conn)
             if final_version != 16:

@@ -26,6 +26,7 @@ class FakeDB:
     calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = field(default_factory=list)
     replaced_keyword_ids: list[tuple[str, list[int]]] = field(default_factory=list)
     updates: list[tuple[str, dict[str, Any], int]] = field(default_factory=list)
+    deletes: list[tuple[str, int]] = field(default_factory=list)
     restores: list[tuple[str, int]] = field(default_factory=list)
 
     def search_conversations_page(self, query, **kwargs):
@@ -80,6 +81,11 @@ class FakeDB:
             )
         )
         self.updates.append((conversation_id, update_data, expected_version))
+        return True
+
+    def soft_delete_conversation(self, conversation_id, expected_version):
+        self.calls.append(("soft_delete_conversation", (conversation_id,), {"expected_version": expected_version}))
+        self.deletes.append((conversation_id, expected_version))
         return True
 
     def restore_conversation(self, conversation_id, expected_version):

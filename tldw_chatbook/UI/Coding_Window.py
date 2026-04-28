@@ -133,9 +133,9 @@ class CodingWindow(Container):
 
             # Create a view for Code Repo Copy/Paste
             with Container(id=CODING_VIEW_REPO_COPY_PASTE, classes="coding-view-area"):
-                # Embed the repository selector directly instead of using a modal
-                repo_window = CodeRepoCopyPasteWindow(self.app_instance)
-                yield from repo_window.compose()
+                # Mount the repository selector as a real widget so its event
+                # handlers and lifecycle hooks remain active.
+                yield CodeRepoCopyPasteWindow(self.app_instance)
 
 
 #

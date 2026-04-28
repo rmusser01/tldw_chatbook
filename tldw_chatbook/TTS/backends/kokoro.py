@@ -110,8 +110,8 @@ class KokoroTTSBackend(LocalTTSBackend):
         
         # Services
         self.audio_service = get_audio_service()
-        self.max_tokens = self.config.get("KOKORO_MAX_TOKENS", 500)
-        self.text_chunker = TextChunker(max_tokens=self.max_tokens)
+        self._max_tokens = int(self.config.get("KOKORO_MAX_TOKENS", 500))
+        self.text_chunker = TextChunker(max_tokens=self._max_tokens)
         self.normalizer = TextNormalizer()
         
         # Voice mixing configuration
@@ -135,6 +135,17 @@ class KokoroTTSBackend(LocalTTSBackend):
             "total_time": 0.0,
             "generation_count": 0
         }
+
+    @property
+    def max_tokens(self) -> int:
+        return self._max_tokens
+
+    @max_tokens.setter
+    def max_tokens(self, value: int) -> None:
+        self._max_tokens = int(value)
+        if hasattr(self, "text_chunker"):
+            self.text_chunker.max_tokens = self._max_tokens
+            self.text_chunker.min_chunk_size = max(10, int(self._max_tokens * 0.1))
     
     async def initialize(self):
         """Initialize the Kokoro backend"""
@@ -732,6 +743,18 @@ class KokoroTTSBackend(LocalTTSBackend):
                     )
                 else:
                     logger.warning("KokoroTTSBackend: No audio generated")
+                    await self._report_progress(
+                        progress=1.0,
+                        processed=token_count,
+                        total=estimated_total_tokens,
+                        status=f"Generation complete: no {request.response_format} audio emitted",
+                        metrics={
+                            "sample_rate": sample_rate,
+                            "samples_generated": total_samples_processed,
+                            "format": request.response_format,
+                            "generation_time": time.time() - start_time
+                        }
+                    )
                     yield b""
                     
         except Exception as e:
@@ -1118,8 +1141,21 @@ class KokoroTTSBackend(LocalTTSBackend):
                 for sentence in sentences:
                     sentence_tokens = self.tokenizer.encode(sentence, add_special_tokens=False)
                     sentence_length = len(sentence_tokens)
+                    chunk_size = max(1, max_tokens)
                     
-                    if current_length + sentence_length > max_tokens:
+                    if sentence_length > max_tokens:
+                        if current_chunk:
+                            chunks.append(" ".join(current_chunk))
+                            current_chunk = []
+                            current_length = 0
+
+                        words = sentence.split()
+                        if words:
+                            for i in range(0, len(words), chunk_size):
+                                chunks.append(" ".join(words[i:i + chunk_size]))
+                        else:
+                            chunks.append(sentence)
+                    elif current_length + sentence_length > max_tokens:
                         if current_chunk:
                             chunks.append(" ".join(current_chunk))
                         current_chunk = [sentence]
@@ -1138,8 +1174,9 @@ class KokoroTTSBackend(LocalTTSBackend):
         # Fallback to simple splitting
         words = text.split()
         chunks = []
-        for i in range(0, len(words), max_tokens):
-            chunks.append(" ".join(words[i:i+max_tokens]))
+        chunk_size = max(1, max_tokens)
+        for i in range(0, len(words), chunk_size):
+            chunks.append(" ".join(words[i:i + chunk_size]))
         return chunks
     
     async def generate_with_timestamps(
