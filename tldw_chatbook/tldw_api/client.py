@@ -1624,6 +1624,94 @@ class TLDWAPIClient:
             headers=headers,
         )
 
+    async def call_server_setup_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "setup",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_kanban_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "kanban",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_moderation_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "moderation",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_monitoring_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "monitoring",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
     def _notes_graph_query_params(self, request_data: NoteGraphRequest | Dict[str, Any]) -> Dict[str, Any]:
         payload = (
             request_data.model_dump(exclude_none=True, exclude_defaults=True, mode="json")
