@@ -1712,6 +1712,490 @@ class TLDWAPIClient:
             headers=headers,
         )
 
+    async def call_server_chats_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "chats",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_chat_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "chat",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_evaluations_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "evaluations",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_llamacpp_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "llamacpp",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_audio_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "audio",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_prompt_studio_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "prompt-studio",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_quizzes_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "quizzes",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_email_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "email",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_chunking_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "chunking",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_llm_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "llm",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_outputs_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "outputs",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_sharing_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "sharing",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_voice_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "voice",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_audit_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "audit",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_invites_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "invites",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_research_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "research",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_web_scraping_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "web-scraping",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_websub_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "websub",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_chatbooks_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "chatbooks",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_config_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "config",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_diag_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "diag",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
+    async def call_server_llamafile_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        return await self._call_server_api_namespace_endpoint(
+            "llamafile",
+            method,
+            endpoint,
+            params=params,
+            payload=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
     def _notes_graph_query_params(self, request_data: NoteGraphRequest | Dict[str, Any]) -> Dict[str, Any]:
         payload = (
             request_data.model_dump(exclude_none=True, exclude_defaults=True, mode="json")
