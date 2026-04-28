@@ -104,10 +104,6 @@ class KeyringServerCredentialStore:
             import keyring
 
             keyring_backend = keyring
-            self._password_delete_error = keyring.errors.PasswordDeleteError
-        else:
-            backend_errors = getattr(keyring_backend, "errors", None)
-            self._password_delete_error = getattr(backend_errors, "PasswordDeleteError", None)
         self._keyring = keyring_backend
 
     def set_secret(self, server_id: str, purpose: str, secret: str) -> None:
@@ -120,12 +116,9 @@ class KeyringServerCredentialStore:
 
     def delete_secret(self, server_id: str, purpose: str) -> None:
         ref = _credential_ref(server_id, purpose)
-        try:
-            self._keyring.delete_password(self.service_name, ref.username)
-        except Exception as exc:
-            if self._password_delete_error is not None and isinstance(exc, self._password_delete_error):
-                return
-            raise
+        if self._keyring.get_password(self.service_name, ref.username) is None:
+            return
+        self._keyring.delete_password(self.service_name, ref.username)
 
     def clear_server(self, server_id: str) -> None:
         normalized_server_id = _normalize_non_empty(server_id, "server_id")

@@ -34,17 +34,17 @@ class FakeKeyring:
 class RaisingDeleteKeyring(FakeKeyring):
     def delete_password(self, service_name: str, username: str) -> None:
         self.deleted.append((service_name, username))
-        raise RuntimeError("missing secret")
+        raise RuntimeError("delete failed")
 
 
-class MissingDeleteKeyring(FakeKeyring):
+class PasswordDeleteErrorKeyring(FakeKeyring):
     class errors:
         class PasswordDeleteError(Exception):
             pass
 
     def delete_password(self, service_name: str, username: str) -> None:
         self.deleted.append((service_name, username))
-        raise self.errors.PasswordDeleteError("missing secret")
+        raise self.errors.PasswordDeleteError("delete failed")
 
 
 def test_in_memory_credentials_are_scoped_by_server_and_purpose():
@@ -155,26 +155,43 @@ def test_keyring_store_uses_server_and_purpose_as_username_and_supports_get_dele
     assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) is None
 
 
-def test_keyring_delete_secret_tolerates_missing_values():
-    fake = MissingDeleteKeyring()
+def test_keyring_delete_secret_tolerates_missing_values_without_calling_delete():
+    fake = RaisingDeleteKeyring()
     store = KeyringServerCredentialStore(keyring_backend=fake)
 
     store.delete_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN)
 
-    assert fake.deleted == [(DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")]
+    assert fake.deleted == []
 
 
-def test_keyring_delete_secret_propagates_unexpected_backend_errors():
+def test_keyring_delete_secret_propagates_existing_secret_runtime_delete_errors():
     fake = RaisingDeleteKeyring()
     store = KeyringServerCredentialStore(keyring_backend=fake)
+    store.set_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN, "secret")
 
-    with pytest.raises(RuntimeError, match="missing secret"):
+    with pytest.raises(RuntimeError, match="delete failed"):
+        store.delete_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN)
+
+
+def test_keyring_delete_secret_propagates_existing_secret_password_delete_errors():
+    fake = PasswordDeleteErrorKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    store.set_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN, "secret")
+
+    with pytest.raises(fake.errors.PasswordDeleteError, match="delete failed"):
         store.delete_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN)
 
 
 def test_keyring_clear_server_deletes_known_purpose_usernames_for_server():
     fake = FakeKeyring()
     store = KeyringServerCredentialStore(keyring_backend=fake)
+    for purpose in [
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+        SERVER_CREDENTIAL_API_KEY,
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ]:
+        store.set_secret("server-a", purpose, f"{purpose}-secret")
 
     store.clear_server("server-a")
 
@@ -184,3 +201,4 @@ def test_keyring_clear_server_deletes_known_purpose_usernames_for_server():
         (DEFAULT_KEYRING_SERVICE_NAME, f"server-a:{SERVER_CREDENTIAL_API_KEY}"),
         (DEFAULT_KEYRING_SERVICE_NAME, f"server-a:{SERVER_CREDENTIAL_BEARER_TOKEN}"),
     ]
+    assert fake.values == {}
