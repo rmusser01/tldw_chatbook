@@ -1507,6 +1507,48 @@ class TLDWAPIClient:
             headers={"expected-version": str(expected_version)},
         )
 
+    @staticmethod
+    def _normalize_notes_namespace_endpoint(endpoint: str) -> str:
+        raw_endpoint = str(endpoint or "").strip()
+        if raw_endpoint.startswith("/api/v1/notes/"):
+            raw_endpoint = raw_endpoint.removeprefix("/api/v1/notes/")
+        elif raw_endpoint in {"/api/v1/notes", "api/v1/notes"}:
+            raw_endpoint = ""
+        elif raw_endpoint.startswith("/") or raw_endpoint.startswith("api/"):
+            raise ValueError("Notes gateway endpoints must stay inside the notes namespace.")
+        trailing_slash = raw_endpoint.endswith("/")
+        normalized = raw_endpoint.strip("/")
+        if ".." in normalized.split("/"):
+            raise ValueError("unsafe notes gateway endpoint.")
+        if not normalized:
+            return "/api/v1/notes/"
+        suffix = "/" if trailing_slash else ""
+        return f"/api/v1/notes/{normalized}{suffix}"
+
+    async def call_server_notes_endpoint(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | list[Any] | None = None,
+        data: Dict[str, Any] | None = None,
+        files: list[tuple] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Any:
+        normalized_method = str(method or "").upper()
+        if normalized_method not in {"GET", "POST", "PATCH", "PUT", "DELETE"}:
+            raise ValueError(f"Unsupported notes gateway method: {method}")
+        return await self._request(
+            normalized_method,
+            self._normalize_notes_namespace_endpoint(endpoint),
+            params=params,
+            json_data=payload,
+            data=data,
+            files=files,
+            headers=headers,
+        )
+
     def _notes_graph_query_params(self, request_data: NoteGraphRequest | Dict[str, Any]) -> Dict[str, Any]:
         payload = (
             request_data.model_dump(exclude_none=True, exclude_defaults=True, mode="json")

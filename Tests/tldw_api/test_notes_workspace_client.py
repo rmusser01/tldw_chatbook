@@ -138,6 +138,54 @@ class TestNotesWorkspaceClient:
 
         _assert_request_call(mocked.await_args, expected_method, expected_endpoint, expected_kwargs)
 
+    async def test_notes_namespace_gateway_routes_server_only_surfaces(self, monkeypatch):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(
+            side_effect=[
+                {"items": [{"id": 3, "keyword": "ai"}]},
+                {"id": 4, "keyword": "ml"},
+                {"id": 4, "keyword": "machine-learning"},
+                {"deleted": True},
+            ]
+        )
+        monkeypatch.setattr(client, "_request", mocked)
+
+        keywords = await client.call_server_notes_endpoint("GET", "keywords/", params={"limit": 25})
+        created = await client.call_server_notes_endpoint("POST", "keywords/", payload={"keyword": "ml"})
+        renamed = await client.call_server_notes_endpoint(
+            "PATCH",
+            "keywords/4",
+            payload={"keyword": "machine-learning"},
+            headers={"expected-version": "2"},
+        )
+        deleted = await client.call_server_notes_endpoint(
+            "DELETE",
+            "keywords/4",
+            headers={"expected-version": "3"},
+        )
+
+        assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/notes/keywords/")
+        assert mocked.await_args_list[0].kwargs["params"] == {"limit": 25}
+        assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/notes/keywords/")
+        assert mocked.await_args_list[1].kwargs["json_data"] == {"keyword": "ml"}
+        assert mocked.await_args_list[2].args[:2] == ("PATCH", "/api/v1/notes/keywords/4")
+        assert mocked.await_args_list[2].kwargs["headers"] == {"expected-version": "2"}
+        assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/notes/keywords/4")
+        assert mocked.await_args_list[3].kwargs["headers"] == {"expected-version": "3"}
+        assert keywords["items"][0]["keyword"] == "ai"
+        assert created["keyword"] == "ml"
+        assert renamed["keyword"] == "machine-learning"
+        assert deleted["deleted"] is True
+
+    async def test_notes_namespace_gateway_rejects_paths_outside_notes(self):
+        client = TLDWAPIClient("http://localhost:8000")
+
+        with pytest.raises(ValueError, match="notes namespace"):
+            await client.call_server_notes_endpoint("GET", "/api/v1/admin/users")
+
+        with pytest.raises(ValueError, match="unsafe"):
+            await client.call_server_notes_endpoint("GET", "../admin")
+
     async def test_notes_graph_endpoint_wiring(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")
         mocked = AsyncMock(return_value=_server_media_list_payload())
