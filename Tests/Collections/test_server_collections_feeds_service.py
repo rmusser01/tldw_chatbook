@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Collections_Interop.server_collections_feeds_service as collections_feeds_module
 from tldw_chatbook.Collections_Interop import ServerCollectionsFeedsService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api import CollectionsFeed
@@ -56,6 +58,80 @@ class FakeCollectionsFeedsClient:
     async def unsubscribe_collections_feed_websub(self, feed_id):
         self.calls.append(("unsubscribe_collections_feed_websub", feed_id))
         return {"message": "unsubscribed", "state": "unsubscribed"}
+
+
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+class ExplodingClientProvider:
+    def __init__(self):
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        raise AssertionError("provider should not be used when direct client exists")
+
+
+def test_server_collections_feeds_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(collections_feeds_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
+@pytest.mark.asyncio
+async def test_server_collections_feeds_service_direct_client_takes_precedence_over_provider():
+    client = FakeCollectionsFeedsClient()
+    provider = ExplodingClientProvider()
+    service = ServerCollectionsFeedsService(client=client, client_provider=provider)
+
+    result = await service.list_feeds(page=2, size=10)
+
+    assert result == {"items": [_feed_payload()], "total": 1}
+    assert provider.build_calls == 0
+    assert client.calls == [("list_collections_feeds", {"q": None, "page": 2, "size": 10})]
+
+
+@pytest.mark.asyncio
+async def test_server_collections_feeds_service_from_server_context_provider_is_lazy():
+    client = FakeCollectionsFeedsClient()
+    provider = FakeClientProvider(client)
+    service = ServerCollectionsFeedsService.from_server_context_provider(provider)
+
+    assert isinstance(service, ServerCollectionsFeedsService)
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 0
+
+    result = await service.list_feeds(page=2, size=10)
+
+    assert result == {"items": [_feed_payload()], "total": 1}
+    assert service.client is None
+    assert provider.build_calls == 1
+    assert client.calls == [("list_collections_feeds", {"q": None, "page": 2, "size": 10})]
+
+
+def test_server_collections_feeds_service_from_config_returns_provider_backed_service():
+    service = ServerCollectionsFeedsService.from_config(
+        {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
+    )
+
+    assert isinstance(service, ServerCollectionsFeedsService)
+    assert service.client is None
+    assert service.client_provider is not None
+
+    client = service.client_provider.build_client()
+
+    assert service.client is None
+    assert client.base_url == "https://example.com"
+    assert service.client_provider.build_client() is client
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,10 @@
 import json
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Writing_Interop.server_writing_service as writing_module
 from tldw_chatbook.Writing_Interop.server_writing_service import ServerWritingService
 from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
 
@@ -179,6 +181,84 @@ class FakeWritingClient:
                 "version": 1,
             }
         ]
+
+
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+class ExplodingClientProvider:
+    def __init__(self):
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        raise AssertionError("provider should not be used when direct client exists")
+
+
+def test_server_writing_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(writing_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
+@pytest.mark.asyncio
+async def test_server_writing_service_direct_client_takes_precedence_over_provider():
+    client = FakeWritingClient()
+    provider = ExplodingClientProvider()
+    service = ServerWritingService(client=client, client_provider=provider)
+
+    project = await service.create_project(title="Novel")
+
+    assert project["record_id"] == "server:writing_project:project-1"
+    assert provider.build_calls == 0
+    assert client.calls == [
+        ("create_manuscript_project", {"title": "Novel", "status": "draft", "settings": {}})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_writing_service_from_server_context_provider_is_lazy():
+    client = FakeWritingClient()
+    provider = FakeClientProvider(client)
+    service = ServerWritingService.from_server_context_provider(provider)
+
+    assert isinstance(service, ServerWritingService)
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 0
+
+    project = await service.create_project(title="Novel")
+
+    assert project["record_type"] == "writing_project"
+    assert service.client is None
+    assert provider.build_calls == 1
+    assert client.calls == [
+        ("create_manuscript_project", {"title": "Novel", "status": "draft", "settings": {}})
+    ]
+
+
+def test_server_writing_service_from_config_returns_provider_backed_service():
+    service = ServerWritingService.from_config(
+        {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
+    )
+
+    assert isinstance(service, ServerWritingService)
+    assert service.client is None
+    assert service.client_provider is not None
+
+    client = service.client_provider.build_client()
+
+    assert service.client is None
+    assert client.base_url == "https://example.com"
+    assert service.client_provider.build_client() is client
 
 
 @pytest.mark.asyncio

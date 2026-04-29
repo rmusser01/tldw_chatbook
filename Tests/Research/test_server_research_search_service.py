@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Research_Interop.server_research_search_service as research_search_module
 from tldw_chatbook.Research_Interop import ServerResearchSearchService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
@@ -53,6 +55,88 @@ class FakeResearchSearchClient:
     async def get_pubmed_paper_by_id(self, **kwargs):
         self.calls.append(("get_pubmed_paper_by_id", kwargs))
         return {"pmid": "12345678", "title": "Clinical Governance"}
+
+
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+class ExplodingClientProvider:
+    def __init__(self):
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        raise AssertionError("provider should not be used when direct client exists")
+
+
+def test_server_research_search_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(research_search_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
+@pytest.mark.asyncio
+async def test_server_research_search_service_direct_client_takes_precedence_over_provider():
+    client = FakeResearchSearchClient()
+    provider = ExplodingClientProvider()
+    service = ServerResearchSearchService(client=client, client_provider=provider)
+
+    result = await service.websearch(query="mcp governance")
+
+    assert result == {"web_search_results_dict": {"results": []}, "sub_query_dict": {}}
+    assert provider.build_calls == 0
+    assert client.calls[0][0] == "research_websearch"
+    assert client.calls[0][1]["query"] == "mcp governance"
+    assert client.calls[0][1]["engine"] == "google"
+    assert client.calls[0][1]["result_count"] == 10
+    assert client.calls[0][1]["aggregate"] is False
+
+
+@pytest.mark.asyncio
+async def test_server_research_search_service_from_server_context_provider_is_lazy():
+    client = FakeResearchSearchClient()
+    provider = FakeClientProvider(client)
+    service = ServerResearchSearchService.from_server_context_provider(provider)
+
+    assert isinstance(service, ServerResearchSearchService)
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 0
+
+    result = await service.websearch(query="mcp governance")
+
+    assert result == {"web_search_results_dict": {"results": []}, "sub_query_dict": {}}
+    assert service.client is None
+    assert provider.build_calls == 1
+    assert client.calls[0][0] == "research_websearch"
+    assert client.calls[0][1]["query"] == "mcp governance"
+    assert client.calls[0][1]["engine"] == "google"
+    assert client.calls[0][1]["result_count"] == 10
+    assert client.calls[0][1]["aggregate"] is False
+
+
+def test_server_research_search_service_from_config_returns_provider_backed_service():
+    service = ServerResearchSearchService.from_config(
+        {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
+    )
+
+    assert isinstance(service, ServerResearchSearchService)
+    assert service.client is None
+    assert service.client_provider is not None
+
+    client = service.client_provider.build_client()
+
+    assert service.client is None
+    assert client.base_url == "https://example.com"
+    assert service.client_provider.build_client() is client
 
 
 @pytest.mark.asyncio

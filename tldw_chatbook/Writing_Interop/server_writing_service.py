@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Optional
 
-from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
+from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     ManuscriptAnalysisRequest,
@@ -52,8 +52,15 @@ REASON_SCENE_REPARENT = "Server scene reparenting is not exposed by the current 
 class ServerWritingService:
     """Thin wrapper that maps Chatbook writing terms onto server manuscript endpoints."""
 
-    def __init__(self, client: Optional[TLDWAPIClient], *, policy_enforcer: Any | None = None):
+    def __init__(
+        self,
+        client: Optional[TLDWAPIClient],
+        *,
+        client_provider: Any | None = None,
+        policy_enforcer: Any | None = None,
+    ):
         self.client = client
+        self.client_provider = client_provider
         self.policy_enforcer = policy_enforcer
 
     @classmethod
@@ -64,14 +71,30 @@ class ServerWritingService:
         policy_enforcer: Any | None = None,
     ) -> "ServerWritingService":
         return cls(
-            client=build_runtime_api_client_from_config(app_config),
+            client=None,
+            client_provider=build_runtime_api_client_provider_from_config(app_config),
+            policy_enforcer=policy_enforcer,
+        )
+
+    @classmethod
+    def from_server_context_provider(
+        cls,
+        provider: Any,
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerWritingService":
+        return cls(
+            client=None,
+            client_provider=provider,
             policy_enforcer=policy_enforcer,
         )
 
     def _require_client(self) -> TLDWAPIClient:
-        if self.client is None:
-            raise ValueError("TLDW API client is required for server writing operations.")
-        return self.client
+        if self.client is not None:
+            return self.client
+        if self.client_provider is not None:
+            return self.client_provider.build_client()
+        raise ValueError("TLDW API client is required for server writing operations.")
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:

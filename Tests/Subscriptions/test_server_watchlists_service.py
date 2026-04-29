@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Subscriptions.server_watchlists_service as watchlists_module
 from tldw_chatbook.Subscriptions import ServerWatchlistsService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
@@ -180,6 +182,104 @@ class FakeWatchlistsClient:
     async def delete_watchlist_alert_rule(self, rule_id):
         self.calls.append(("delete_watchlist_alert_rule", rule_id))
         return {"deleted": True, "rule_id": rule_id}
+
+
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+class ExplodingClientProvider:
+    def __init__(self):
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        raise AssertionError("provider should not be used when direct client exists")
+
+
+def test_server_watchlists_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(watchlists_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
+@pytest.mark.asyncio
+async def test_server_watchlists_service_direct_client_takes_precedence_over_provider():
+    client = FakeWatchlistsClient()
+    provider = ExplodingClientProvider()
+    service = ServerWatchlistsService(client=client, client_provider=provider)
+
+    result = await service.list_sources(q="ai", limit=25, offset=5)
+
+    assert result[0]["id"] == "server:watchlist_source:17"
+    assert provider.build_calls == 0
+    assert client.calls == [
+        (
+            "list_watchlist_sources",
+            {
+                "q": "ai",
+                "tags": None,
+                "source_type": None,
+                "active": None,
+                "limit": 25,
+                "offset": 5,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_watchlists_service_from_server_context_provider_is_lazy():
+    client = FakeWatchlistsClient()
+    provider = FakeClientProvider(client)
+    service = ServerWatchlistsService.from_server_context_provider(provider)
+
+    assert isinstance(service, ServerWatchlistsService)
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 0
+
+    result = await service.list_sources(q="ai", limit=25, offset=5)
+
+    assert result[0]["id"] == "server:watchlist_source:17"
+    assert service.client is None
+    assert provider.build_calls == 1
+    assert client.calls == [
+        (
+            "list_watchlist_sources",
+            {
+                "q": "ai",
+                "tags": None,
+                "source_type": None,
+                "active": None,
+                "limit": 25,
+                "offset": 5,
+            },
+        )
+    ]
+
+
+def test_server_watchlists_service_from_config_returns_provider_backed_service():
+    service = ServerWatchlistsService.from_config(
+        {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
+    )
+
+    assert isinstance(service, ServerWatchlistsService)
+    assert service.client is None
+    assert service.client_provider is not None
+
+    client = service.client_provider.build_client()
+
+    assert service.client is None
+    assert client.base_url == "https://example.com"
+    assert service.client_provider.build_client() is client
 
 
 @pytest.mark.asyncio
