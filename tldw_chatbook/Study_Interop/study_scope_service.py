@@ -2051,8 +2051,6 @@ class StudyScopeService:
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._deck_action_id(normalized_mode, "delete"))
-        if normalized_mode == StudyBackend.SERVER:
-            self._raise_server_deck_delete_unsupported()
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).delete_deck(
                 deck_id,

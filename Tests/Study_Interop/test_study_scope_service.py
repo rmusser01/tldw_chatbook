@@ -2470,7 +2470,7 @@ async def test_scope_service_does_not_swallow_server_deck_delete_unsupported_err
 
 
 @pytest.mark.asyncio
-async def test_scope_service_blocks_server_deck_delete_before_dispatch():
+async def test_scope_service_routes_server_deck_delete_when_adapter_provides_it():
     class ServerStudyServiceWithDelete(FakeServerStudyService):
         async def delete_deck(self, deck_id, *, expected_version=None, hard_delete=False):
             self.calls.append(("delete_deck", deck_id, expected_version, hard_delete))
@@ -2484,13 +2484,10 @@ async def test_scope_service_blocks_server_deck_delete_before_dispatch():
         policy_enforcer=policy_enforcer,
     )
 
-    with pytest.raises(
-        NotImplementedError,
-        match="Flashcard deck deletion is not supported by the current server API\\.",
-    ):
-        await scope.delete_deck(mode="server", deck_id=7, expected_version=2)
+    deleted = await scope.delete_deck(mode="server", deck_id=7, expected_version=2)
 
-    assert server.calls == []
+    assert deleted is True
+    assert server.calls == [("delete_deck", 7, 2, False)]
     assert policy_enforcer.calls == ["study.deck.delete.server"]
 
 
