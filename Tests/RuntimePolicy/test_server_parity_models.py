@@ -396,6 +396,18 @@ def test_string_tuple_fields_reject_non_string_items(factory) -> None:
 @pytest.mark.parametrize(
     "factory",
     [
+        lambda: SyncReadinessReport(domain="chat", reason_codes={"not_registered": "detail"}),
+        lambda: ProviderMigrationStatus(service_name="chat", notes={"provider-backed": "detail"}),
+    ],
+)
+def test_string_tuple_fields_reject_mapping_input(factory) -> None:
+    with pytest.raises(TypeError):
+        factory()
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
         lambda: EventCursor(
             source_authority="remote",
             server_profile_id=None,

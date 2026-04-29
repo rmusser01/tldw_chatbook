@@ -78,6 +78,8 @@ def _validate_source_authority(value: str) -> None:
 def _freeze_string_tuple(value: Iterable[Any], *, field_name: str) -> tuple[str, ...]:
     if isinstance(value, str | bytes):
         raise TypeError(f"{field_name} must be an iterable of str, not a scalar string")
+    if isinstance(value, Mapping):
+        raise TypeError(f"{field_name} must be an iterable of str, not a mapping")
 
     items = tuple(value)
     for item in items:
