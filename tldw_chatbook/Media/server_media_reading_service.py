@@ -512,16 +512,19 @@ class ServerMediaReadingService:
         return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
 
     async def list_unified_items(self, **filters: Any) -> Any:
+        self._enforce(self._media_item_action_id("list"))
         response = await self._require_client().list_unified_items(
             **{key: value for key, value in filters.items() if value is not None}
         )
         return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
 
     async def get_unified_item(self, item_id: Any) -> Any:
+        self._enforce(self._media_item_action_id("detail"))
         response = await self._require_client().get_unified_item(int(item_id))
         return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
 
     async def bulk_update_unified_items(self, request_data: ItemsBulkRequest) -> Any:
+        self._enforce(self._media_item_action_id("update"))
         response = await self._require_client().bulk_update_unified_items(request_data)
         return response.model_dump(exclude_none=True, mode="json") if hasattr(response, "model_dump") else response
 

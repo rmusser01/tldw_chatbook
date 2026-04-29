@@ -911,6 +911,11 @@ class FakeClientProvider:
         return self.client
 
 
+class ExplodingClientProvider:
+    def build_client(self):
+        raise AssertionError("provider should not build a client")
+
+
 @pytest.mark.asyncio
 async def test_server_service_uses_provider_backed_client_when_no_direct_client():
     client = FakeClient()
@@ -972,6 +977,46 @@ async def test_server_service_denied_policy_does_not_build_provider_client():
         await service.list_media_items()
 
     assert provider.build_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "args", "kwargs", "expected_action_id"),
+    [
+        ("list_unified_items", (), {"q": "article"}, "media.items.list.server"),
+        ("get_unified_item", (42,), {}, "media.items.detail.server"),
+        (
+            "bulk_update_unified_items",
+            (ItemsBulkRequest(item_ids=[42], action="set_favorite", favorite=True),),
+            {},
+            "media.items.update.server",
+        ),
+    ],
+)
+async def test_server_service_denied_unified_policy_does_not_build_provider_client(
+    method_name,
+    args,
+    kwargs,
+    expected_action_id,
+):
+    policy = Mock()
+    policy.require_allowed = Mock(side_effect=PolicyDeniedError(
+        action_id=expected_action_id,
+        reason_code="wrong_source",
+        user_message="Blocked.",
+        effective_source="local",
+        authority_owner="shared",
+    ))
+    service = ServerMediaReadingService(
+        client=None,
+        client_provider=ExplodingClientProvider(),
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(PolicyDeniedError):
+        await getattr(service, method_name)(*args, **kwargs)
+
+    policy.require_allowed.assert_called_once_with(action_id=expected_action_id)
 
 
 @pytest.mark.asyncio
@@ -1363,7 +1408,8 @@ async def test_server_service_routes_reading_url_save():
 @pytest.mark.asyncio
 async def test_server_service_routes_unified_items_surface():
     client = FakeClient()
-    service = ServerMediaReadingService(client=client)
+    policy = Mock()
+    service = ServerMediaReadingService(client=client, policy_enforcer=policy)
 
     listing = await service.list_unified_items(q="article", origin="reading", page=2, size=10)
     item = await service.get_unified_item(42)
@@ -1387,6 +1433,11 @@ async def test_server_service_routes_unified_items_surface():
                 "hard": False,
             },
         ),
+    ]
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "media.items.list.server",
+        "media.items.detail.server",
+        "media.items.update.server",
     ]
 
 
