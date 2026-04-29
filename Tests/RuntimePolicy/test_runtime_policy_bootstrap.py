@@ -162,6 +162,29 @@ def test_config_client_provider_repr_redacts_config_secrets():
     assert "redacted" in repr(provider)
 
 
+@pytest.mark.asyncio
+async def test_config_client_provider_close_cached_client_clears_and_closes_previous_client():
+    from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def close(self) -> None:
+            self.close_calls += 1
+
+    provider = build_runtime_api_client_provider_from_config(
+        {"tldw_api": {"base_url": "https://example.test", "api_key": "secret"}}
+    )
+    cached_client = FakeClient()
+    provider._cached_client = cached_client
+
+    await provider.close_cached_client()
+
+    assert provider._cached_client is None
+    assert cached_client.close_calls == 1
+
+
 def test_build_server_chatbook_service_wraps_authoritative_client_builder():
     from tldw_chatbook.runtime_policy.bootstrap import build_server_chatbook_service
 
