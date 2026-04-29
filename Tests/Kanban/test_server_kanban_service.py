@@ -1,5 +1,8 @@
+import inspect
+
 import pytest
 
+import tldw_chatbook.Kanban_Interop.server_kanban_service as kanban_module
 from tldw_chatbook.Kanban_Interop.server_kanban_service import ServerKanbanService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
@@ -128,6 +131,122 @@ class FakePolicyEnforcer:
                 effective_source="server",
                 authority_owner="server",
             )
+
+
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+class FreshClientProvider:
+    def __init__(self, factory):
+        self.factory = factory
+        self.build_calls = 0
+        self.clients = []
+
+    def build_client(self):
+        self.build_calls += 1
+        client = self.factory()
+        self.clients.append(client)
+        return client
+
+
+class ExplodingClientProvider:
+    def __init__(self):
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        raise AssertionError("provider should not be used when direct client exists")
+
+
+def test_server_kanban_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(kanban_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
+@pytest.mark.asyncio
+async def test_server_kanban_service_direct_client_takes_precedence_over_provider():
+    client = FakeKanbanClient()
+    provider = ExplodingClientProvider()
+    service = ServerKanbanService(client, client_provider=provider)
+
+    boards = await service.list_boards()
+
+    assert boards["boards"][0]["record_id"] == "server:kanban_board:1"
+    assert provider.build_calls == 0
+    assert client.calls == [("list_kanban_boards", {})]
+
+
+@pytest.mark.asyncio
+async def test_server_kanban_service_from_server_context_provider_is_lazy():
+    client = FakeKanbanClient()
+    provider = FakeClientProvider(client)
+    service = ServerKanbanService.from_server_context_provider(provider)
+
+    assert isinstance(service, ServerKanbanService)
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 0
+
+    boards = await service.list_boards(include_archived=True)
+
+    assert boards["boards"][0]["record_id"] == "server:kanban_board:1"
+    assert service.client is None
+    assert provider.build_calls == 1
+    assert client.calls == [("list_kanban_boards", {"include_archived": True})]
+
+
+@pytest.mark.asyncio
+async def test_server_kanban_service_re_resolves_provider_without_service_local_client_cache():
+    provider = FreshClientProvider(FakeKanbanClient)
+    service = ServerKanbanService.from_server_context_provider(provider)
+
+    await service.list_boards()
+    await service.list_boards(include_archived=True)
+
+    assert service.client is None
+    assert provider.build_calls == 2
+    assert len(provider.clients) == 2
+    assert provider.clients[0] is not provider.clients[1]
+    assert provider.clients[0].calls == [("list_kanban_boards", {})]
+    assert provider.clients[1].calls == [("list_kanban_boards", {"include_archived": True})]
+    for built_client in provider.clients:
+        assert all(value is not built_client for value in vars(service).values())
+
+
+@pytest.mark.asyncio
+async def test_server_kanban_service_from_config_returns_provider_backed_service(monkeypatch):
+    provider = FakeClientProvider(FakeKanbanClient())
+    build_provider_calls = []
+
+    def build_provider(app_config):
+        build_provider_calls.append(app_config)
+        return provider
+
+    monkeypatch.setattr(kanban_module, "build_runtime_api_client_provider_from_config", build_provider)
+
+    config = {"tldw_api": {"base_url": "https://example.com"}}
+    service = ServerKanbanService.from_config(config)
+
+    assert isinstance(service, ServerKanbanService)
+    assert service.client is None
+    assert service.client_provider is provider
+    assert build_provider_calls == [config]
+    assert provider.build_calls == 0
+
+    boards = await service.list_boards()
+
+    assert boards["boards"][0]["record_id"] == "server:kanban_board:1"
+    assert service.client is None
+    assert provider.build_calls == 1
 
 
 @pytest.mark.asyncio

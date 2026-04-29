@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
-from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
+from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     KanbanBoardCreate,
@@ -162,9 +162,11 @@ class ServerKanbanService:
         self,
         client: Optional[TLDWAPIClient],
         *,
+        client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
     ) -> None:
         self.client = client
+        self.client_provider = client_provider
         self.policy_enforcer = policy_enforcer
 
     @classmethod
@@ -175,7 +177,21 @@ class ServerKanbanService:
         policy_enforcer: Any | None = None,
     ) -> "ServerKanbanService":
         return cls(
-            client=build_runtime_api_client_from_config(app_config),
+            client=None,
+            client_provider=build_runtime_api_client_provider_from_config(app_config),
+            policy_enforcer=policy_enforcer,
+        )
+
+    @classmethod
+    def from_server_context_provider(
+        cls,
+        provider: Any,
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerKanbanService":
+        return cls(
+            client=None,
+            client_provider=provider,
             policy_enforcer=policy_enforcer,
         )
 
@@ -189,9 +205,11 @@ class ServerKanbanService:
         return _bound_operation
 
     def _require_client(self) -> TLDWAPIClient:
-        if self.client is None:
-            raise ValueError("TLDW API client is required for server Kanban operations.")
-        return self.client
+        if self.client is not None:
+            return self.client
+        if self.client_provider is not None:
+            return self.client_provider.build_client()
+        raise ValueError("TLDW API client is required for server Kanban operations.")
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
