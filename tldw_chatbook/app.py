@@ -1655,7 +1655,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
 
         has_local = self.local_evaluation_service is not None
-        has_server = getattr(self.server_evaluation_service, "client", None) is not None
+        has_server = (
+            getattr(self.server_evaluation_service, "client", None) is not None
+            or getattr(self.server_evaluation_service, "client_provider", None) is not None
+        )
         if not has_local and not has_server:
             self.evaluation_scope_service = None
             return
