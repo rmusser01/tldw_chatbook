@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
 from ..tldw_api import ChatLoopStartRequest, TLDWAPIClient
+
+
+@dataclass(slots=True)
+class _ConfigBackedClientProvider:
+    app_config: Mapping[str, Any]
+    _client: TLDWAPIClient | None = None
+
+    def build_client(self) -> TLDWAPIClient:
+        if self._client is None:
+            self._client = build_runtime_api_client_from_config(self.app_config)
+        return self._client
 
 
 class ServerChatLoopService:
@@ -22,7 +34,7 @@ class ServerChatLoopService:
 
     @classmethod
     def from_config(cls, app_config: Mapping[str, Any]) -> "ServerChatLoopService":
-        return cls(client=build_runtime_api_client_from_config(app_config))
+        return cls(client_provider=_ConfigBackedClientProvider(app_config))
 
     @classmethod
     def from_server_context_provider(cls, provider: Any) -> "ServerChatLoopService":

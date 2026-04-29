@@ -2392,9 +2392,14 @@ async def test_server_character_persona_service_hard_stops_denied_ui_policy_deci
     assert client.list_characters_calls == []
 
 
-def test_server_character_persona_service_from_config_uses_api_client(monkeypatch):
-    sentinel_client = Mock()
-    build_client = Mock(return_value=sentinel_client)
+@pytest.mark.asyncio
+async def test_server_character_persona_service_from_config_builds_client_lazily(monkeypatch):
+    sentinel_client = FakeCharacterPersonaClient()
+    build_client_calls = []
+
+    def build_client(app_config):
+        build_client_calls.append(app_config)
+        return sentinel_client
 
     monkeypatch.setattr(
         "tldw_chatbook.Character_Chat.server_character_persona_service.build_runtime_api_client_from_config",
@@ -2403,20 +2408,33 @@ def test_server_character_persona_service_from_config_uses_api_client(monkeypatc
 
     service = ServerCharacterPersonaService.from_config({"tldw_api": {"base_url": "https://example.com"}})
 
-    assert service.client is sentinel_client
-    build_client.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
+    assert service.client is None
+    assert service.client_provider is not None
+    assert build_client_calls == []
+
+    result = await service.list_characters(limit=13, offset=4)
+
+    assert result == [{"id": 1, "name": "Ada"}]
+    assert build_client_calls == [{"tldw_api": {"base_url": "https://example.com"}}]
+    assert sentinel_client.list_characters_calls == [{"limit": 13, "offset": 4}]
 
 
 def test_app_wires_character_persona_services(monkeypatch):
     from tldw_chatbook import app as app_module
 
     server_service = Mock()
+    server_dictionary_service = Mock()
     captured = {}
 
     monkeypatch.setattr(
         app_module.ServerCharacterPersonaService,
-        "from_config",
+        "from_server_context_provider",
         Mock(return_value=server_service),
+    )
+    monkeypatch.setattr(
+        app_module.ServerChatDictionaryService,
+        "from_server_context_provider",
+        Mock(return_value=server_dictionary_service),
     )
     original_scope_service = app_module.CharacterPersonaScopeService
 
@@ -2433,9 +2451,9 @@ def test_app_wires_character_persona_services(monkeypatch):
     monkeypatch.setattr(app_module, "CharacterPersonaScopeService", scope_service_factory)
 
     fake_app = Mock()
-    fake_app.app_config = {"tldw_api": {"base_url": "https://example.com"}}
     fake_app.chachanotes_db = object()
     fake_app.service_policy_enforcer = object()
+    fake_app.server_context_provider = object()
 
     app_module.TldwCli._wire_character_persona_services(fake_app)
 

@@ -123,6 +123,33 @@ class ExplodingProvider:
 
 
 @pytest.mark.asyncio
+async def test_server_chat_conversation_service_from_config_builds_client_lazily(monkeypatch):
+    sentinel_client = FakeChatClient()
+    build_client_calls: list[dict[str, Any]] = []
+
+    def build_client(app_config):
+        build_client_calls.append(app_config)
+        return sentinel_client
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.server_chat_conversation_service.build_runtime_api_client_from_config",
+        build_client,
+    )
+
+    service = ServerChatConversationService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+
+    assert service.client is None
+    assert service.client_provider is not None
+    assert build_client_calls == []
+
+    result = await service.list_conversations(query="billing")
+
+    assert result["items"][0]["id"] == "conv-1"
+    assert build_client_calls == [{"tldw_api": {"base_url": "https://example.com"}}]
+    assert sentinel_client.calls == [("list_chat_conversations", (), {"query": "billing"})]
+
+
+@pytest.mark.asyncio
 async def test_server_chat_conversation_service_reuses_provider_cached_client_across_operations():
     provider = FakeCachingProvider(FakeChatClient)
     service = ServerChatConversationService.from_server_context_provider(provider)
