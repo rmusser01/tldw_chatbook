@@ -653,6 +653,52 @@ async def test_scope_service_rejects_local_notes_graph_operations_explicitly():
         await scope_service.get_notes_graph(scope=ScopeType.LOCAL_NOTE)
 
 
+@pytest.mark.asyncio
+async def test_scope_service_rejects_all_local_notes_graph_operations_before_backend_dispatch():
+    server = FakeServerNotes()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=server,
+    )
+
+    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+        await scope_service.get_note_neighbors(scope=ScopeType.LOCAL_NOTE, note_id="local-1")
+    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+        await scope_service.create_note_link(
+            scope=ScopeType.LOCAL_NOTE,
+            note_id="local-1",
+            to_note_id="local-2",
+        )
+    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+        await scope_service.delete_note_link(scope=ScopeType.LOCAL_NOTE, edge_id="local:manual:1")
+
+    assert server.graph_calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_all_workspace_notes_graph_operations_before_backend_dispatch():
+    server = FakeServerNotes()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=server,
+    )
+
+    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+        await scope_service.get_notes_graph(scope=ScopeType.WORKSPACE, center_note_id="note:123")
+    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+        await scope_service.get_note_neighbors(scope=ScopeType.WORKSPACE, note_id="note:123")
+    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+        await scope_service.create_note_link(
+            scope=ScopeType.WORKSPACE,
+            note_id="note:123",
+            to_note_id="note:456",
+        )
+    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+        await scope_service.delete_note_link(scope=ScopeType.WORKSPACE, edge_id="e:1")
+
+    assert server.graph_calls == []
+
+
 def test_scope_service_reports_known_notes_graph_capability_gaps():
     scope_service = NotesScopeService(
         local_notes_service=FakeLocalNotes(),

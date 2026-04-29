@@ -207,6 +207,34 @@ async def test_scope_service_routes_server_chat_loop_and_rejects_local_loop():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_rejects_all_local_chat_loop_controls_before_backend_dispatch():
+    server = FakeServerConversationService()
+    policy = RecordingPolicy()
+    service = ChatConversationScopeService(
+        local_service=FakeConversationService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(NotImplementedError, match="Local chat loop runs are not implemented"):
+        await service.list_loop_events("run_123", mode="local", after_seq=3)
+    with pytest.raises(NotImplementedError, match="Local chat loop runs are not implemented"):
+        await service.approve_loop_call("run_123", mode="local", approval_id="approval-1")
+    with pytest.raises(NotImplementedError, match="Local chat loop runs are not implemented"):
+        await service.reject_loop_call("run_123", mode="local", approval_id="approval-2")
+    with pytest.raises(NotImplementedError, match="Local chat loop runs are not implemented"):
+        await service.cancel_loop("run_123", mode="local")
+
+    assert server.calls == []
+    assert policy.calls == [
+        "chat.loop.observe.local",
+        "chat.loop.approve.local",
+        "chat.loop.approve.local",
+        "chat.loop.cancel.local",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_maps_server_style_tree_pagination_to_local_tree_arguments():
     local = FakeConversationService()
     service = ChatConversationScopeService(local_service=local, server_service=FakeServerConversationService())

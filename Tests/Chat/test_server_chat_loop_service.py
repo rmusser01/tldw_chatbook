@@ -182,3 +182,20 @@ async def test_chat_loop_scope_service_rejects_local_mode_before_policy_dispatch
         await scope.start_run(mode="local", messages=[{"role": "user", "content": "hello"}])
 
     assert policy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_chat_loop_scope_service_rejects_all_local_controls_before_policy_dispatch():
+    policy = FakePolicyEnforcer()
+    scope = ServerChatLoopScopeService(server_service=ServerChatLoopService(client=FakeClient()), policy_enforcer=policy)
+
+    with pytest.raises(ValueError, match="Server chat loop requires server mode"):
+        await scope.list_events(mode="local", run_id="run_1", after_seq=3)
+    with pytest.raises(ValueError, match="Server chat loop requires server mode"):
+        await scope.approve(mode="local", run_id="run_1", approval_id="approval-1")
+    with pytest.raises(ValueError, match="Server chat loop requires server mode"):
+        await scope.reject(mode="local", run_id="run_1", approval_id="approval-2")
+    with pytest.raises(ValueError, match="Server chat loop requires server mode"):
+        await scope.cancel(mode="local", run_id="run_1")
+
+    assert policy.calls == []
