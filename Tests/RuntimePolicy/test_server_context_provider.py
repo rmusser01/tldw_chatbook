@@ -981,7 +981,30 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
         },
     )
 
+    runtime_context.state = replace(
+        runtime_context.state,
+        active_server_id="https://server.example.com/api",
+    )
+    context = provider.get_active_context()
+
+    assert context.active_server_id == "https://server.example.com/api"
+    assert context.auth_token == "legacy-bearer"
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) == "legacy-bearer"
+
+    runtime_context.state = replace(
+        runtime_context.state,
+        active_server_id="https://server-a.example.com/api",
+    )
     provider.clear_server_credentials("https://server.example.com/api")
+
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) is None
+
     runtime_context.state = replace(
         runtime_context.state,
         active_server_id="https://server.example.com/api",
