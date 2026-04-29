@@ -323,3 +323,33 @@ def test_non_finite_json_float_values_raise_type_error(field_name: str, kwargs: 
 
     with pytest.raises(TypeError):
         NormalizedEventRecord(**event_kwargs)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "kwargs"),
+    [
+        ("entity_ref", {"entity_ref": {"type": "notification", 1: "n-1"}}),
+        ("payload", {"payload": {1: "numeric-key"}}),
+        ("payload", {"payload": {"nested": {1: "numeric-key"}}}),
+        ("details", {"details": {1: "numeric-key"}}),
+    ],
+)
+def test_non_string_json_mapping_keys_raise_type_error(field_name: str, kwargs: dict) -> None:
+    if field_name == "details":
+        with pytest.raises(TypeError):
+            SyncReadinessReport(domain="notes", **kwargs)
+        return
+
+    event_kwargs = {
+        "source_authority": "local",
+        "server_profile_id": None,
+        "stream_name": "notifications",
+        "stream_instance_id": "default",
+        "event_kind": "notification.created",
+        "entity_ref": {"type": "notification", "id": "n-1"},
+        "payload_hash": "hash",
+    }
+    event_kwargs.update(kwargs)
+
+    with pytest.raises(TypeError):
+        NormalizedEventRecord(**event_kwargs)

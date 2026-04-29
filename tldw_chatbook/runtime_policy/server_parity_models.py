@@ -17,7 +17,12 @@ FrozenJsonValue = JsonScalar | tuple[Any, ...] | dict[str, Any]
 
 class FrozenJSONDict(dict[str, FrozenJsonValue]):
     def __init__(self, data: Mapping[str, Any]) -> None:
-        dict.__init__(self, ((str(key), _freeze_json_value(value)) for key, value in data.items()))
+        frozen_items: list[tuple[str, FrozenJsonValue]] = []
+        for key, value in data.items():
+            if not isinstance(key, str):
+                raise TypeError(f"JSON mapping keys must be str, got {type(key).__name__}")
+            frozen_items.append((key, _freeze_json_value(value)))
+        dict.__init__(self, frozen_items)
 
     def _raise_frozen(self, *args: Any, **kwargs: Any) -> None:
         raise TypeError("FrozenJSONDict is immutable")
