@@ -62,6 +62,7 @@ class RuntimeServerContextProvider:
         self.target_store = target_store
         self.credential_store = credential_store
         self.app_config = app_config or {}
+        self._legacy_cleared_server_ids: set[str] = set()
         self._cached_client_key: _CachedClientKey | None = None
         self._cached_client: TLDWAPIClient | None = None
         self._pending_client_close_tasks: set[asyncio.Task[None]] = set()
@@ -131,8 +132,10 @@ class RuntimeServerContextProvider:
         self._invalidate_cached_client()
 
     def clear_all_credentials(self) -> None:
+        active_server_id = self._active_server_id_or_none()
         self.credential_store.clear_all()
-        self.app_config = self._app_config_without_legacy_credentials()
+        if active_server_id is not None:
+            self._legacy_cleared_server_ids.add(active_server_id)
         self._invalidate_cached_client()
 
     def clear_active_server_auth_tokens(self) -> None:
@@ -161,6 +164,7 @@ class RuntimeServerContextProvider:
                 refresh_token,
             )
         if access_token or refresh_token:
+            self._legacy_cleared_server_ids.discard(context.active_server_id)
             self._invalidate_cached_client()
 
     def resolve_target(self) -> ConfiguredServerTarget | None:
@@ -180,6 +184,12 @@ class RuntimeServerContextProvider:
         if state.active_source != "server" or not state.server_configured or not active_server_id:
             raise ServerContextUnavailable("Runtime policy does not have an active configured server")
         return active_server_id
+
+    def _active_server_id_or_none(self) -> str | None:
+        try:
+            return self._require_active_server_id()
+        except ServerContextUnavailable:
+            return None
 
     def _legacy_target_for_active_server(self, active_server_id: str) -> ConfiguredServerTarget | None:
         legacy_binding = derive_configured_server_binding(self.app_config)
@@ -212,16 +222,18 @@ class RuntimeServerContextProvider:
                 return secret, f"credential_store:{candidate_purpose}"
 
         if allow_legacy_config:
+            if server_id in self._legacy_cleared_server_ids:
+                if credential_error is not None:
+                    raise credential_error
+                raise ServerCredentialsUnavailable(
+                    "Legacy credentials are unavailable for the active server profile"
+                )
             legacy_token = self._legacy_config_token()
             if legacy_token is not None:
                 imported_purpose = self._import_legacy_token(server_id, target.auth_mode, legacy_token)
                 if imported_purpose is not None:
                     return legacy_token, f"credential_store:{imported_purpose}"
                 return legacy_token, "legacy:tldw_api"
-            if self._is_legacy_auth_target(target):
-                raise ServerCredentialsUnavailable(
-                    "Legacy credentials are unavailable for the active server profile"
-                )
         if credential_error is not None:
             raise credential_error
         return None, "none"
@@ -260,27 +272,6 @@ class RuntimeServerContextProvider:
 
         legacy_binding = derive_configured_server_binding(self.app_config)
         return legacy_binding.server_configured and legacy_binding.active_server_id == active_server_id
-
-    def _app_config_without_legacy_credentials(self) -> Mapping[str, Any]:
-        if not isinstance(self.app_config, Mapping):
-            return {}
-
-        sanitized_config = dict(self.app_config)
-        api_config = self.app_config.get("tldw_api", {})
-        if not isinstance(api_config, Mapping):
-            sanitized_config["tldw_api"] = {}
-            return sanitized_config
-
-        sanitized_api_config = dict(api_config)
-        sanitized_api_config.pop("auth_token", None)
-        sanitized_api_config.pop("api_key", None)
-        sanitized_api_config.pop("bearer_token", None)
-        sanitized_config["tldw_api"] = sanitized_api_config
-        return sanitized_config
-
-    @staticmethod
-    def _is_legacy_auth_target(target: ConfiguredServerTarget) -> bool:
-        return target.auth_reference == "legacy:tldw_api"
 
     def _import_legacy_token(self, server_id: str, auth_mode: str, token: str) -> str | None:
         purposes = self._purposes_for_auth_mode(auth_mode)

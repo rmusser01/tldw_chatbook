@@ -60,6 +60,23 @@ class RaisingCredentialStore:
         raise RuntimeError("keyring unavailable")
 
 
+class LookupFailingCredentialStore:
+    def set_secret(self, server_id: str, purpose: str, secret: str) -> None:
+        return None
+
+    def get_secret(self, server_id: str, purpose: str) -> str | None:
+        raise RuntimeError("lookup unavailable")
+
+    def delete_secret(self, server_id: str, purpose: str) -> None:
+        return None
+
+    def clear_server(self, server_id: str) -> None:
+        return None
+
+    def clear_all(self) -> None:
+        return None
+
+
 def _runtime_context(
     *,
     active_source: str = "server",
@@ -747,6 +764,7 @@ async def test_clear_all_credentials_invalidates_cached_client_and_removes_impor
         "https://backup.example.com/api",
         SERVER_CREDENTIAL_ACCESS_TOKEN,
     ) is None
+    assert provider.app_config["tldw_api"]["bearer_token"] == "legacy-bearer"
 
     with pytest.raises(ServerCredentialsUnavailable):
         provider.get_active_context()
@@ -754,6 +772,37 @@ async def test_clear_all_credentials_invalidates_cached_client_and_removes_impor
         "https://server.example.com/api",
         SERVER_CREDENTIAL_BEARER_TOKEN,
     ) is None
+
+
+def test_clear_all_credentials_preserves_original_credential_store_error_for_legacy_profile(tmp_path):
+    provider = _provider(
+        tmp_path,
+        credential_store=LookupFailingCredentialStore(),
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api/",
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    provider.clear_all_credentials()
+
+    with pytest.raises(ServerCredentialsUnavailable) as exc:
+        provider.get_active_context()
+
+    assert isinstance(exc.value.__cause__, RuntimeError)
 
 
 def test_target_store_json_and_target_metadata_do_not_contain_stored_secret(tmp_path):
