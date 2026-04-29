@@ -19,6 +19,15 @@ The migration goal is to make active-server selection, credentials, token lifecy
 
 - `ServerRuntimeService`: app wiring now uses `ServerRuntimeService.from_server_context_provider(...)`. Its `from_config()` and `from_app_config()` factories remain as compatibility shims.
 - `ServerAuthAccountService`: app wiring now uses `ServerAuthAccountService.from_server_context_provider(...)`. Its `from_config()` and `from_app_config()` factories remain as compatibility shims.
+- `ServerChatConversationService`: app wiring now uses `ServerChatConversationService.from_server_context_provider(...)`. Its `from_config()` factory remains as a compatibility shim.
+- `ServerCharacterPersonaService`: app wiring now uses `ServerCharacterPersonaService.from_server_context_provider(...)`. Its `from_config()` factory remains as a compatibility shim.
+- `ServerChatDictionaryService`: app wiring now uses `ServerChatDictionaryService.from_server_context_provider(...)`. Its `from_config()` factory remains as a compatibility shim.
+- `ServerMediaReadingService`: app wiring now uses `ServerMediaReadingService.from_server_context_provider(...)`. Its `from_config()` factory remains as a compatibility shim.
+- `ServerNotesWorkspaceService`: app wiring now uses `ServerNotesWorkspaceService.from_server_context_provider(...)`. Its `from_config()` factory remains as a compatibility shim.
+- `ServerPromptService`: app wiring now uses `ServerPromptService.from_server_context_provider(...)`, and `build_prompt_scope_service(...)` receives the app `RuntimeServerContextProvider`. Its `from_config()` and legacy prompt-scope fallback remain as compatibility shims.
+- `ServerChatbookService`: app wiring now uses `ServerChatbookService.from_server_context_provider(...)`. `build_tldw_api_client_from_config(...)`, `build_server_chatbook_service_from_config(...)`, and `ServerChatbookService.from_config(...)` remain as compatibility shims.
+- `ServerPromptStudioService`: app wiring now uses `ServerPromptStudioService.from_server_context_provider(...)`. Its `from_config()` factory remains as a compatibility shim.
+- `ServerChatLoopService`: service constructor and `from_server_context_provider(...)` exist, but there is no current app service wiring call site in this tranche. Its `from_config()` factory remains as a compatibility shim.
 
 ## Direct Builder Audit Command
 
@@ -48,17 +57,16 @@ These are core interaction, identity, chat, media, note, prompt, and chatbook su
 | --- | ---: | --- |
 | `tldw_chatbook/Auth_Account_Interop/server_auth_account_service.py` | 7, 52 | Migrated app wiring; compatibility factory still calls the legacy config builder. |
 | `tldw_chatbook/Server_Runtime_Interop/server_runtime_service.py` | 7, 34 | Migrated app wiring; compatibility factory still calls the legacy config builder. |
-| `tldw_chatbook/Chat/server_chat_conversation_service.py` | 7, 39 | Service migration target. |
-| `tldw_chatbook/Chat/server_chat_loop_service.py` | 7, 19 | Service migration target. |
-| `tldw_chatbook/Character_Chat/server_character_persona_service.py` | 9, 46 | Service migration target. |
-| `tldw_chatbook/Character_Chat/server_chat_dictionary_service.py` | 27 | Service migration target. |
-| `tldw_chatbook/Chatbooks/server_chatbook_service.py` | 9, 31, 174 | Service/helper migration target. |
-| `tldw_chatbook/Media/server_media_reading_service.py` | 77, 80 | Service migration target. |
-| `tldw_chatbook/Notes/server_notes_workspace_service.py` | 10, 45 | Service migration target. |
-| `tldw_chatbook/Prompt_Management/server_prompt_service.py` | 28 | Service migration target. |
-| `tldw_chatbook/Prompt_Management/prompt_scope_service.py` | 10, 70-71, 671 | High-priority indirect prompt factory. `ServerPromptService.from_config(...)` still constructs a server client from `app_config` through the chatbook compatibility wrapper. |
-| `tldw_chatbook/Prompt_Studio_Interop/server_prompt_studio_service.py` | 7, 53 | Service migration target. |
-| `tldw_chatbook/app.py` | 1635, 1646 | High-priority app startup prompt/chatbook factory consumers. These are separate from the intentional Unified MCP target-specific factory at lines 2145 and 2151. |
+| `tldw_chatbook/Chat/server_chat_conversation_service.py` | 7, 41 | Migrated app wiring; compatibility factory still calls the legacy config builder. |
+| `tldw_chatbook/Chat/server_chat_loop_service.py` | 7, 25 | Partially migrated service seam; no app wiring call site in this tranche, and compatibility factory still calls the legacy config builder. |
+| `tldw_chatbook/Character_Chat/server_character_persona_service.py` | 9, 53 | Migrated app wiring; compatibility factory still calls the legacy config builder. |
+| `tldw_chatbook/Character_Chat/server_chat_dictionary_service.py` | 34 | Migrated app wiring; compatibility factory still calls the legacy config builder. |
+| `tldw_chatbook/Chatbooks/server_chatbook_service.py` | 9, 29, 31, 70, 181 | Migrated app wiring; compatibility helpers/factory still call the legacy config builder. |
+| `tldw_chatbook/Media/server_media_reading_service.py` | 84, 87 | Migrated app wiring; compatibility factory still calls the legacy config builder. |
+| `tldw_chatbook/Notes/server_notes_workspace_service.py` | 10, 52 | Migrated app wiring; compatibility factory still calls the legacy config builder. |
+| `tldw_chatbook/Prompt_Management/server_prompt_service.py` | 35 | Migrated app wiring; compatibility factory still calls the legacy config builder. |
+| `tldw_chatbook/Prompt_Management/prompt_scope_service.py` | 10, 77, 677 | Migrated app wiring passes a provider into `build_prompt_scope_service(...)`; legacy prompt-scope fallback still constructs from `app_config`. |
+| `tldw_chatbook/Prompt_Studio_Interop/server_prompt_studio_service.py` | 7, 55 | Migrated app wiring; compatibility factory still calls the legacy config builder. |
 
 ### Medium Priority
 
@@ -127,9 +135,9 @@ These `rg` matches are intentional current seams, not remaining service migratio
 
 | Module | Audit lines | Notes |
 | --- | ---: | --- |
-| `tldw_chatbook/app.py` | 2145, 2151 | Unified MCP target-specific client factory. This currently builds a client for the selected MCP target and is separate from server service migration. |
+| `tldw_chatbook/app.py` | 2105, 2111 | Unified MCP target-specific client factory. This currently builds a client for the selected MCP target and is separate from server service migration. |
 | `tldw_chatbook/runtime_policy/server_context.py` | 104 | `RuntimeServerContextProvider.build_client()` provider seam. This is the desired construction point for migrated services. |
-| `tldw_chatbook/runtime_policy/bootstrap.py` | 34, 75, 76, 88 | Runtime-policy bootstrap and legacy compatibility helpers. These stay as compatibility seams until consumers are fully migrated. |
+| `tldw_chatbook/runtime_policy/bootstrap.py` | 34, 75, 76, 79, 88 | Runtime-policy bootstrap and legacy compatibility helpers. These stay as compatibility seams until consumers are fully migrated. |
 
 ## Follow-Up Guardrails
 

@@ -22,13 +22,18 @@ from tldw_chatbook.Audio_Services_Interop import (
     ServerAudioServicesService,
 )
 from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
+from tldw_chatbook.Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
 from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+from tldw_chatbook.Character_Chat.local_character_persona_service import LocalCharacterPersonaService
 from tldw_chatbook.Character_Chat.server_chat_dictionary_service import ServerChatDictionaryService
+from tldw_chatbook.Character_Chat.server_character_persona_service import ServerCharacterPersonaService
 from tldw_chatbook.Media import (
     LocalMediaReadingService,
     MediaReadingScopeService,
     ServerMediaReadingService,
 )
+from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+from tldw_chatbook.Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_store import LocalMCPStore
@@ -148,6 +153,14 @@ def test_app_uses_screen_navigation_and_wires_media_services():
     assert isinstance(app.media_reading_scope_service, MediaReadingScopeService)
     assert app.media_runtime_state.runtime_backend == "local"
     assert app.auth_account_scope_service.server_context_provider is app.server_context_provider
+    assert app.server_media_reading_service.client_provider is app.server_context_provider
+    assert app.server_chat_conversation_service.client_provider is app.server_context_provider
+    assert app.server_notes_workspace_service.client_provider is app.server_context_provider
+    assert app.server_character_persona_service.client_provider is app.server_context_provider
+    assert app.server_chat_dictionary_service.client_provider is app.server_context_provider
+    assert app.server_prompt_service.client_provider is app.server_context_provider
+    assert app.server_chatbook_service.client_provider is app.server_context_provider
+    assert app.server_prompt_studio_service.client_provider is app.server_context_provider
     assert app.server_runtime_service.client_provider is app.server_context_provider
     assert app.server_auth_account_service.client_provider is app.server_context_provider
 
@@ -272,6 +285,11 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.writing_scope_service, WritingScopeService)
     assert isinstance(app.server_chat_conversation_service, ServerChatConversationService)
     assert isinstance(app.chat_conversation_scope_service, ChatConversationScopeService)
+    assert isinstance(app.server_notes_workspace_service, ServerNotesWorkspaceService)
+    assert isinstance(app.notes_scope_service, NotesScopeService)
+    assert isinstance(app.server_character_persona_service, ServerCharacterPersonaService)
+    assert isinstance(app.local_character_persona_service, LocalCharacterPersonaService)
+    assert isinstance(app.character_persona_scope_service, CharacterPersonaScopeService)
     assert isinstance(app.server_chat_dictionary_service, ServerChatDictionaryService)
     assert isinstance(app.local_chat_dictionary_service, LocalChatDictionaryService)
     assert isinstance(app.chat_dictionary_scope_service, ChatDictionaryScopeService)

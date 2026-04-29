@@ -302,7 +302,6 @@ from tldw_chatbook.Evaluations_Interop import (
 from tldw_chatbook.runtime_policy.bootstrap import (
     add_runtime_policy_snapshot,
     build_runtime_api_client,
-    build_server_chatbook_service,
     load_runtime_policy_for_app,
     reconcile_saved_screen_state,
     set_authoritative_runtime_source,
@@ -1288,6 +1287,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.client_id = CLI_APP_CLIENT_ID
         self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
         self.db_status_manager = DBStatusManager(self)  # Initialize database status manager
+        self._wire_server_context_provider()
         self._startup_phases["basic_init"] = time.perf_counter() - phase_start
         log_histogram("app_startup_phase_duration_seconds", self._startup_phases["basic_init"], 
                      labels={"phase": "basic_init"}, 
@@ -1390,16 +1390,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         initial_media_runtime_backend = self._resolve_initial_media_runtime_backend()
         self.media_runtime_state = MediaRuntimeState(runtime_backend=initial_media_runtime_backend)
         self.local_media_reading_service = LocalMediaReadingService(self.media_db, app_config=self.app_config)
-        try:
-            self.server_media_reading_service = ServerMediaReadingService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_media_reading_service = ServerMediaReadingService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        self.server_media_reading_service = ServerMediaReadingService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.media_reading_scope_service = MediaReadingScopeService(
             local_service=self.local_media_reading_service,
             server_service=self.server_media_reading_service,
@@ -1436,6 +1430,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             prompt_db=self.prompts_db,
             app_config=self.app_config,
             policy_enforcer=self.service_policy_enforcer,
+            client_provider=self.server_context_provider,
         )
 
         if self.notes_service and hasattr(self.notes_service, 'db') and self.notes_service.db:
@@ -1452,16 +1447,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         self._wire_chat_conversation_services()
 
-        try:
-            self.server_notes_workspace_service = ServerNotesWorkspaceService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_notes_workspace_service = ServerNotesWorkspaceService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        self.server_notes_workspace_service = ServerNotesWorkspaceService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.notes_scope_service = NotesScopeService(
             local_notes_service=self.notes_service,
             server_service=self.server_notes_workspace_service,
@@ -1520,6 +1509,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # Final memory check
         log_resource_usage()
 
+    def _wire_server_context_provider(self) -> None:
+        self.unified_mcp_target_store = ConfiguredServerTargetStore(
+            get_user_data_dir() / "mcp_server_targets.json",
+        )
+        self.unified_mcp_target_store.upsert_legacy_config_target(self.app_config)
+        self.server_credential_store = KeyringServerCredentialStore()
+        self.server_context_provider = RuntimeServerContextProvider(
+            runtime_context=self.runtime_policy,
+            target_store=self.unified_mcp_target_store,
+            credential_store=self.server_credential_store,
+            app_config=self.app_config,
+        )
+
     def open_study_screen(self, scope_context: Optional[StudyScopeContext] = None) -> None:
         self.pending_study_scope_context = scope_context
         self.post_message(NavigateToScreen(TAB_STUDY))
@@ -1536,16 +1538,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.post_message(NavigateToScreen(TAB_NOTES))
 
     def _wire_character_persona_services(self) -> None:
-        try:
-            self.server_character_persona_service = ServerCharacterPersonaService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_character_persona_service = ServerCharacterPersonaService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        self.server_character_persona_service = ServerCharacterPersonaService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.local_character_persona_service = LocalCharacterPersonaService(
             self.chachanotes_db,
             persona_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
@@ -1555,16 +1551,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_character_persona_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.server_chat_dictionary_service = ServerChatDictionaryService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_chat_dictionary_service = ServerChatDictionaryService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        self.server_chat_dictionary_service = ServerChatDictionaryService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.local_chat_dictionary_service = LocalChatDictionaryService(
             self.chachanotes_db,
             history_store_path=get_user_data_dir() / "tldw_chatbook_chat_dictionary_history.json",
@@ -1584,16 +1574,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             if getattr(self, "chachanotes_db", None) is not None
             else None
         )
-        try:
-            self.server_chat_conversation_service = ServerChatConversationService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_chat_conversation_service = ServerChatConversationService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        self.server_chat_conversation_service = ServerChatConversationService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.chat_conversation_scope_service = ChatConversationScopeService(
             local_service=self.local_chat_conversation_service,
             server_service=self.server_chat_conversation_service,
@@ -1631,22 +1615,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     def _wire_prompt_chatbook_services(self) -> None:
         self.local_prompt_service = LocalPromptService(prompts_interop)
-        try:
-            self.server_prompt_service = ServerPromptService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_prompt_service = ServerPromptService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
+        self.server_prompt_service = ServerPromptService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
         )
 
         self.local_chatbook_service = LocalChatbookService(self._build_chatbook_db_paths())
-        self.server_chatbook_service = build_server_chatbook_service(
-            app_config=self.app_config,
+        self.server_chatbook_service = ServerChatbookService.from_server_context_provider(
+            self.server_context_provider,
             policy_enforcer=self.service_policy_enforcer,
-            allow_unconfigured=True,
         )
 
         self.prompt_chatbook_scope_service = PromptChatbookScopeService(
@@ -1868,16 +1845,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_meetings_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.server_prompt_studio_service = ServerPromptStudioService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_prompt_studio_service = ServerPromptStudioService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        self.server_prompt_studio_service = ServerPromptStudioService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.prompt_studio_scope_service = PromptStudioScopeService(
             server_service=self.server_prompt_studio_service,
             policy_enforcer=self.service_policy_enforcer,
@@ -2124,17 +2095,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.local_mcp_control_service = LocalMCPControlService(
             store=self.local_mcp_store,
             policy_enforcer=self.service_policy_enforcer,
-        )
-        self.unified_mcp_target_store = ConfiguredServerTargetStore(
-            get_user_data_dir() / "mcp_server_targets.json",
-        )
-        self.unified_mcp_target_store.upsert_legacy_config_target(self.app_config)
-        self.server_credential_store = KeyringServerCredentialStore()
-        self.server_context_provider = RuntimeServerContextProvider(
-            runtime_context=self.runtime_policy,
-            target_store=self.unified_mcp_target_store,
-            credential_store=self.server_credential_store,
-            app_config=self.app_config,
         )
         self.unified_mcp_context_store = UnifiedMCPContextStore(
             get_user_data_dir() / "unified_mcp_context.json",
