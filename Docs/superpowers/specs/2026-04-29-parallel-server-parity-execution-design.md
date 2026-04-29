@@ -30,6 +30,25 @@ The goal is parallel execution with explicit integration gates.
 - Do not enable write sync for any domain in this phase.
 - Do not add new direct legacy `tldw_api` config client construction.
 
+## Authority Baseline
+
+Parallel lanes must share one active-server authority. These are the only allowed seams for server/profile/credential/capability state:
+
+- `runtime_policy.bootstrap.RuntimePolicyContext`: active source, active server ID, reachability, and auth probe state.
+- `MCP.server_target_store.ConfiguredServerTargetStore`: persisted server profile and target metadata. It must not store secret material.
+- `runtime_policy.server_context.RuntimeServerContextProvider`: credential lookup, active server context, credential-bound client construction, and provider-client cache invalidation.
+- `runtime_policy.server_capabilities.ActiveServerCapabilityService`: active-server capability snapshot refresh.
+
+No lane may add:
+
+- A second active-server registry.
+- A second selected-server state file.
+- A second capability snapshot authority.
+- Domain-specific server credential caches.
+- Server profile JSON fields containing bearer, API, refresh, OAuth, BYOK, or session secrets.
+
+Any implementation plan that needs server identity, credentials, clients, or capability state must name which baseline seam it uses. Any exception requires a separate design review before work starts.
+
 ## Recommended Approach
 
 Use **Parallel Foundations With Integration Gates**.
@@ -42,6 +61,27 @@ Rejected alternatives:
 - **Infrastructure-only parallelism:** safest architecturally, but too slow to close user-visible parity gaps.
 
 ## Parallel Lanes
+
+### Lane 0: Shared Schema Slice
+
+Owns the first integration slice. This lane must land before other lanes depend on shared event, notification, sync, or provider migration metadata.
+
+Deliverables:
+
+- `NormalizedEventRecord`
+- `EventCursor`
+- `EventDedupeKey`
+- `NotificationPresentationRecord`
+- `SyncIdentityMapEntry`
+- `SyncReadinessReport`
+- `ProviderMigrationStatus`
+
+Rules:
+
+- Schemas must be lightweight dataclasses, protocols, or typed dictionaries.
+- Schemas must not import UI modules.
+- Schemas must not perform network or database work.
+- Schema changes after initial landing require integration review.
 
 ### Lane A: Realtime And Notifications Foundation
 
@@ -68,6 +108,15 @@ Required event identity fields:
 - Transport type: local producer, SSE, WebSocket, polling, or manual refresh.
 - Payload kind and normalized entity reference.
 - Delivery state for local presentation, separate from server-owned read/dismiss state.
+
+Cursor and acknowledgement rules:
+
+- Cursor keys are scoped by active server profile ID, stream name, and stream instance ID.
+- Cursor state must never be shared across server profiles.
+- Cursor advancement happens only after local processing acknowledges the event.
+- Unsupported or stale server cursors must produce a typed reset/requery result rather than silently replaying across streams.
+- Dedupe retention must be bounded by count and/or time.
+- Reconnect tests must cover duplicate events, unacknowledged events, stale cursors, and active-server switch isolation.
 
 ### Lane B: Provider Migration Batches
 
@@ -97,14 +146,14 @@ Deliverables:
 
 ### Lane C: Sync And Mirror Dry-Run Substrate
 
-Owns sync metadata and readiness contracts only. It must not enable write sync.
+Owns sync metadata and readiness contracts only. It must not enable write sync or queue replayable mutations.
 
 Deliverables:
 
 - Sync identity map model.
 - Per-server sync profile state.
 - Remote pull cursor model.
-- Local outbox model, disabled by default.
+- Local outbox model shape, with no replay worker and no write dispatch path.
 - Conflict strategy enum and default conflict policy.
 - Per-domain sync eligibility registry.
 - Sync readiness report.
@@ -118,6 +167,11 @@ Rules:
 - Chat metadata remains read-only/server-owned until server create/delete and persist identity limitations are modeled.
 - Workspace-scoped records must preserve workspace boundaries.
 - Server switching must not replay queued operations against the wrong server.
+- This tranche exposes no replay worker.
+- This tranche exposes no remote mutation dispatch from sync.
+- This tranche exposes no write-enabled domain registration.
+- This tranche writes no authoritative local mirror copy of server-owned records.
+- Tests must prove dry-run and readiness paths do not call server create, update, delete, or mutation APIs.
 
 Identity-readiness checklist:
 
@@ -155,6 +209,18 @@ Initial edge focus:
 - Media/Reading: ingest-job event/status normalization, saved-view behavior constrained by server contract, chunk-level TTS adoption decision.
 - Notes/Workspaces: graph semantics, workspace-aware sync design, local/offline graph generation decision, cross-scope moves still deferred.
 
+Per-domain acceptance template:
+
+- Source owner: local, server, workspace, shared, or deferred.
+- Read behavior by source.
+- Write behavior by source.
+- Server-switch behavior.
+- Workspace isolation behavior.
+- Unsupported-capability IDs and user-facing reason codes.
+- Provider dependency status: migrated, compatibility mode, or not applicable.
+- Required service/scope/API-client tests.
+- UI impact: service wiring only, contract fixture, or no UI touch.
+
 ### Lane E: UX Handoff Contracts
 
 Owns backend/view-model contracts for the parallel UI/UX rewrite.
@@ -174,6 +240,18 @@ Rules:
 - Do not rebuild current screens.
 - Do not require broad UI tests.
 - Contracts consume runtime-policy state and unsupported-capability reports instead of guessing authority.
+
+Required fields per UX contract:
+
+- Contract ID and version.
+- Source owner and active source.
+- Active server profile ID when relevant.
+- Capability/action ID.
+- Unsupported reason code and user message when unsupported.
+- Server reachability/auth state when server-backed.
+- Workspace scope ID when workspace-scoped.
+- Fixture payloads for local, server, unavailable server, unsupported action, and workspace isolation cases.
+- Required contract tests.
 
 ## Shared Schemas First
 
@@ -199,7 +277,17 @@ Lanes that need event, notification, sync, or provider migration metadata must u
 
 ### Gate 2: Provider Migration Gate
 
-Any new server-backed service path must use `RuntimeServerContextProvider` or be explicitly documented as compatibility mode in the migration audit. No new direct `build_runtime_api_client_from_config()` consumers may be added.
+Any new server-backed service path must use `RuntimeServerContextProvider`.
+
+Existing compatibility factories may remain temporarily only if already listed in `Docs/Development/server-client-provider-migration-audit.md`. No lane may add:
+
+- New direct `build_runtime_api_client_from_config()` consumers.
+- New direct `build_runtime_api_client(app_config=...)` consumers.
+- New indirect `from_config()` wrappers that construct server clients from app config.
+- New prompt/chatbook compatibility factory consumers.
+- New UI/event helper call sites that construct server clients from app config.
+
+Every provider migration batch must update the direct and indirect migration audit.
 
 ### Gate 3: Event Before Notification Contract Finalization
 
@@ -228,11 +316,12 @@ Each lane can commit independently, but a tranche is not complete until:
 
 Run these work items concurrently:
 
-1. **Lane A:** Realtime/event shared schema plus observer skeleton.
-2. **Lane B:** Provider migration high-priority batch 1: chat, media, notes/workspaces.
-3. **Lane C:** Sync readiness registry and dry-run report core, no outbox replay.
-4. **Lane D:** Domain edge specs/tests for chat, media/reading, notes/workspaces.
-5. **Lane E:** UX handoff contracts for active server, unsupported actions, and notifications.
+1. **Lane 0:** Shared schema slice.
+2. **Lane A:** Realtime/event observer skeleton using shared event schemas.
+3. **Lane B:** Provider migration high-priority batch 1: chat, media, notes/workspaces.
+4. **Lane C:** Sync readiness registry and dry-run report core, no outbox replay.
+5. **Lane D:** Domain edge specs/tests for chat, media/reading, notes/workspaces.
+6. **Lane E:** UX handoff contracts for active server, unsupported actions, and notifications.
 
 Recommended merge order:
 
@@ -249,13 +338,22 @@ The lanes can develop concurrently, but later merge order should respect these d
 
 Suggested branch/worktree ownership:
 
-- `parity-events-foundation`: event records, observers, notification presentation adapter.
-- `parity-provider-migration-batch1`: high-priority provider migration.
-- `parity-sync-dry-run-substrate`: sync readiness and dry-run substrate.
-- `parity-domain-edge-contracts`: chat/media/notes edge specs and service tests.
-- `parity-ux-handoff-contracts`: view-model contracts and fixtures.
+| Lane | Branch/worktree | Primary file ownership | Restricted files | Merge rule |
+| --- | --- | --- | --- | --- |
+| Lane 0 | `parity-shared-schemas` | Shared model/schema modules and schema tests | App wiring, domain services, UI screens | Lands first. Later schema edits require integration review. |
+| Lane A | `parity-events-foundation` | Event observer services, event cursor/dedupe store, notification presentation adapter, event tests | Provider migration files, sync write paths, UI screens | May depend on Lane 0. Must cancel on active-server switch. |
+| Lane B | `parity-provider-migration-batch1` | Server service constructors/factories, app service wiring, provider migration tests, migration audit | Event observer internals, sync substrate, domain edge specs except audit notes | Owns app wiring for migrated services. Must not add legacy builders. |
+| Lane C | `parity-sync-dry-run-substrate` | Sync readiness models, dry-run report services, sync eligibility tests | Domain mutation dispatch, event observer internals, UI screens | No replay worker or remote mutation calls. |
+| Lane D | `parity-domain-edge-contracts` | Domain edge specs, service/scope tests, unsupported-capability reports for chat/media/notes | App wiring and service constructors until Lane B lands | Specs/tests only for overlapping provider-migrated domains until Lane B merges. |
+| Lane E | `parity-ux-handoff-contracts` | View-model contracts, fixtures, contract tests | Current UI screen implementation | Contracts only; no UI redesign. |
 
-File ownership should be explicit in implementation plans to avoid merge conflicts. Shared schema files should be owned by the event/sync foundation lane first, then treated as integration-gated.
+Conflict rules:
+
+- Lane B owns service constructor and app wiring edits for migrated services.
+- Lane D may add domain tests/specs in the same domain areas, but must not change provider construction until Lane B lands.
+- Lane A and Lane C may share schema dependencies only through Lane 0 outputs.
+- Any lane touching authority baseline seams needs explicit integration review.
+- Any lane touching `app.py` must list the exact initialization block it owns before implementation starts.
 
 ## Testing Strategy
 
