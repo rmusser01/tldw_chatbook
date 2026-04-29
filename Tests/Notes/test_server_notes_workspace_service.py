@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 
 from tldw_chatbook.Notes.server_notes_workspace_service import (
@@ -117,6 +119,16 @@ class FakeClient:
         return {"deleted": True, "edge_id": edge_id}
 
 
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
         self.denied_reason = denied_reason
@@ -137,6 +149,89 @@ class FakePolicyEnforcer:
             effective_source="local",
             authority_owner="shared",
         )
+
+
+@pytest.mark.asyncio
+async def test_service_uses_provider_backed_client_when_no_direct_client():
+    client = FakeClient()
+    provider = FakeClientProvider(client)
+    service = ServerNotesWorkspaceService(client=None, client_provider=provider)
+
+    result = await service.search_server_notes(query="remote", limit=25)
+
+    assert provider.build_calls == 1
+    assert client.search_calls == [
+        {
+            "query": "remote",
+            "limit": 25,
+            "offset": 0,
+            "include_keywords": True,
+        }
+    ]
+    assert result["items"][0]["title"] == "Remote"
+
+
+@pytest.mark.asyncio
+async def test_service_prefers_direct_client_over_provider():
+    direct_client = FakeClient()
+    provider_client = FakeClient()
+    provider = FakeClientProvider(provider_client)
+    service = ServerNotesWorkspaceService(client=direct_client, client_provider=provider)
+
+    await service.search_server_notes(query="remote")
+
+    assert provider.build_calls == 0
+    assert len(direct_client.search_calls) == 1
+    assert provider_client.search_calls == []
+
+
+@pytest.mark.asyncio
+async def test_service_from_server_context_provider_uses_provider_client():
+    client = FakeClient()
+    provider = FakeClientProvider(client)
+    policy_enforcer = FakePolicyEnforcer()
+    service = ServerNotesWorkspaceService.from_server_context_provider(
+        provider,
+        policy_enforcer=policy_enforcer,
+    )
+
+    await service.search_server_notes(query="remote")
+
+    assert provider.build_calls == 1
+    assert len(client.search_calls) == 1
+    assert policy_enforcer.calls == ["notes.list.server"]
+
+
+@pytest.mark.asyncio
+async def test_service_denied_policy_does_not_build_provider_client():
+    policy_enforcer = FakePolicyEnforcer.deny("wrong_source")
+    provider = FakeClientProvider(FakeClient())
+    service = ServerNotesWorkspaceService(
+        client=None,
+        client_provider=provider,
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError):
+        await service.search_server_notes(query="remote")
+
+    assert provider.build_calls == 0
+    assert policy_enforcer.calls == ["notes.list.server"]
+
+
+def test_service_from_config_uses_shared_api_client_builder(monkeypatch):
+    sentinel_client = object()
+    build_client = Mock(return_value=sentinel_client)
+    monkeypatch.setattr(
+        "tldw_chatbook.Notes.server_notes_workspace_service.build_runtime_api_client_from_config",
+        build_client,
+    )
+
+    service = ServerNotesWorkspaceService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+
+    assert service.client is sentinel_client
+    assert service.client_provider is None
+    build_client.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
 
 
 @pytest.mark.asyncio

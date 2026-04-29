@@ -63,8 +63,15 @@ class ServerMediaReadingService:
 
     _SUPPORTED_METADATA_FIELDS = {"status", "favorite", "tags", "notes", "title"}
 
-    def __init__(self, client: Optional[TLDWAPIClient], *, policy_enforcer: Any | None = None):
+    def __init__(
+        self,
+        client: Optional[TLDWAPIClient],
+        *,
+        client_provider: Any | None = None,
+        policy_enforcer: Any | None = None,
+    ):
         self.client = client
+        self.client_provider = client_provider
         self.policy_enforcer = policy_enforcer
 
     @classmethod
@@ -81,10 +88,25 @@ class ServerMediaReadingService:
             policy_enforcer=policy_enforcer,
         )
 
+    @classmethod
+    def from_server_context_provider(
+        cls,
+        provider: Any,
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerMediaReadingService":
+        return cls(
+            client=None,
+            client_provider=provider,
+            policy_enforcer=policy_enforcer,
+        )
+
     def _require_client(self) -> TLDWAPIClient:
-        if self.client is None:
-            raise ValueError("TLDW API client is required for server media operations.")
-        return self.client
+        if self.client is not None:
+            return self.client
+        if self.client_provider is not None:
+            return self.client_provider.build_client()
+        raise ValueError("TLDW API client is required for server media operations.")
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:

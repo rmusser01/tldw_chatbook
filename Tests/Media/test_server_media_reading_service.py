@@ -901,6 +901,79 @@ class FakeClient:
         return {"removed": 2, "files_deleted": 1}
 
 
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+@pytest.mark.asyncio
+async def test_server_service_uses_provider_backed_client_when_no_direct_client():
+    client = FakeClient()
+    provider = FakeClientProvider(client)
+    service = ServerMediaReadingService(client=None, client_provider=provider)
+
+    result = await service.list_media_items(page=2, results_per_page=5, include_keywords=True)
+
+    assert provider.build_calls == 1
+    assert client.calls == [("list_media_items", 2, 5, True)]
+    assert result["items"][0]["title"] == "Server Media"
+
+
+@pytest.mark.asyncio
+async def test_server_service_prefers_direct_client_over_provider():
+    direct_client = FakeClient()
+    provider_client = FakeClient()
+    provider = FakeClientProvider(provider_client)
+    service = ServerMediaReadingService(client=direct_client, client_provider=provider)
+
+    await service.list_media_items()
+
+    assert provider.build_calls == 0
+    assert direct_client.calls == [("list_media_items", 1, 10, False)]
+    assert provider_client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_service_from_server_context_provider_uses_provider_client():
+    client = FakeClient()
+    provider = FakeClientProvider(client)
+    policy = Mock()
+    service = ServerMediaReadingService.from_server_context_provider(
+        provider,
+        policy_enforcer=policy,
+    )
+
+    await service.list_media_items()
+
+    assert provider.build_calls == 1
+    assert client.calls == [("list_media_items", 1, 10, False)]
+    policy.require_allowed.assert_called_once_with(action_id="media.items.list.server")
+
+
+@pytest.mark.asyncio
+async def test_server_service_denied_policy_does_not_build_provider_client():
+    policy = Mock()
+    policy.require_allowed = Mock(side_effect=PolicyDeniedError(
+        action_id="media.items.list.server",
+        reason_code="wrong_source",
+        user_message="Blocked.",
+        effective_source="local",
+        authority_owner="shared",
+    ))
+    provider = FakeClientProvider(FakeClient())
+    service = ServerMediaReadingService(client=None, client_provider=provider, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError):
+        await service.list_media_items()
+
+    assert provider.build_calls == 0
+
+
 @pytest.mark.asyncio
 async def test_server_service_delegates_search_and_detail_to_reading_item_endpoints():
     client = FakeClient()
@@ -2637,4 +2710,5 @@ def test_server_service_from_config_uses_shared_api_client_builder(monkeypatch):
     service = ServerMediaReadingService.from_config({"tldw_api": {"base_url": "https://example.com"}})
 
     assert service.client is sentinel_client
+    assert service.client_provider is None
     build_client.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
