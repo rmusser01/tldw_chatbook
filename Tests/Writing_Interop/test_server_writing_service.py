@@ -193,6 +193,19 @@ class FakeClientProvider:
         return self.client
 
 
+class FreshClientProvider:
+    def __init__(self, factory):
+        self.factory = factory
+        self.build_calls = 0
+        self.clients = []
+
+    def build_client(self):
+        self.build_calls += 1
+        client = self.factory()
+        self.clients.append(client)
+        return client
+
+
 class ExplodingClientProvider:
     def __init__(self):
         self.build_calls = 0
@@ -243,6 +256,28 @@ async def test_server_writing_service_from_server_context_provider_is_lazy():
     assert client.calls == [
         ("create_manuscript_project", {"title": "Novel", "status": "draft", "settings": {}})
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_writing_service_re_resolves_provider_without_service_local_client_cache():
+    provider = FreshClientProvider(FakeWritingClient)
+    service = ServerWritingService.from_server_context_provider(provider)
+
+    await service.create_project(title="Novel One")
+    await service.create_project(title="Novel Two")
+
+    assert service.client is None
+    assert provider.build_calls == 2
+    assert len(provider.clients) == 2
+    assert provider.clients[0] is not provider.clients[1]
+    assert provider.clients[0].calls == [
+        ("create_manuscript_project", {"title": "Novel One", "status": "draft", "settings": {}})
+    ]
+    assert provider.clients[1].calls == [
+        ("create_manuscript_project", {"title": "Novel Two", "status": "draft", "settings": {}})
+    ]
+    for built_client in provider.clients:
+        assert all(value is not built_client for value in vars(service).values())
 
 
 def test_server_writing_service_from_config_returns_provider_backed_service():

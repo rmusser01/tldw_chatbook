@@ -67,6 +67,19 @@ class FakeClientProvider:
         return self.client
 
 
+class FreshClientProvider:
+    def __init__(self, factory):
+        self.factory = factory
+        self.build_calls = 0
+        self.clients = []
+
+    def build_client(self):
+        self.build_calls += 1
+        client = self.factory()
+        self.clients.append(client)
+        return client
+
+
 class ExplodingClientProvider:
     def __init__(self):
         self.build_calls = 0
@@ -121,6 +134,26 @@ async def test_server_research_search_service_from_server_context_provider_is_la
     assert client.calls[0][1]["engine"] == "google"
     assert client.calls[0][1]["result_count"] == 10
     assert client.calls[0][1]["aggregate"] is False
+
+
+@pytest.mark.asyncio
+async def test_server_research_search_service_re_resolves_provider_without_service_local_client_cache():
+    provider = FreshClientProvider(FakeResearchSearchClient)
+    service = ServerResearchSearchService.from_server_context_provider(provider)
+
+    await service.websearch(query="mcp governance")
+    await service.websearch(query="agent governance")
+
+    assert service.client is None
+    assert provider.build_calls == 2
+    assert len(provider.clients) == 2
+    assert provider.clients[0] is not provider.clients[1]
+    assert provider.clients[0].calls[0][0] == "research_websearch"
+    assert provider.clients[0].calls[0][1]["query"] == "mcp governance"
+    assert provider.clients[1].calls[0][0] == "research_websearch"
+    assert provider.clients[1].calls[0][1]["query"] == "agent governance"
+    for built_client in provider.clients:
+        assert all(value is not built_client for value in vars(service).values())
 
 
 def test_server_research_search_service_from_config_returns_provider_backed_service():
