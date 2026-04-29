@@ -51,6 +51,28 @@ def test_registered_read_only_domain_reports_eligible_without_write() -> None:
     assert report.details == {"collections": ("notes",)}
 
 
+def test_write_enabled_eligibility_is_clamped_off_for_dry_run_readiness() -> None:
+    registry = SyncEligibilityRegistry()
+    registry.register(
+        SyncDomainEligibility(
+            domain="notes",
+            sync_eligible=True,
+            write_enabled=True,
+            reason_codes=("server_write_supported",),
+        )
+    )
+
+    report = build_sync_readiness_report(
+        domain="notes",
+        server_profile_id="server-a",
+        workspace_id="workspace-1",
+        registry=registry,
+    )
+
+    assert report.sync_eligible is True
+    assert report.write_enabled is False
+
+
 def test_readiness_preserves_workspace_boundaries_per_report() -> None:
     registry = SyncEligibilityRegistry()
     registry.register(SyncDomainEligibility(domain="notes", sync_eligible=True))
@@ -70,4 +92,3 @@ def test_readiness_preserves_workspace_boundaries_per_report() -> None:
 
     assert workspace_a.workspace_id == "workspace-a"
     assert workspace_b.workspace_id == "workspace-b"
-

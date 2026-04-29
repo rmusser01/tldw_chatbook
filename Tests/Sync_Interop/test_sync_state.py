@@ -25,6 +25,20 @@ def test_sync_profile_state_store_keys_state_by_server_profile_id() -> None:
     assert server_b.enabled_domains == set()
 
 
+def test_sync_profile_state_store_isolates_same_server_by_workspace_id() -> None:
+    store = SyncProfileStateStore()
+
+    workspace_a = store.get_or_create("server-a", workspace_id="workspace-a")
+    workspace_b = store.get_or_create("server-a", workspace_id="workspace-b")
+    workspace_a.enabled_domains.add("notes")
+
+    assert workspace_a is store.get_or_create("server-a", workspace_id="workspace-a")
+    assert workspace_a is not workspace_b
+    assert workspace_a.workspace_id == "workspace-a"
+    assert workspace_b.workspace_id == "workspace-b"
+    assert workspace_b.enabled_domains == set()
+
+
 def test_sync_profile_state_requires_server_profile_id() -> None:
     with pytest.raises(ValueError, match="server_profile_id"):
         SyncProfileState(server_profile_id="")
@@ -32,27 +46,60 @@ def test_sync_profile_state_requires_server_profile_id() -> None:
 
 def test_remote_pull_cursor_storage_key_is_scoped_by_server_domain_and_collection() -> None:
     notes_cursor = RemotePullCursor(
+        source_authority="server",
         server_profile_id="server-a",
+        workspace_id="workspace-1",
         domain="notes",
-        remote_collection="workspace-1",
+        remote_collection="collection-1",
         cursor="remote-cursor-1",
     )
     chat_cursor = RemotePullCursor(
+        source_authority="server",
         server_profile_id="server-a",
+        workspace_id="workspace-1",
         domain="chat",
-        remote_collection="workspace-1",
+        remote_collection="collection-1",
         cursor="remote-cursor-1",
     )
     other_server_cursor = RemotePullCursor(
+        source_authority="server",
         server_profile_id="server-b",
+        workspace_id="workspace-1",
         domain="notes",
-        remote_collection="workspace-1",
+        remote_collection="collection-1",
         cursor="remote-cursor-1",
     )
 
-    assert notes_cursor.storage_key() == "server-a:notes:workspace-1"
+    assert notes_cursor.storage_key() == "server:server-a:workspace-1:notes:collection-1"
     assert notes_cursor.storage_key() != chat_cursor.storage_key()
     assert notes_cursor.storage_key() != other_server_cursor.storage_key()
+
+
+def test_remote_pull_cursor_storage_key_differs_by_workspace_and_source_authority() -> None:
+    server_cursor = RemotePullCursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        workspace_id="workspace-a",
+        domain="notes",
+        remote_collection="collection-1",
+    )
+    other_workspace = RemotePullCursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        workspace_id="workspace-b",
+        domain="notes",
+        remote_collection="collection-1",
+    )
+    local_cursor = RemotePullCursor(
+        source_authority="local",
+        server_profile_id=None,
+        workspace_id="workspace-a",
+        domain="notes",
+        remote_collection="collection-1",
+    )
+
+    assert server_cursor.storage_key() != other_workspace.storage_key()
+    assert server_cursor.storage_key() != local_cursor.storage_key()
 
 
 def test_default_conflict_policy_is_read_only_and_preserves_local() -> None:
@@ -79,3 +126,24 @@ def test_local_outbox_entry_is_shape_only_without_dispatch_metadata() -> None:
     assert not hasattr(entry, "dispatch")
     assert not hasattr(entry, "replay")
 
+
+def test_local_outbox_entry_payload_is_immutable_and_stable_after_input_mutation() -> None:
+    payload = {"title": "Draft", "metadata": {"tags": ["sync"]}}
+    entry = LocalOutboxEntry(
+        entry_id="outbox-1",
+        server_profile_id="server-a",
+        domain="notes",
+        workspace_id="workspace-1",
+        local_entity_id="note-1",
+        operation="update",
+        payload_hash="sha256:abc",
+        payload=payload,
+    )
+
+    payload["metadata"]["tags"].append("mutated")
+
+    assert entry.payload == {"title": "Draft", "metadata": {"tags": ("sync",)}}
+    with pytest.raises(TypeError, match="immutable"):
+        entry.payload["title"] = "Changed"
+    with pytest.raises(TypeError, match="immutable"):
+        entry.payload["metadata"]["new"] = "value"

@@ -10,6 +10,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Mapping
 
+from tldw_chatbook.runtime_policy.server_parity_models import FrozenJSONDict, SourceAuthority
+
+_SOURCE_AUTHORITIES = {"local", "server"}
+
 
 class ConflictStrategy(str, Enum):
     """Conflict strategies available to future sync execution paths."""
@@ -37,6 +41,7 @@ class SyncProfileState:
     """Per-server profile state for dry-run sync discovery."""
 
     server_profile_id: str
+    workspace_id: str | None = None
     enabled_domains: set[str] = field(default_factory=set)
     conflict_policy: ConflictPolicy = field(default_factory=ConflictPolicy.default)
 
@@ -46,38 +51,63 @@ class SyncProfileState:
 
 
 class SyncProfileStateStore:
-    """In-memory profile state keyed by server profile ID."""
+    """In-memory profile state keyed by server profile and workspace IDs."""
 
     def __init__(self) -> None:
-        self._states: dict[str, SyncProfileState] = {}
+        self._states: dict[tuple[str, str | None], SyncProfileState] = {}
 
-    def get_or_create(self, server_profile_id: str) -> SyncProfileState:
+    def get_or_create(
+        self,
+        server_profile_id: str,
+        *,
+        workspace_id: str | None = None,
+    ) -> SyncProfileState:
         if not server_profile_id:
             raise ValueError("server_profile_id is required")
-        if server_profile_id not in self._states:
-            self._states[server_profile_id] = SyncProfileState(server_profile_id=server_profile_id)
-        return self._states[server_profile_id]
+        key = (server_profile_id, workspace_id)
+        if key not in self._states:
+            self._states[key] = SyncProfileState(
+                server_profile_id=server_profile_id,
+                workspace_id=workspace_id,
+            )
+        return self._states[key]
 
-    def get(self, server_profile_id: str) -> SyncProfileState | None:
-        return self._states.get(server_profile_id)
+    def get(
+        self,
+        server_profile_id: str,
+        *,
+        workspace_id: str | None = None,
+    ) -> SyncProfileState | None:
+        return self._states.get((server_profile_id, workspace_id))
 
 
 @dataclass(frozen=True, slots=True)
 class RemotePullCursor:
-    """Remote pull cursor scoped to server profile, domain, and collection."""
+    """Remote pull cursor scoped to source, server profile, workspace, domain, and collection."""
 
-    server_profile_id: str
+    server_profile_id: str | None
     domain: str
     remote_collection: str
     cursor: str | None = None
+    workspace_id: str | None = None
+    source_authority: SourceAuthority = "server"
 
     def __post_init__(self) -> None:
-        for field_name in ("server_profile_id", "domain", "remote_collection"):
+        if self.source_authority not in _SOURCE_AUTHORITIES:
+            raise ValueError("source_authority must be one of: local, server")
+        if self.source_authority == "server" and not self.server_profile_id:
+            raise ValueError("server_profile_id is required for server remote pull cursors")
+        for field_name in ("domain", "remote_collection"):
             if not getattr(self, field_name):
                 raise ValueError(f"{field_name} is required")
 
     def storage_key(self) -> str:
-        return f"{self.server_profile_id}:{self.domain}:{self.remote_collection}"
+        server_key = self.server_profile_id or "none"
+        workspace_key = self.workspace_id or "none"
+        return (
+            f"{self.source_authority}:{server_key}:{workspace_key}:"
+            f"{self.domain}:{self.remote_collection}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,9 +136,8 @@ class LocalOutboxEntry:
         ):
             if not getattr(self, field_name):
                 raise ValueError(f"{field_name} is required")
-        object.__setattr__(self, "payload", dict(self.payload))
+        object.__setattr__(self, "payload", FrozenJSONDict(self.payload))
 
     def storage_key(self) -> str:
         workspace_key = self.workspace_id or "none"
         return f"{self.server_profile_id}:{self.domain}:{workspace_key}:{self.entry_id}"
-

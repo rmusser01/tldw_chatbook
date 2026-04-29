@@ -76,3 +76,34 @@ def test_mirror_report_preserves_workspace_boundaries_when_filtering_identity_ma
     assert report["mapped_count"] == 1
     assert report["actions"][0]["identity"]["workspace_id"] == "workspace-a"
 
+
+def test_mirror_report_excludes_identity_map_entries_with_wrong_source_authority() -> None:
+    server_entry = SyncIdentityMapEntry(
+        domain="notes",
+        source_authority="server",
+        source_scope="workspace",
+        local_entity_id="local-note-1",
+        remote_entity_id="remote-note-1",
+        server_profile_id="server-a",
+        workspace_id="workspace-a",
+    )
+    local_entry = SyncIdentityMapEntry(
+        domain="notes",
+        source_authority="local",
+        source_scope="workspace",
+        local_entity_id="local-note-2",
+        remote_entity_id="remote-note-2",
+        server_profile_id="server-a",
+        workspace_id="workspace-a",
+    )
+
+    report = build_sync_mirror_report(
+        domain="notes",
+        server_profile_id="server-a",
+        workspace_id="workspace-a",
+        source_authority="server",
+        identity_map=[server_entry, local_entry],
+    )
+
+    assert report["mapped_count"] == 1
+    assert report["actions"][0]["identity"]["source_authority"] == "server"

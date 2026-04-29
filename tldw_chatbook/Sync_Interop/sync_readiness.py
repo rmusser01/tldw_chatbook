@@ -62,7 +62,7 @@ def build_sync_readiness_report(
     return SyncReadinessReport(
         domain=domain,
         sync_eligible=eligibility.sync_eligible,
-        write_enabled=eligibility.write_enabled,
+        write_enabled=False,
         reason_codes=eligibility.reason_codes,
         server_profile_id=server_profile_id,
         workspace_id=workspace_id,
@@ -81,4 +81,3 @@ DEFAULT_SYNC_ELIGIBILITY_REGISTRY = SyncEligibilityRegistry(
         )
     ]
 )
-

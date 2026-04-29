@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
-from tldw_chatbook.runtime_policy.server_parity_models import SyncIdentityMapEntry
+from tldw_chatbook.runtime_policy.server_parity_models import SourceAuthority, SyncIdentityMapEntry
 
 
 def _record_by_id(records: Iterable[Mapping[str, Any]], key: str = "id") -> dict[str, Mapping[str, Any]]:
@@ -31,6 +31,7 @@ def build_sync_mirror_report(
     domain: str,
     server_profile_id: str,
     workspace_id: str | None,
+    source_authority: SourceAuthority = "server",
     identity_map: Iterable[SyncIdentityMapEntry] = (),
     local_records: Iterable[Mapping[str, Any]] = (),
     remote_records: Iterable[Mapping[str, Any]] = (),
@@ -44,6 +45,7 @@ def build_sync_mirror_report(
         entry
         for entry in identity_map
         if entry.domain == domain
+        and entry.source_authority == source_authority
         and entry.server_profile_id == server_profile_id
         and entry.workspace_id == workspace_id
     ]
@@ -68,9 +70,9 @@ def build_sync_mirror_report(
         "domain": domain,
         "server_profile_id": server_profile_id,
         "workspace_id": workspace_id,
+        "source_authority": source_authority,
         "dry_run": True,
         "write_enabled": False,
         "mapped_count": len(scoped_entries),
         "actions": actions,
     }
-
