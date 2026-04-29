@@ -750,12 +750,12 @@ async def test_clear_all_credentials_invalidates_cached_client_and_removes_impor
 
     context = provider.get_active_context()
 
-    assert context.auth_token == "legacy-bearer"
-    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    assert context.auth_token is None
+    assert context.credential_source == "none"
     assert credentials.get_secret(
         "https://server.example.com/api",
         SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) == "legacy-bearer"
+    ) is None
 
 
 def test_target_store_json_and_target_metadata_do_not_contain_stored_secret(tmp_path):

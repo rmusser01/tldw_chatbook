@@ -62,6 +62,7 @@ class RuntimeServerContextProvider:
         self.target_store = target_store
         self.credential_store = credential_store
         self.app_config = app_config or {}
+        self._legacy_reimport_blocked_after_global_clear = False
         self._cached_client_key: _CachedClientKey | None = None
         self._cached_client: TLDWAPIClient | None = None
         self._pending_client_close_tasks: set[asyncio.Task[None]] = set()
@@ -132,6 +133,7 @@ class RuntimeServerContextProvider:
 
     def clear_all_credentials(self) -> None:
         self.credential_store.clear_all()
+        self._legacy_reimport_blocked_after_global_clear = True
         self._invalidate_cached_client()
 
     def clear_active_server_auth_tokens(self) -> None:
@@ -160,6 +162,7 @@ class RuntimeServerContextProvider:
                 refresh_token,
             )
         if access_token or refresh_token:
+            self._legacy_reimport_blocked_after_global_clear = False
             self._invalidate_cached_client()
 
     def resolve_target(self) -> ConfiguredServerTarget | None:
@@ -251,6 +254,8 @@ class RuntimeServerContextProvider:
         using_legacy_fallback_target: bool,
     ) -> bool:
         if not using_legacy_fallback_target and target.auth_reference != "legacy:tldw_api":
+            return False
+        if self._legacy_reimport_blocked_after_global_clear:
             return False
 
         legacy_binding = derive_configured_server_binding(self.app_config)
