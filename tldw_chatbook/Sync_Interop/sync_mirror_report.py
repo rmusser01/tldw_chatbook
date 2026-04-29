@@ -32,6 +32,7 @@ def build_sync_mirror_report(
     server_profile_id: str,
     workspace_id: str | None,
     source_authority: SourceAuthority = "server",
+    source_scope: str = "workspace",
     identity_map: Iterable[SyncIdentityMapEntry] = (),
     local_records: Iterable[Mapping[str, Any]] = (),
     remote_records: Iterable[Mapping[str, Any]] = (),
@@ -46,6 +47,7 @@ def build_sync_mirror_report(
         for entry in identity_map
         if entry.domain == domain
         and entry.source_authority == source_authority
+        and entry.source_scope == source_scope
         and entry.server_profile_id == server_profile_id
         and entry.workspace_id == workspace_id
     ]
@@ -71,6 +73,7 @@ def build_sync_mirror_report(
         "server_profile_id": server_profile_id,
         "workspace_id": workspace_id,
         "source_authority": source_authority,
+        "source_scope": source_scope,
         "dry_run": True,
         "write_enabled": False,
         "mapped_count": len(scoped_entries),

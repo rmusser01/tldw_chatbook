@@ -107,3 +107,37 @@ def test_mirror_report_excludes_identity_map_entries_with_wrong_source_authority
 
     assert report["mapped_count"] == 1
     assert report["actions"][0]["identity"]["source_authority"] == "server"
+
+
+def test_mirror_report_excludes_identity_map_entries_with_wrong_source_scope() -> None:
+    workspace_entry = SyncIdentityMapEntry(
+        domain="notes",
+        source_authority="server",
+        source_scope="workspace",
+        local_entity_id="local-note-1",
+        remote_entity_id="remote-note-1",
+        server_profile_id="server-a",
+        workspace_id="workspace-a",
+    )
+    profile_entry = SyncIdentityMapEntry(
+        domain="notes",
+        source_authority="server",
+        source_scope="server_profile",
+        local_entity_id="local-note-2",
+        remote_entity_id="remote-note-2",
+        server_profile_id="server-a",
+        workspace_id="workspace-a",
+    )
+
+    report = build_sync_mirror_report(
+        domain="notes",
+        server_profile_id="server-a",
+        workspace_id="workspace-a",
+        source_authority="server",
+        source_scope="workspace",
+        identity_map=[workspace_entry, profile_entry],
+    )
+
+    assert report["source_scope"] == "workspace"
+    assert report["mapped_count"] == 1
+    assert report["actions"][0]["identity"]["source_scope"] == "workspace"
