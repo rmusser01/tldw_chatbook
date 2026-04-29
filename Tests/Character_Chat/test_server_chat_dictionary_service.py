@@ -116,7 +116,7 @@ class ExplodingProvider:
 
 
 @pytest.mark.asyncio
-async def test_server_chat_dictionary_service_from_config_builds_client_lazily(monkeypatch):
+async def test_server_chat_dictionary_service_from_config_builds_and_reuses_client_lazily(monkeypatch):
     sentinel_client = FakeChatDictionaryClient()
     build_client_calls: list[dict[str, Any] | None] = []
 
@@ -136,10 +136,15 @@ async def test_server_chat_dictionary_service_from_config_builds_client_lazily(m
     assert build_client_calls == []
 
     result = await service.list_dictionaries(include_inactive=True)
+    detail = await service.get_dictionary(7)
 
     assert result["dictionaries"][0]["name"] == "Lore"
+    assert detail["id"] == 7
     assert build_client_calls == [{"tldw_api": {"base_url": "https://example.com"}}]
-    assert sentinel_client.calls == [("list_chat_dictionaries", {"include_inactive": True})]
+    assert sentinel_client.calls == [
+        ("list_chat_dictionaries", {"include_inactive": True}),
+        ("get_chat_dictionary", 7),
+    ]
 
 
 @pytest.mark.asyncio

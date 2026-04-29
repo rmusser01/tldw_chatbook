@@ -77,7 +77,7 @@ class ExplodingProvider:
 
 
 @pytest.mark.asyncio
-async def test_server_chat_loop_service_from_config_builds_client_lazily(monkeypatch):
+async def test_server_chat_loop_service_from_config_builds_and_reuses_client_lazily(monkeypatch):
     sentinel_client = FakeClient()
     build_client_calls: list[dict[str, Any]] = []
 
@@ -97,10 +97,15 @@ async def test_server_chat_loop_service_from_config_builds_client_lazily(monkeyp
     assert build_client_calls == []
 
     result = await service.cancel("run_1")
+    events = await service.list_events("run_1", after_seq=1)
 
     assert result == {"ok": True}
+    assert events["run_id"] == "run_1"
     assert build_client_calls == [{"tldw_api": {"base_url": "https://example.com"}}]
-    assert sentinel_client.calls == [("cancel_chat_loop_run", "run_1")]
+    assert sentinel_client.calls == [
+        ("cancel_chat_loop_run", "run_1"),
+        ("list_chat_loop_events", "run_1", 1),
+    ]
 
 
 @pytest.mark.asyncio

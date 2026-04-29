@@ -2393,7 +2393,7 @@ async def test_server_character_persona_service_hard_stops_denied_ui_policy_deci
 
 
 @pytest.mark.asyncio
-async def test_server_character_persona_service_from_config_builds_client_lazily(monkeypatch):
+async def test_server_character_persona_service_from_config_builds_and_reuses_client_lazily(monkeypatch):
     sentinel_client = FakeCharacterPersonaClient()
     build_client_calls = []
 
@@ -2413,10 +2413,35 @@ async def test_server_character_persona_service_from_config_builds_client_lazily
     assert build_client_calls == []
 
     result = await service.list_characters(limit=13, offset=4)
+    detail = await service.get_character(1)
 
     assert result == [{"id": 1, "name": "Ada"}]
+    assert detail["id"] == 1
     assert build_client_calls == [{"tldw_api": {"base_url": "https://example.com"}}]
     assert sentinel_client.list_characters_calls == [{"limit": 13, "offset": 4}]
+    assert sentinel_client.get_character_calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_server_character_persona_service_from_config_denied_policy_does_not_build_lazy_client(monkeypatch):
+    build_client = Mock(side_effect=AssertionError("lazy client should not be built"))
+    policy = FakePolicyEnforcer.deny("server_unreachable")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Character_Chat.server_character_persona_service.build_runtime_api_client_from_config",
+        build_client,
+    )
+
+    service = ServerCharacterPersonaService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}},
+        policy_enforcer=policy,
+    )
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await service.list_characters(limit=13, offset=4)
+
+    assert exc.value.reason_code == "server_unreachable"
+    build_client.assert_not_called()
 
 
 def test_app_wires_character_persona_services(monkeypatch):

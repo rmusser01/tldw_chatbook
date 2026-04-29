@@ -123,7 +123,7 @@ class ExplodingProvider:
 
 
 @pytest.mark.asyncio
-async def test_server_chat_conversation_service_from_config_builds_client_lazily(monkeypatch):
+async def test_server_chat_conversation_service_from_config_builds_and_reuses_client_lazily(monkeypatch):
     sentinel_client = FakeChatClient()
     build_client_calls: list[dict[str, Any]] = []
 
@@ -143,10 +143,15 @@ async def test_server_chat_conversation_service_from_config_builds_client_lazily
     assert build_client_calls == []
 
     result = await service.list_conversations(query="billing")
+    detail = await service.get_conversation("conv-1")
 
     assert result["items"][0]["id"] == "conv-1"
+    assert detail["id"] == "conv-1"
     assert build_client_calls == [{"tldw_api": {"base_url": "https://example.com"}}]
-    assert sentinel_client.calls == [("list_chat_conversations", (), {"query": "billing"})]
+    assert sentinel_client.calls == [
+        ("list_chat_conversations", (), {"query": "billing"}),
+        ("get_chat_conversation", ("conv-1",), {}),
+    ]
 
 
 @pytest.mark.asyncio
