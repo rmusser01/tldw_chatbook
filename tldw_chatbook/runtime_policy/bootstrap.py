@@ -76,6 +76,32 @@ def build_runtime_api_client_from_config(app_config: Mapping[str, Any] | None) -
     return build_runtime_api_client(app_config=app_config)
 
 
+@dataclass(slots=True)
+class LegacyConfigServerClientProvider:
+    app_config: Mapping[str, Any] | None
+    _cached_client: TLDWAPIClient | None = None
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(app_config=<redacted>)"
+
+    def build_client(self) -> TLDWAPIClient:
+        if self._cached_client is None:
+            self._cached_client = build_runtime_api_client_from_config(self.app_config)
+        return self._cached_client
+
+    async def close_cached_client(self) -> None:
+        cached_client = self._cached_client
+        self._cached_client = None
+        if cached_client is not None:
+            await cached_client.close()
+
+
+def build_runtime_api_client_provider_from_config(
+    app_config: Mapping[str, Any] | None,
+) -> LegacyConfigServerClientProvider:
+    return LegacyConfigServerClientProvider(app_config=app_config)
+
+
 def build_server_chatbook_service(
     *,
     app_config: Mapping[str, Any] | None,

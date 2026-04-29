@@ -110,6 +110,58 @@ def test_build_runtime_api_client_supports_explicit_custom_token_overrides():
     assert client.bearer_token == "bearer-secret"
 
 
+def test_config_client_provider_builds_legacy_client_lazily():
+    from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
+
+    provider = build_runtime_api_client_provider_from_config(
+        {"tldw_api": {"base_url": "https://example.test", "api_key": "secret"}}
+    )
+
+    assert provider._cached_client is None
+
+    first = provider.build_client()
+    second = provider.build_client()
+
+    assert first is second
+    assert first.base_url == "https://example.test"
+    assert first.token == "secret"
+
+
+def test_config_client_provider_preserves_legacy_config_alias_and_bearer_auth():
+    from tldw_chatbook.runtime_policy.bootstrap import (
+        build_runtime_api_client_from_config,
+        build_runtime_api_client_provider_from_config,
+    )
+
+    app_config = {
+        "tldw_api": {
+            "url": "https://Alias.Example.COM:8443/api/",
+            "auth_mode": "bearer",
+            "bearer_token": "legacy-bearer",
+        }
+    }
+    provider = build_runtime_api_client_provider_from_config(app_config)
+
+    client = provider.build_client()
+    expected_client = build_runtime_api_client_from_config(app_config)
+
+    assert client.base_url == expected_client.base_url
+    assert client.token == expected_client.token
+    assert client.bearer_token == expected_client.bearer_token
+
+
+def test_config_client_provider_repr_redacts_config_secrets():
+    from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
+
+    provider = build_runtime_api_client_provider_from_config(
+        {"tldw_api": {"base_url": "https://example.test", "api_key": "secret"}}
+    )
+
+    assert "secret" not in repr(provider)
+    assert "api_key" not in repr(provider)
+    assert "redacted" in repr(provider)
+
+
 def test_build_server_chatbook_service_wraps_authoritative_client_builder():
     from tldw_chatbook.runtime_policy.bootstrap import build_server_chatbook_service
 
