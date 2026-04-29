@@ -152,6 +152,23 @@ def test_app_uses_screen_navigation_and_wires_media_services():
     assert app.server_auth_account_service.client_provider is app.server_context_provider
 
 
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_closes_server_context_provider_cached_client():
+    class FakeServerContextProvider:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def close_cached_client(self) -> None:
+            self.close_calls += 1
+
+    provider = FakeServerContextProvider()
+    app_like = SimpleNamespace(server_context_provider=provider)
+
+    await TldwCli._close_server_context_provider_cached_client(app_like)
+
+    assert provider.close_calls == 1
+
+
 def test_app_initializes_watchlists_and_notifications_services():
     app = _build_test_app()
 

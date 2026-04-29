@@ -4191,6 +4191,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.loguru_logger.info("DB size update timer stopped.")
         # --- End Stop DB Size Update Timer ---
 
+    async def _close_server_context_provider_cached_client(self) -> None:
+        server_context_provider = getattr(self, "server_context_provider", None)
+        close_cached_client = getattr(server_context_provider, "close_cached_client", None)
+        if callable(close_cached_client):
+            await close_cached_client()
+
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
         import asyncio
@@ -4284,6 +4290,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             if hasattr(self, '_media_cleanup_timer') and self._media_cleanup_timer:
                 self._media_cleanup_timer.stop()
                 self.loguru_logger.info("Media cleanup timer stopped")
+
+            try:
+                await self._close_server_context_provider_cached_client()
+                self.loguru_logger.info("Server context provider cached client closed")
+            except Exception as e:
+                self.loguru_logger.error(f"Error closing server context provider cached client: {e}")
                 
         except Exception as e:
             self.loguru_logger.error(f"Error during service cleanup: {e}")

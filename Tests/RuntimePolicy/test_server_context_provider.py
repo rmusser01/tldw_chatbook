@@ -17,6 +17,7 @@ from tldw_chatbook.runtime_policy.server_credentials import (
 )
 from tldw_chatbook.runtime_policy.server_context import (
     RuntimeServerContextProvider,
+    ServerCredentialsUnavailable,
     ServerContextUnavailable,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -39,6 +40,20 @@ class CountingTargetStore(ConfiguredServerTargetStore):
     def get_target(self, server_id: str) -> ConfiguredServerTarget | None:
         self.get_target_calls += 1
         return super().get_target(server_id)
+
+
+class RaisingCredentialStore:
+    def set_secret(self, server_id: str, purpose: str, secret: str) -> None:
+        raise RuntimeError("keyring unavailable")
+
+    def get_secret(self, server_id: str, purpose: str) -> str | None:
+        raise RuntimeError("keyring unavailable")
+
+    def delete_secret(self, server_id: str, purpose: str) -> None:
+        raise RuntimeError("keyring unavailable")
+
+    def clear_server(self, server_id: str) -> None:
+        raise RuntimeError("keyring unavailable")
 
 
 def _runtime_context(
@@ -195,6 +210,54 @@ def test_legacy_fallback_without_target_prefers_credential_store_token_over_lega
 
     assert context.auth_token == "stored-bearer"
     assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+
+
+def test_legacy_fallback_uses_config_token_when_credential_store_is_unavailable(tmp_path):
+    provider = _provider(
+        tmp_path,
+        credential_store=RaisingCredentialStore(),
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    context = provider.get_active_context()
+
+    assert context.auth_token == "legacy-bearer"
+    assert context.credential_source == "legacy:tldw_api"
+
+
+def test_explicit_keyring_reference_raises_typed_error_when_credential_store_is_unavailable(tmp_path):
+    provider = _provider(
+        tmp_path,
+        credential_store=RaisingCredentialStore(),
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="bearer",
+                auth_reference=f"keyring:{SERVER_CREDENTIAL_ACCESS_TOKEN}",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    with pytest.raises(ServerCredentialsUnavailable) as exc:
+        provider.get_active_context()
+
+    assert isinstance(exc.value.__cause__, RuntimeError)
 
 
 def test_bearer_auth_prefers_bearer_token_then_access_token_before_legacy_config(tmp_path):

@@ -187,13 +187,18 @@ class RuntimeServerContextProvider:
     ) -> tuple[str | None, str]:
         purpose = self._purpose_from_auth_reference(target.auth_reference)
         if purpose is not None:
-            secret = self.credential_store.get_secret(server_id, purpose)
+            secret = self._get_credential_secret(server_id, purpose)
             if secret is not None:
                 return secret, f"credential_store:{purpose}"
             return None, "none"
 
+        credential_error: ServerCredentialsUnavailable | None = None
         for candidate_purpose in self._purposes_for_auth_mode(target.auth_mode):
-            secret = self.credential_store.get_secret(server_id, candidate_purpose)
+            try:
+                secret = self._get_credential_secret(server_id, candidate_purpose)
+            except ServerCredentialsUnavailable as exc:
+                credential_error = exc
+                break
             if secret is not None:
                 return secret, f"credential_store:{candidate_purpose}"
 
@@ -201,7 +206,17 @@ class RuntimeServerContextProvider:
             legacy_token = self._legacy_config_token()
             if legacy_token is not None:
                 return legacy_token, "legacy:tldw_api"
+        if credential_error is not None:
+            raise credential_error
         return None, "none"
+
+    def _get_credential_secret(self, server_id: str, purpose: str) -> str | None:
+        try:
+            return self.credential_store.get_secret(server_id, purpose)
+        except Exception as exc:
+            raise ServerCredentialsUnavailable(
+                f"Credential store is unavailable for active server credential purpose: {purpose}"
+            ) from exc
 
     def _legacy_config_token(self) -> str | None:
         api_config = self._legacy_api_config()
