@@ -81,9 +81,27 @@ Each operation entry must include:
 Rules:
 
 - This endpoint is the server-side source of truth for Chatbook action availability.
+- Chatbook's existing active-server capability service remains the local projection/cache for the selected server. It must consume this endpoint and active-server context; it must not become a second independent authority with separately invented support rules.
 - It may be backed by existing route metadata, permission catalogs, and feature flags, but must present one stable Chatbook-facing shape.
 - It must not expose admin/billing/ops-only operations unless the authenticated principal can manage them and Chatbook has a destination for them.
 - Route presence without a capability entry is not enough for Chatbook to enable an action.
+- The response must be scoped by active authenticated principal and should include concrete manageable scope instances, not only scope type names.
+
+Scope instance entries must include:
+
+- `scope_type`: `user`, `workspace`, `team`, `org`, or another stable server scope.
+- `scope_id`: concrete server ID for the scope.
+- `display_name`: safe label for Chatbook panes.
+- `parent_scope`: optional parent reference for team/org/workspace nesting.
+- `operations`: operation IDs available in that concrete scope.
+- `default_selected`: optional hint for initial Chatbook selection.
+
+Security and redaction rules:
+
+- `permission_denied` operations may be represented as unavailable only when product UX requires discoverability. Otherwise they should be omitted.
+- Internal route names, policy IDs, and permission strings must be redacted unless the authenticated principal is allowed to inspect them.
+- Billing, ops, and unrelated admin capabilities must not appear solely because the principal has broad server admin access; Chatbook must also have a destination and product need for the operation.
+- Feature-disabled operations should expose stable reason codes without leaking deployment internals.
 
 ## Priority 1: Missing First-Class APIs
 
@@ -125,6 +143,7 @@ Extend existing chat-loop start/run contract with:
 
 - Optional `conversation_id` for attach.
 - Optional `create_conversation` payload.
+- Optional `idempotency_key` for attach/create/persist retries.
 - Response field `conversation_ref` when a persisted server conversation exists.
 - Event field `conversation_ref` when persistence happens asynchronously.
 
@@ -141,6 +160,8 @@ Rules:
 - A `run_id` is not a conversation ID.
 - Chatbook must not create a local conversation from server loop events.
 - If the server cannot persist or attach a run, the capability catalog must report that explicitly.
+- Retrying attach/create/persist with the same `idempotency_key` must return the same `conversation_ref` or a stable terminal error.
+- Attach must be atomic with respect to the target conversation version/ETag when one is supplied.
 
 Capability entries:
 
@@ -162,6 +183,7 @@ Delete request/response requirements:
 - Must define whether managed source items are detached, deleted, preserved, or archived.
 - Must refuse deletion during active sync unless `force=true` is explicitly supported.
 - Must return enough data for Chatbook to update local presentation state without guessing.
+- Repeated delete calls must be idempotent or return a stable terminal `not_found_or_deleted` style response that Chatbook can treat as complete.
 
 Capability entry:
 
@@ -376,15 +398,15 @@ Capability entries:
 - `mcp.governance.*.server`
 - `mcp.audit.*.server`
 
-## Priority 3: Optional New APIs
+## Priority 3: Decision-Gated Domain Deferral Closure APIs
 
-These should be added only if the product decision is to close the related deferred edge now.
+These APIs close known domain deferrals. They are not generic nice-to-haves. Each row must be explicitly included or explicitly deferred before implementation so Chatbook does not keep ambiguous placeholders.
 
 ### Per-Media-Type Read-It-Later Server Browsing
 
 Current Chatbook contract treats server read-it-later as aggregate-only.
 
-If closing this gap, extend existing reading/listing APIs with:
+Closure API, if included:
 
 - `media_type` filter for saved/read-it-later context.
 - Explicit accepted media type values.
@@ -398,7 +420,7 @@ Capability entry:
 
 Current Chatbook contract defers chunk-level TTS for both local and server.
 
-If closing this gap, expose:
+Closure APIs, if included:
 
 - `GET /api/v1/reading/items/{item_id}/chunks`
 - `POST /api/v1/reading/items/{item_id}/chunks/{chunk_id}/tts`
@@ -423,7 +445,7 @@ Capability entry:
 
 Current Chatbook contract limits notes graph operations to server user-space notes.
 
-If closing this gap, expose:
+Closure APIs, if included:
 
 - `GET /api/v1/workspaces/{workspace_id}/notes/graph`
 - `GET /api/v1/workspaces/{workspace_id}/notes/{note_id}/neighbors`
@@ -438,7 +460,7 @@ Capability entry:
 
 Current Chatbook contract defers cross-scope moves.
 
-If closing this gap, expose server-owned move routes:
+Closure APIs, if included:
 
 - `POST /api/v1/notes/{note_id}/move-to-workspace`
 - `POST /api/v1/workspaces/{workspace_id}/notes/{note_id}/move-to-user-space`
@@ -452,6 +474,8 @@ Required semantics:
 - Version/ETag handling.
 - Conflict behavior.
 - Rollback or failure atomicity.
+- Idempotency keys for retried moves.
+- Stable source and destination references in the response.
 
 Capability entries:
 
@@ -460,6 +484,12 @@ Capability entries:
 - `notes.cross_scope_move.workspace_to_workspace`
 
 Local-to-server and server-to-local are not pure server moves. They require Chatbook import/export semantics and should remain separate from server workspace move APIs.
+
+Decision recording rule:
+
+- If a closure API is included, it must move from this section into a concrete implementation lane with route, schema, permission, and tests.
+- If deferred, the capability catalog must include the corresponding unsupported operation with `contract_deferred` or `server_contract_missing`.
+- Chatbook must continue hard-stopping deferred operations before dispatch.
 
 ## Chatbook-Local Only
 
