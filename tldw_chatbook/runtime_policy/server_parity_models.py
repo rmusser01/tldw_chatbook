@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Literal, Mapping
+from math import isfinite
+from typing import Any, Literal, Mapping
 
 SourceAuthority = Literal["local", "server"]
 EventTransportType = Literal["local_producer", "sse", "websocket", "polling", "manual_refresh"]
@@ -11,39 +12,42 @@ ServerNotificationDismissState = Literal["unknown", "active", "dismissed"]
 
 JsonScalar = str | int | float | bool | None
 JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
-FrozenJsonValue = Any
+FrozenJsonValue = JsonScalar | tuple[Any, ...] | dict[str, Any]
 
 
-class FrozenJSONDict(Mapping[str, FrozenJsonValue]):
+class FrozenJSONDict(dict[str, FrozenJsonValue]):
     def __init__(self, data: Mapping[str, Any]) -> None:
-        self._data = {str(key): _freeze_json_value(value) for key, value in data.items()}
+        dict.__init__(self, ((str(key), _freeze_json_value(value)) for key, value in data.items()))
 
-    def __getitem__(self, key: str) -> FrozenJsonValue:
-        return self._data[key]
+    def _raise_frozen(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("FrozenJSONDict is immutable")
 
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._data)
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def __repr__(self) -> str:
-        return repr(self._data)
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, Mapping):
-            return dict(self.items()) == {str(key): _freeze_json_value(value) for key, value in other.items()}
-        return False
+    __setitem__ = _raise_frozen
+    __delitem__ = _raise_frozen
+    clear = _raise_frozen
+    pop = _raise_frozen
+    popitem = _raise_frozen
+    setdefault = _raise_frozen
+    update = _raise_frozen
+    __ior__ = _raise_frozen
 
 
 def _freeze_json_value(value: Any) -> FrozenJsonValue:
     if isinstance(value, FrozenJSONDict):
         return value
+    if value is None or isinstance(value, str | bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise TypeError("JSON float values must be finite")
+        return value
     if isinstance(value, Mapping):
         return FrozenJSONDict(value)
     if isinstance(value, list | tuple):
         return tuple(_freeze_json_value(item) for item in value)
-    return value
+    raise TypeError(f"Unsupported JSON value type: {type(value).__name__}")
 
 
 def _freeze_json_mapping(value: Mapping[str, Any]) -> FrozenJSONDict:

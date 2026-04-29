@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 
@@ -217,3 +218,108 @@ def test_sync_readiness_report_details_are_stable_after_input_mutation() -> None
     details["reasons"].append("mutated")
 
     assert report.details == {"nested": {"state": "initial"}, "reasons": ("missing_identity",)}
+
+
+def test_normalized_event_record_json_fields_support_direct_json_dumps() -> None:
+    record = NormalizedEventRecord(
+        source_authority="local",
+        server_profile_id=None,
+        stream_name="notifications",
+        stream_instance_id="default",
+        event_kind="notification.created",
+        entity_ref={"type": "notification", "id": "n-1"},
+        payload_hash="hash",
+        payload={"nested": {"ok": True}, "items": ["a", 1]},
+    )
+    report = SyncReadinessReport(
+        domain="notes",
+        details={"nested": {"state": "initial"}, "reasons": ["missing_identity"]},
+    )
+
+    assert json.loads(json.dumps(record.entity_ref)) == {"type": "notification", "id": "n-1"}
+    assert json.loads(json.dumps(record.payload)) == {"nested": {"ok": True}, "items": ["a", 1]}
+    assert json.loads(json.dumps(report.details)) == {
+        "nested": {"state": "initial"},
+        "reasons": ["missing_identity"],
+    }
+
+
+def test_frozen_json_mappings_reject_mutation() -> None:
+    record = NormalizedEventRecord(
+        source_authority="local",
+        server_profile_id=None,
+        stream_name="notifications",
+        stream_instance_id="default",
+        event_kind="notification.created",
+        entity_ref={"type": "notification", "id": "n-1"},
+        payload_hash="hash",
+        payload={"nested": {"ok": True}},
+    )
+    report = SyncReadinessReport(domain="notes", details={"state": "initial"})
+
+    with pytest.raises(TypeError):
+        record.entity_ref["id"] = "n-2"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        record.payload["new"] = "value"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        record.payload["nested"]["ok"] = False  # type: ignore[index]
+    with pytest.raises(TypeError):
+        report.details.update({"state": "mutated"})  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "kwargs"),
+    [
+        ("entity_ref", {"entity_ref": {"type": object(), "id": "n-1"}}),
+        ("payload", {"payload": {"unsupported": object()}}),
+        ("details", {"details": {"unsupported": object()}}),
+    ],
+)
+def test_unsupported_json_values_raise_type_error(field_name: str, kwargs: dict) -> None:
+    if field_name == "details":
+        with pytest.raises(TypeError):
+            SyncReadinessReport(domain="notes", **kwargs)
+        return
+
+    event_kwargs = {
+        "source_authority": "local",
+        "server_profile_id": None,
+        "stream_name": "notifications",
+        "stream_instance_id": "default",
+        "event_kind": "notification.created",
+        "entity_ref": {"type": "notification", "id": "n-1"},
+        "payload_hash": "hash",
+    }
+    event_kwargs.update(kwargs)
+
+    with pytest.raises(TypeError):
+        NormalizedEventRecord(**event_kwargs)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "kwargs"),
+    [
+        ("entity_ref", {"entity_ref": {"type": "notification", "score": math.inf}}),
+        ("payload", {"payload": {"score": math.nan}}),
+        ("details", {"details": {"score": -math.inf}}),
+    ],
+)
+def test_non_finite_json_float_values_raise_type_error(field_name: str, kwargs: dict) -> None:
+    if field_name == "details":
+        with pytest.raises(TypeError):
+            SyncReadinessReport(domain="notes", **kwargs)
+        return
+
+    event_kwargs = {
+        "source_authority": "local",
+        "server_profile_id": None,
+        "stream_name": "notifications",
+        "stream_instance_id": "default",
+        "event_kind": "notification.created",
+        "entity_ref": {"type": "notification", "id": "n-1"},
+        "payload_hash": "hash",
+    }
+    event_kwargs.update(kwargs)
+
+    with pytest.raises(TypeError):
+        NormalizedEventRecord(**event_kwargs)
