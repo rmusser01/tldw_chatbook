@@ -141,24 +141,32 @@ async def test_server_auth_account_service_can_use_context_provider_client():
     ]
 
 
-def test_server_auth_account_service_from_config_still_builds_direct_client():
+def test_server_auth_account_service_from_config_delegates_through_provider_seam():
     service = ServerAuthAccountService.from_config(
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
     )
 
-    assert service.client is not None
-    assert service.client_provider is None
-    assert service.client.base_url == "https://example.com"
+    assert service.client is None
+    assert service.client_provider is not None
+
+    client = service.client_provider.build_client()
+
+    assert client.base_url == "https://example.com"
+    assert service.client_provider.build_client() is client
 
 
-def test_server_auth_account_service_from_app_config_keeps_config_compatibility():
+def test_server_auth_account_service_from_app_config_delegates_through_provider_seam():
     service = ServerAuthAccountService.from_app_config(
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
     )
 
-    assert service.client is not None
-    assert service.client_provider is None
-    assert service.client.base_url == "https://example.com"
+    assert service.client is None
+    assert service.client_provider is not None
+
+    client = service.client_provider.build_client()
+
+    assert client.base_url == "https://example.com"
+    assert service.client_provider.build_client() is client
 
 
 @pytest.mark.asyncio
