@@ -82,6 +82,11 @@ Rules:
 - Schemas must not import UI modules.
 - Schemas must not perform network or database work.
 - Schema changes after initial landing require integration review.
+- Execution rule:
+  Dependent lanes may run concurrently only under one of these two conditions:
+  1. they branch from the reviewed Lane 0 worktree after the shared schema slice lands there, or
+  2. they limit themselves to docs, tests, and non-schema adapter scaffolding that does not create local replacement schema definitions.
+- Until Lane 0 lands, no lane may create a parallel event, sync, notification, or provider-migration schema module, local typed-dict copy, or duplicated dataclass stub for shared records.
 
 ### Lane A: Realtime And Notifications Foundation
 
@@ -135,6 +140,19 @@ Sub-batch rules:
 - `app.py` wiring changes are centralized in the B1 integration owner branch after service-level tests exist.
 - A sub-batch may add provider-backed factories without changing app wiring.
 - The integration owner must reconcile constructor signatures and update the migration audit after each sub-batch lands.
+- No provider sub-batch may edit another sub-batch's service files.
+- No provider sub-batch may edit `app.py`.
+- The B1 integration owner is the only branch allowed to change `app.py`, startup wiring, or shared migration-audit enforcement for this tranche.
+- If a shared helper or constructor signature must change across sub-batches, the owning sub-batch lands the minimal service-local change first and the B1 integration owner performs the cross-batch reconciliation after the sub-batches are reviewed.
+
+Sub-batch ownership model:
+
+| Sub-batch | Owned service files | Allowed test files | Forbidden files |
+| --- | --- | --- | --- |
+| B1a | `Chat/server_chat_conversation_service.py`, `Chat/server_chat_loop_service.py`, `Character_Chat/server_character_persona_service.py`, `Character_Chat/server_chat_dictionary_service.py` | Chat/character focused tests only | `app.py`, media, notes, prompt, chatbook, prompt-studio service files |
+| B1b | `Media/server_media_reading_service.py`, `Notes/server_notes_workspace_service.py` | Media/notes focused tests only | `app.py`, chat, character, prompt, chatbook, prompt-studio service files |
+| B1c | `Chatbooks/server_chatbook_service.py`, `Prompt_Management/server_prompt_service.py`, `Prompt_Management/prompt_scope_service.py`, `Prompt_Studio_Interop/server_prompt_studio_service.py` | Prompt/chatbook/prompt-studio focused tests only | `app.py`, chat, character, media, notes service files |
+| B1 integration owner | `app.py`, migration audit doc, service-wiring tests, migration audit guard | Service-wiring and migration-audit tests only | service-module implementation changes except minimal conflict resolution during merge |
 
 Deliverables:
 
@@ -293,6 +311,10 @@ Migration audit checks must be baseline-diff based:
 
 - Existing audited compatibility factories are allowed until their batch migrates them.
 - A migration guard should compare current direct and indirect scans against `Docs/Development/server-client-provider-migration-audit.md`.
+- The baseline key must be semantic and stable under unrelated line churn. Allowed forms are:
+  - path plus matched builder signature text, or
+  - path plus audited match count for a declared builder class.
+- Raw line-number-only allowlists are forbidden for migration-audit enforcement.
 - The guard should fail on new unlisted direct builders, new unlisted indirect factories, new UI/event helper client builders, or removed audit entries that still exist in code.
 - Intentional bootstrap/provider seams must stay listed separately from migration backlog entries.
 
@@ -337,6 +359,7 @@ Concurrent execution rules:
 - Lanes A, C, and E that need concrete shared schemas must either branch from the Lane 0 worktree after schema review or wait until Lane 0 merges.
 - Lane D may proceed with domain specs and service tests that do not depend on shared schemas, but shared event/sync/provider metadata references must import Lane 0 outputs only.
 - Lane B sub-batches may run independently of Lane 0 for provider factory work, but any `ProviderMigrationStatus` usage must wait for Lane 0.
+- If a dependent lane starts before Lane 0 merges, its pre-merge branch must contain no locally invented shared-schema definitions at review time. Review should fail that lane until it rebases onto the reviewed Lane 0 worktree or removes the duplicated schema material.
 
 Recommended merge order:
 
@@ -363,7 +386,7 @@ Suggested branch/worktree ownership:
 | Lane B1c | `parity-provider-prompt-chatbook` | Prompt, chatbook, and prompt-studio service constructors/factories plus focused tests | `app.py`, event observer internals, sync substrate, domain edge specs except audit notes | Service factories only until B1 integration. Must not add legacy builders. |
 | Lane B1 integration | `parity-provider-b1-integration` | App service wiring, constructor reconciliation, provider migration tests, migration audit | Event observer internals, sync substrate, domain edge specs except audit notes | Lands after required B1 service sub-batches. Owns `app.py` migrated-service wiring. |
 | Lane C | `parity-sync-dry-run-substrate` | Sync readiness models, dry-run report services, sync eligibility tests | Domain mutation dispatch, event observer internals, UI screens | No replay worker or remote mutation calls. |
-| Lane D | `parity-domain-edge-contracts` | Domain edge specs, service/scope tests, unsupported-capability reports for chat/media/notes | App wiring and service constructors until Lane B lands | Specs/tests only for overlapping provider-migrated domains until Lane B merges. |
+| Lane D | `parity-domain-edge-contracts` | Domain edge specs, lane-specific edge test files, unsupported-capability reports for chat/media/notes | App wiring, provider service constructors, provider-owned test files until Lane B lands | Specs/tests only for overlapping provider-migrated domains until Lane B merges. |
 | Lane E | `parity-ux-handoff-contracts` | View-model contracts, fixtures, contract tests | Current UI screen implementation | Contracts only; no UI redesign. |
 
 Conflict rules:
@@ -371,6 +394,8 @@ Conflict rules:
 - Lane B sub-batches own service constructor edits only for their assigned modules.
 - Lane B1 integration owns `app.py` edits for migrated services.
 - Lane D may add domain tests/specs in the same domain areas, but must not change provider construction until the relevant Lane B sub-batch lands.
+- For domains shared with Lane B, focused provider-migration test files remain owned by the relevant Lane B sub-batch.
+- Lane D must use additive lane-specific test files or clearly separate domain-edge test files when adding coverage in chat/media/notes areas. It must not edit provider-owned test files unless that edit is coordinated through the owning Lane B sub-batch.
 - Lane A and Lane C may share schema dependencies only through Lane 0 outputs.
 - Any lane touching authority baseline seams needs explicit integration review.
 - Any lane touching `app.py` must list the exact initialization block it owns before implementation starts.
