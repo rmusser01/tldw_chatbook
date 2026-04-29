@@ -138,6 +138,20 @@ def test_notification_feed_item_contract_preserves_presentation_state():
     assert contract.to_payload()["presentation"]["read_state"] == "unread"
 
 
+def test_notification_feed_item_contract_uses_registry_authority_owner():
+    contract = notification_feed_item_from_payload(
+        _server_state(),
+        notification_id="notif-workspace",
+        title="Workspace note changed",
+        message="A workspace note changed.",
+        action_id="notes.list.workspace",
+        workspace_scope_id="workspace-a",
+    )
+
+    assert contract.source_owner == "shared"
+    assert contract.capability_id == "notes_workspaces"
+
+
 def test_future_sync_status_contract_is_readiness_only_and_conflict_aware():
     contract = sync_status_contract(
         _server_state(),

@@ -216,13 +216,14 @@ def notification_feed_item_from_payload(
     delivery_state: str = "pending",
     created_at: str | None = None,
 ) -> NotificationFeedItemContract:
+    capability = get_capability_entry(action_id)
     return NotificationFeedItemContract(
         contract_id=CONTRACT_ID,
         contract_version=CONTRACT_VERSION,
-        source_owner="server" if action_id.endswith(".server") else "local",
+        source_owner=_source_owner(capability.authority_owner),
         active_source=state.active_source,
         active_server_profile_id=_server_profile_id(state),
-        capability_id=_capability_id(action_id),
+        capability_id=capability.capability_id,
         action_id=action_id,
         notification_id=notification_id,
         title=title,
