@@ -24,15 +24,17 @@ AUDIT_ROW_RE = re.compile(r"^\|\s*`(?P<path>tldw_chatbook/[^`]+)`\s*\|\s*(?P<lin
 LINE_TOKEN_RE = re.compile(r"\b(?P<start>\d+)(?:\s*-\s*(?P<end>\d+))?\b")
 
 
-def _audited_locations() -> set[tuple[str, int]]:
+def _audited_match_counts() -> dict[str, int]:
     audit_text = AUDIT_PATH.read_text(encoding="utf-8")
-    allowed: set[tuple[str, int]] = set()
+    allowed: dict[str, int] = {}
     for row in AUDIT_ROW_RE.finditer(audit_text):
         path = row.group("path")
+        count = 0
         for token in LINE_TOKEN_RE.finditer(row.group("lines")):
             start = int(token.group("start"))
             end = int(token.group("end") or start)
-            allowed.update((path, line_number) for line_number in range(start, end + 1))
+            count += end - start + 1
+        allowed[path] = allowed.get(path, 0) + count
     return allowed
 
 
@@ -47,11 +49,20 @@ def _builder_matches() -> set[tuple[str, int, str]]:
 
 
 def test_legacy_server_client_builder_matches_are_listed_in_migration_audit():
-    audited = _audited_locations()
-    unaudited = [
-        f"{path}:{line_number}: {line}"
-        for path, line_number, line in sorted(_builder_matches())
-        if (path, line_number) not in audited
-    ]
+    audited_counts = _audited_match_counts()
+    matches_by_path: dict[str, list[tuple[int, str]]] = {}
+    for path, line_number, line in sorted(_builder_matches()):
+        matches_by_path.setdefault(path, []).append((line_number, line))
 
-    assert unaudited == []
+    drift: list[str] = []
+    for path, matches in sorted(matches_by_path.items()):
+        audited_count = audited_counts.get(path, 0)
+        actual_count = len(matches)
+        if actual_count <= audited_count:
+            continue
+        drift.append(
+            f"{path}: audited {audited_count} builder call(s), found {actual_count}: "
+            + "; ".join(f"{line_number}: {line}" for line_number, line in matches)
+        )
+
+    assert drift == []
