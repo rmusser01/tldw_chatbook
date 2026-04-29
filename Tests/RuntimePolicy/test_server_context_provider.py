@@ -734,7 +734,6 @@ async def test_clear_all_credentials_invalidates_cached_client_and_removes_impor
     opened_http_client = await first_client._get_client()
 
     provider.clear_all_credentials()
-    context = provider.get_active_context()
     if provider._pending_client_close_tasks:
         await asyncio.gather(*provider._pending_client_close_tasks)
 
@@ -748,8 +747,15 @@ async def test_clear_all_credentials_invalidates_cached_client_and_removes_impor
         "https://backup.example.com/api",
         SERVER_CREDENTIAL_ACCESS_TOKEN,
     ) is None
-    assert context.auth_token is None
-    assert context.credential_source == "none"
+
+    context = provider.get_active_context()
+
+    assert context.auth_token == "legacy-bearer"
+    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) == "legacy-bearer"
 
 
 def test_target_store_json_and_target_metadata_do_not_contain_stored_secret(tmp_path):

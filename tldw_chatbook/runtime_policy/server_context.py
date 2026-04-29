@@ -62,7 +62,6 @@ class RuntimeServerContextProvider:
         self.target_store = target_store
         self.credential_store = credential_store
         self.app_config = app_config or {}
-        self._legacy_imported_server_ids: set[str] = set()
         self._cached_client_key: _CachedClientKey | None = None
         self._cached_client: TLDWAPIClient | None = None
         self._pending_client_close_tasks: set[asyncio.Task[None]] = set()
@@ -216,7 +215,6 @@ class RuntimeServerContextProvider:
             if legacy_token is not None:
                 imported_purpose = self._import_legacy_token(server_id, target.auth_mode, legacy_token)
                 if imported_purpose is not None:
-                    self._legacy_imported_server_ids.add(server_id)
                     return legacy_token, f"credential_store:{imported_purpose}"
                 return legacy_token, "legacy:tldw_api"
         if credential_error is not None:
@@ -253,8 +251,6 @@ class RuntimeServerContextProvider:
         using_legacy_fallback_target: bool,
     ) -> bool:
         if not using_legacy_fallback_target and target.auth_reference != "legacy:tldw_api":
-            return False
-        if active_server_id in self._legacy_imported_server_ids:
             return False
 
         legacy_binding = derive_configured_server_binding(self.app_config)
