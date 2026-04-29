@@ -62,6 +62,7 @@ class RuntimeServerContextProvider:
         self.target_store = target_store
         self.credential_store = credential_store
         self.app_config = app_config or {}
+        self._legacy_imported_server_ids: set[str] = set()
         self._cached_client_key: _CachedClientKey | None = None
         self._cached_client: TLDWAPIClient | None = None
         self._pending_client_close_tasks: set[asyncio.Task[None]] = set()
@@ -79,7 +80,11 @@ class RuntimeServerContextProvider:
         auth_token, credential_source = self._resolve_auth_token(
             active_server_id,
             target,
-            allow_legacy_config=using_legacy_fallback_target or target.auth_reference == "legacy:tldw_api",
+            allow_legacy_config=self._should_allow_legacy_config(
+                active_server_id,
+                target,
+                using_legacy_fallback_target=using_legacy_fallback_target,
+            ),
         )
         return ActiveServerContext(
             active_server_id=active_server_id,
@@ -124,6 +129,10 @@ class RuntimeServerContextProvider:
 
     def clear_server_credentials(self, server_id: str) -> None:
         self.credential_store.clear_server(server_id)
+        self._invalidate_cached_client()
+
+    def clear_all_credentials(self) -> None:
+        self.credential_store.clear_all()
         self._invalidate_cached_client()
 
     def clear_active_server_auth_tokens(self) -> None:
@@ -205,6 +214,10 @@ class RuntimeServerContextProvider:
         if allow_legacy_config:
             legacy_token = self._legacy_config_token()
             if legacy_token is not None:
+                imported_purpose = self._import_legacy_token(server_id, target.auth_mode, legacy_token)
+                if imported_purpose is not None:
+                    self._legacy_imported_server_ids.add(server_id)
+                    return legacy_token, f"credential_store:{imported_purpose}"
                 return legacy_token, "legacy:tldw_api"
         if credential_error is not None:
             raise credential_error
@@ -231,6 +244,33 @@ class RuntimeServerContextProvider:
             return {}
         api_config = self.app_config.get("tldw_api", {})
         return api_config if isinstance(api_config, Mapping) else {}
+
+    def _should_allow_legacy_config(
+        self,
+        active_server_id: str,
+        target: ConfiguredServerTarget,
+        *,
+        using_legacy_fallback_target: bool,
+    ) -> bool:
+        if not using_legacy_fallback_target and target.auth_reference != "legacy:tldw_api":
+            return False
+        if active_server_id in self._legacy_imported_server_ids:
+            return False
+
+        legacy_binding = derive_configured_server_binding(self.app_config)
+        return legacy_binding.server_configured and legacy_binding.active_server_id == active_server_id
+
+    def _import_legacy_token(self, server_id: str, auth_mode: str, token: str) -> str | None:
+        purposes = self._purposes_for_auth_mode(auth_mode)
+        if not purposes:
+            return None
+
+        purpose = purposes[0]
+        try:
+            self.credential_store.set_secret(server_id, purpose, token)
+        except Exception:
+            return None
+        return purpose
 
     def _invalidate_cached_client(self) -> None:
         cached_client = self._cached_client

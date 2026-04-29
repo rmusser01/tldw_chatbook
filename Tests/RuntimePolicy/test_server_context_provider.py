@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import replace
 
@@ -53,6 +54,9 @@ class RaisingCredentialStore:
         raise RuntimeError("keyring unavailable")
 
     def clear_server(self, server_id: str) -> None:
+        raise RuntimeError("keyring unavailable")
+
+    def clear_all(self) -> None:
         raise RuntimeError("keyring unavailable")
 
 
@@ -153,7 +157,7 @@ def test_legacy_fallback_works_when_no_target_exists_and_app_config_matches_acti
     assert context.base_url == "https://server.example.com/api"
     assert context.auth_method == "bearer"
     assert context.auth_token == "legacy-bearer"
-    assert context.credential_source == "legacy:tldw_api"
+    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
     assert context.target.server_id == "https://server.example.com/api"
     assert context.target.auth_reference == "legacy:tldw_api"
 
@@ -188,6 +192,91 @@ def test_legacy_target_prefers_credential_store_token_over_legacy_config(tmp_pat
 
     assert context.auth_token == "stored-access"
     assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_ACCESS_TOKEN}"
+
+
+def test_legacy_config_token_imports_only_for_active_server_profile(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    target_store = _target_store(
+        tmp_path,
+        [
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            ),
+            ConfiguredServerTarget(
+                server_id="https://backup.example.com/api",
+                label="Backup",
+                base_url="https://backup.example.com/api",
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+            ),
+        ],
+    )
+    provider = RuntimeServerContextProvider(
+        runtime_context=_runtime_context(),
+        target_store=target_store,
+        credential_store=credentials,
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    context = provider.get_active_context()
+
+    assert context.active_server_id == "https://server.example.com/api"
+    assert context.auth_token == "legacy-bearer"
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) == "legacy-bearer"
+    assert credentials.get_secret(
+        "https://backup.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) is None
+
+
+def test_legacy_config_token_does_not_apply_to_nonmatching_active_server_profile(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    provider = _provider(
+        tmp_path,
+        runtime_context=_runtime_context(active_server_id="https://backup.example.com/api"),
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://backup.example.com/api",
+                label="Backup",
+                base_url="https://backup.example.com/api",
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    context = provider.get_active_context()
+
+    assert context.active_server_id == "https://backup.example.com/api"
+    assert context.auth_token is None
+    assert context.credential_source == "none"
+    assert credentials.get_secret(
+        "https://backup.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) is None
 
 
 def test_legacy_fallback_without_target_prefers_credential_store_token_over_legacy_config(tmp_path):
@@ -615,6 +704,54 @@ async def test_clear_active_server_auth_tokens_invalidates_cache_and_preserves_s
     ) == "bearer-1"
 
 
+@pytest.mark.asyncio
+async def test_clear_all_credentials_invalidates_cached_client_and_removes_imported_credentials(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://backup.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "backup-access")
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api/",
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    first_client = provider.build_client()
+    opened_http_client = await first_client._get_client()
+
+    provider.clear_all_credentials()
+    context = provider.get_active_context()
+    if provider._pending_client_close_tasks:
+        await asyncio.gather(*provider._pending_client_close_tasks)
+
+    assert provider._cached_client is None
+    assert opened_http_client.is_closed
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) is None
+    assert credentials.get_secret(
+        "https://backup.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) is None
+    assert context.auth_token is None
+    assert context.credential_source == "none"
+
+
 def test_target_store_json_and_target_metadata_do_not_contain_stored_secret(tmp_path):
     secret = "literal-provider-token-must-not-leak"
     credentials = InMemoryServerCredentialStore()
@@ -673,6 +810,52 @@ def test_clear_active_server_credentials_and_clear_server_credentials_clear_per_
     provider.clear_server_credentials("server-b")
 
     assert credentials.get_secret("server-b", SERVER_CREDENTIAL_BEARER_TOKEN) is None
+
+
+@pytest.mark.asyncio
+async def test_switching_active_server_rebuilds_client_with_new_profile_and_closes_old_client(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "shared-access")
+    credentials.set_secret("https://backup.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "shared-access")
+    runtime_context = _runtime_context()
+    provider = RuntimeServerContextProvider(
+        runtime_context=runtime_context,
+        target_store=_target_store(
+            tmp_path,
+            [
+                ConfiguredServerTarget(
+                    server_id="https://server.example.com/api",
+                    label="Primary",
+                    base_url="https://shared.example.com/api",
+                    auth_mode="bearer",
+                    is_default=True,
+                ),
+                ConfiguredServerTarget(
+                    server_id="https://backup.example.com/api",
+                    label="Backup",
+                    base_url="https://shared.example.com/api",
+                    auth_mode="bearer",
+                ),
+            ],
+        ),
+        credential_store=credentials,
+        app_config={},
+    )
+
+    first_client = provider.build_client()
+    opened_http_client = await first_client._get_client()
+
+    runtime_context.state = replace(
+        runtime_context.state,
+        active_server_id="https://backup.example.com/api",
+    )
+    second_client = provider.build_client()
+    await provider.close_cached_client()
+
+    assert second_client is not first_client
+    assert opened_http_client.is_closed
+    assert second_client.base_url == "https://shared.example.com/api"
+    assert second_client.bearer_token == "shared-access"
 
 
 def test_clear_active_server_auth_tokens_preserves_static_credentials(tmp_path):
