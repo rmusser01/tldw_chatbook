@@ -36,7 +36,7 @@ The server already exposes broad route coverage for most domains:
 - Writing/manuscript structural routes exist.
 - RAG, media embeddings, evaluations, flashcards, quizzes, audio jobs, audio streaming, voice assistant, notifications, web clipper, sharing, and Unified MCP routes exist.
 
-The remaining gap is therefore not whole-domain route creation. The gap is a smaller set of missing first-class operations plus stable contracts that Chatbook can use for action gating, identity handling, and source-honest unsupported behavior.
+The remaining gap is therefore not whole-domain route creation. The gap is canonical Chatbook binding: stable operation IDs, source/scope capability exposure, identity handling, and source-honest unsupported behavior over the server APIs that already power the web UI. A server operation must not be marked "missing" until the corresponding web UI/admin/extension usage and route implementation have been searched.
 
 ## API Contract Principles
 
@@ -103,18 +103,28 @@ Security and redaction rules:
 - Billing, ops, and unrelated admin capabilities must not appear solely because the principal has broad server admin access; Chatbook must also have a destination and product need for the operation.
 - Feature-disabled operations should expose stable reason codes without leaking deployment internals.
 
-## Priority 1: Missing First-Class APIs
+## Priority 1: Canonical Chatbook Bindings And Confirmed Gaps
 
 ### Chat Conversations
 
-Current gap: server conversation list/detail/update/tree/share exist, but first-class create/delete are not exposed as a stable Chatbook contract outside launch/persist flows.
+Current correction: server chat creation/deletion capability already exists through user-facing route surfaces. In `tldw_server2`, `character_chat_sessions.py` exposes `POST /api/v1/chats/` for character/persona chat session creation and `DELETE /api/v1/chats/{chat_id}` for soft/hard deletion; chat completion flows also create or resolve conversations through `get_or_create_conversation`. The gap is not proven absence of server APIs. The gap is choosing and documenting the canonical Chatbook binding for generic, character, persona, workspace, and chat-loop conversation actions.
 
-Expose:
+Verified existing surfaces:
 
-- `POST /api/v1/chat/conversations`
-- `DELETE /api/v1/chat/conversations/{conversation_id}`
+- `GET /api/v1/chats/`, `POST /api/v1/chats/`, `GET /api/v1/chats/{chat_id}`, `PUT /api/v1/chats/{chat_id}`, `DELETE /api/v1/chats/{chat_id}`, and restore/export/settings routes are provided by the chat-session router.
+- `GET /api/v1/chats/{chat_id}/messages` and `POST /api/v1/chats/{chat_id}/messages` are provided by the character-message router and are already described by the extension server-backed chat plan.
+- `GET /api/v1/chat/conversations`, `GET /api/v1/chat/conversations/{conversation_id}`, `PATCH /api/v1/chat/conversations/{conversation_id}`, tree, and share-link routes exist, with hidden aliases under `/api/v1/chats/conversations`.
+- Existing E2E coverage creates server chats through `/api/v1/chats/` with a `character_id`, then deletes them through `/api/v1/chats/{chat_id}`.
 
-Create request requirements:
+Required work:
+
+- Audit the web UI/admin/extension call sites before labeling any chat operation missing.
+- Bind Chatbook to the existing canonical route when it already satisfies the operation semantics.
+- Add a thin alias endpoint only when the existing route is flow-specific in a way that would force Chatbook to fake unsupported fields or couple generic model-only conversation management to character/persona session-only semantics.
+- Preserve public Chatbook-facing operation IDs even if the underlying route is `POST /api/v1/chats/`, chat completion create-on-send, or a future alias.
+- Treat generic model-only conversation create/delete as a decision point, not a confirmed missing API: either bind it to chat completion create-on-send, bind it to an existing non-character chat-session shape if supported, or add a thin explicit alias after verifying neither existing path is source-honest.
+
+Canonical binding requirements:
 
 - `title`.
 - `scope_type`: `global` or `workspace`.
@@ -171,9 +181,9 @@ Capability entries:
 
 ### Ingestion Sources Delete
 
-Current gap: server ingestion sources expose create/list/get/patch/sync/archive/reattach, but no first-class delete route.
+Current scan result: server ingestion sources expose create/list/get/patch/sync/archive/reattach. The endpoint decorator list in `ingestion_sources.py` has no `DELETE` route, and the service layer scan found artifact/snapshot deletion helpers but no source-level delete/tombstone helper. Extension E2E mocks list/get/items/sync only, and the source-level web/admin/extension search did not find an ingestion-source delete call. Treat this as the only currently likely route gap, still subject to a final web UI route-usage audit before implementation.
 
-Expose:
+If confirmed missing, expose:
 
 - `DELETE /api/v1/ingestion-sources/{source_id}`
 
@@ -314,11 +324,15 @@ Stabilize:
 - Study pack job lifecycle.
 - Source object references for generated cards/quizzes.
 
-Recommended endpoints if not already canonical:
+Canonical binding checks, not presumed missing:
 
 - `GET /api/v1/evaluations/targets`
 - `GET /api/v1/evaluations/history/{run_id}/artifacts`
 - `GET /api/v1/evaluations/history/{run_id}/artifacts/{artifact_id}/download`
+
+Route-scan note:
+
+- Evaluation CRUD/run/history, benchmark, dataset, recipe, synthetic, RAG-pipeline, and webhook surfaces already exist under the unified evaluations router family. Before adding any endpoint above, bind Chatbook to the existing route if it can provide the same target or artifact contract.
 
 Capability entries:
 
@@ -338,9 +352,9 @@ Stabilize:
 - Collection identity and export contract.
 - Export job lifecycle and download route.
 - Per-media embedding admin operations if Chatbook should expose them.
-- Model/provider catalog for embedding operations.
+- Model/provider catalog for embedding operations. The embedding-model/provider catalog and media embedding delete surfaces already exist; collection export remains conditional on whether an existing RAG artifact/export route can be bound source-honestly.
 
-Recommended endpoints if not already canonical:
+Canonical binding checks, not presumed missing:
 
 - `POST /api/v1/rag/collections/{collection_id}/exports`
 - `GET /api/v1/rag/collections/{collection_id}/exports/{export_id}`
@@ -406,6 +420,10 @@ These APIs close known domain deferrals. They are not generic nice-to-haves. Eac
 
 Current Chatbook contract treats server read-it-later as aggregate-only.
 
+Route-scan note:
+
+- Reading item list/search exists and media listing supports media-type filters, but the reading saved/read-it-later surface did not show a source-honest `media_type` filter or per-type counts in the route scan. Bind to an existing route if one is found; otherwise keep aggregate-only or add this closure API.
+
 Closure API, if included:
 
 - `media_type` filter for saved/read-it-later context.
@@ -419,6 +437,10 @@ Capability entry:
 ### Chunk-Level Reading TTS
 
 Current Chatbook contract defers chunk-level TTS for both local and server.
+
+Route-scan note:
+
+- `POST /api/v1/reading/items/{item_id}/tts` exists for item-level TTS. The route scan did not find first-class reading chunk listing, chunk TTS jobs, chunk audio retrieval, or chunk TTS artifact deletion.
 
 Closure APIs, if included:
 
@@ -445,6 +467,10 @@ Capability entry:
 
 Current Chatbook contract limits notes graph operations to server user-space notes.
 
+Route-scan note:
+
+- Notes graph read/neighbors/manual-link/delete-link routes exist under `/api/v1/notes`. Workspace note CRUD exists under `/api/v1/workspaces/{workspace_id}/notes`, but the route scan did not find workspace-scoped graph/neighbors/link routes.
+
 Closure APIs, if included:
 
 - `GET /api/v1/workspaces/{workspace_id}/notes/graph`
@@ -459,6 +485,10 @@ Capability entry:
 ### Cross-Scope Note And Workspace Moves
 
 Current Chatbook contract defers cross-scope moves.
+
+Route-scan note:
+
+- Workspace note CRUD exists, but the route scan did not find note move routes between user space, workspace space, or workspace-to-workspace. Chatbook must not emulate these moves with copy/delete.
 
 Closure APIs, if included:
 
@@ -509,7 +539,7 @@ These do not require new server APIs:
 Recommended parallel lanes:
 
 1. Capability catalog: build first because every other lane uses its operation IDs.
-2. Missing first-class APIs: chat conversation create/delete, chat loop attach/persist, ingestion source delete.
+2. Canonical binding and confirmed gaps: bind chat conversation create/delete to existing server surfaces where source-honest, stabilize chat-loop attach/persist, and implement ingestion-source delete only if the final web UI route-usage audit confirms no existing delete/tombstone route.
 3. Stabilization contracts: notifications/events, workflows/artifacts, research/artifacts, watchlists/runs, audio/job events.
 4. Optional deferrals: per-media-type read-it-later, chunk TTS, workspace graph, cross-scope moves.
 5. Chatbook service adapters: consume capability catalog and remove hardcoded unsupported assumptions only after the server operation is present.
@@ -520,7 +550,7 @@ Server-side tests:
 
 - Capability catalog filters by authenticated principal.
 - Every Chatbook operation ID has either a supported route or an explicit unsupported reason.
-- Missing first-class APIs enforce ownership, scope, and permissions.
+- Canonical-bound and newly added operations enforce ownership, scope, and permissions.
 - Event streams resume by cursor and dedupe duplicate events.
 - Delete/move APIs are idempotent or return stable terminal errors.
 
