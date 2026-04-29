@@ -353,3 +353,85 @@ def test_non_string_json_mapping_keys_raise_type_error(field_name: str, kwargs: 
 
     with pytest.raises(TypeError):
         NormalizedEventRecord(**event_kwargs)
+
+
+def test_tuple_like_fields_are_normalized_and_mutation_safe() -> None:
+    reason_codes = ["not_registered"]
+    notes = ["provider-backed"]
+
+    report = SyncReadinessReport(domain="chat", reason_codes=reason_codes)
+    status = ProviderMigrationStatus(service_name="chat", notes=notes)
+
+    reason_codes.append("mutated")
+    notes.append("mutated")
+
+    assert report.reason_codes == ("not_registered",)
+    assert status.notes == ("provider-backed",)
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: EventCursor(
+            source_authority="remote",
+            server_profile_id=None,
+            stream_name="notifications",
+            stream_instance_id="default",
+        ),
+        lambda: NormalizedEventRecord(
+            source_authority="remote",
+            server_profile_id=None,
+            stream_name="notifications",
+            stream_instance_id="default",
+            event_kind="notification.created",
+            entity_ref={"type": "notification", "id": "n-1"},
+            payload_hash="hash",
+        ),
+        lambda: EventDedupeKey(
+            source_authority="remote",
+            server_profile_id=None,
+            stream_name="notifications",
+            stream_instance_id="default",
+            event_kind="notification.created",
+            entity_id="n-1",
+            timestamp=None,
+            payload_hash="hash",
+        ),
+        lambda: SyncIdentityMapEntry(
+            domain="notes",
+            source_authority="remote",
+            source_scope="workspace",
+            local_entity_id="local-1",
+        ),
+    ],
+)
+def test_invalid_source_authority_values_raise_value_error(factory) -> None:
+    with pytest.raises(ValueError):
+        factory()
+
+
+def test_invalid_event_transport_type_raises_value_error() -> None:
+    with pytest.raises(ValueError):
+        NormalizedEventRecord(
+            source_authority="local",
+            server_profile_id=None,
+            stream_name="notifications",
+            stream_instance_id="default",
+            event_kind="notification.created",
+            entity_ref={"type": "notification", "id": "n-1"},
+            payload_hash="hash",
+            transport_type="carrier_pigeon",
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"local_delivery_state": "queued"},
+        {"server_read_state": "seen"},
+        {"server_dismiss_state": "archived"},
+    ],
+)
+def test_invalid_notification_state_values_raise_value_error(kwargs: dict) -> None:
+    with pytest.raises(ValueError):
+        NotificationPresentationRecord(event_key="event-1", **kwargs)

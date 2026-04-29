@@ -14,6 +14,12 @@ JsonScalar = str | int | float | bool | None
 JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 FrozenJsonValue = JsonScalar | tuple[Any, ...] | dict[str, Any]
 
+_SOURCE_AUTHORITIES = {"local", "server"}
+_EVENT_TRANSPORT_TYPES = {"local_producer", "sse", "websocket", "polling", "manual_refresh"}
+_NOTIFICATION_DELIVERY_STATES = {"pending", "delivered", "failed", "suppressed"}
+_SERVER_NOTIFICATION_READ_STATES = {"unknown", "unread", "read"}
+_SERVER_NOTIFICATION_DISMISS_STATES = {"unknown", "active", "dismissed"}
+
 
 class FrozenJSONDict(dict[str, FrozenJsonValue]):
     def __init__(self, data: Mapping[str, Any]) -> None:
@@ -59,6 +65,16 @@ def _freeze_json_mapping(value: Mapping[str, Any]) -> FrozenJSONDict:
     return FrozenJSONDict(value)
 
 
+def _validate_literal(value: str, *, field_name: str, allowed_values: set[str]) -> None:
+    if value not in allowed_values:
+        allowed = ", ".join(sorted(allowed_values))
+        raise ValueError(f"{field_name} must be one of: {allowed}")
+
+
+def _validate_source_authority(value: str) -> None:
+    _validate_literal(value, field_name="source_authority", allowed_values=_SOURCE_AUTHORITIES)
+
+
 def _entity_id(entity_ref: Mapping[str, Any]) -> str:
     entity_id = entity_ref.get("id")
     if entity_id is None:
@@ -75,6 +91,7 @@ class EventCursor:
     cursor: str | None = None
 
     def __post_init__(self) -> None:
+        _validate_source_authority(self.source_authority)
         if self.source_authority == "server" and not self.server_profile_id:
             raise ValueError("server_profile_id is required for server event cursors")
 
@@ -101,6 +118,12 @@ class NormalizedEventRecord:
     payload: Mapping[str, FrozenJsonValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        _validate_source_authority(self.source_authority)
+        _validate_literal(
+            self.transport_type,
+            field_name="transport_type",
+            allowed_values=_EVENT_TRANSPORT_TYPES,
+        )
         if self.source_authority == "server" and not self.server_profile_id:
             raise ValueError("server_profile_id is required for server normalized events")
         object.__setattr__(self, "entity_ref", _freeze_json_mapping(self.entity_ref))
@@ -120,6 +143,9 @@ class EventDedupeKey:
     entity_id: str
     timestamp: str | None
     payload_hash: str
+
+    def __post_init__(self) -> None:
+        _validate_source_authority(self.source_authority)
 
     @classmethod
     def from_event(cls, event: NormalizedEventRecord) -> "EventDedupeKey":
@@ -144,6 +170,23 @@ class NotificationPresentationRecord:
     presented_at: str | None = None
     delivery_error: str | None = None
 
+    def __post_init__(self) -> None:
+        _validate_literal(
+            self.local_delivery_state,
+            field_name="local_delivery_state",
+            allowed_values=_NOTIFICATION_DELIVERY_STATES,
+        )
+        _validate_literal(
+            self.server_read_state,
+            field_name="server_read_state",
+            allowed_values=_SERVER_NOTIFICATION_READ_STATES,
+        )
+        _validate_literal(
+            self.server_dismiss_state,
+            field_name="server_dismiss_state",
+            allowed_values=_SERVER_NOTIFICATION_DISMISS_STATES,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class SyncIdentityMapEntry:
@@ -158,6 +201,9 @@ class SyncIdentityMapEntry:
     last_observed_remote_at: str | None = None
     last_local_dirty_at: str | None = None
 
+    def __post_init__(self) -> None:
+        _validate_source_authority(self.source_authority)
+
 
 @dataclass(frozen=True, slots=True)
 class SyncReadinessReport:
@@ -170,6 +216,7 @@ class SyncReadinessReport:
     details: Mapping[str, FrozenJsonValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
         object.__setattr__(self, "details", _freeze_json_mapping(self.details))
 
 
@@ -181,3 +228,6 @@ class ProviderMigrationStatus:
     reason_code: str | None = None
     server_profile_id: str | None = None
     notes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "notes", tuple(self.notes))
