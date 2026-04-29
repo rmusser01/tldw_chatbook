@@ -57,9 +57,15 @@ def _audited_match_metadata(audit_path: Path = AUDIT_PATH) -> dict[str, dict[str
             start = int(token.group("start"))
             end = int(token.group("end") or start)
             count += end - start + 1
-        metadata = allowed.setdefault(path, {"count": 0, "semantic_matches": Counter()})
+        semantic_matches = _extract_semantic_matches(row.group("notes"))
+        metadata = allowed.setdefault(
+            path,
+            {"count": 0, "semantic_matches": Counter(), "line_only_rows": 0},
+        )
         metadata["count"] = int(metadata["count"]) + count
-        metadata["semantic_matches"].update(_extract_semantic_matches(row.group("notes")))
+        metadata["semantic_matches"].update(semantic_matches)
+        if count and not semantic_matches:
+            metadata["line_only_rows"] = int(metadata["line_only_rows"]) + 1
     return allowed
 
 
@@ -82,9 +88,18 @@ def _audit_drift(audit_path: Path = AUDIT_PATH, source_root: Path = SOURCE_ROOT,
     drift: list[str] = []
     for path in sorted(set(audited_metadata) | set(matches_by_path)):
         matches = matches_by_path.get(path, [])
-        metadata = audited_metadata.get(path, {"count": 0, "semantic_matches": Counter()})
+        metadata = audited_metadata.get(
+            path,
+            {"count": 0, "semantic_matches": Counter(), "line_only_rows": 0},
+        )
         audited_count = int(metadata["count"])
         actual_count = len(matches)
+        if int(metadata["line_only_rows"]):
+            drift.append(
+                f"{path}: line-only audit row is invalid; add Semantic match snippets"
+            )
+            continue
+
         if actual_count <= audited_count:
             actual_semantics = Counter(line for _, line in matches)
             audited_semantics = metadata["semantic_matches"]
@@ -202,7 +217,36 @@ def test_audit_guard_rejects_line_number_only_rows(tmp_path: Path):
     drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
 
     assert drift == [
-        "tldw_chatbook/example.py: semantic match drift; missing=['build_runtime_api_client_from_config(app_config)'] extra=[]"
+        "tldw_chatbook/example.py: line-only audit row is invalid; add Semantic match snippets"
+    ]
+
+
+def test_audit_guard_rejects_stale_line_number_only_rows(tmp_path: Path):
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "tldw_chatbook"
+    source_root.mkdir(parents=True)
+    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path.parent.mkdir(parents=True)
+    audit_path.write_text(
+        "\n".join(
+            [
+                "| Module | Audit lines | Notes |",
+                "| --- | ---: | --- |",
+                "| `tldw_chatbook/example.py` | 123 | Line-only stale row. |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (source_root / "example.py").write_text(
+        "def no_builder_here():\n    return None\n",
+        encoding="utf-8",
+    )
+
+    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+
+    assert drift == [
+        "tldw_chatbook/example.py: line-only audit row is invalid; add Semantic match snippets"
     ]
 
 
