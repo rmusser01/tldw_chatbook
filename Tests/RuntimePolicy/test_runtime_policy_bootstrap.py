@@ -243,6 +243,68 @@ def test_wire_server_context_provider_exposes_provider_and_credential_store(tmp_
     assert app_like.server_context_provider.credential_store is app_like.server_credential_store
 
 
+def test_auth_scope_updates_and_clears_legacy_imported_effective_bearer_token(tmp_path):
+    from tldw_chatbook.Auth_Account_Interop.auth_account_scope_service import AuthAccountScopeService
+    from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
+    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
+    from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
+    from tldw_chatbook.runtime_policy.server_credentials import (
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+        InMemoryServerCredentialStore,
+    )
+    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+
+    app_config = {
+        "tldw_api": {
+            "url": "https://Alias.Example.COM:8443/api/",
+            "auth_mode": "bearer",
+            "bearer_token": "legacy-bearer",
+        }
+    }
+    store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
+    store.save(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="https://old.example.com/api",
+            server_configured=True,
+            last_known_server_label="old.example.com",
+        )
+    )
+    app_like = SimpleNamespace(app_config=app_config, app_state=AppState())
+    context = load_runtime_policy_for_app(app_like, store=store)
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    target_store.upsert_legacy_config_target(app_config)
+    credential_store = InMemoryServerCredentialStore()
+    provider = RuntimeServerContextProvider(
+        runtime_context=context,
+        target_store=target_store,
+        credential_store=credential_store,
+        app_config=app_config,
+    )
+    scope = AuthAccountScopeService(server_context_provider=provider)
+
+    assert provider.get_active_context().auth_token == "legacy-bearer"
+    assert credential_store.get_secret(
+        context.state.active_server_id,
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) == "legacy-bearer"
+
+    scope.store_login_tokens(access_token="access-1", refresh_token="refresh-1")
+
+    assert provider.get_active_context().auth_token == "access-1"
+    assert credential_store.get_secret(
+        context.state.active_server_id,
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) == "access-1"
+
+    scope.clear_login_tokens()
+
+    assert credential_store.get_secret(
+        context.state.active_server_id,
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) is None
+
+
 def test_load_runtime_policy_for_app_rebinds_persisted_runtime_state_to_configured_server_identity(
     tmp_path,
 ):

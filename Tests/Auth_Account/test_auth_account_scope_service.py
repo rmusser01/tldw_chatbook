@@ -252,8 +252,29 @@ def test_store_login_tokens_routes_through_server_context_provider():
     ) == "access-1"
     assert provider.credential_store.get_secret(
         "http://server.test",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) == "access-1"
+    assert provider.credential_store.get_secret(
+        "http://server.test",
         SERVER_CREDENTIAL_REFRESH_TOKEN,
     ) == "refresh-1"
+
+
+def test_store_login_tokens_overwrites_preexisting_effective_bearer_token():
+    provider = FakeServerContextProvider()
+    provider.credential_store.set_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+        "legacy-bearer",
+    )
+    scope = AuthAccountScopeService(server_context_provider=provider)
+
+    scope.store_login_tokens(access_token="access-1", refresh_token="refresh-1")
+
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) == "access-1"
 
 
 @pytest.mark.asyncio
@@ -308,12 +329,34 @@ def test_clear_login_tokens_routes_through_server_context_provider():
     ) is None
     assert provider.credential_store.get_secret(
         "http://server.test",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) is None
+    assert provider.credential_store.get_secret(
+        "http://server.test",
         SERVER_CREDENTIAL_REFRESH_TOKEN,
     ) is None
 
 
+def test_clear_login_tokens_clears_preexisting_effective_bearer_token():
+    provider = FakeServerContextProvider()
+    provider.credential_store.set_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+        "legacy-bearer",
+    )
+    provider.store_auth_tokens(access_token="access-1", refresh_token="refresh-1")
+    scope = AuthAccountScopeService(server_context_provider=provider)
+
+    scope.clear_login_tokens()
+
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) is None
+
+
 @pytest.mark.asyncio
-async def test_logout_clear_bearer_token_preserves_static_server_credentials():
+async def test_logout_clear_bearer_token_clears_effective_bearer_credential_and_preserves_api_key():
     server = FakeAuthAccountService()
     provider = FakeServerContextProvider()
     provider.store_auth_tokens(access_token="access-1", refresh_token="refresh-1")
@@ -338,7 +381,7 @@ async def test_logout_clear_bearer_token_preserves_static_server_credentials():
     assert provider.credential_store.get_secret(
         "http://server.test",
         SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) == "bearer-1"
+    ) is None
 
 
 @pytest.mark.asyncio

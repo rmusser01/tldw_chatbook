@@ -6,6 +6,8 @@ import inspect
 from enum import Enum
 from typing import Any
 
+from tldw_chatbook.runtime_policy.server_credentials import SERVER_CREDENTIAL_BEARER_TOKEN
+
 
 class AuthAccountBackend(str, Enum):
     LOCAL = "local"
@@ -116,11 +118,64 @@ class AuthAccountScopeService:
         store = getattr(self.server_context_provider, "store_auth_tokens", None)
         if callable(store):
             store(access_token=access_token, refresh_token=refresh_token)
+        self._set_effective_bearer_token(access_token)
 
     def clear_login_tokens(self) -> None:
         clear = getattr(self.server_context_provider, "clear_active_server_auth_tokens", None)
         if callable(clear):
             clear()
+        self._delete_effective_bearer_token()
+
+    def _set_effective_bearer_token(self, access_token: str | None) -> None:
+        if not access_token:
+            return
+        credential_store, active_server_id = self._resolve_provider_credential_store_context()
+        if credential_store is None or not active_server_id:
+            return
+        credential_store.set_secret(
+            active_server_id,
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+            access_token,
+        )
+
+    def _delete_effective_bearer_token(self) -> None:
+        credential_store, active_server_id = self._resolve_provider_credential_store_context()
+        if credential_store is None or not active_server_id:
+            return
+        credential_store.delete_secret(
+            active_server_id,
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+
+    def _resolve_provider_credential_store_context(self) -> tuple[Any | None, str | None]:
+        provider = self.server_context_provider
+        if provider is None:
+            return None, None
+
+        credential_store = getattr(provider, "credential_store", None)
+        if credential_store is None:
+            return None, None
+
+        active_server_id = getattr(provider, "active_server_id", None)
+        if active_server_id:
+            return credential_store, str(active_server_id)
+
+        get_active_context = getattr(provider, "get_active_context", None)
+        if callable(get_active_context):
+            try:
+                active_context = get_active_context()
+            except Exception:
+                active_context = None
+            resolved_server_id = getattr(active_context, "active_server_id", None)
+            if resolved_server_id:
+                return credential_store, str(resolved_server_id)
+
+        runtime_context = getattr(provider, "runtime_context", None)
+        state = getattr(runtime_context, "state", None)
+        resolved_server_id = getattr(state, "active_server_id", None)
+        if resolved_server_id:
+            return credential_store, str(resolved_server_id)
+        return credential_store, None
 
     @staticmethod
     def _normalize_session(mode: AuthAccountBackend, payload: dict[str, Any]) -> dict[str, Any]:
