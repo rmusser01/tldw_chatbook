@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+
 import pytest
 
 from tldw_chatbook.runtime_policy.server_parity_models import (
@@ -138,3 +142,78 @@ def test_notification_presentation_keeps_local_delivery_state_separate_from_serv
     assert presentation.local_delivery_state == "delivered"
     assert presentation.server_read_state == "unread"
     assert presentation.server_dismiss_state == "active"
+
+
+def test_importing_server_parity_models_does_not_load_heavy_runtime_policy_modules() -> None:
+    script = """
+import json
+import sys
+import tldw_chatbook.runtime_policy.server_parity_models
+
+heavy_modules = [
+    "tldw_chatbook.runtime_policy.engine",
+    "tldw_chatbook.runtime_policy.enforcement",
+    "tldw_chatbook.runtime_policy.server_context",
+    "tldw_chatbook.runtime_policy.server_capabilities",
+]
+print(json.dumps({name: name in sys.modules for name in heavy_modules}, sort_keys=True))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "tldw_chatbook.runtime_policy.engine": False,
+        "tldw_chatbook.runtime_policy.enforcement": False,
+        "tldw_chatbook.runtime_policy.server_capabilities": False,
+        "tldw_chatbook.runtime_policy.server_context": False,
+    }
+
+
+def test_normalized_event_record_dedupe_identity_is_stable_after_input_mutation() -> None:
+    entity_ref = {"type": "notification", "id": "n-1"}
+    record = NormalizedEventRecord(
+        source_authority="local",
+        server_profile_id=None,
+        stream_name="notifications",
+        stream_instance_id="default",
+        event_kind="notification.created",
+        entity_ref=entity_ref,
+        payload_hash="hash",
+    )
+
+    entity_ref["id"] = "n-2"
+
+    assert record.fallback_dedupe_key().entity_id == "n-1"
+
+
+def test_normalized_event_record_payload_is_stable_after_input_mutation() -> None:
+    payload = {"outer": {"inner": "initial"}, "items": ["a"]}
+    record = NormalizedEventRecord(
+        source_authority="local",
+        server_profile_id=None,
+        stream_name="notifications",
+        stream_instance_id="default",
+        event_kind="notification.created",
+        entity_ref={"type": "notification", "id": "n-1"},
+        payload_hash="hash",
+        payload=payload,
+    )
+
+    payload["outer"]["inner"] = "mutated"
+    payload["items"].append("b")
+
+    assert record.payload == {"outer": {"inner": "initial"}, "items": ("a",)}
+
+
+def test_sync_readiness_report_details_are_stable_after_input_mutation() -> None:
+    details = {"nested": {"state": "initial"}, "reasons": ["missing_identity"]}
+    report = SyncReadinessReport(domain="notes", details=details)
+
+    details["nested"]["state"] = "mutated"
+    details["reasons"].append("mutated")
+
+    assert report.details == {"nested": {"state": "initial"}, "reasons": ("missing_identity",)}
