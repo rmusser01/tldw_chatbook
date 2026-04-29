@@ -122,19 +122,19 @@ Cursor and acknowledgement rules:
 
 Owns migration of remaining server-backed services to `RuntimeServerContextProvider`.
 
-Initial high-priority batch:
+Initial high-priority sub-batches:
 
-- `Chat/server_chat_conversation_service.py`
-- `Chat/server_chat_loop_service.py`
-- `Character_Chat/server_character_persona_service.py`
-- `Character_Chat/server_chat_dictionary_service.py`
-- `Chatbooks/server_chatbook_service.py`
-- `Media/server_media_reading_service.py`
-- `Notes/server_notes_workspace_service.py`
-- `Prompt_Management/server_prompt_service.py`
-- `Prompt_Management/prompt_scope_service.py`
-- `Prompt_Studio_Interop/server_prompt_studio_service.py`
-- Prompt/chatbook startup consumers in `app.py`
+- **B1a Chat and character services:** `Chat/server_chat_conversation_service.py`, `Chat/server_chat_loop_service.py`, `Character_Chat/server_character_persona_service.py`, and `Character_Chat/server_chat_dictionary_service.py`.
+- **B1b Media and notes/workspaces services:** `Media/server_media_reading_service.py` and `Notes/server_notes_workspace_service.py`.
+- **B1c Prompt, chatbook, and prompt-studio services:** `Chatbooks/server_chatbook_service.py`, `Prompt_Management/server_prompt_service.py`, `Prompt_Management/prompt_scope_service.py`, and `Prompt_Studio_Interop/server_prompt_studio_service.py`.
+- **B1 integration owner:** prompt/chatbook startup consumers and migrated service wiring in `app.py`.
+
+Sub-batch rules:
+
+- B1a, B1b, and B1c may run in parallel when they edit only their owned service modules and tests.
+- `app.py` wiring changes are centralized in the B1 integration owner branch after service-level tests exist.
+- A sub-batch may add provider-backed factories without changing app wiring.
+- The integration owner must reconcile constructor signatures and update the migration audit after each sub-batch lands.
 
 Deliverables:
 
@@ -289,6 +289,13 @@ Existing compatibility factories may remain temporarily only if already listed i
 
 Every provider migration batch must update the direct and indirect migration audit.
 
+Migration audit checks must be baseline-diff based:
+
+- Existing audited compatibility factories are allowed until their batch migrates them.
+- A migration guard should compare current direct and indirect scans against `Docs/Development/server-client-provider-migration-audit.md`.
+- The guard should fail on new unlisted direct builders, new unlisted indirect factories, new UI/event helper client builders, or removed audit entries that still exist in code.
+- Intentional bootstrap/provider seams must stay listed separately from migration backlog entries.
+
 ### Gate 3: Event Before Notification Contract Finalization
 
 UX notification contracts can draft early, but cannot finalize until event identity, cursor, dedupe, reconnect, and retention semantics are stable.
@@ -318,19 +325,28 @@ Run these work items concurrently:
 
 1. **Lane 0:** Shared schema slice.
 2. **Lane A:** Realtime/event observer skeleton using shared event schemas.
-3. **Lane B:** Provider migration high-priority batch 1: chat, media, notes/workspaces.
+3. **Lane B:** Provider migration high-priority sub-batches B1a, B1b, B1c, plus one B1 app-wiring integration owner.
 4. **Lane C:** Sync readiness registry and dry-run report core, no outbox replay.
 5. **Lane D:** Domain edge specs/tests for chat, media/reading, notes/workspaces.
 6. **Lane E:** UX handoff contracts for active server, unsupported actions, and notifications.
 
+Concurrent execution rules:
+
+- Lane 0 lands first as an integration slice.
+- Lanes A, C, and E may draft specs, test fixtures, and adapter skeletons before Lane 0 merges, but they must not create local replacement schema stubs.
+- Lanes A, C, and E that need concrete shared schemas must either branch from the Lane 0 worktree after schema review or wait until Lane 0 merges.
+- Lane D may proceed with domain specs and service tests that do not depend on shared schemas, but shared event/sync/provider metadata references must import Lane 0 outputs only.
+- Lane B sub-batches may run independently of Lane 0 for provider factory work, but any `ProviderMigrationStatus` usage must wait for Lane 0.
+
 Recommended merge order:
 
 1. Shared schemas.
-2. Provider migration batch.
-3. Realtime observer skeleton.
-4. Sync readiness dry-run.
-5. Domain edge service tests/specs.
-6. UX handoff contracts.
+2. Provider migration service sub-batches B1a, B1b, and B1c.
+3. Provider migration B1 app-wiring integration owner.
+4. Realtime observer skeleton.
+5. Sync readiness dry-run.
+6. Domain edge service tests/specs.
+7. UX handoff contracts.
 
 The lanes can develop concurrently, but later merge order should respect these dependencies.
 
@@ -342,15 +358,19 @@ Suggested branch/worktree ownership:
 | --- | --- | --- | --- | --- |
 | Lane 0 | `parity-shared-schemas` | Shared model/schema modules and schema tests | App wiring, domain services, UI screens | Lands first. Later schema edits require integration review. |
 | Lane A | `parity-events-foundation` | Event observer services, event cursor/dedupe store, notification presentation adapter, event tests | Provider migration files, sync write paths, UI screens | May depend on Lane 0. Must cancel on active-server switch. |
-| Lane B | `parity-provider-migration-batch1` | Server service constructors/factories, app service wiring, provider migration tests, migration audit | Event observer internals, sync substrate, domain edge specs except audit notes | Owns app wiring for migrated services. Must not add legacy builders. |
+| Lane B1a | `parity-provider-chat-character` | Chat and character server service constructors/factories plus focused tests | `app.py`, event observer internals, sync substrate, domain edge specs except audit notes | Service factories only until B1 integration. Must not add legacy builders. |
+| Lane B1b | `parity-provider-media-notes` | Media and notes/workspaces server service constructors/factories plus focused tests | `app.py`, event observer internals, sync substrate, domain edge specs except audit notes | Service factories only until B1 integration. Must not add legacy builders. |
+| Lane B1c | `parity-provider-prompt-chatbook` | Prompt, chatbook, and prompt-studio service constructors/factories plus focused tests | `app.py`, event observer internals, sync substrate, domain edge specs except audit notes | Service factories only until B1 integration. Must not add legacy builders. |
+| Lane B1 integration | `parity-provider-b1-integration` | App service wiring, constructor reconciliation, provider migration tests, migration audit | Event observer internals, sync substrate, domain edge specs except audit notes | Lands after required B1 service sub-batches. Owns `app.py` migrated-service wiring. |
 | Lane C | `parity-sync-dry-run-substrate` | Sync readiness models, dry-run report services, sync eligibility tests | Domain mutation dispatch, event observer internals, UI screens | No replay worker or remote mutation calls. |
 | Lane D | `parity-domain-edge-contracts` | Domain edge specs, service/scope tests, unsupported-capability reports for chat/media/notes | App wiring and service constructors until Lane B lands | Specs/tests only for overlapping provider-migrated domains until Lane B merges. |
 | Lane E | `parity-ux-handoff-contracts` | View-model contracts, fixtures, contract tests | Current UI screen implementation | Contracts only; no UI redesign. |
 
 Conflict rules:
 
-- Lane B owns service constructor and app wiring edits for migrated services.
-- Lane D may add domain tests/specs in the same domain areas, but must not change provider construction until Lane B lands.
+- Lane B sub-batches own service constructor edits only for their assigned modules.
+- Lane B1 integration owns `app.py` edits for migrated services.
+- Lane D may add domain tests/specs in the same domain areas, but must not change provider construction until the relevant Lane B sub-batch lands.
 - Lane A and Lane C may share schema dependencies only through Lane 0 outputs.
 - Any lane touching authority baseline seams needs explicit integration review.
 - Any lane touching `app.py` must list the exact initialization block it owns before implementation starts.

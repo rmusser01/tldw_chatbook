@@ -64,6 +64,11 @@ Existing seams to preserve:
 - `Auth_Account_Interop.AuthAccountScopeService` remains the policy-gated server auth/account operation seam.
 - Legacy `tldw_api` config remains a compatibility input until migrated.
 
+Authority rule:
+
+- New connection/auth work must extend or wrap the seams above. It must not introduce a parallel selected-server registry, a second persisted active-server state file, a second capability snapshot authority, or domain-owned credential caches.
+- Any implementation plan that needs server identity, credentials, client construction, capability snapshots, or server switching invalidation must name the existing seam it extends before code work starts.
+
 Responsibilities:
 
 - Active server profile selection.
@@ -79,6 +84,12 @@ Domain services should not read raw app config or cache server credentials direc
 
 Migration must be staged. The first implementation should introduce a compatibility client-provider facade that can still build clients from the legacy `tldw_api` config while exposing the new active-server context API. Domain services should then migrate to the provider in audited batches. Do not attempt a big-bang rewrite of every `_require_client()` implementation in the connection/auth tranche.
 
+Migration guardrails:
+
+- Maintain a direct and indirect migration audit rather than treating all existing config-based factories as immediate failures.
+- Every migration batch must update the audit with migrated services, remaining compatibility factories, intentional bootstrap seams, and UI/event helper call sites.
+- Audit checks should compare against the current baseline and fail only on newly introduced legacy builders or newly unlisted compatibility factories.
+
 Credential security requirements:
 
 - Do not persist bearer, API, refresh, OAuth, or BYOK secrets in plaintext JSON profile files.
@@ -89,6 +100,12 @@ Credential security requirements:
 - Server switching must never reuse a credential from another server profile.
 - Existing config tokens should be treated as legacy inputs; migration should either import them into the credential store and scrub them where safe, or leave them as read-only compatibility credentials until the user explicitly migrates.
 - Tests need fake or in-memory credential stores so no real OS keychain or local secret backend is required in CI.
+
+Credential implementation constraints:
+
+- Profile switching must re-resolve credentials by active server profile ID and must not reuse a token object cached under a different profile.
+- Logout, credential removal, and server-profile deletion must clear refresh credentials and invalidate any credential-bound client cache entries.
+- Test backends must be able to assert that no secret material is written to target-store JSON, exported settings, log messages, exception strings, or cache-key representations.
 
 ### Source Authority Foundation
 
@@ -132,6 +149,14 @@ Normalized event records must include enough identity for reconnect and dedupe:
 
 Reconnect behavior must be explicit. Observers should resume from the last acknowledged cursor where the server supports it, dedupe repeated events, bound retained event history, and cancel streams immediately when the active server changes or credentials are cleared.
 
+Event store rules:
+
+- Cursor keys must include source authority, active server profile ID for server streams, stream name, and stream instance ID.
+- Cursor advancement happens only after local processing acknowledges the event.
+- Dedupe keys must be stable across reconnects and must fall back to source, stream, event kind, entity ID, timestamp, and payload hash when the server does not provide a stable event ID.
+- Event and dedupe retention must be bounded by count, age, or both.
+- Unsupported, expired, or rejected cursors must produce a typed reset/requery result instead of silently replaying across streams or server profiles.
+
 ### Sync/Mirror Foundation
 
 Sync should be explicit, domain-gated, and designed before broad adoption.
@@ -164,7 +189,7 @@ Identity-readiness checklist:
 - Safe server-switch behavior for queued and pulled state.
 - Redaction policy for synced metadata.
 
-Potential early candidates can include selected notes, media metadata, or chat metadata only after they satisfy the checklist. Chat metadata is not eligible for write-enabled sync until server create/delete and streaming/persist identity limitations are resolved or explicitly modeled as read-only/server-owned edges. Workspace data should remain isolated and require explicit workspace-aware sync rules.
+Potential early candidates can include selected notes, media metadata, or chat metadata only after they satisfy the checklist. Candidate status is not approval to write sync. The first implementation for any candidate domain must be dry-run/read-only mirror reporting with an explicit no-mutation test boundary. Chat metadata is not eligible for write-enabled sync until server create/delete and streaming/persist identity limitations are resolved or explicitly modeled as read-only/server-owned edges. Workspace data should remain isolated and require explicit workspace-aware sync rules.
 
 ## Data Flow Rules
 
