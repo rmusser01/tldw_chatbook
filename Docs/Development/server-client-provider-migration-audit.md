@@ -20,7 +20,7 @@ The migration goal is to make active-server selection, credentials, token lifecy
 - `ServerRuntimeService`: app wiring now uses `ServerRuntimeService.from_server_context_provider(...)`. Its `from_config()` and `from_app_config()` factories remain as compatibility shims.
 - `ServerAuthAccountService`: app wiring now uses `ServerAuthAccountService.from_server_context_provider(...)`. Its `from_config()` and `from_app_config()` factories remain as compatibility shims.
 
-## Current Audit Command
+## Direct Builder Audit Command
 
 Generated with:
 
@@ -28,13 +28,23 @@ Generated with:
 rg -n "build_runtime_api_client_from_config|build_runtime_api_client\(" tldw_chatbook
 ```
 
+## Indirect Factory Audit Command
+
+The direct builder scan does not catch compatibility wrappers that still construct server clients from `app_config`. The targeted prompt/chatbook indirect factory scan used for this audit is:
+
+```bash
+rg -n "build_tldw_api_client_from_config|ServerPromptService\.from_config|build_server_chatbook_service|build_server_chatbook_service_from_config" tldw_chatbook
+```
+
+This second scan is intentionally limited to known prompt/chatbook compatibility factories. Broad `app_config` scans are too noisy for this audit, but these wrappers still route through legacy config-based client construction and must remain in the migration backlog.
+
 ## Compatibility Mode Remaining
 
 ### High Priority
 
 These are core interaction, identity, chat, media, note, prompt, and chatbook surfaces where active-server switching and credential freshness are most user-visible.
 
-| Module | Direct builder lines | Notes |
+| Module | Audit lines | Notes |
 | --- | ---: | --- |
 | `tldw_chatbook/Auth_Account_Interop/server_auth_account_service.py` | 7, 52 | Migrated app wiring; compatibility factory still calls the legacy config builder. |
 | `tldw_chatbook/Server_Runtime_Interop/server_runtime_service.py` | 7, 34 | Migrated app wiring; compatibility factory still calls the legacy config builder. |
@@ -46,13 +56,15 @@ These are core interaction, identity, chat, media, note, prompt, and chatbook su
 | `tldw_chatbook/Media/server_media_reading_service.py` | 77, 80 | Service migration target. |
 | `tldw_chatbook/Notes/server_notes_workspace_service.py` | 10, 45 | Service migration target. |
 | `tldw_chatbook/Prompt_Management/server_prompt_service.py` | 28 | Service migration target. |
+| `tldw_chatbook/Prompt_Management/prompt_scope_service.py` | 10, 70-71, 671 | High-priority indirect prompt factory. `ServerPromptService.from_config(...)` still constructs a server client from `app_config` through the chatbook compatibility wrapper. |
 | `tldw_chatbook/Prompt_Studio_Interop/server_prompt_studio_service.py` | 7, 53 | Service migration target. |
+| `tldw_chatbook/app.py` | 1635, 1646 | High-priority app startup prompt/chatbook factory consumers. These are separate from the intentional Unified MCP target-specific factory at lines 2145 and 2151. |
 
 ### Medium Priority
 
 These are user-facing feature services that should move to provider-backed construction after the core interaction paths are stable.
 
-| Module | Direct builder lines | Notes |
+| Module | Audit lines | Notes |
 | --- | ---: | --- |
 | `tldw_chatbook/Writing_Interop/server_writing_service.py` | 8, 67 | Service migration target. |
 | `tldw_chatbook/Research_Interop/server_research_service.py` | 7, 37 | Service migration target. |
@@ -79,7 +91,7 @@ These are user-facing feature services that should move to provider-backed const
 
 These are admin, catalog, governance, integration, or out-of-scope-for-this-workstream services. They still need migration, but can follow the higher traffic service paths.
 
-| Module | Direct builder lines | Notes |
+| Module | Audit lines | Notes |
 | --- | ---: | --- |
 | `tldw_chatbook/Sync_Interop/server_sync_service.py` | 7, 32 | Service migration target; sync/mirror behavior is outside this workstream. |
 | `tldw_chatbook/RAG_Admin/server_rag_admin_service.py` | 8, 40 | Service migration target. |
@@ -101,16 +113,19 @@ These are admin, catalog, governance, integration, or out-of-scope-for-this-work
 
 These are direct helper call sites rather than service classes. They should be reviewed separately from service constructor migration.
 
-| Module | Direct builder lines | Notes |
+| Module | Audit lines | Notes |
 | --- | ---: | --- |
 | `tldw_chatbook/UI/MediaIngestWindowRebuilt.py` | 777 | UI helper call site. |
 | `tldw_chatbook/Event_Handlers/tldw_api_events.py` | 572 | Event helper call site. |
+| `tldw_chatbook/UI/ChatbookExportManagementWindow.py` | 37, 486, 588 | UI helper indirect chatbook factory consumer through `build_server_chatbook_service_from_config(...)`. |
+| `tldw_chatbook/UI/Wizards/ChatbookImportWizard.py` | 41, 706 | UI wizard indirect chatbook factory consumer through `build_server_chatbook_service(...)`. |
+| `tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py` | 41, 654 | UI wizard indirect chatbook factory consumer through `build_server_chatbook_service(...)`. |
 
 ### Intentional Current Provider And Bootstrap Usage
 
 These `rg` matches are intentional current seams, not remaining service migration targets.
 
-| Module | Direct builder lines | Notes |
+| Module | Audit lines | Notes |
 | --- | ---: | --- |
 | `tldw_chatbook/app.py` | 2145, 2151 | Unified MCP target-specific client factory. This currently builds a client for the selected MCP target and is separate from server service migration. |
 | `tldw_chatbook/runtime_policy/server_context.py` | 104 | `RuntimeServerContextProvider.build_client()` provider seam. This is the desired construction point for migrated services. |
