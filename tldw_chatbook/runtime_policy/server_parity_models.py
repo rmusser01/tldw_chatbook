@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from math import isfinite
-from typing import Any, Literal, Mapping
+from typing import Any, Iterable, Literal, Mapping
 
 SourceAuthority = Literal["local", "server"]
 EventTransportType = Literal["local_producer", "sse", "websocket", "polling", "manual_refresh"]
@@ -73,6 +73,17 @@ def _validate_literal(value: str, *, field_name: str, allowed_values: set[str]) 
 
 def _validate_source_authority(value: str) -> None:
     _validate_literal(value, field_name="source_authority", allowed_values=_SOURCE_AUTHORITIES)
+
+
+def _freeze_string_tuple(value: Iterable[Any], *, field_name: str) -> tuple[str, ...]:
+    if isinstance(value, str | bytes):
+        raise TypeError(f"{field_name} must be an iterable of str, not a scalar string")
+
+    items = tuple(value)
+    for item in items:
+        if not isinstance(item, str):
+            raise TypeError(f"{field_name} items must be str, got {type(item).__name__}")
+    return items
 
 
 def _entity_id(entity_ref: Mapping[str, Any]) -> str:
@@ -216,7 +227,7 @@ class SyncReadinessReport:
     details: Mapping[str, FrozenJsonValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+        object.__setattr__(self, "reason_codes", _freeze_string_tuple(self.reason_codes, field_name="reason_codes"))
         object.__setattr__(self, "details", _freeze_json_mapping(self.details))
 
 
@@ -230,4 +241,4 @@ class ProviderMigrationStatus:
     notes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "notes", tuple(self.notes))
+        object.__setattr__(self, "notes", _freeze_string_tuple(self.notes, field_name="notes"))

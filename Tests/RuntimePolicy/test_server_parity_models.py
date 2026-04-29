@@ -372,6 +372,30 @@ def test_tuple_like_fields_are_normalized_and_mutation_safe() -> None:
 @pytest.mark.parametrize(
     "factory",
     [
+        lambda: SyncReadinessReport(domain="chat", reason_codes="not_registered"),
+        lambda: ProviderMigrationStatus(service_name="chat", notes="provider-backed"),
+    ],
+)
+def test_string_tuple_fields_reject_plain_string_input(factory) -> None:
+    with pytest.raises(TypeError):
+        factory()
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: SyncReadinessReport(domain="chat", reason_codes=["not_registered", 1]),
+        lambda: ProviderMigrationStatus(service_name="chat", notes=["provider-backed", 1]),
+    ],
+)
+def test_string_tuple_fields_reject_non_string_items(factory) -> None:
+    with pytest.raises(TypeError):
+        factory()
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
         lambda: EventCursor(
             source_authority="remote",
             server_profile_id=None,
