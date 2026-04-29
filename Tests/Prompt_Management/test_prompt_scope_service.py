@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Prompt_Management.prompt_scope_service as prompt_scope_module
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService,
@@ -34,6 +36,33 @@ class FakePolicyEnforcer:
         self.actions.append(action_id)
         if self.denied_reason:
             raise PermissionError(self.denied_reason)
+
+
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+class ExplodingClientProvider:
+    def __init__(self):
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        raise AssertionError("provider should not build a client")
+
+
+def test_prompt_scope_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(prompt_scope_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+    assert "build_tldw_api_client_from_config" not in source
 
 
 class FakeLocalPromptService:
@@ -289,17 +318,13 @@ async def test_prompt_scope_saves_and_deletes_against_selected_backend():
     ]
 
 
-def test_build_prompt_scope_service_wires_local_and_server_backends(monkeypatch):
-    client = object()
-    calls = []
-
-    def fake_client_builder(app_config):
-        calls.append(app_config)
-        return client
-
+@pytest.mark.asyncio
+async def test_build_prompt_scope_service_wires_local_and_server_backends_lazily(monkeypatch):
+    client = FakeServerPromptService()
+    build_client = Mock(return_value=client)
     monkeypatch.setattr(
-        "tldw_chatbook.Prompt_Management.prompt_scope_service.build_tldw_api_client_from_config",
-        fake_client_builder,
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
+        build_client,
     )
 
     prompt_db = object()
@@ -314,9 +339,16 @@ def test_build_prompt_scope_service_wires_local_and_server_backends(monkeypatch)
     assert isinstance(service.local_service, LocalPromptService)
     assert service.local_service.prompt_db is prompt_db
     assert isinstance(service.server_service, ServerPromptService)
-    assert service.server_service.client is client
+    assert service.server_service.client is None
+    assert service.server_service.client_provider is not None
     assert service.policy_enforcer == "policy"
-    assert calls == [app_config]
+    build_client.assert_not_called()
+
+    prompts = await service.server_service.list_prompts(page=2, per_page=3)
+
+    assert prompts.items[0].id == 9
+    assert service.server_service.client is None
+    build_client.assert_called_once_with(app_config)
 
 
 def test_build_prompt_scope_service_keeps_server_backend_unavailable_without_config():
@@ -325,24 +357,16 @@ def test_build_prompt_scope_service_keeps_server_backend_unavailable_without_con
     assert service.local_service is None
     assert isinstance(service.server_service, ServerPromptService)
     assert service.server_service.client is None
+    assert service.server_service.client_provider is None
 
 
 @pytest.mark.asyncio
 async def test_scope_server_prompt_service_from_config_can_use_provider_backed_client(monkeypatch):
     build_client = Mock(side_effect=AssertionError("legacy config builder should not run"))
     monkeypatch.setattr(
-        "tldw_chatbook.Prompt_Management.prompt_scope_service.build_tldw_api_client_from_config",
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client",
         build_client,
     )
-
-    class FakeClientProvider:
-        def __init__(self, client):
-            self.client = client
-            self.build_calls = 0
-
-        def build_client(self):
-            self.build_calls += 1
-            return self.client
 
     provider = FakeClientProvider(FakeServerPromptService())
     service = ServerPromptService.from_config(
@@ -356,6 +380,44 @@ async def test_scope_server_prompt_service_from_config_can_use_provider_backed_c
     assert service.client_provider is provider
     assert provider.build_calls == 1
     assert result.items[0].id == 9
+
+
+@pytest.mark.asyncio
+async def test_scope_server_prompt_service_from_config_uses_shared_provider_lazily(monkeypatch):
+    client = FakeServerPromptService()
+    direct_builder = Mock(side_effect=AssertionError("service should not call direct legacy builder"))
+    provider_builder = Mock(return_value=client)
+    monkeypatch.setattr("tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client", direct_builder)
+    monkeypatch.setattr(
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
+        provider_builder,
+    )
+
+    service = ServerPromptService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+
+    assert isinstance(service, ServerPromptService)
+    assert service.client is None
+    assert service.client_provider is not None
+    direct_builder.assert_not_called()
+    provider_builder.assert_not_called()
+
+    result = await service.list_prompts(page=2, per_page=3)
+
+    assert result.items[0].id == 9
+    assert service.client is None
+    provider_builder.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
+
+
+@pytest.mark.asyncio
+async def test_scope_server_prompt_service_direct_client_takes_precedence_over_provider():
+    client = FakeServerPromptService()
+    provider = ExplodingClientProvider()
+    service = ServerPromptService(client=client, client_provider=provider)
+
+    result = await service.list_prompts(page=2, per_page=3)
+
+    assert result.items[0].id == 9
+    assert provider.build_calls == 0
 
 
 @pytest.mark.asyncio

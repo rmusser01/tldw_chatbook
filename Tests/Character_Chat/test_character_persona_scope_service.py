@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Character_Chat.server_character_persona_service as character_persona_module
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
@@ -690,6 +692,13 @@ class ExplodingProvider:
     def build_client(self):
         self.calls += 1
         raise AssertionError("provider should not be used")
+
+
+def test_server_character_persona_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(character_persona_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
 
 
 @pytest.mark.asyncio
@@ -1997,9 +2006,13 @@ async def test_server_character_persona_service_reuses_provider_cached_client_ac
     provider = FakeCachingProvider(FakeCharacterPersonaClient)
     service = ServerCharacterPersonaService.from_server_context_provider(provider)
 
+    assert service.client is None
+    assert provider.build_calls == 0
+
     await service.list_characters(limit=13, offset=4)
     await service.get_character(1)
 
+    assert service.client is None
     assert provider.build_calls == 2
     assert provider.constructed_clients == 1
     assert provider.client.list_characters_calls == [{"limit": 13, "offset": 4}]
@@ -2402,12 +2415,13 @@ async def test_server_character_persona_service_from_config_builds_and_reuses_cl
         return sentinel_client
 
     monkeypatch.setattr(
-        "tldw_chatbook.Character_Chat.server_character_persona_service.build_runtime_api_client_from_config",
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         build_client,
     )
 
     service = ServerCharacterPersonaService.from_config({"tldw_api": {"base_url": "https://example.com"}})
 
+    assert isinstance(service, ServerCharacterPersonaService)
     assert service.client is None
     assert service.client_provider is not None
     assert build_client_calls == []
@@ -2417,6 +2431,7 @@ async def test_server_character_persona_service_from_config_builds_and_reuses_cl
 
     assert result == [{"id": 1, "name": "Ada"}]
     assert detail["id"] == 1
+    assert service.client is None
     assert build_client_calls == [{"tldw_api": {"base_url": "https://example.com"}}]
     assert sentinel_client.list_characters_calls == [{"limit": 13, "offset": 4}]
     assert sentinel_client.get_character_calls == [1]
@@ -2428,7 +2443,7 @@ async def test_server_character_persona_service_from_config_denied_policy_does_n
     policy = FakePolicyEnforcer.deny("server_unreachable")
 
     monkeypatch.setattr(
-        "tldw_chatbook.Character_Chat.server_character_persona_service.build_runtime_api_client_from_config",
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         build_client,
     )
 

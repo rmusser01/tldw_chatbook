@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Chatbooks.server_chatbook_service as chatbook_module
 from tldw_chatbook.Chatbooks.chatbook_models import (
     ChatbookManifest,
     ChatbookVersion,
@@ -48,6 +50,13 @@ class FakeClientProvider:
         return self.client
 
 
+def test_server_chatbook_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(chatbook_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
 def test_service_rejects_server_unsupported_import_content_types():
     service = ServerChatbookService(client=None)
 
@@ -86,28 +95,66 @@ def test_service_rejects_import_request_with_unsupported_content_types():
         )
 
 
-def test_build_server_chatbook_service_from_config_threads_policy_enforcer():
+def test_build_server_chatbook_service_from_config_threads_policy_enforcer(monkeypatch):
     policy = FakePolicyEnforcer()
+    build_client = Mock(return_value=Mock(base_url="https://example.com/api/"))
+    monkeypatch.setattr(
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
+        build_client,
+    )
+    app_config = {
+        "tldw_api": {
+            "base_url": "https://example.com/api/",
+            "api_key": "secret-key",
+        }
+    }
 
     service, client = build_server_chatbook_service_from_config(
-        {
-            "tldw_api": {
-                "base_url": "https://example.com/api/",
-                "api_key": "secret-key",
-            }
-        },
+        app_config,
         policy_enforcer=policy,
     )
 
+    assert isinstance(service, ServerChatbookService)
     assert service.client is client
+    assert service.client_provider is None
     assert service.policy_enforcer is policy
+    build_client.assert_called_once_with(app_config)
+
+
+@pytest.mark.asyncio
+async def test_server_chatbook_service_from_config_uses_shared_provider_lazily(monkeypatch):
+    class FakeClient:
+        async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0):
+            return {"items": [{"job_id": "provider-export-1"}], "limit": limit, "offset": offset}
+
+    direct_builder = Mock(side_effect=AssertionError("service should not call direct legacy builder"))
+    provider_builder = Mock(return_value=FakeClient())
+    monkeypatch.setattr("tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client", direct_builder)
+    monkeypatch.setattr(
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
+        provider_builder,
+    )
+
+    service = ServerChatbookService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+
+    assert isinstance(service, ServerChatbookService)
+    assert service.client is None
+    assert service.client_provider is not None
+    direct_builder.assert_not_called()
+    provider_builder.assert_not_called()
+
+    result = await service.list_export_jobs(limit=5, offset=2)
+
+    assert service.client is None
+    assert result["items"][0]["job_id"] == "provider-export-1"
+    provider_builder.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
 
 
 @pytest.mark.asyncio
 async def test_server_chatbook_service_from_config_can_use_provider_backed_client(monkeypatch):
     build_client = Mock(side_effect=AssertionError("legacy config builder should not run"))
     monkeypatch.setattr(
-        "tldw_chatbook.Chatbooks.server_chatbook_service.build_runtime_api_client_from_config",
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client",
         build_client,
     )
 

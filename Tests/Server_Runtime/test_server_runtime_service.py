@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Server_Runtime_Interop.server_runtime_service as runtime_module
 from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
@@ -93,6 +95,13 @@ class ExplodingProvider:
         raise AssertionError("provider should not be used")
 
 
+def test_server_runtime_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(runtime_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
 @pytest.mark.asyncio
 async def test_server_runtime_service_can_use_context_provider_client():
     fake_client = FakeServerRuntimeClient()
@@ -111,9 +120,13 @@ async def test_server_runtime_service_reuses_provider_cached_client_across_opera
     provider = FakeCachingProvider(FakeServerRuntimeClient)
     service = ServerRuntimeService.from_server_context_provider(provider)
 
+    assert service.client is None
+    assert provider.build_calls == 0
+
     await service.get_health()
     await service.get_readiness()
 
+    assert service.client is None
     assert provider.build_calls == 2
     assert provider.constructed_clients == 1
     assert provider.client.calls == [
@@ -162,11 +175,13 @@ def test_server_runtime_service_from_config_delegates_through_provider_seam():
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
     )
 
+    assert isinstance(service, ServerRuntimeService)
     assert service.client is None
     assert service.client_provider is not None
 
     client = service.client_provider.build_client()
 
+    assert service.client is None
     assert client.base_url == "https://example.com"
     assert service.client_provider.build_client() is client
 
@@ -176,11 +191,13 @@ def test_server_runtime_service_from_app_config_delegates_through_provider_seam(
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
     )
 
+    assert isinstance(service, ServerRuntimeService)
     assert service.client is None
     assert service.client_provider is not None
 
     client = service.client_provider.build_client()
 
+    assert service.client is None
     assert client.base_url == "https://example.com"
     assert service.client_provider.build_client() is client
 

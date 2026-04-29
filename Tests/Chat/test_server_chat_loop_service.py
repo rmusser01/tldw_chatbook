@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import pytest
 
+import tldw_chatbook.Chat.server_chat_loop_service as chat_loop_module
 from tldw_chatbook.Chat import ServerChatLoopScopeService, ServerChatLoopService
 
 
@@ -76,6 +78,13 @@ class ExplodingProvider:
         raise AssertionError("provider should not be used")
 
 
+def test_server_chat_loop_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(chat_loop_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
 @pytest.mark.asyncio
 async def test_server_chat_loop_service_from_config_builds_and_reuses_client_lazily(monkeypatch):
     sentinel_client = FakeClient()
@@ -86,12 +95,13 @@ async def test_server_chat_loop_service_from_config_builds_and_reuses_client_laz
         return sentinel_client
 
     monkeypatch.setattr(
-        "tldw_chatbook.Chat.server_chat_loop_service.build_runtime_api_client_from_config",
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         build_client,
     )
 
     service = ServerChatLoopService.from_config({"tldw_api": {"base_url": "https://example.com"}})
 
+    assert isinstance(service, ServerChatLoopService)
     assert service.client is None
     assert service.client_provider is not None
     assert build_client_calls == []
@@ -101,6 +111,7 @@ async def test_server_chat_loop_service_from_config_builds_and_reuses_client_laz
 
     assert result == {"ok": True}
     assert events["run_id"] == "run_1"
+    assert service.client is None
     assert build_client_calls == [{"tldw_api": {"base_url": "https://example.com"}}]
     assert sentinel_client.calls == [
         ("cancel_chat_loop_run", "run_1"),
@@ -113,9 +124,13 @@ async def test_server_chat_loop_service_reuses_provider_cached_client_across_ope
     provider = FakeCachingProvider(FakeClient)
     service = ServerChatLoopService.from_server_context_provider(provider)
 
+    assert service.client is None
+    assert provider.build_calls == 0
+
     started = await service.start_run(messages=[{"role": "user", "content": "hello"}])
     events = await service.list_events("run_1", after_seq=1)
 
+    assert service.client is None
     assert started == {"run_id": "run_1"}
     assert events["run_id"] == "run_1"
     assert provider.build_calls == 2

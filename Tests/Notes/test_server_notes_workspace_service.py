@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Notes.server_notes_workspace_service as notes_workspace_module
 from tldw_chatbook.Notes.server_notes_workspace_service import (
     ServerNotesWorkspaceService,
 )
@@ -151,6 +153,13 @@ class FakePolicyEnforcer:
         )
 
 
+def test_server_notes_workspace_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(notes_workspace_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
 @pytest.mark.asyncio
 async def test_service_uses_provider_backed_client_when_no_direct_client():
     client = FakeClient()
@@ -159,6 +168,7 @@ async def test_service_uses_provider_backed_client_when_no_direct_client():
 
     result = await service.search_server_notes(query="remote", limit=25)
 
+    assert service.client is None
     assert provider.build_calls == 1
     assert client.search_calls == [
         {
@@ -195,8 +205,13 @@ async def test_service_from_server_context_provider_uses_provider_client():
         policy_enforcer=policy_enforcer,
     )
 
+    assert isinstance(service, ServerNotesWorkspaceService)
+    assert service.client is None
+    assert provider.build_calls == 0
+
     await service.search_server_notes(query="remote")
 
+    assert service.client is None
     assert provider.build_calls == 1
     assert len(client.search_calls) == 1
     assert policy_enforcer.calls == ["notes.list.server"]
@@ -219,18 +234,26 @@ async def test_service_denied_policy_does_not_build_provider_client():
     assert policy_enforcer.calls == ["notes.list.server"]
 
 
-def test_service_from_config_uses_shared_api_client_builder(monkeypatch):
-    sentinel_client = object()
+@pytest.mark.asyncio
+async def test_service_from_config_uses_shared_provider_lazily(monkeypatch):
+    sentinel_client = FakeClient()
     build_client = Mock(return_value=sentinel_client)
     monkeypatch.setattr(
-        "tldw_chatbook.Notes.server_notes_workspace_service.build_runtime_api_client_from_config",
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         build_client,
     )
 
     service = ServerNotesWorkspaceService.from_config({"tldw_api": {"base_url": "https://example.com"}})
 
-    assert service.client is sentinel_client
-    assert service.client_provider is None
+    assert isinstance(service, ServerNotesWorkspaceService)
+    assert service.client is None
+    assert service.client_provider is not None
+    build_client.assert_not_called()
+
+    result = await service.search_server_notes(query="remote")
+
+    assert result["items"][0]["title"] == "Remote"
+    assert service.client is None
     build_client.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
 
 

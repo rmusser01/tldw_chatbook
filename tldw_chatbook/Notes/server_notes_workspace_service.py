@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping, Optional, Sequence
 
-from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
+from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..tldw_api import (
     NoteCreateRequest,
     NoteGraphRequest,
@@ -49,7 +49,8 @@ class ServerNotesWorkspaceService:
         policy_enforcer: Any = None,
     ) -> "ServerNotesWorkspaceService":
         return cls(
-            client=build_runtime_api_client_from_config(app_config),
+            client=None,
+            client_provider=build_runtime_api_client_provider_from_config(app_config),
             policy_enforcer=policy_enforcer,
         )
 

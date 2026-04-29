@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Media.server_media_reading_service as media_reading_module
 from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api import (
@@ -916,6 +918,13 @@ class ExplodingClientProvider:
         raise AssertionError("provider should not build a client")
 
 
+def test_server_media_reading_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(media_reading_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
 @pytest.mark.asyncio
 async def test_server_service_uses_provider_backed_client_when_no_direct_client():
     client = FakeClient()
@@ -924,6 +933,7 @@ async def test_server_service_uses_provider_backed_client_when_no_direct_client(
 
     result = await service.list_media_items(page=2, results_per_page=5, include_keywords=True)
 
+    assert service.client is None
     assert provider.build_calls == 1
     assert client.calls == [("list_media_items", 2, 5, True)]
     assert result["items"][0]["title"] == "Server Media"
@@ -953,8 +963,13 @@ async def test_server_service_from_server_context_provider_uses_provider_client(
         policy_enforcer=policy,
     )
 
+    assert isinstance(service, ServerMediaReadingService)
+    assert service.client is None
+    assert provider.build_calls == 0
+
     await service.list_media_items()
 
+    assert service.client is None
     assert provider.build_calls == 1
     assert client.calls == [("list_media_items", 1, 10, False)]
     policy.require_allowed.assert_called_once_with(action_id="media.items.list.server")
@@ -2750,8 +2765,9 @@ async def test_server_service_hard_stops_denied_ui_policy_decision():
     assert client.calls == []
 
 
-def test_server_service_from_config_uses_shared_api_client_builder(monkeypatch):
-    sentinel_client = Mock()
+@pytest.mark.asyncio
+async def test_server_service_from_config_uses_shared_provider_lazily(monkeypatch):
+    sentinel_client = FakeClient()
     build_client = Mock(return_value=sentinel_client)
     monkeypatch.setattr(
         "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
@@ -2760,6 +2776,13 @@ def test_server_service_from_config_uses_shared_api_client_builder(monkeypatch):
 
     service = ServerMediaReadingService.from_config({"tldw_api": {"base_url": "https://example.com"}})
 
-    assert service.client is sentinel_client
-    assert service.client_provider is None
+    assert isinstance(service, ServerMediaReadingService)
+    assert service.client is None
+    assert service.client_provider is not None
+    build_client.assert_not_called()
+
+    result = await service.list_media_items()
+
+    assert result["items"][0]["title"] == "Server Media"
+    assert service.client is None
     build_client.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})

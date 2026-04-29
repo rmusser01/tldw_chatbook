@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Auth_Account_Interop.server_auth_account_service as auth_account_module
 from tldw_chatbook.Auth_Account_Interop.server_auth_account_service import ServerAuthAccountService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api import (
@@ -88,14 +90,25 @@ class ExplodingProvider:
         raise AssertionError("provider should not be used")
 
 
+def test_server_auth_account_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(auth_account_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
 @pytest.mark.asyncio
 async def test_server_auth_account_service_reuses_provider_cached_client_across_operations():
     provider = FakeCachingProvider(FakeAuthAccountClient)
     service = ServerAuthAccountService.from_server_context_provider(provider)
 
+    assert service.client is None
+    assert provider.build_calls == 0
+
     await service.login(username="ada@example.com", password="secret")
     await service.list_auth_sessions()
 
+    assert service.client is None
     assert provider.build_calls == 2
     assert provider.constructed_clients == 1
     assert provider.client.calls == [
@@ -146,11 +159,13 @@ def test_server_auth_account_service_from_config_delegates_through_provider_seam
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
     )
 
+    assert isinstance(service, ServerAuthAccountService)
     assert service.client is None
     assert service.client_provider is not None
 
     client = service.client_provider.build_client()
 
+    assert service.client is None
     assert client.base_url == "https://example.com"
     assert service.client_provider.build_client() is client
 
@@ -160,11 +175,13 @@ def test_server_auth_account_service_from_app_config_delegates_through_provider_
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
     )
 
+    assert isinstance(service, ServerAuthAccountService)
     assert service.client is None
     assert service.client_provider is not None
 
     client = service.client_provider.build_client()
 
+    assert service.client is None
     assert client.base_url == "https://example.com"
     assert service.client_provider.build_client() is client
 

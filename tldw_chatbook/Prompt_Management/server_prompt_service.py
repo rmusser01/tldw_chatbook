@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.tldw_api.prompt_chatbook_schemas import PromptCreateRequest, PromptPreviewRequest
 
@@ -36,10 +37,10 @@ class ServerPromptService:
                 client_provider=client_provider,
                 policy_enforcer=policy_enforcer,
             )
-        from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client
 
         return cls(
-            build_runtime_api_client(app_config=app_config),
+            client=None,
+            client_provider=build_runtime_api_client_provider_from_config(app_config),
             policy_enforcer=policy_enforcer,
         )
 

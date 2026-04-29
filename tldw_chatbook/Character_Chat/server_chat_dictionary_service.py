@@ -2,23 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
+from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-
-
-@dataclass(slots=True)
-class _ConfigBackedClientProvider:
-    app_config: dict[str, Any] | None
-    _client: Any | None = None
-
-    def build_client(self) -> Any:
-        if self._client is None:
-            from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client
-
-            self._client = build_runtime_api_client(app_config=self.app_config)
-        return self._client
 
 
 class ServerChatDictionaryService:
@@ -43,7 +30,7 @@ class ServerChatDictionaryService:
         policy_enforcer: Any | None = None,
     ) -> "ServerChatDictionaryService":
         return cls(
-            client_provider=_ConfigBackedClientProvider(app_config),
+            client_provider=build_runtime_api_client_provider_from_config(app_config),
             policy_enforcer=policy_enforcer,
         )
 

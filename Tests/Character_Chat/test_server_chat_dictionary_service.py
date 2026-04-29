@@ -1,7 +1,10 @@
+import inspect
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Character_Chat.server_chat_dictionary_service as chat_dictionary_module
 from tldw_chatbook.Character_Chat.server_chat_dictionary_service import ServerChatDictionaryService
 from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
 
@@ -115,22 +118,30 @@ class ExplodingProvider:
         raise AssertionError("provider should not be used")
 
 
+def test_server_chat_dictionary_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(chat_dictionary_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
 @pytest.mark.asyncio
 async def test_server_chat_dictionary_service_from_config_builds_and_reuses_client_lazily(monkeypatch):
     sentinel_client = FakeChatDictionaryClient()
     build_client_calls: list[dict[str, Any] | None] = []
 
-    def build_client(*, app_config):
+    def build_client(app_config):
         build_client_calls.append(app_config)
         return sentinel_client
 
     monkeypatch.setattr(
-        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client",
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         build_client,
     )
 
     service = ServerChatDictionaryService.from_config({"tldw_api": {"base_url": "https://example.com"}})
 
+    assert isinstance(service, ServerChatDictionaryService)
     assert service.client is None
     assert service.client_provider is not None
     assert build_client_calls == []
@@ -140,6 +151,7 @@ async def test_server_chat_dictionary_service_from_config_builds_and_reuses_clie
 
     assert result["dictionaries"][0]["name"] == "Lore"
     assert detail["id"] == 7
+    assert service.client is None
     assert build_client_calls == [{"tldw_api": {"base_url": "https://example.com"}}]
     assert sentinel_client.calls == [
         ("list_chat_dictionaries", {"include_inactive": True}),
@@ -152,9 +164,13 @@ async def test_server_chat_dictionary_service_reuses_provider_cached_client_acro
     provider = FakeCachingProvider(FakeChatDictionaryClient)
     service = ServerChatDictionaryService.from_server_context_provider(provider)
 
+    assert service.client is None
+    assert provider.build_calls == 0
+
     await service.list_dictionaries(include_inactive=True)
     await service.get_dictionary(7)
 
+    assert service.client is None
     assert provider.build_calls == 2
     assert provider.constructed_clients == 1
     assert provider.client.calls == [

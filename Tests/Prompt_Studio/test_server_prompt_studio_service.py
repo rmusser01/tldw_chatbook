@@ -1,5 +1,9 @@
+import inspect
+from unittest.mock import Mock
+
 import pytest
 
+import tldw_chatbook.Prompt_Studio_Interop.server_prompt_studio_service as prompt_studio_module
 from tldw_chatbook.Prompt_Studio_Interop.server_prompt_studio_service import ServerPromptStudioService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
@@ -225,6 +229,15 @@ class FakeClientProvider:
         return self.client
 
 
+class ExplodingClientProvider:
+    def __init__(self):
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        raise AssertionError("provider should not build a client")
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
         self.denied_reason = denied_reason
@@ -242,13 +255,43 @@ class FakePolicyEnforcer:
             )
 
 
+def test_server_prompt_studio_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(prompt_studio_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_studio_service_from_config_uses_shared_provider_lazily(monkeypatch):
+    client = FakePromptStudioClient()
+    provider_builder = Mock(return_value=client)
+    monkeypatch.setattr(
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
+        provider_builder,
+    )
+
+    service = ServerPromptStudioService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+
+    assert isinstance(service, ServerPromptStudioService)
+    assert service.client is None
+    assert service.client_provider is not None
+    provider_builder.assert_not_called()
+
+    result = await service.list_projects(search="provider")
+
+    assert service.client is None
+    assert result["data"][0]["record_id"] == "server:prompt_studio_project:1"
+    provider_builder.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
+
+
 @pytest.mark.asyncio
 async def test_server_prompt_studio_service_from_config_can_use_provider_backed_client(monkeypatch):
     def fail_build_client(_app_config):
         raise AssertionError("legacy config builder should not run")
 
     monkeypatch.setattr(
-        "tldw_chatbook.Prompt_Studio_Interop.server_prompt_studio_service.build_runtime_api_client_from_config",
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         fail_build_client,
     )
 
@@ -264,6 +307,36 @@ async def test_server_prompt_studio_service_from_config_can_use_provider_backed_
     assert service.client_provider is provider
     assert provider.build_calls == 1
     assert result["data"][0]["record_id"] == "server:prompt_studio_project:1"
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_studio_service_from_server_context_provider_is_lazy():
+    provider = FakeClientProvider(FakePromptStudioClient())
+    service = ServerPromptStudioService.from_server_context_provider(provider)
+
+    assert isinstance(service, ServerPromptStudioService)
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 0
+
+    result = await service.list_projects(search="provider")
+
+    assert service.client is None
+    assert provider.build_calls == 1
+    assert result["data"][0]["record_id"] == "server:prompt_studio_project:1"
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_studio_service_direct_client_takes_precedence_over_provider():
+    client = FakePromptStudioClient()
+    provider = ExplodingClientProvider()
+    service = ServerPromptStudioService(client=client, client_provider=provider)
+
+    result = await service.list_projects(search="direct")
+
+    assert result["data"][0]["record_id"] == "server:prompt_studio_project:1"
+    assert provider.build_calls == 0
+    assert client.calls[0] == ("list_prompt_studio_projects", {"search": "direct"})
 
 
 @pytest.mark.asyncio

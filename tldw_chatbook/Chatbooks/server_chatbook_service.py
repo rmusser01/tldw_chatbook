@@ -6,8 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
-from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
-from ..runtime_policy.bootstrap import build_server_chatbook_service as build_runtime_server_chatbook_service
+from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     ChatbookContinueExportRequest,
@@ -28,7 +27,7 @@ def _utc_now_iso() -> str:
 
 def build_tldw_api_client_from_config(config: Mapping[str, Any]) -> TLDWAPIClient:
     """Backwards-compatible proxy to the authoritative runtime-policy client factory."""
-    return build_runtime_api_client_from_config(config)
+    return build_runtime_api_client_provider_from_config(config).build_client()
 
 
 def _normalize_selection_key(key: SelectionKey) -> str:
@@ -73,11 +72,8 @@ def build_server_chatbook_service_from_config(
     policy_enforcer: Any = None,
 ) -> tuple["ServerChatbookService", TLDWAPIClient]:
     """Build a server chatbook service plus its owned API client from application config."""
-    service = build_runtime_server_chatbook_service(
-        app_config=config,
-        policy_enforcer=policy_enforcer,
-    )
-    return service, service.client
+    client = build_runtime_api_client_provider_from_config(config).build_client()
+    return ServerChatbookService(client, policy_enforcer=policy_enforcer), client
 
 
 def build_server_import_selections_from_manifest(
@@ -185,7 +181,8 @@ class ServerChatbookService:
                 policy_enforcer=policy_enforcer,
             )
         return cls(
-            build_runtime_api_client_from_config(app_config or {}),
+            client=None,
+            client_provider=build_runtime_api_client_provider_from_config(app_config or {}),
             policy_enforcer=policy_enforcer,
         )
 

@@ -7,7 +7,10 @@ import sqlite3
 from enum import Enum
 from typing import Any, Optional
 
-from ..Chatbooks.server_chatbook_service import build_tldw_api_client_from_config
+from ..runtime_policy.bootstrap import (
+    build_runtime_api_client_provider_from_config,
+    derive_configured_server_binding,
+)
 from ..tldw_api import (
     PromptCollectionCreateRequest,
     PromptCollectionUpdateRequest,
@@ -81,7 +84,10 @@ class ServerPromptService:
     ) -> "ServerPromptService":
         if client_provider is not None:
             return cls(client=None, client_provider=client_provider)
-        return cls(client=build_tldw_api_client_from_config(app_config))
+        return cls(
+            client=None,
+            client_provider=build_runtime_api_client_provider_from_config(app_config),
+        )
 
     @classmethod
     def from_server_context_provider(cls, provider: Any) -> "ServerPromptService":
@@ -678,12 +684,11 @@ class PromptScopeService:
         return normalize_prompt_collection_record(response, backend=normalized_mode.value)
 
 
-def _build_legacy_server_prompt_service_from_config(app_config: dict[str, Any] | None) -> ServerPromptService:
-    """Legacy config fallback for startup paths that have not been provider-wired yet."""
-    try:
-        return ServerPromptService.from_config(app_config or {})
-    except ValueError:
+def _build_server_prompt_service_from_config(app_config: dict[str, Any] | None) -> ServerPromptService:
+    """Build a lazy server prompt service when app config contains a server binding."""
+    if not derive_configured_server_binding(app_config).server_configured:
         return ServerPromptService(client=None)
+    return ServerPromptService.from_config(app_config or {})
 
 
 def build_prompt_scope_service(
@@ -700,7 +705,7 @@ def build_prompt_scope_service(
         if client_provider is not None:
             server_service = ServerPromptService.from_server_context_provider(client_provider)
         else:
-            server_service = _build_legacy_server_prompt_service_from_config(app_config)
+            server_service = _build_server_prompt_service_from_config(app_config)
 
     return PromptScopeService(
         local_service=local_service,

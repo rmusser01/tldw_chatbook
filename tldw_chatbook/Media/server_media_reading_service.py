@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
+from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     AddMediaRequest,
@@ -81,10 +82,9 @@ class ServerMediaReadingService:
         *,
         policy_enforcer: Any | None = None,
     ) -> "ServerMediaReadingService":
-        from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
-
         return cls(
-            client=build_runtime_api_client_from_config(app_config),
+            client=None,
+            client_provider=build_runtime_api_client_provider_from_config(app_config),
             policy_enforcer=policy_enforcer,
         )
 

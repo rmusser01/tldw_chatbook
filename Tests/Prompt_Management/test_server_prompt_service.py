@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Prompt_Management.server_prompt_service as server_prompt_module
 from tldw_chatbook.Prompt_Management.server_prompt_service import ServerPromptService
 from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
 
@@ -125,6 +127,48 @@ class FakeClientProvider:
         return self.client
 
 
+class ExplodingClientProvider:
+    def __init__(self):
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        raise AssertionError("provider should not build a client")
+
+
+def test_server_prompt_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(server_prompt_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_service_from_config_uses_shared_provider_lazily(monkeypatch):
+    sentinel_client = FakePromptClient()
+    direct_builder = Mock(side_effect=AssertionError("service should not call direct legacy builder"))
+    provider_builder = Mock(return_value=sentinel_client)
+    monkeypatch.setattr("tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client", direct_builder)
+    monkeypatch.setattr(
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
+        provider_builder,
+    )
+
+    service = ServerPromptService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+
+    assert isinstance(service, ServerPromptService)
+    assert service.client is None
+    assert service.client_provider is not None
+    direct_builder.assert_not_called()
+    provider_builder.assert_not_called()
+
+    result = await service.get_prompts_health()
+
+    assert result == {"status": "healthy"}
+    assert service.client is None
+    provider_builder.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
+
+
 @pytest.mark.asyncio
 async def test_server_prompt_service_from_config_can_use_provider_backed_client(monkeypatch):
     build_client = Mock(side_effect=AssertionError("legacy config builder should not run"))
@@ -149,6 +193,19 @@ async def test_server_prompt_service_from_config_can_use_provider_backed_client(
     assert service.client_provider is provider
     assert provider.build_calls == 1
     policy.require_allowed.assert_called_once_with(action_id="prompts.health.detail.server")
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_service_direct_client_takes_precedence_over_provider():
+    client = FakePromptClient()
+    provider = ExplodingClientProvider()
+    service = ServerPromptService(client=client, client_provider=provider)
+
+    result = await service.get_prompts_health()
+
+    assert result == {"status": "healthy"}
+    assert provider.build_calls == 0
+    assert client.calls == [("get_prompts_health",)]
 
 
 @pytest.mark.asyncio

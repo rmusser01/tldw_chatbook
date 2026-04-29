@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 
+import tldw_chatbook.Chat.server_chat_conversation_service as chat_conversation_module
 from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
 from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api.chat_loop_schemas import ChatLoopActionResponse, ChatLoopEventsResponse, ChatLoopStartResponse
@@ -122,6 +124,13 @@ class ExplodingProvider:
         raise AssertionError("provider should not be used")
 
 
+def test_server_chat_conversation_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(chat_conversation_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
 @pytest.mark.asyncio
 async def test_server_chat_conversation_service_from_config_builds_and_reuses_client_lazily(monkeypatch):
     sentinel_client = FakeChatClient()
@@ -132,12 +141,13 @@ async def test_server_chat_conversation_service_from_config_builds_and_reuses_cl
         return sentinel_client
 
     monkeypatch.setattr(
-        "tldw_chatbook.Chat.server_chat_conversation_service.build_runtime_api_client_from_config",
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         build_client,
     )
 
     service = ServerChatConversationService.from_config({"tldw_api": {"base_url": "https://example.com"}})
 
+    assert isinstance(service, ServerChatConversationService)
     assert service.client is None
     assert service.client_provider is not None
     assert build_client_calls == []
@@ -147,6 +157,7 @@ async def test_server_chat_conversation_service_from_config_builds_and_reuses_cl
 
     assert result["items"][0]["id"] == "conv-1"
     assert detail["id"] == "conv-1"
+    assert service.client is None
     assert build_client_calls == [{"tldw_api": {"base_url": "https://example.com"}}]
     assert sentinel_client.calls == [
         ("list_chat_conversations", (), {"query": "billing"}),
@@ -159,9 +170,13 @@ async def test_server_chat_conversation_service_reuses_provider_cached_client_ac
     provider = FakeCachingProvider(FakeChatClient)
     service = ServerChatConversationService.from_server_context_provider(provider)
 
+    assert service.client is None
+    assert provider.build_calls == 0
+
     await service.list_conversations(query="billing")
     await service.get_conversation("conv-1")
 
+    assert service.client is None
     assert provider.build_calls == 2
     assert provider.constructed_clients == 1
     assert provider.client.calls == [
