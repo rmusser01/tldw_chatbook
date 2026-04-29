@@ -94,8 +94,16 @@ class FakeServerContextProvider:
 
     def __init__(self):
         self.credential_store = InMemoryServerCredentialStore()
+        self.store_auth_tokens_calls = []
+        self.clear_active_server_auth_tokens_calls = 0
 
     def store_auth_tokens(self, *, access_token=None, refresh_token=None):
+        self.store_auth_tokens_calls.append(
+            {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+            }
+        )
         if access_token:
             self.credential_store.set_secret(
                 self.active_server_id,
@@ -113,6 +121,7 @@ class FakeServerContextProvider:
         self.credential_store.clear_server(self.active_server_id)
 
     def clear_active_server_auth_tokens(self):
+        self.clear_active_server_auth_tokens_calls += 1
         self.credential_store.delete_secret(self.active_server_id, SERVER_CREDENTIAL_ACCESS_TOKEN)
         self.credential_store.delete_secret(self.active_server_id, SERVER_CREDENTIAL_REFRESH_TOKEN)
 
@@ -217,6 +226,34 @@ async def test_login_persists_tokens_when_context_provider_is_available():
         "http://server.test",
         SERVER_CREDENTIAL_REFRESH_TOKEN,
     ) == "refresh-1"
+    assert provider.store_auth_tokens_calls == [
+        {
+            "access_token": "access-1",
+            "refresh_token": "refresh-1",
+        }
+    ]
+
+
+def test_store_login_tokens_routes_through_server_context_provider():
+    provider = FakeServerContextProvider()
+    scope = AuthAccountScopeService(server_context_provider=provider)
+
+    scope.store_login_tokens(access_token="access-1", refresh_token="refresh-1")
+
+    assert provider.store_auth_tokens_calls == [
+        {
+            "access_token": "access-1",
+            "refresh_token": "refresh-1",
+        }
+    ]
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) == "access-1"
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) == "refresh-1"
 
 
 @pytest.mark.asyncio
@@ -246,6 +283,25 @@ async def test_logout_clears_active_server_credentials_when_requested():
 
     await scope.logout(clear_bearer_token=True)
 
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) is None
+    assert provider.credential_store.get_secret(
+        "http://server.test",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ) is None
+    assert provider.clear_active_server_auth_tokens_calls == 1
+
+
+def test_clear_login_tokens_routes_through_server_context_provider():
+    provider = FakeServerContextProvider()
+    provider.store_auth_tokens(access_token="access-1", refresh_token="refresh-1")
+    scope = AuthAccountScopeService(server_context_provider=provider)
+
+    scope.clear_login_tokens()
+
+    assert provider.clear_active_server_auth_tokens_calls == 1
     assert provider.credential_store.get_secret(
         "http://server.test",
         SERVER_CREDENTIAL_ACCESS_TOKEN,

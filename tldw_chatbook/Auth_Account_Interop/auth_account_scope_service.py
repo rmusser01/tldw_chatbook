@@ -97,15 +97,27 @@ class AuthAccountScopeService:
     def _store_auth_tokens(self, payload: Any) -> None:
         if not isinstance(payload, dict):
             return
-        access_token = payload.get("access_token")
-        refresh_token = payload.get("refresh_token")
+        self.store_login_tokens(
+            access_token=payload.get("access_token"),
+            refresh_token=payload.get("refresh_token"),
+        )
+
+    def _clear_active_server_auth_tokens(self) -> None:
+        self.clear_login_tokens()
+
+    def store_login_tokens(
+        self,
+        *,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
+    ) -> None:
         if not access_token and not refresh_token:
             return
         store = getattr(self.server_context_provider, "store_auth_tokens", None)
         if callable(store):
             store(access_token=access_token, refresh_token=refresh_token)
 
-    def _clear_active_server_auth_tokens(self) -> None:
+    def clear_login_tokens(self) -> None:
         clear = getattr(self.server_context_provider, "clear_active_server_auth_tokens", None)
         if callable(clear):
             clear()

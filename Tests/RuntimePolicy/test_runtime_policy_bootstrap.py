@@ -215,7 +215,32 @@ def test_load_runtime_policy_for_app_supports_legacy_url_alias_and_provider_reso
     assert active_context.base_url == "https://alias.example.com:8443/api"
     assert active_context.auth_method == "bearer"
     assert active_context.auth_token == "legacy-bearer"
-    assert active_context.credential_source == "legacy:tldw_api"
+    assert active_context.credential_source == "credential_store:bearer_token"
+
+
+def test_wire_server_context_provider_exposes_provider_and_credential_store(tmp_path, monkeypatch):
+    from tldw_chatbook.app import TldwCli
+
+    class FakeKeyringServerCredentialStore:
+        pass
+
+    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        "tldw_chatbook.app.KeyringServerCredentialStore",
+        FakeKeyringServerCredentialStore,
+    )
+    app_like = SimpleNamespace(
+        app_config={"tldw_api": {"base_url": "https://example.com/api/"}},
+        runtime_policy=SimpleNamespace(state=RuntimeSourceState()),
+    )
+
+    TldwCli._wire_server_context_provider(app_like)
+
+    assert isinstance(app_like.server_credential_store, FakeKeyringServerCredentialStore)
+    assert app_like.server_context_provider is not None
+    assert app_like.server_context_provider.runtime_context is app_like.runtime_policy
+    assert app_like.server_context_provider.target_store is app_like.unified_mcp_target_store
+    assert app_like.server_context_provider.credential_store is app_like.server_credential_store
 
 
 def test_load_runtime_policy_for_app_rebinds_persisted_runtime_state_to_configured_server_identity(
