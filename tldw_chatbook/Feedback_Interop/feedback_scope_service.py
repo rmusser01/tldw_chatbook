@@ -106,7 +106,13 @@ class FeedbackScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == FeedbackBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
-        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        reports = [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        if callable(getattr(self.server_service, "get_feedback", None)):
+            reports = [
+                item for item in reports
+                if item.get("operation_id") != "feedback.detail.server"
+            ]
+        return reports
 
     async def _call(
         self,
@@ -142,9 +148,9 @@ class FeedbackScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("detail", normalized_mode))
-        if normalized_mode == FeedbackBackend.SERVER:
-            raise ValueError("The current server feedback API does not expose single-feedback detail.")
         service = self._service_for_mode(normalized_mode)
+        if normalized_mode == FeedbackBackend.SERVER and not callable(getattr(service, "get_feedback", None)):
+            raise ValueError("The current server feedback API does not expose single-feedback detail.")
         result = await self._maybe_await(service.get_feedback(feedback_id))
         return self._normalize_response(normalized_mode, result)
 
