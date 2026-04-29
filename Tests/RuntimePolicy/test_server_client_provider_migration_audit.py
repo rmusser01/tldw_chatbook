@@ -80,7 +80,8 @@ def _audit_drift(audit_path: Path = AUDIT_PATH, source_root: Path = SOURCE_ROOT,
         matches_by_path.setdefault(path, []).append((line_number, line))
 
     drift: list[str] = []
-    for path, matches in sorted(matches_by_path.items()):
+    for path in sorted(set(audited_metadata) | set(matches_by_path)):
+        matches = matches_by_path.get(path, [])
         metadata = audited_metadata.get(path, {"count": 0, "semantic_matches": Counter()})
         audited_count = int(metadata["count"])
         actual_count = len(matches)
@@ -152,6 +153,35 @@ def test_audit_guard_uses_semantic_not_line_number_matching(tmp_path: Path):
 
     assert drift == [
         "tldw_chatbook/example.py: semantic match drift; missing=['build_runtime_api_client_from_config(app_config)'] extra=['build_runtime_api_client(app_config)']"
+    ]
+
+
+def test_audit_guard_rejects_stale_audited_row_with_no_live_match(tmp_path: Path):
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "tldw_chatbook"
+    source_root.mkdir(parents=True)
+    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path.parent.mkdir(parents=True)
+    audit_path.write_text(
+        "\n".join(
+            [
+                "| Module | Audit lines | Notes |",
+                "| --- | ---: | --- |",
+                "| `tldw_chatbook/example.py` | 1 | Semantic match: `build_runtime_api_client_from_config(app_config)`. |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (source_root / "example.py").write_text(
+        "def no_builder_here():\n    return None\n",
+        encoding="utf-8",
+    )
+
+    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+
+    assert drift == [
+        "tldw_chatbook/example.py: semantic match drift; missing=[] extra=['build_runtime_api_client_from_config(app_config)']"
     ]
 
 
