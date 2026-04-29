@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
+from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..tldw_api import (
     CloneWorkspaceRequest,
     CreateTokenRequest,
@@ -18,19 +19,32 @@ from ..tldw_api import (
 class ServerSharingService:
     """Thin wrapper around non-admin server Sharing endpoints."""
 
-    def __init__(self, client: Optional[TLDWAPIClient]):
+    def __init__(
+        self,
+        client: Optional[TLDWAPIClient],
+        *,
+        client_provider: Any | None = None,
+    ) -> None:
         self.client = client
+        self.client_provider = client_provider
 
     @classmethod
     def from_config(cls, app_config: Mapping[str, Any]) -> "ServerSharingService":
-        from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
+        return cls(
+            client=None,
+            client_provider=build_runtime_api_client_provider_from_config(app_config),
+        )
 
-        return cls(client=build_runtime_api_client_from_config(app_config))
+    @classmethod
+    def from_server_context_provider(cls, provider: Any) -> "ServerSharingService":
+        return cls(client=None, client_provider=provider)
 
     def _require_client(self) -> TLDWAPIClient:
-        if self.client is None:
-            raise ValueError("TLDW API client is required for server Sharing operations.")
-        return self.client
+        if self.client is not None:
+            return self.client
+        if self.client_provider is not None:
+            return self.client_provider.build_client()
+        raise ValueError("TLDW API client is required for server Sharing operations.")
 
     @staticmethod
     def _as_dict(value: Any) -> dict[str, Any]:

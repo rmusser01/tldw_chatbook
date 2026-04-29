@@ -1,7 +1,9 @@
+import inspect
 from unittest.mock import Mock
 
 import pytest
 
+import tldw_chatbook.Study_Interop.server_study_service as study_module
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.Study_Interop.server_study_service import ServerStudyService
 from tldw_chatbook.tldw_api.flashcards_schemas import (
@@ -540,6 +542,111 @@ class FakeClient:
                 "target_id": "quiz-9",
             }
         )
+
+
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+class FreshClientProvider:
+    def __init__(self, factory):
+        self.factory = factory
+        self.build_calls = 0
+        self.clients = []
+
+    def build_client(self):
+        self.build_calls += 1
+        client = self.factory()
+        self.clients.append(client)
+        return client
+
+
+class ExplodingClientProvider:
+    def __init__(self):
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        raise AssertionError("provider should not be used when direct client exists")
+
+
+def test_server_study_service_module_does_not_reference_legacy_config_client_builders():
+    source = inspect.getsource(study_module)
+
+    assert "build_runtime_api_client_from_config" not in source
+    assert "build_runtime_api_client(app_config" not in source
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_direct_client_takes_precedence_over_provider():
+    client = FakeClient()
+    provider = ExplodingClientProvider()
+    service = ServerStudyService(client=client, client_provider=provider)
+
+    result = await service.get_flashcard(CARD_UUID)
+
+    assert result["uuid"] == CARD_UUID
+    assert provider.build_calls == 0
+    assert client.calls == [("get_flashcard", CARD_UUID)]
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_from_server_context_provider_is_lazy():
+    client = FakeClient()
+    provider = FakeClientProvider(client)
+    service = ServerStudyService.from_server_context_provider(provider)
+
+    assert isinstance(service, ServerStudyService)
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 0
+
+    result = await service.get_flashcard(CARD_UUID)
+
+    assert result["uuid"] == CARD_UUID
+    assert service.client is None
+    assert provider.build_calls == 1
+    assert client.calls == [("get_flashcard", CARD_UUID)]
+
+
+@pytest.mark.asyncio
+async def test_server_study_service_re_resolves_provider_without_service_local_client_cache():
+    provider = FreshClientProvider(FakeClient)
+    service = ServerStudyService.from_server_context_provider(provider)
+
+    await service.get_flashcard(CARD_UUID)
+    await service.get_flashcard(CARD_UUID)
+
+    assert service.client is None
+    assert provider.build_calls == 2
+    assert len(provider.clients) == 2
+    assert provider.clients[0] is not provider.clients[1]
+    assert provider.clients[0].calls == [("get_flashcard", CARD_UUID)]
+    assert provider.clients[1].calls == [("get_flashcard", CARD_UUID)]
+    for built_client in provider.clients:
+        assert all(value is not built_client for value in vars(service).values())
+
+
+def test_server_study_service_from_config_returns_provider_backed_service():
+    service = ServerStudyService.from_config(
+        {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
+    )
+
+    assert isinstance(service, ServerStudyService)
+    assert service.client is None
+    assert service.client_provider is not None
+
+    client = service.client_provider.build_client()
+
+    assert service.client is None
+    assert client.base_url == "https://example.com"
+    assert service.client_provider.build_client() is client
 
 
 @pytest.mark.asyncio
