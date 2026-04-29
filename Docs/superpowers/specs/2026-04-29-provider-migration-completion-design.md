@@ -52,9 +52,9 @@ The preferred service shape is:
 - Policy-denied actions should still fail before building a provider client when the service already enforces policy before dispatch.
 - Services must not cache auth tokens, base URLs, server profile IDs, or provider-built client instances outside the provider.
 
-If a high-priority service cannot route `from_config(...)` or an equivalent public compatibility API through a provider-compatible adapter, the tranche must stop for explicit follow-up approval before completion. High-priority service-local legacy builders are not allowed to remain as normal audit holdouts.
+If a high-priority, medium-priority, or low-priority service cannot route `from_config(...)` or an equivalent public compatibility API through a provider-compatible adapter, the tranche must stop for explicit follow-up approval before completion. Service-local legacy builders are not allowed to remain as normal audit holdouts for any service included in this tranche.
 
-Medium-priority, low-priority, and UI/event helper paths that cannot safely route through a provider-compatible adapter may remain explicit migration-audit holdouts with a reason and follow-up owner.
+UI/event helper paths that cannot safely route through a provider-compatible adapter may remain explicit migration-audit holdouts with a reason and follow-up owner.
 
 ## Compatibility Adapter
 
@@ -237,8 +237,8 @@ Broad UI tests are not required for this tranche. Service wiring tests are appro
 ## Acceptance Criteria
 
 - High-priority service-local legacy builders are removed. Any high-priority exception requires separate explicit approval before the tranche can be marked complete.
-- Medium-priority services have provider-backed construction.
-- Low-priority services have provider-backed construction.
+- Medium-priority services have provider-backed construction. Any medium-priority exception requires separate explicit approval before the tranche can be marked complete.
+- Low-priority services have provider-backed construction. Any low-priority exception requires separate explicit approval before the tranche can be marked complete.
 - Public compatibility APIs keep their existing call signatures and return shapes unless separately approved for removal.
 - Service internals no longer import or call direct legacy builders except approved holdouts.
 - Service internals do not cache provider-built clients outside the provider or compatibility adapter.
