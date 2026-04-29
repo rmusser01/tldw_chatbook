@@ -788,11 +788,11 @@ async def test_scope_service_lists_local_targets_and_routes_run_creation_by_back
 
 
 @pytest.mark.asyncio
-async def test_scope_service_blocks_server_target_catalog_before_dispatch():
+async def test_scope_service_routes_server_target_catalog_when_adapter_provides_it():
     class ServerEvaluationServiceWithTargets(FakeServerEvaluationService):
         async def list_targets(self, *, provider=None, limit=100, offset=0):
             self.calls.append(("list_targets", provider, limit, offset))
-            return [{"id": "server-model", "name": "Server Model"}]
+            return [{"id": "server-model", "name": "Server Model", "provider": "openai"}]
 
     server = ServerEvaluationServiceWithTargets()
     policy_enforcer = FakePolicyEnforcer()
@@ -802,10 +802,14 @@ async def test_scope_service_blocks_server_target_catalog_before_dispatch():
         policy_enforcer=policy_enforcer,
     )
 
-    with pytest.raises(NotImplementedError, match="server evaluation API does not expose a target catalog"):
-        await scope.list_targets(mode="server")
+    targets = await scope.list_targets(mode="server", provider="openai", limit=10, offset=5)
 
-    assert server.calls == []
+    assert targets[0]["record_id"] == "server:evaluation_target:server-model"
+    assert targets[0]["backend"] == "server"
+    assert targets[0]["backing_id"] == "server-model"
+    assert targets[0]["name"] == "Server Model"
+    assert targets[0]["provider"] == "openai"
+    assert server.calls == [("list_targets", "openai", 10, 5)]
     assert policy_enforcer.calls == ["evaluations.target.list.server"]
 
 

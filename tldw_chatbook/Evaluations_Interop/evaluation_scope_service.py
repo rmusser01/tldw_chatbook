@@ -194,7 +194,13 @@ class EvaluationScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == EvaluationBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
-        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        reports = [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        if callable(getattr(self.server_service, "list_targets", None)):
+            reports = [
+                item for item in reports
+                if item.get("operation_id") != "evaluations.targets.list.server"
+            ]
+        return reports
 
     async def _resolve_record(self, record: Any, fetcher: Any, identifier: str) -> Any:
         if isinstance(record, Mapping):
@@ -452,8 +458,6 @@ class EvaluationScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._target_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
-        if normalized_mode == EvaluationBackend.SERVER and hasattr(service, "list_targets"):
-            self._raise_server_targets_unsupported()
         if not hasattr(service, "list_targets"):
             return []
         records = await self._maybe_await(

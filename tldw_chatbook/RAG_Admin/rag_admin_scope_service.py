@@ -138,7 +138,13 @@ class RAGAdminScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == RAGAdminBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
-        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        reports = [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        if callable(getattr(self.server_service, "export_collection", None)):
+            reports = [
+                item for item in reports
+                if item.get("operation_id") != "rag.collections.export.server"
+            ]
+        return reports
 
     async def list_templates(
         self,
@@ -398,11 +404,11 @@ class RAGAdminScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._admin_action_id(normalized_mode, "observe"))
-        if normalized_mode == RAGAdminBackend.SERVER:
-            self._raise_server_collection_export_unsupported()
         service = self._service_for_mode(normalized_mode)
         method = getattr(service, "export_collection", None)
         if not callable(method):
+            if normalized_mode == RAGAdminBackend.SERVER:
+                self._raise_server_collection_export_unsupported()
             raise ValueError(f"{normalized_mode.value.title()} collection export is not available yet.")
         options: dict[str, Any] = {"include_embeddings": include_embeddings}
         if limit is not None:

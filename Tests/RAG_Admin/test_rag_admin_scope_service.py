@@ -340,7 +340,7 @@ async def test_scope_service_routes_local_collection_export_as_rag_admin_observe
 
 
 @pytest.mark.asyncio
-async def test_scope_service_blocks_server_collection_export_before_dispatch():
+async def test_scope_service_routes_server_collection_export_when_adapter_provides_it():
     class ServerServiceWithExport(FakeServerService):
         async def export_collection(self, collection_name, **options):
             self.calls.append(("export_collection", collection_name, options))
@@ -354,10 +354,15 @@ async def test_scope_service_blocks_server_collection_export_before_dispatch():
         policy_enforcer=policy_enforcer,
     )
 
-    with pytest.raises(NotImplementedError, match="embedding collection export"):
-        await scope.export_collection(mode="server", collection_name="demo")
+    exported = await scope.export_collection(
+        mode="server",
+        collection_name="demo",
+        include_embeddings=False,
+        limit=50,
+    )
 
-    assert server.calls == []
+    assert exported == {"backend": "server", "name": "demo"}
+    assert server.calls == [("export_collection", "demo", {"include_embeddings": False, "limit": 50})]
     assert policy_enforcer.calls == ["rag.admin.observe.server"]
 
 
