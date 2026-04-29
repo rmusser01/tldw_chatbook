@@ -13,17 +13,20 @@ from tldw_chatbook.Notifications.event_observer import (
 )
 from tldw_chatbook.runtime_policy.server_parity_models import EventCursor, NormalizedEventRecord
 
+_USE_CURSOR = object()
+
 
 def _event(
-    cursor: str,
+    cursor: str | None,
     *,
     server_profile_id: str = "server-a",
     stream_name: str = "notifications",
     stream_instance_id: str = "workspace-1",
     entity_id: str | None = None,
     payload_hash: str | None = None,
+    server_cursor: str | None | object = _USE_CURSOR,
 ) -> NormalizedEventRecord:
-    entity_id = entity_id or cursor
+    entity_id = entity_id or str(cursor)
     payload_hash = payload_hash or f"hash-{cursor}"
     return NormalizedEventRecord(
         source_authority="server",
@@ -34,7 +37,7 @@ def _event(
         entity_ref={"id": entity_id},
         payload_hash=payload_hash,
         event_id=f"{entity_id}:{payload_hash}",
-        server_cursor=cursor,
+        server_cursor=cursor if server_cursor is _USE_CURSOR else server_cursor,
         transport_type="sse",
     )
 
@@ -82,6 +85,49 @@ class SlowBackoff:
     async def __call__(self, attempt):
         self.started.set()
         await asyncio.Event().wait()
+
+
+class CloseableAsyncIterator:
+    def __init__(self, items):
+        self.items = list(items)
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self.items:
+            raise StopAsyncIteration
+        await asyncio.sleep(0)
+        return self.items.pop(0)
+
+    async def aclose(self):
+        self.closed = True
+
+
+class CloseableIdleIterator:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        self.started.set()
+        await asyncio.Event().wait()
+        raise StopAsyncIteration
+
+    async def aclose(self):
+        self.closed = True
+
+
+class CloseableTransport:
+    def __init__(self, iterator):
+        self.iterator = iterator
+
+    def stream(self, cursor):
+        return self.iterator
 
 
 @pytest.mark.asyncio
@@ -161,6 +207,36 @@ async def test_unacknowledged_duplicate_after_reconnect_is_retried_and_can_advan
     )
     assert [event.server_cursor for event in observed] == ["cursor-1", "cursor-1"]
     assert cursor.cursor == "cursor-1"
+
+
+@pytest.mark.asyncio
+async def test_no_cursor_event_after_existing_cursor_does_not_clear_expected_cursor():
+    store = EventCursorStore()
+    store.acknowledge_event(_event("cursor-start"))
+    transport = FakeTransport([[
+        _event("no-cursor", server_cursor=None),
+        _event("cursor-next"),
+    ]])
+    observed = []
+
+    result = await EventObserver(store=store, transport=transport).run(
+        source_authority="server",
+        server_profile_id="server-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+        handler=lambda event: observed.append(event) or True,
+        max_events=2,
+    )
+
+    cursor = store.get_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+    )
+    assert result.reset is None
+    assert [event.server_cursor for event in observed] == [None, "cursor-next"]
+    assert cursor.cursor == "cursor-next"
 
 
 @pytest.mark.asyncio
@@ -319,6 +395,81 @@ async def test_cancel_event_wakes_idle_stream_wait():
     result = await asyncio.wait_for(task, timeout=0.2)
 
     assert result.cancelled is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_event_wakes_pending_handler_without_acknowledging_event():
+    cancel = asyncio.Event()
+    handler_started = asyncio.Event()
+    store = EventCursorStore()
+
+    async def handler(event):
+        handler_started.set()
+        await asyncio.Event().wait()
+        return True
+
+    task = asyncio.create_task(
+        EventObserver(store=store, transport=FakeTransport([[_event("cursor-1")]])).run(
+            source_authority="server",
+            server_profile_id="server-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+            handler=handler,
+            cancel_event=cancel,
+        )
+    )
+    await asyncio.wait_for(handler_started.wait(), timeout=0.2)
+
+    cancel.set()
+    result = await asyncio.wait_for(task, timeout=0.2)
+
+    cursor = store.get_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+    )
+    assert result.cancelled is True
+    assert cursor.cursor is None
+
+
+@pytest.mark.asyncio
+async def test_stream_iterator_is_closed_on_max_events_return():
+    iterator = CloseableAsyncIterator([_event("cursor-1"), _event("cursor-2")])
+
+    await EventObserver(store=EventCursorStore(), transport=CloseableTransport(iterator)).run(
+        source_authority="server",
+        server_profile_id="server-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+        handler=lambda event: True,
+        max_events=1,
+    )
+
+    assert iterator.closed is True
+
+
+@pytest.mark.asyncio
+async def test_stream_iterator_is_closed_on_cancelled_wait():
+    cancel = asyncio.Event()
+    iterator = CloseableIdleIterator()
+    task = asyncio.create_task(
+        EventObserver(store=EventCursorStore(), transport=CloseableTransport(iterator)).run(
+            source_authority="server",
+            server_profile_id="server-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+            handler=lambda event: True,
+            cancel_event=cancel,
+        )
+    )
+    await asyncio.wait_for(iterator.started.wait(), timeout=0.2)
+
+    cancel.set()
+    result = await asyncio.wait_for(task, timeout=0.2)
+
+    assert result.cancelled is True
+    assert iterator.closed is True
 
 
 @pytest.mark.asyncio

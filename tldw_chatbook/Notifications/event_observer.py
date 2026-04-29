@@ -64,16 +64,16 @@ async def _await_with_cancel(awaitable: Awaitable[Any], cancel_event: asyncio.Ev
     task = asyncio.ensure_future(awaitable)
     cancel_task = asyncio.create_task(cancel_event.wait())
     done, _ = await asyncio.wait({task, cancel_task}, return_when=asyncio.FIRST_COMPLETED)
-    if cancel_task in done:
-        task.cancel()
+    if task in done:
+        cancel_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await task
-        raise _CancelledByEvent
+            await cancel_task
+        return task.result()
 
-    cancel_task.cancel()
+    task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
-        await cancel_task
-    return task.result()
+        await task
+    raise _CancelledByEvent
 
 
 async def _maybe_await_with_cancel(value: Any, cancel_event: asyncio.Event | None) -> Any:
@@ -82,6 +82,12 @@ async def _maybe_await_with_cancel(value: Any, cancel_event: asyncio.Event | Non
     if inspect.isawaitable(value):
         return await _await_with_cancel(value, cancel_event)
     return value
+
+
+async def _close_iterator(iterator: Any) -> None:
+    aclose = getattr(iterator, "aclose", None)
+    if callable(aclose):
+        await _maybe_await(aclose())
 
 
 async def bounded_exponential_backoff(
@@ -136,33 +142,38 @@ class EventObserver:
             try:
                 stream = self.transport.stream(cursor)
                 iterator = stream.__aiter__()
-                while True:
-                    try:
-                        event = await _await_with_cancel(anext(iterator), cancel_event)
-                    except StopAsyncIteration:
-                        return EventObserverResult(handled_events=handled_events, reset=last_reset)
+                try:
+                    while True:
+                        try:
+                            event = await _await_with_cancel(anext(iterator), cancel_event)
+                        except StopAsyncIteration:
+                            return EventObserverResult(handled_events=handled_events, reset=last_reset)
 
-                    if cancel_event is not None and cancel_event.is_set():
-                        return EventObserverResult(
-                            handled_events=handled_events,
-                            reset=last_reset,
-                            cancelled=True,
-                        )
-                    if self.store.is_duplicate_event(event):
-                        continue
+                        if cancel_event is not None and cancel_event.is_set():
+                            return EventObserverResult(
+                                handled_events=handled_events,
+                                reset=last_reset,
+                                cancelled=True,
+                            )
+                        if self.store.is_duplicate_event(event):
+                            continue
 
-                    should_ack = bool(await _maybe_await(handler(event)))
-                    handled_events += 1
-                    if should_ack:
-                        advance = self.store.acknowledge_event(event, expected_cursor=expected_ack_cursor)
-                        if advance.status is not CursorAdvanceStatus.STALE_RESET:
-                            self.store.remember_event(event)
-                            expected_ack_cursor = event.server_cursor
-                        else:
-                            last_reset = advance
+                        should_ack = bool(await _maybe_await_with_cancel(handler(event), cancel_event))
+                        handled_events += 1
+                        if should_ack:
+                            advance = self.store.acknowledge_event(event, expected_cursor=expected_ack_cursor)
+                            if advance.status is CursorAdvanceStatus.ADVANCED:
+                                self.store.remember_event(event)
+                                expected_ack_cursor = advance.cursor.cursor
+                            elif advance.status is not CursorAdvanceStatus.STALE_RESET:
+                                self.store.remember_event(event)
+                            else:
+                                last_reset = advance
 
-                    if max_events is not None and handled_events >= max_events:
-                        return EventObserverResult(handled_events=handled_events, reset=last_reset)
+                        if max_events is not None and handled_events >= max_events:
+                            return EventObserverResult(handled_events=handled_events, reset=last_reset)
+                finally:
+                    await _close_iterator(iterator)
 
             except _CancelledByEvent:
                 return EventObserverResult(handled_events=handled_events, reset=last_reset, cancelled=True)
