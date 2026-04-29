@@ -14,7 +14,10 @@ def _event(
     entity_id: str = "n1",
     payload_hash: str = "hash-1",
     server_cursor: str | None = "cursor-1",
+    event_id: str | None = None,
+    include_event_id: bool = True,
 ) -> NormalizedEventRecord:
+    resolved_event_id = event_id if event_id is not None else f"{entity_id}:{payload_hash}"
     return NormalizedEventRecord(
         source_authority="server",
         server_profile_id=server_profile_id,
@@ -23,7 +26,7 @@ def _event(
         event_kind=event_kind,
         entity_ref={"id": entity_id},
         payload_hash=payload_hash,
-        event_id=f"{entity_id}:{payload_hash}",
+        event_id=resolved_event_id if include_event_id else None,
         server_cursor=server_cursor,
         transport_type="sse",
     )
@@ -95,3 +98,33 @@ def test_dedupe_retention_is_bounded_and_evicted_entries_can_be_seen_again():
 
     assert store.dedupe_size == 2
     assert store.remember_event(first).is_duplicate is False
+
+
+def test_dedupe_prefers_stable_event_id_over_fallback_fields():
+    store = EventCursorStore()
+    first = _event(entity_id="same", payload_hash="same", event_id="event-a")
+    second = _event(entity_id="same", payload_hash="same", event_id="event-b")
+
+    assert store.remember_event(first).is_duplicate is False
+    assert store.remember_event(second).is_duplicate is False
+    assert store.dedupe_size == 2
+
+
+def test_dedupe_prefers_server_cursor_when_event_id_is_absent():
+    store = EventCursorStore()
+    first = _event(
+        entity_id="same",
+        payload_hash="same",
+        server_cursor="cursor-a",
+        include_event_id=False,
+    )
+    second = _event(
+        entity_id="same",
+        payload_hash="same",
+        server_cursor="cursor-b",
+        include_event_id=False,
+    )
+
+    assert store.remember_event(first).is_duplicate is False
+    assert store.remember_event(second).is_duplicate is False
+    assert store.dedupe_size == 2

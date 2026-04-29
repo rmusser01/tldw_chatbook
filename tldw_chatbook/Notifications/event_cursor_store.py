@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Hashable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -12,6 +13,15 @@ from tldw_chatbook.runtime_policy.server_parity_models import (
     NormalizedEventRecord,
     SourceAuthority,
 )
+
+EventDedupeIdentity = tuple[Hashable, ...]
+
+
+class _NoExpectedCursor:
+    pass
+
+
+_NO_EXPECTED_CURSOR = _NoExpectedCursor()
 
 
 class CursorAdvanceStatus(str, Enum):
@@ -29,7 +39,7 @@ class CursorAdvanceResult:
 
 @dataclass(frozen=True, slots=True)
 class DedupeResult:
-    key: EventDedupeKey
+    key: EventDedupeIdentity
     is_duplicate: bool
 
 
@@ -46,14 +56,28 @@ class EventCursorStore:
             raise ValueError("dedupe_retention must be at least 1")
         self._dedupe_retention = dedupe_retention
         self._cursors: dict[str, EventCursor] = {}
-        self._dedupe: OrderedDict[EventDedupeKey, None] = OrderedDict()
+        self._dedupe: OrderedDict[EventDedupeIdentity, None] = OrderedDict()
 
     @property
     def dedupe_size(self) -> int:
         return len(self._dedupe)
 
     def is_duplicate_event(self, event: NormalizedEventRecord) -> bool:
-        return EventDedupeKey.from_event(event) in self._dedupe
+        return self._dedupe_identity(event) in self._dedupe
+
+    @staticmethod
+    def _dedupe_identity(event: NormalizedEventRecord) -> EventDedupeIdentity:
+        scope = (
+            event.source_authority,
+            event.server_profile_id,
+            event.stream_name,
+            event.stream_instance_id,
+        )
+        if event.event_id:
+            return (*scope, "event_id", event.event_id)
+        if event.server_cursor:
+            return (*scope, "server_cursor", event.server_cursor)
+        return (*scope, "fallback", EventDedupeKey.from_event(event))
 
     def get_cursor(
         self,
@@ -72,7 +96,7 @@ class EventCursorStore:
         return self._cursors.get(cursor.storage_key(), cursor)
 
     def remember_event(self, event: NormalizedEventRecord) -> DedupeResult:
-        key = EventDedupeKey.from_event(event)
+        key = self._dedupe_identity(event)
         if key in self._dedupe:
             self._dedupe.move_to_end(key)
             return DedupeResult(key=key, is_duplicate=True)
@@ -86,7 +110,7 @@ class EventCursorStore:
         self,
         event: NormalizedEventRecord,
         *,
-        expected_cursor: str | None = None,
+        expected_cursor: str | None | _NoExpectedCursor = _NO_EXPECTED_CURSOR,
     ) -> CursorAdvanceResult:
         current = self.get_cursor(
             source_authority=event.source_authority,
@@ -94,7 +118,7 @@ class EventCursorStore:
             stream_name=event.stream_name,
             stream_instance_id=event.stream_instance_id,
         )
-        if expected_cursor is not None and current.cursor != expected_cursor:
+        if not isinstance(expected_cursor, _NoExpectedCursor) and current.cursor != expected_cursor:
             reset = EventCursor(
                 source_authority=current.source_authority,
                 server_profile_id=current.server_profile_id,

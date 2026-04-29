@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -47,6 +48,39 @@ class EventObserverResult:
 async def _maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
+    return value
+
+
+class _CancelledByEvent(Exception):
+    pass
+
+
+async def _await_with_cancel(awaitable: Awaitable[Any], cancel_event: asyncio.Event | None) -> Any:
+    if cancel_event is None:
+        return await awaitable
+    if cancel_event.is_set():
+        raise _CancelledByEvent
+
+    task = asyncio.ensure_future(awaitable)
+    cancel_task = asyncio.create_task(cancel_event.wait())
+    done, _ = await asyncio.wait({task, cancel_task}, return_when=asyncio.FIRST_COMPLETED)
+    if cancel_task in done:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        raise _CancelledByEvent
+
+    cancel_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await cancel_task
+    return task.result()
+
+
+async def _maybe_await_with_cancel(value: Any, cancel_event: asyncio.Event | None) -> Any:
+    if cancel_event is not None and cancel_event.is_set():
+        raise _CancelledByEvent
+    if inspect.isawaitable(value):
+        return await _await_with_cancel(value, cancel_event)
     return value
 
 
@@ -97,9 +131,17 @@ class EventObserver:
                 stream_name=stream_name,
                 stream_instance_id=stream_instance_id,
             )
+            expected_ack_cursor = cursor.cursor
 
             try:
-                async for event in self.transport.stream(cursor):
+                stream = self.transport.stream(cursor)
+                iterator = stream.__aiter__()
+                while True:
+                    try:
+                        event = await _await_with_cancel(anext(iterator), cancel_event)
+                    except StopAsyncIteration:
+                        return EventObserverResult(handled_events=handled_events, reset=last_reset)
+
                     if cancel_event is not None and cancel_event.is_set():
                         return EventObserverResult(
                             handled_events=handled_events,
@@ -112,14 +154,18 @@ class EventObserver:
                     should_ack = bool(await _maybe_await(handler(event)))
                     handled_events += 1
                     if should_ack:
-                        advance = self.store.acknowledge_event(event)
+                        advance = self.store.acknowledge_event(event, expected_cursor=expected_ack_cursor)
                         if advance.status is not CursorAdvanceStatus.STALE_RESET:
                             self.store.remember_event(event)
+                            expected_ack_cursor = event.server_cursor
+                        else:
+                            last_reset = advance
 
                     if max_events is not None and handled_events >= max_events:
                         return EventObserverResult(handled_events=handled_events, reset=last_reset)
 
-                return EventObserverResult(handled_events=handled_events, reset=last_reset)
+            except _CancelledByEvent:
+                return EventObserverResult(handled_events=handled_events, reset=last_reset, cancelled=True)
             except StaleCursorError:
                 last_reset = self.store.reset_cursor(cursor, reason="stale_cursor")
             except UnsupportedCursorError:
@@ -131,4 +177,7 @@ class EventObserver:
             reconnects += 1
             if reconnects > max_reconnects:
                 return EventObserverResult(handled_events=handled_events, reset=last_reset)
-            await _maybe_await(self.backoff(reconnects))
+            try:
+                await _maybe_await_with_cancel(self.backoff(reconnects), cancel_event)
+            except _CancelledByEvent:
+                return EventObserverResult(handled_events=handled_events, reset=last_reset, cancelled=True)

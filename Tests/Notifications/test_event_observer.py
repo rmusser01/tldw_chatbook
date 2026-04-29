@@ -64,6 +64,26 @@ class RecordingBackoff:
         self.calls.append(attempt)
 
 
+class IdleTransport:
+    def __init__(self):
+        self.started = asyncio.Event()
+
+    async def stream(self, cursor):
+        self.started.set()
+        await asyncio.Event().wait()
+        if False:
+            yield _event("never")
+
+
+class SlowBackoff:
+    def __init__(self):
+        self.started = asyncio.Event()
+
+    async def __call__(self, attempt):
+        self.started.set()
+        await asyncio.Event().wait()
+
+
 @pytest.mark.asyncio
 async def test_observer_reconnects_with_injectable_backoff_and_resumes_cursor():
     store = EventCursorStore()
@@ -141,6 +161,40 @@ async def test_unacknowledged_duplicate_after_reconnect_is_retried_and_can_advan
     )
     assert [event.server_cursor for event in observed] == ["cursor-1", "cursor-1"]
     assert cursor.cursor == "cursor-1"
+
+
+@pytest.mark.asyncio
+async def test_observer_uses_stream_start_cursor_to_reject_stale_acknowledgement():
+    store = EventCursorStore()
+    older_event = _event("cursor-old")
+    newer_event = _event("cursor-new")
+    transport = FakeTransport([[older_event]])
+    observed = []
+
+    def handler(event):
+        observed.append(event)
+        store.acknowledge_event(newer_event)
+        return True
+
+    result = await EventObserver(store=store, transport=transport).run(
+        source_authority="server",
+        server_profile_id="server-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+        handler=handler,
+        max_events=1,
+    )
+
+    cursor = store.get_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+    )
+    assert [event.server_cursor for event in observed] == ["cursor-old"]
+    assert result.reset is not None
+    assert result.reset.status is CursorAdvanceStatus.STALE_RESET
+    assert cursor.cursor is None
 
 
 @pytest.mark.asyncio
@@ -243,3 +297,52 @@ async def test_active_server_switch_and_credential_clear_cancel_observation():
         stream_name="notifications",
         stream_instance_id="workspace-1",
     ).cursor == "cursor-1"
+
+
+@pytest.mark.asyncio
+async def test_cancel_event_wakes_idle_stream_wait():
+    cancel = asyncio.Event()
+    transport = IdleTransport()
+    task = asyncio.create_task(
+        EventObserver(store=EventCursorStore(), transport=transport).run(
+            source_authority="server",
+            server_profile_id="server-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+            handler=lambda event: True,
+            cancel_event=cancel,
+        )
+    )
+    await asyncio.wait_for(transport.started.wait(), timeout=0.2)
+
+    cancel.set()
+    result = await asyncio.wait_for(task, timeout=0.2)
+
+    assert result.cancelled is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_event_wakes_backoff_wait():
+    cancel = asyncio.Event()
+    backoff = SlowBackoff()
+    task = asyncio.create_task(
+        EventObserver(
+            store=EventCursorStore(),
+            transport=FakeTransport([RuntimeError("disconnect"), []]),
+            backoff=backoff,
+        ).run(
+            source_authority="server",
+            server_profile_id="server-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+            handler=lambda event: True,
+            cancel_event=cancel,
+            max_reconnects=1,
+        )
+    )
+    await asyncio.wait_for(backoff.started.wait(), timeout=0.2)
+
+    cancel.set()
+    result = await asyncio.wait_for(task, timeout=0.2)
+
+    assert result.cancelled is True
