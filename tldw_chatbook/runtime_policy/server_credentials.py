@@ -125,7 +125,7 @@ class KeyringServerCredentialStore:
 
         refs: list[ServerCredentialRef] = []
         for entry in entries:
-            if not isinstance(entry, list | tuple) or len(entry) != 2:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
                 continue
             server_id, purpose = entry
             if not isinstance(server_id, str) or not isinstance(purpose, str):
