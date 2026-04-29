@@ -104,6 +104,37 @@ def test_build_server_chatbook_service_from_config_threads_policy_enforcer():
 
 
 @pytest.mark.asyncio
+async def test_server_chatbook_service_from_config_can_use_provider_backed_client(monkeypatch):
+    build_client = Mock(side_effect=AssertionError("legacy config builder should not run"))
+    monkeypatch.setattr(
+        "tldw_chatbook.Chatbooks.server_chatbook_service.build_runtime_api_client_from_config",
+        build_client,
+    )
+
+    class FakeClient:
+        async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0):
+            return {"items": [{"job_id": "provider-export-1"}], "limit": limit, "offset": offset}
+
+    provider = FakeClientProvider(FakeClient())
+    policy = FakePolicyEnforcer()
+    service = ServerChatbookService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}},
+        client_provider=provider,
+        policy_enforcer=policy,
+    )
+
+    result = await service.list_export_jobs(limit=5, offset=2)
+
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 1
+    assert result["items"][0]["job_id"] == "provider-export-1"
+    assert result["limit"] == 5
+    assert result["offset"] == 2
+    assert policy.calls == ["chatbooks.export_jobs.list.server"]
+
+
+@pytest.mark.asyncio
 async def test_server_chatbook_service_uses_provider_client_when_no_direct_client():
     class FakeClient:
         async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0):

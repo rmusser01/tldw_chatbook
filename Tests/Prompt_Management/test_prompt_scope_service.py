@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
@@ -323,6 +325,37 @@ def test_build_prompt_scope_service_keeps_server_backend_unavailable_without_con
     assert service.local_service is None
     assert isinstance(service.server_service, ServerPromptService)
     assert service.server_service.client is None
+
+
+@pytest.mark.asyncio
+async def test_scope_server_prompt_service_from_config_can_use_provider_backed_client(monkeypatch):
+    build_client = Mock(side_effect=AssertionError("legacy config builder should not run"))
+    monkeypatch.setattr(
+        "tldw_chatbook.Prompt_Management.prompt_scope_service.build_tldw_api_client_from_config",
+        build_client,
+    )
+
+    class FakeClientProvider:
+        def __init__(self, client):
+            self.client = client
+            self.build_calls = 0
+
+        def build_client(self):
+            self.build_calls += 1
+            return self.client
+
+    provider = FakeClientProvider(FakeServerPromptService())
+    service = ServerPromptService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}},
+        client_provider=provider,
+    )
+
+    result = await service.list_prompts(page=2, per_page=3)
+
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 1
+    assert result.items[0].id == 9
 
 
 @pytest.mark.asyncio

@@ -27,8 +27,15 @@ class ServerPromptService:
         cls,
         app_config: dict[str, Any] | None,
         *,
+        client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
     ) -> "ServerPromptService":
+        if client_provider is not None:
+            return cls(
+                client=None,
+                client_provider=client_provider,
+                policy_enforcer=policy_enforcer,
+            )
         from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client
 
         return cls(

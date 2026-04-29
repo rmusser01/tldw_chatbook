@@ -215,6 +215,16 @@ class FakePromptStudioClient:
         yield {"event": "stream.complete", "project_id": project_id}
 
 
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
         self.denied_reason = denied_reason
@@ -230,6 +240,30 @@ class FakePolicyEnforcer:
                 effective_source="server",
                 authority_owner="server",
             )
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_studio_service_from_config_can_use_provider_backed_client(monkeypatch):
+    def fail_build_client(_app_config):
+        raise AssertionError("legacy config builder should not run")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Prompt_Studio_Interop.server_prompt_studio_service.build_runtime_api_client_from_config",
+        fail_build_client,
+    )
+
+    provider = FakeClientProvider(FakePromptStudioClient())
+    service = ServerPromptStudioService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}},
+        client_provider=provider,
+    )
+
+    result = await service.list_projects(search="provider")
+
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 1
+    assert result["data"][0]["record_id"] == "server:prompt_studio_project:1"
 
 
 @pytest.mark.asyncio

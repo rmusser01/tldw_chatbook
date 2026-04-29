@@ -175,8 +175,15 @@ class ServerChatbookService:
         cls,
         app_config: Mapping[str, Any] | None,
         *,
+        client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
     ) -> "ServerChatbookService":
+        if client_provider is not None:
+            return cls(
+                client=None,
+                client_provider=client_provider,
+                policy_enforcer=policy_enforcer,
+            )
         return cls(
             build_runtime_api_client_from_config(app_config or {}),
             policy_enforcer=policy_enforcer,

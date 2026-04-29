@@ -115,6 +115,42 @@ class FakePromptClient:
         return {"collection_id": collection_id, **kwargs}
 
 
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_service_from_config_can_use_provider_backed_client(monkeypatch):
+    build_client = Mock(side_effect=AssertionError("legacy config builder should not run"))
+    monkeypatch.setattr(
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client",
+        build_client,
+    )
+    client = FakePromptClient()
+    provider = FakeClientProvider(client)
+    policy = Mock()
+
+    service = ServerPromptService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}},
+        client_provider=provider,
+        policy_enforcer=policy,
+    )
+
+    result = await service.get_prompts_health()
+
+    assert result == {"status": "healthy"}
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 1
+    policy.require_allowed.assert_called_once_with(action_id="prompts.health.detail.server")
+
+
 @pytest.mark.asyncio
 async def test_server_prompt_service_enforces_policy_actions():
     client = FakePromptClient()

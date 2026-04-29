@@ -49,8 +49,15 @@ class ServerPromptStudioService:
         cls,
         app_config: Mapping[str, Any],
         *,
+        client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
     ) -> "ServerPromptStudioService":
+        if client_provider is not None:
+            return cls(
+                client=None,
+                client_provider=client_provider,
+                policy_enforcer=policy_enforcer,
+            )
         return cls(
             client=build_runtime_api_client_from_config(app_config),
             policy_enforcer=policy_enforcer,

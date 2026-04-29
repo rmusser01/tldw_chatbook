@@ -73,7 +73,14 @@ class ServerPromptService:
         self.client_provider = client_provider
 
     @classmethod
-    def from_config(cls, app_config: dict[str, Any]) -> "ServerPromptService":
+    def from_config(
+        cls,
+        app_config: dict[str, Any],
+        *,
+        client_provider: Any | None = None,
+    ) -> "ServerPromptService":
+        if client_provider is not None:
+            return cls(client=None, client_provider=client_provider)
         return cls(client=build_tldw_api_client_from_config(app_config))
 
     @classmethod
