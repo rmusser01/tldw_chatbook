@@ -15,7 +15,7 @@ The migration goal is to make active-server selection, credentials, token lifecy
 - `RuntimeServerContextProvider`: active server context resolution, credential lookup, client construction, and cache invalidation seam for migrated services.
 - `ActiveServerCapabilityService`: active-server capability snapshot seam.
 
-## Lane C Migration-Audit Owner Workflow
+## Provider Migration Audit Owner Workflow
 
 `Docs/Development/server-client-provider-migration-audit.md` has one owner for this tranche: the single `Lane C` migration-audit integration owner.
 
