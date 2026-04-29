@@ -21,6 +21,15 @@ from .server_context import (
     ServerContextUnavailable,
     ServerCredentialsUnavailable,
 )
+from .server_parity_models import (
+    EventCursor,
+    EventDedupeKey,
+    NormalizedEventRecord,
+    NotificationPresentationRecord,
+    ProviderMigrationStatus,
+    SyncIdentityMapEntry,
+    SyncReadinessReport,
+)
 from .types import CapabilityEntry, PolicyDecision, PolicyDeniedError, RuntimeSourceState
 from .unsupported_capabilities import (
     UnsupportedCapabilityReportError,
@@ -54,12 +63,19 @@ __all__ = [
     "normalize_runtime_source_state",
     "ActiveServerCapabilityService",
     "ActiveServerContext",
+    "EventCursor",
+    "EventDedupeKey",
+    "NormalizedEventRecord",
+    "NotificationPresentationRecord",
+    "ProviderMigrationStatus",
     "redact_secret",
     "runtime_source_state_from_dict",
     "runtime_source_state_to_dict",
     "RuntimeServerContextProvider",
     "ServerContextUnavailable",
     "ServerCredentialsUnavailable",
+    "SyncIdentityMapEntry",
+    "SyncReadinessReport",
     "validate_unsupported_capability_report",
     "validate_registry_completeness",
 ]
