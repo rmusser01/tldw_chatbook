@@ -40,6 +40,14 @@ class FakeChatClient:
         self.calls.append(("get_chat_conversation_citations", (conversation_id,), {}))
         return {"conversation_id": conversation_id, "citations": [{"id": "doc-1"}], "total_count": 1}
 
+    async def create_character_chat_session(self, request_data: Any, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("create_character_chat_session", (request_data,), kwargs))
+        return {"id": "chat-1", "title": request_data.title, "character_id": request_data.character_id}
+
+    async def delete_character_chat_session(self, chat_id: str, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("delete_character_chat_session", (chat_id,), kwargs))
+        return {"success": True}
+
     async def list_chat_commands(self) -> Any:
         self.calls.append(("list_chat_commands", (), {}))
         return {"commands": [{"name": "/search"}]}
@@ -281,16 +289,65 @@ async def test_server_chat_conversation_service_fails_closed_before_client_call_
 
 
 @pytest.mark.asyncio
-async def test_server_chat_conversation_create_and_delete_are_explicit_unsupported_boundaries():
+async def test_server_chat_conversation_service_routes_character_session_create_and_delete():
     policy = RecordingPolicy()
-    service = ServerChatConversationService(FakeChatClient(), policy_enforcer=policy)
+    client = FakeChatClient()
+    service = ServerChatConversationService(client, policy_enforcer=policy)
 
-    with pytest.raises(NotImplementedError, match="does not expose first-class conversation create"):
-        await service.create_conversation(title="Remote draft")
-    with pytest.raises(NotImplementedError, match="does not expose conversation delete"):
-        await service.delete_conversation("conv-1", expected_version=1)
+    created = await service.create_conversation(
+        title="Remote draft",
+        character_id=7,
+        scope_type="workspace",
+        workspace_id="ws-1",
+        seed_first_message=True,
+        greeting_strategy="default",
+    )
+    deleted = await service.delete_conversation(
+        "chat-1",
+        expected_version=3,
+        hard_delete=True,
+        scope_type="workspace",
+        workspace_id="ws-1",
+    )
 
+    assert created == {"id": "chat-1", "title": "Remote draft", "character_id": 7}
+    assert deleted is True
     assert policy.calls == ["chat.create.server", "chat.delete.server"]
+    create_call = client.calls[0]
+    assert create_call[0] == "create_character_chat_session"
+    create_request = create_call[1][0]
+    assert create_request.title == "Remote draft"
+    assert create_request.character_id == 7
+    assert create_request.scope_type == "workspace"
+    assert create_request.workspace_id == "ws-1"
+    assert create_call[2] == {
+        "seed_first_message": True,
+        "greeting_strategy": "default",
+        "alternate_index": None,
+    }
+    assert client.calls[1] == (
+        "delete_character_chat_session",
+        ("chat-1",),
+        {
+            "expected_version": 3,
+            "hard_delete": True,
+            "scope_type": "workspace",
+            "workspace_id": "ws-1",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_server_chat_conversation_service_rejects_generic_server_create_without_assistant_identity():
+    client = FakeChatClient()
+    policy = RecordingPolicy()
+    service = ServerChatConversationService(client, policy_enforcer=policy)
+
+    with pytest.raises(ValueError, match="requires character_id or assistant_kind"):
+        await service.create_conversation(title="Generic remote draft")
+
+    assert policy.calls == ["chat.create.server"]
+    assert client.calls == []
 
 
 @pytest.mark.asyncio

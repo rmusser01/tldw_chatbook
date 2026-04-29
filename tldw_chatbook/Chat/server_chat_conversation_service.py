@@ -10,6 +10,7 @@ from tldw_chatbook.tldw_api import (
     ChatKnowledgeSaveRequest,
     ChatLoopApprovalDecisionRequest,
     ChatLoopStartRequest,
+    CharacterChatSessionCreate,
     ConversationShareLinkCreateRequest,
     ConversationUpdateRequest,
     TLDWAPIClient,
@@ -104,6 +105,22 @@ class ServerChatConversationService:
         if isinstance(payload, ConversationShareLinkCreateRequest):
             return payload
         return ConversationShareLinkCreateRequest(**dict(payload))
+
+    @staticmethod
+    def _chat_session_create_request(
+        payload: CharacterChatSessionCreate | Mapping[str, Any],
+    ) -> CharacterChatSessionCreate:
+        if isinstance(payload, CharacterChatSessionCreate):
+            return payload
+        request_payload = dict(payload)
+        has_character_identity = request_payload.get("character_id") is not None
+        has_assistant_identity = bool(request_payload.get("assistant_kind") and request_payload.get("assistant_id"))
+        if not has_character_identity and not has_assistant_identity:
+            raise ValueError(
+                "Server conversation create requires character_id or assistant_kind + assistant_id; "
+                "generic model-only server conversation create is not supported by the current server chat-session route."
+            )
+        return CharacterChatSessionCreate(**request_payload)
 
     async def list_conversations(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce(self._action_id("list"))
@@ -207,14 +224,44 @@ class ServerChatConversationService:
         self._enforce("chat.loop.cancel.server")
         return await self._require_client().cancel_chat_loop_run(run_id)
 
-    async def create_conversation(self, **_kwargs: Any) -> dict[str, Any]:
+    async def create_conversation(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce(self._action_id("create"))
-        raise NotImplementedError(
-            "tldw_server does not expose first-class conversation create outside chat launch/persist flows."
+        payload = dict(kwargs)
+        seed_first_message = bool(payload.pop("seed_first_message", False))
+        greeting_strategy = payload.pop("greeting_strategy", "default")
+        alternate_index = payload.pop("alternate_index", None)
+        request_data = payload.pop("request_data", None)
+        if request_data is None:
+            request_data = payload
+        elif payload:
+            if isinstance(request_data, CharacterChatSessionCreate):
+                merged_payload = request_data.model_dump(exclude_none=True, mode="json")
+            else:
+                merged_payload = dict(request_data)
+            merged_payload.update(payload)
+            request_data = merged_payload
+        return await self._require_client().create_character_chat_session(
+            self._chat_session_create_request(request_data),
+            seed_first_message=seed_first_message,
+            greeting_strategy=greeting_strategy,
+            alternate_index=alternate_index,
         )
 
-    async def delete_conversation(self, conversation_id: str, *, expected_version: int) -> bool:
+    async def delete_conversation(
+        self,
+        conversation_id: str,
+        *,
+        expected_version: int | None = None,
+        hard_delete: bool = False,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
+    ) -> bool:
         self._enforce(self._action_id("delete"))
-        raise NotImplementedError(
-            "tldw_server does not expose conversation delete through the chat conversation contract."
+        await self._require_client().delete_character_chat_session(
+            conversation_id,
+            expected_version=expected_version,
+            hard_delete=hard_delete,
+            scope_type=scope_type,
+            workspace_id=workspace_id,
         )
+        return True

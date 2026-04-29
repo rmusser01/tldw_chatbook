@@ -81,10 +81,12 @@ class FakeServerConversationService:
 
     async def create_conversation(self, **kwargs: Any) -> str:
         self.calls.append(("create_conversation", (), kwargs))
+        if kwargs.get("character_id") is None and not (kwargs.get("assistant_kind") and kwargs.get("assistant_id")):
+            raise ValueError("Server conversation create requires character_id or assistant_kind + assistant_id.")
         return "server-created"
 
-    async def delete_conversation(self, conversation_id: str, expected_version: int) -> bool:
-        self.calls.append(("delete_conversation", (conversation_id, expected_version), {}))
+    async def delete_conversation(self, conversation_id: str, expected_version: int, **kwargs: Any) -> bool:
+        self.calls.append(("delete_conversation", (conversation_id, expected_version), kwargs))
         return True
 
     async def start_loop(self, **kwargs: Any) -> dict[str, Any]:
@@ -304,17 +306,51 @@ async def test_scope_service_routes_create_delete_and_requires_local_or_server_m
 
     created = await service.create_conversation(mode="local", title="Local draft")
     deleted = await service.delete_conversation("conv-1", expected_version=3, mode="local")
+    server_created = await service.create_conversation(
+        mode="server",
+        title="Server draft",
+        character_id=7,
+        scope_type="workspace",
+        workspace_id="ws-1",
+    )
+    server_deleted = await service.delete_conversation(
+        "server-conv-1",
+        expected_version=4,
+        mode="server",
+        hard_delete=True,
+        scope_type="workspace",
+        workspace_id="ws-1",
+    )
 
     assert created == "local-created"
     assert deleted is True
-    assert policy.calls == ["chat.create.local", "chat.delete.local"]
+    assert server_created == "server-created"
+    assert server_deleted is True
+    assert policy.calls == ["chat.create.local", "chat.delete.local", "chat.create.server", "chat.delete.server"]
+    assert server.calls == [
+        (
+            "create_conversation",
+            (),
+            {
+                "title": "Server draft",
+                "character_id": 7,
+                "scope_type": "workspace",
+                "workspace_id": "ws-1",
+            },
+        ),
+        (
+            "delete_conversation",
+            ("server-conv-1", 4),
+            {"hard_delete": True, "scope_type": "workspace", "workspace_id": "ws-1"},
+        ),
+    ]
 
     with pytest.raises(ValueError, match="mode must be 'local' or 'server'"):
         await service.list_conversations(mode="mixed")
 
 
 @pytest.mark.asyncio
-async def test_scope_service_blocks_unsupported_server_conversation_create_delete_before_dispatch():
+async def test_scope_service_surfaces_server_create_validation_without_local_dispatch():
     server = FakeServerConversationService()
     policy = RecordingPolicy()
     service = ChatConversationScopeService(
@@ -323,13 +359,11 @@ async def test_scope_service_blocks_unsupported_server_conversation_create_delet
         policy_enforcer=policy,
     )
 
-    with pytest.raises(NotImplementedError, match="does not expose first-class conversation creation"):
+    with pytest.raises(ValueError, match="requires character_id or assistant_kind"):
         await service.create_conversation(mode="server", title="Server draft")
-    with pytest.raises(NotImplementedError, match="does not expose conversation deletion"):
-        await service.delete_conversation("conv-1", expected_version=1, mode="server")
 
-    assert server.calls == []
-    assert policy.calls == ["chat.create.server", "chat.delete.server"]
+    assert server.calls == [("create_conversation", (), {"title": "Server draft"})]
+    assert policy.calls == ["chat.create.server"]
 
 
 @pytest.mark.asyncio
@@ -415,21 +449,4 @@ def test_scope_service_reports_known_chat_conversation_capability_gaps():
             ],
         },
     ]
-    assert server_report == [
-        {
-            "operation_id": "chat.conversation.create.server",
-            "source": "server",
-            "supported": False,
-            "reason_code": "server_contract_missing",
-            "user_message": "The current server chat conversation contract does not expose first-class conversation creation outside chat launch/persist flows.",
-            "affected_action_ids": ["chat.create.server"],
-        },
-        {
-            "operation_id": "chat.conversation.delete.server",
-            "source": "server",
-            "supported": False,
-            "reason_code": "server_contract_missing",
-            "user_message": "The current server chat conversation contract does not expose conversation deletion.",
-            "affected_action_ids": ["chat.delete.server"],
-        },
-    ]
+    assert server_report == []

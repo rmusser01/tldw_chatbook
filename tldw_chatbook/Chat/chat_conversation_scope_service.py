@@ -38,24 +38,7 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
     },
 ]
 
-_SERVER_UNSUPPORTED_CAPABILITIES = [
-    {
-        "operation_id": "chat.conversation.create.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "server_contract_missing",
-        "user_message": "The current server chat conversation contract does not expose first-class conversation creation outside chat launch/persist flows.",
-        "affected_action_ids": ["chat.create.server"],
-    },
-    {
-        "operation_id": "chat.conversation.delete.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "server_contract_missing",
-        "user_message": "The current server chat conversation contract does not expose conversation deletion.",
-        "affected_action_ids": ["chat.delete.server"],
-    },
-]
+_SERVER_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 
 
 class ChatConversationScopeService:
@@ -101,19 +84,6 @@ class ChatConversationScopeService:
         if self.policy_enforcer is None:
             return
         self.policy_enforcer.require_allowed(action_id=action_id)
-
-    @staticmethod
-    def _raise_server_create_unsupported() -> None:
-        raise NotImplementedError(
-            "The current server chat conversation contract does not expose first-class conversation creation "
-            "outside chat launch/persist flows."
-        )
-
-    @staticmethod
-    def _raise_server_delete_unsupported() -> None:
-        raise NotImplementedError(
-            "The current server chat conversation contract does not expose conversation deletion."
-        )
 
     def _service_for_mode(self, mode: str) -> Any:
         service = self.server_service if mode == "server" else self.local_service
@@ -342,8 +312,6 @@ class ChatConversationScopeService:
     async def create_conversation(self, *, mode: str = "local", **kwargs: Any) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("create", normalized_mode))
-        if normalized_mode == "server":
-            self._raise_server_create_unsupported()
         return await self._maybe_await(self._service_for_mode(normalized_mode).create_conversation(**kwargs))
 
     async def delete_conversation(
@@ -352,16 +320,16 @@ class ChatConversationScopeService:
         *,
         expected_version: int,
         mode: str = "local",
+        **kwargs: Any,
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("delete", normalized_mode))
-        if normalized_mode == "server":
-            self._raise_server_delete_unsupported()
         return bool(
             await self._maybe_await(
                 self._service_for_mode(normalized_mode).delete_conversation(
                     conversation_id,
                     expected_version=expected_version,
+                    **kwargs,
                 )
             )
         )
