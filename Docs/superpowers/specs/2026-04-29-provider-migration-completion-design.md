@@ -46,13 +46,15 @@ The preferred service shape is:
 
 - Constructor accepts `client: TLDWAPIClient | None`, optional `client_provider`, and optional `policy_enforcer`.
 - `from_server_context_provider(provider, ...)` returns an instance with `client=None` and `client_provider=provider`.
-- `from_config(app_config, ...)` remains public and delegates through a provider-compatible adapter where feasible.
+- `from_config(app_config, ...)` remains public and delegates through a provider-compatible adapter.
 - Direct injected clients remain first priority in `_require_client()`.
 - Provider-backed clients are resolved lazily through `client_provider.build_client()`.
 - Policy-denied actions should still fail before building a provider client when the service already enforces policy before dispatch.
-- Services must not cache auth tokens, base URLs, server profile IDs, or credential-derived client instances outside the provider.
+- Services must not cache auth tokens, base URLs, server profile IDs, or provider-built client instances outside the provider.
 
-If a service cannot safely route `from_config(...)` through a provider-compatible adapter, it must remain an explicit migration-audit holdout with a reason and follow-up owner.
+If a high-priority service cannot route `from_config(...)` or an equivalent public compatibility API through a provider-compatible adapter, the tranche must stop for explicit follow-up approval before completion. High-priority service-local legacy builders are not allowed to remain as normal audit holdouts.
+
+Medium-priority, low-priority, and UI/event helper paths that cannot safely route through a provider-compatible adapter may remain explicit migration-audit holdouts with a reason and follow-up owner.
 
 ## Compatibility Adapter
 
@@ -63,11 +65,13 @@ The preferred adapter lives in `runtime_policy.bootstrap` or a closely related r
 Adapter requirements:
 
 - Expose the same minimal provider behavior services need: `build_client()`.
+- Preserve existing public compatibility API signatures and return shapes. This includes positional/keyword arguments, tuple returns from helper builders, async/sync behavior, and the service/client objects existing callers receive.
 - Keep secrets out of reprs, logs, and target-store metadata.
 - Avoid creating a second active-server authority.
 - Reuse `RuntimeServerContextProvider` when runtime context, target store, and credential store are available.
 - Fall back to a compatibility provider only for public legacy APIs that lack full runtime-policy dependencies.
 - Keep bootstrap/provider construction points explicitly listed in the migration audit as intentional current seams.
+- Keep compatibility-provider client caching centralized in the provider or bootstrap adapter. Service instances must not store the first provider-built client in their own `client` field after construction.
 
 ## Work Breakdown
 
@@ -92,7 +96,7 @@ Services include:
 
 Deliverables:
 
-- Remove service-local direct legacy builder imports where feasible.
+- Remove service-local direct legacy builder imports.
 - Preserve public compatibility factories.
 - Establish the shared adapter idiom used by later lanes.
 - Keep focused compatibility tests green.
@@ -123,6 +127,8 @@ Services include:
 - `Companion_Interop/server_companion_service.py`
 - `Personalization_Interop/server_personalization_service.py`
 - `Notifications/server_notifications_service.py`
+
+`Notifications/server_notifications_service.py` is in scope only for server-client construction migration. Realtime behavior, event observation, SSE/WebSocket transport, notification delivery semantics, and server/local notification authority changes remain deferred to the realtime/notifications tranche.
 
 Deliverables:
 
@@ -178,7 +184,7 @@ Deliverables:
 - Keep helpers listed as explicit holdouts when current UI wiring makes migration too broad for this tranche.
 - Do not redesign or broadly refactor current UI code.
 
-### Integration Lane: Migration Audit And Guard
+### Integration Lane: Provider Migration Audit Owner
 
 Owns shared audit material.
 
@@ -194,6 +200,7 @@ Rules:
 - The integration owner reconciles the latest direct and indirect scans.
 - Audit checks use stable semantic keys: path plus matched builder signature text, or path plus declared builder-class match count.
 - Raw line-number-only matching remains forbidden.
+- This tranche's Provider Migration Audit Owner supersedes the previous audit document's historical "Lane C Migration-Audit Owner" label. The first audit-owner task must rename that heading in `Docs/Development/server-client-provider-migration-audit.md` before domain migration branches begin.
 
 ## Ownership Rules
 
@@ -212,8 +219,10 @@ Required service tests should cover:
 - Provider-backed construction through `from_server_context_provider(...)`.
 - Public compatibility API behavior through `from_config(...)` or equivalent helper APIs.
 - Lazy provider client construction.
+- No service-local cache of provider-built clients. Tests should use a fake provider that returns distinct clients or records build calls to prove services keep resolving through the provider rather than copying the built client into service state.
 - Policy-denied paths that avoid client construction where existing service behavior supports that ordering.
 - Existing action dispatch to the expected API client method and payload shape.
+- Public compatibility API shape preservation for existing `from_config(...)`, `from_app_config(...)`, and helper builder call signatures and return shapes.
 
 Required audit tests should cover:
 
@@ -227,11 +236,12 @@ Broad UI tests are not required for this tranche. Service wiring tests are appro
 
 ## Acceptance Criteria
 
-- High-priority service-local legacy builders are removed or explicitly justified as unresolved holdouts.
+- High-priority service-local legacy builders are removed. Any high-priority exception requires separate explicit approval before the tranche can be marked complete.
 - Medium-priority services have provider-backed construction.
 - Low-priority services have provider-backed construction.
-- Public compatibility APIs remain stable unless separately approved for removal.
+- Public compatibility APIs keep their existing call signatures and return shapes unless separately approved for removal.
 - Service internals no longer import or call direct legacy builders except approved holdouts.
+- Service internals do not cache provider-built clients outside the provider or compatibility adapter.
 - The migration audit reflects the final semantic scan.
 - Focused service and migration-audit tests pass.
 - `git diff --check` is clean.
