@@ -52,6 +52,60 @@ class FakeClient:
         return {"ok": True}
 
 
+class FakeCachingProvider:
+    def __init__(self, client_factory):
+        self.client_factory = client_factory
+        self.client = None
+        self.build_calls = 0
+        self.constructed_clients = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        if self.client is None:
+            self.client = self.client_factory()
+            self.constructed_clients += 1
+        return self.client
+
+
+class ExplodingProvider:
+    def __init__(self):
+        self.calls = 0
+
+    def build_client(self):
+        self.calls += 1
+        raise AssertionError("provider should not be used")
+
+
+@pytest.mark.asyncio
+async def test_server_chat_loop_service_reuses_provider_cached_client_across_operations():
+    provider = FakeCachingProvider(FakeClient)
+    service = ServerChatLoopService.from_server_context_provider(provider)
+
+    started = await service.start_run(messages=[{"role": "user", "content": "hello"}])
+    events = await service.list_events("run_1", after_seq=1)
+
+    assert started == {"run_id": "run_1"}
+    assert events["run_id"] == "run_1"
+    assert provider.build_calls == 2
+    assert provider.constructed_clients == 1
+    assert provider.client.calls == [
+        ("start_chat_loop_run", {"messages": [{"role": "user", "content": "hello"}]}),
+        ("list_chat_loop_events", "run_1", 1),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_chat_loop_service_direct_client_takes_precedence_over_provider():
+    client = FakeClient()
+    provider = ExplodingProvider()
+    service = ServerChatLoopService(client=client, client_provider=provider)
+
+    await service.cancel("run_1")
+
+    assert provider.calls == 0
+    assert client.calls == [("cancel_chat_loop_run", "run_1")]
+
+
 @pytest.mark.asyncio
 async def test_server_chat_loop_service_routes_typed_client_calls():
     client = FakeClient()

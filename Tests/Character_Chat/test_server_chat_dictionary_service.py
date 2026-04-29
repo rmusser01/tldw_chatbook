@@ -91,6 +91,80 @@ class FakeChatDictionaryClient:
         return {"dictionary_id": dictionary_id, "entry_count": 0}
 
 
+class FakeCachingProvider:
+    def __init__(self, client_factory):
+        self.client_factory = client_factory
+        self.client = None
+        self.build_calls = 0
+        self.constructed_clients = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        if self.client is None:
+            self.client = self.client_factory()
+            self.constructed_clients += 1
+        return self.client
+
+
+class ExplodingProvider:
+    def __init__(self):
+        self.calls = 0
+
+    def build_client(self):
+        self.calls += 1
+        raise AssertionError("provider should not be used")
+
+
+@pytest.mark.asyncio
+async def test_server_chat_dictionary_service_reuses_provider_cached_client_across_operations():
+    provider = FakeCachingProvider(FakeChatDictionaryClient)
+    service = ServerChatDictionaryService.from_server_context_provider(provider)
+
+    await service.list_dictionaries(include_inactive=True)
+    await service.get_dictionary(7)
+
+    assert provider.build_calls == 2
+    assert provider.constructed_clients == 1
+    assert provider.client.calls == [
+        ("list_chat_dictionaries", {"include_inactive": True}),
+        ("get_chat_dictionary", 7),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_chat_dictionary_service_direct_client_takes_precedence_over_provider():
+    client = FakeChatDictionaryClient()
+    provider = ExplodingProvider()
+    service = ServerChatDictionaryService(client=client, client_provider=provider)
+
+    await service.get_statistics(7)
+
+    assert provider.calls == 0
+    assert client.calls == [("get_chat_dictionary_statistics", 7)]
+
+
+@pytest.mark.asyncio
+async def test_server_chat_dictionary_service_denied_policy_does_not_build_provider_client():
+    policy = Mock()
+    policy.require_allowed = None
+    policy.require_ui_action_allowed = Mock(
+        return_value=PolicyDecision(
+            allowed=False,
+            reason_code="wrong_source",
+            user_message="Blocked.",
+            effective_source="server",
+            authority_owner="server",
+        )
+    )
+    provider = ExplodingProvider()
+    service = ServerChatDictionaryService.from_server_context_provider(provider, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError):
+        await service.list_dictionaries()
+
+    assert provider.calls == 0
+
+
 @pytest.mark.asyncio
 async def test_server_chat_dictionary_service_routes_core_actions_with_policy():
     client = FakeChatDictionaryClient()

@@ -668,6 +668,30 @@ class FakePolicyEnforcer:
         )
 
 
+class FakeCachingProvider:
+    def __init__(self, client_factory):
+        self.client_factory = client_factory
+        self.client = None
+        self.build_calls = 0
+        self.constructed_clients = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        if self.client is None:
+            self.client = self.client_factory()
+            self.constructed_clients += 1
+        return self.client
+
+
+class ExplodingProvider:
+    def __init__(self):
+        self.calls = 0
+
+    def build_client(self):
+        self.calls += 1
+        raise AssertionError("provider should not be used")
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_to_server_backend_when_mode_is_server():
     local_service = Mock()
@@ -1966,6 +1990,45 @@ async def test_scope_service_requires_local_backend_for_local_calls():
 
     with pytest.raises(ValueError, match="Local character/persona backend is unavailable"):
         await scope_service.list_characters(mode="local")
+
+
+@pytest.mark.asyncio
+async def test_server_character_persona_service_reuses_provider_cached_client_across_operations():
+    provider = FakeCachingProvider(FakeCharacterPersonaClient)
+    service = ServerCharacterPersonaService.from_server_context_provider(provider)
+
+    await service.list_characters(limit=13, offset=4)
+    await service.get_character(1)
+
+    assert provider.build_calls == 2
+    assert provider.constructed_clients == 1
+    assert provider.client.list_characters_calls == [{"limit": 13, "offset": 4}]
+    assert provider.client.get_character_calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_server_character_persona_service_direct_client_takes_precedence_over_provider():
+    client = FakeCharacterPersonaClient()
+    provider = ExplodingProvider()
+    service = ServerCharacterPersonaService(client=client, client_provider=provider)
+
+    await service.list_characters(limit=13, offset=4)
+
+    assert provider.calls == 0
+    assert client.list_characters_calls == [{"limit": 13, "offset": 4}]
+
+
+@pytest.mark.asyncio
+async def test_server_character_persona_service_denied_policy_does_not_build_provider_client():
+    provider = ExplodingProvider()
+    policy = FakePolicyEnforcer.deny("server_unreachable")
+    service = ServerCharacterPersonaService.from_server_context_provider(provider, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await service.list_characters(limit=13, offset=4)
+
+    assert exc.value.reason_code == "server_unreachable"
+    assert provider.calls == 0
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
+from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api.chat_loop_schemas import ChatLoopActionResponse, ChatLoopEventsResponse, ChatLoopStartResponse
 
 
@@ -95,6 +96,78 @@ class RecordingPolicy:
         self.calls.append(action_id)
         if action_id in self.denied:
             raise RuntimeError(f"denied:{action_id}")
+
+
+class FakeCachingProvider:
+    def __init__(self, client_factory):
+        self.client_factory = client_factory
+        self.client = None
+        self.build_calls = 0
+        self.constructed_clients = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        if self.client is None:
+            self.client = self.client_factory()
+            self.constructed_clients += 1
+        return self.client
+
+
+class ExplodingProvider:
+    def __init__(self):
+        self.calls = 0
+
+    def build_client(self):
+        self.calls += 1
+        raise AssertionError("provider should not be used")
+
+
+@pytest.mark.asyncio
+async def test_server_chat_conversation_service_reuses_provider_cached_client_across_operations():
+    provider = FakeCachingProvider(FakeChatClient)
+    service = ServerChatConversationService.from_server_context_provider(provider)
+
+    await service.list_conversations(query="billing")
+    await service.get_conversation("conv-1")
+
+    assert provider.build_calls == 2
+    assert provider.constructed_clients == 1
+    assert provider.client.calls == [
+        ("list_chat_conversations", (), {"query": "billing"}),
+        ("get_chat_conversation", ("conv-1",), {}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_chat_conversation_service_direct_client_takes_precedence_over_provider():
+    client = FakeChatClient()
+    provider = ExplodingProvider()
+    service = ServerChatConversationService(client=client, client_provider=provider)
+
+    await service.list_conversations()
+
+    assert provider.calls == 0
+    assert client.calls == [("list_chat_conversations", (), {})]
+
+
+@pytest.mark.asyncio
+async def test_server_chat_conversation_service_denied_policy_does_not_build_provider_client():
+    policy = RecordingPolicy()
+    policy.require_allowed = None
+    policy.require_ui_action_allowed = lambda action_id: PolicyDecision(
+        allowed=False,
+        reason_code="wrong_source",
+        user_message="Blocked.",
+        effective_source="server",
+        authority_owner="server",
+    )
+    provider = ExplodingProvider()
+    service = ServerChatConversationService.from_server_context_provider(provider, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError):
+        await service.list_conversations()
+
+    assert provider.calls == 0
 
 
 @pytest.mark.asyncio

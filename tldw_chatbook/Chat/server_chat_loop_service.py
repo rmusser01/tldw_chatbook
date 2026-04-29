@@ -11,17 +11,29 @@ from ..tldw_api import ChatLoopStartRequest, TLDWAPIClient
 class ServerChatLoopService:
     """Adapt server chat-loop endpoints to a source-aware Chatbook service seam."""
 
-    def __init__(self, client: Optional[TLDWAPIClient]):
+    def __init__(
+        self,
+        client: Optional[TLDWAPIClient] = None,
+        *,
+        client_provider: Any | None = None,
+    ):
         self.client = client
+        self.client_provider = client_provider
 
     @classmethod
     def from_config(cls, app_config: Mapping[str, Any]) -> "ServerChatLoopService":
         return cls(client=build_runtime_api_client_from_config(app_config))
 
+    @classmethod
+    def from_server_context_provider(cls, provider: Any) -> "ServerChatLoopService":
+        return cls(client_provider=provider)
+
     def _require_client(self) -> TLDWAPIClient:
-        if self.client is None:
-            raise ValueError("TLDW API client is required for server chat loop operations.")
-        return self.client
+        if self.client is not None:
+            return self.client
+        if self.client_provider is not None:
+            return self.client_provider.build_client()
+        raise ValueError("TLDW API client is required for server chat loop operations.")
 
     @staticmethod
     def _as_dict(value: Any) -> dict[str, Any]:

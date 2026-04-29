@@ -10,9 +10,16 @@ from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 class ServerChatDictionaryService:
     """Delegate chat dictionary/world-book operations to tldw_server."""
 
-    def __init__(self, client: Any, *, policy_enforcer: Any | None = None):
+    def __init__(
+        self,
+        client: Any | None = None,
+        *,
+        policy_enforcer: Any | None = None,
+        client_provider: Any | None = None,
+    ):
         self.client = client
         self.policy_enforcer = policy_enforcer
+        self.client_provider = client_provider
 
     @classmethod
     def from_config(
@@ -28,10 +35,21 @@ class ServerChatDictionaryService:
             policy_enforcer=policy_enforcer,
         )
 
+    @classmethod
+    def from_server_context_provider(
+        cls,
+        provider: Any,
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerChatDictionaryService":
+        return cls(client_provider=provider, policy_enforcer=policy_enforcer)
+
     def _require_client(self) -> Any:
-        if self.client is None:
-            raise ValueError("Server chat dictionary client is unavailable.")
-        return self.client
+        if self.client is not None:
+            return self.client
+        if self.client_provider is not None:
+            return self.client_provider.build_client()
+        raise ValueError("Server chat dictionary client is unavailable.")
 
     @staticmethod
     def _payload(request_data: Any) -> Any:
