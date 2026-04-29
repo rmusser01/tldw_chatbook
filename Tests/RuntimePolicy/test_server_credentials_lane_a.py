@@ -52,3 +52,17 @@ def test_keyring_clear_all_removes_indexed_entries():
     store.clear_all()
 
     assert fake.values == {}
+
+
+def test_keyring_clear_server_preserves_known_purpose_only_behavior():
+    fake = FakeKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    store.set_secret("server-a", "custom_token", "c1")
+
+    store.clear_server("server-a")
+
+    assert store.get_secret("server-a", "custom_token") == "c1"
+
+    store.clear_all()
+
+    assert fake.values == {}

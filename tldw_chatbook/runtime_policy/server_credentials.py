@@ -188,10 +188,7 @@ class KeyringServerCredentialStore:
 
     def clear_server(self, server_id: str) -> None:
         normalized_server_id = _normalize_non_empty(server_id, "server_id")
-        indexed_purposes = {
-            ref.purpose for ref in self._load_index() if ref.server_id == normalized_server_id
-        }
-        for purpose in (*_KNOWN_SERVER_CREDENTIAL_PURPOSES, *sorted(indexed_purposes)):
+        for purpose in _KNOWN_SERVER_CREDENTIAL_PURPOSES:
             self.delete_secret(normalized_server_id, purpose)
 
     def clear_all(self) -> None:
