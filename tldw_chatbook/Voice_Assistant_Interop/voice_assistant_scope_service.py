@@ -51,8 +51,8 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "operation_id": "voice_assistant.websocket.server",
         "source": "server",
         "supported": False,
-        "reason_code": "transport_deferred",
-        "user_message": "Voice Assistant WebSocket sessions are deferred until Chatbook adds a dedicated realtime voice transport.",
+        "reason_code": "client_adapter_missing",
+        "user_message": "The server exposes Voice Assistant websocket sessions; this Chatbook adapter currently exposes REST commands, sessions, and analytics only.",
         "affected_action_ids": [],
     },
 ]
@@ -101,7 +101,26 @@ class VoiceAssistantScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == VoiceAssistantBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
-        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        report: list[dict[str, Any]] = []
+        for item in _SERVER_UNSUPPORTED_CAPABILITIES:
+            if item["operation_id"] == "voice_assistant.websocket.server" and self._has_websocket_sessions_adapter():
+                continue
+            report.append(dict(item))
+        return report
+
+    def _has_websocket_sessions_adapter(self) -> bool:
+        service = self.server_service
+        if service is None:
+            return False
+        explicit_support = getattr(service, "supports_websocket_sessions", None)
+        if explicit_support is not None:
+            return bool(explicit_support)
+        websocket_methods = (
+            "connect_voice_assistant_websocket",
+            "stream_voice_assistant_websocket",
+            "stream_voice_session_websocket",
+        )
+        return any(callable(getattr(service, method_name, None)) for method_name in websocket_methods)
 
     async def _call(
         self,

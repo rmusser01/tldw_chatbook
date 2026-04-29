@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
+from .mcp_governance_schemas import MCPGovernanceEvent
 from .mcp_unified_schemas import (
     ACPProfileCreateRequest,
     ACPProfileUpdateRequest,
@@ -450,6 +451,35 @@ class MCPUnifiedClient:
             params=params or None,
         )
         return MCPListEnvelope.from_payload(payload)
+
+    async def stream_governance_events(
+        self,
+        *,
+        after_event_id: str | None = None,
+        event_types: list[str] | None = None,
+        owner_scope_type: str | None = None,
+        owner_scope_id: int | None = None,
+        replay: bool = True,
+        limit: int | None = None,
+    ) -> AsyncGenerator[MCPGovernanceEvent, None]:
+        params: Dict[str, Any] = {"replay": "true" if replay else "false"}
+        if after_event_id is not None:
+            params["after_event_id"] = after_event_id
+        if event_types is not None:
+            params["event_type"] = list(event_types)
+        if owner_scope_type is not None:
+            params["owner_scope_type"] = owner_scope_type
+        if owner_scope_id is not None:
+            params["owner_scope_id"] = owner_scope_id
+        if limit is not None:
+            params["limit"] = limit
+        stream = getattr(self.root_client, "_stream_sse_request")
+        async for event in stream(
+            "/api/v1/mcp/hub/events/stream",
+            params=params,
+            event_model=MCPGovernanceEvent,
+        ):
+            yield event
 
     async def create_external_server(
         self,

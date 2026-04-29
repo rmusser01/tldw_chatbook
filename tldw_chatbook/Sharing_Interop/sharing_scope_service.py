@@ -122,6 +122,11 @@ class SharingScopeService:
             ]
         if isinstance(payload.get("items"), list):
             payload["items"] = [self._normalize_item(mode, item) for item in payload["items"]]
+        if isinstance(payload.get("events"), list):
+            payload["events"] = [
+                self._with_record_id(mode, "sharing_event", item, "id") if isinstance(item, dict) else item
+                for item in payload["events"]
+            ]
         return self._normalize_item(mode, payload)
 
     def _normalize_item(self, mode: SharingBackend, item: Any) -> Any:
@@ -141,6 +146,8 @@ class SharingScopeService:
             return self._with_record_id(mode, "shared_media", item, "id")
         if "job_id" in item:
             return self._with_record_id(mode, "sharing_clone_job", item, "job_id")
+        if "event_type" in item and "id" in item:
+            return self._with_record_id(mode, "sharing_event", item, "id")
         if "id" in item:
             return self._with_record_id(mode, "workspace_share", item, "id")
         record = dict(item)
@@ -155,6 +162,8 @@ class SharingScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == SharingBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        if callable(getattr(self.server_service, "observe_link_events", None)):
+            return []
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def _call(
@@ -239,6 +248,15 @@ class SharingScopeService:
             action="launch",
             method_name="import_public_link",
             args=(token,),
+        )
+
+    async def observe_link_events(self, *, mode: SharingBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+        return await self._call(
+            mode=mode,
+            resource="links",
+            action="observe",
+            method_name="observe_link_events",
+            kwargs=kwargs,
         )
 
     async def share_workspace(self, *, mode: SharingBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:

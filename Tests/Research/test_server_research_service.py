@@ -16,8 +16,8 @@ class FakeResearchClient:
         self.calls.append(("create_research_run", request_data.model_dump(exclude_none=True, mode="json")))
         return {"id": "run-1", "status": "running", "phase": "planning", "control_state": "running"}
 
-    async def list_research_runs(self, limit=25):
-        self.calls.append(("list_research_runs", limit))
+    async def list_research_runs(self, limit=25, offset=0, session_id=None, status=None):
+        self.calls.append(("list_research_runs", limit, offset, session_id, status))
         return [{"id": "run-1", "query": "MCP", "status": "running"}]
 
     async def get_research_run(self, session_id):
@@ -31,6 +31,10 @@ class FakeResearchClient:
     async def cancel_research_run(self, session_id):
         self.calls.append(("cancel_research_run", session_id))
         return {"id": session_id, "status": "cancelled"}
+
+    async def delete_research_run(self, session_id):
+        self.calls.append(("delete_research_run", session_id))
+        return {"deleted": True}
 
     async def get_research_bundle(self, session_id):
         self.calls.append(("get_research_bundle", session_id))
@@ -91,7 +95,7 @@ async def test_server_research_service_direct_client_takes_precedence_over_provi
     assert runs[0]["id"] == "run-1"
     assert runs[0]["source"] == "server"
     assert provider.build_calls == 0
-    assert client.calls == [("list_research_runs", 1)]
+    assert client.calls == [("list_research_runs", 1, 0, None, None)]
 
 
 @pytest.mark.asyncio
@@ -111,7 +115,7 @@ async def test_server_research_service_from_server_context_provider_is_lazy():
     assert runs[0]["source"] == "server"
     assert service.client is None
     assert provider.build_calls == 1
-    assert client.calls == [("list_research_runs", 1)]
+    assert client.calls == [("list_research_runs", 1, 0, None, None)]
 
 
 @pytest.mark.asyncio
@@ -126,8 +130,8 @@ async def test_server_research_service_re_resolves_provider_without_service_loca
     assert provider.build_calls == 2
     assert len(provider.clients) == 2
     assert provider.clients[0] is not provider.clients[1]
-    assert provider.clients[0].calls == [("list_research_runs", 1)]
-    assert provider.clients[1].calls == [("list_research_runs", 2)]
+    assert provider.clients[0].calls == [("list_research_runs", 1, 0, None, None)]
+    assert provider.clients[1].calls == [("list_research_runs", 2, 0, None, None)]
     for built_client in provider.clients:
         assert all(value is not built_client for value in vars(service).values())
 
@@ -155,10 +159,11 @@ async def test_server_research_service_routes_runs_with_policy_actions():
     service = ServerResearchService(client=client, policy_enforcer=policy)
 
     launched = await service.launch_run(query="MCP governance")
-    listed = await service.list_runs(limit=10)
+    listed = await service.list_runs(limit=10, offset=5, session_id="run-1", status="running")
     detail = await service.get_run("run-1")
     paused = await service.pause_run("run-1")
     cancelled = await service.cancel_run("run-1")
+    deleted = await service.delete_run("run-1")
     bundle = await service.get_bundle("run-1")
     artifact = await service.get_artifact("run-1", "final_report")
 
@@ -167,6 +172,9 @@ async def test_server_research_service_routes_runs_with_policy_actions():
     assert detail["id"] == "run-1"
     assert paused["control_state"] == "paused"
     assert cancelled["status"] == "cancelled"
+    assert deleted is True
+    assert ("list_research_runs", 10, 5, "run-1", "running") in client.calls
+    assert ("delete_research_run", "run-1") in client.calls
     assert bundle["summary"]["answer"] == "Done"
     assert artifact["content"] == {"ok": True}
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
@@ -175,6 +183,7 @@ async def test_server_research_service_routes_runs_with_policy_actions():
         "research.runs.detail.server",
         "research.runs.update.server",
         "research.runs.update.server",
+        "research.runs.delete.server",
         "research.runs.detail.server",
         "research.runs.detail.server",
     ]
@@ -204,15 +213,15 @@ async def test_server_research_service_hard_stops_denied_ui_policy_decision():
 
 
 @pytest.mark.asyncio
-async def test_server_research_service_exposes_honest_delete_boundary():
+async def test_server_research_service_delete_run_delegates_to_client():
     client = FakeResearchClient()
     policy = Mock()
     service = ServerResearchService(client=client, policy_enforcer=policy)
 
-    with pytest.raises(NotImplementedError, match="does not support research run deletion"):
-        await service.delete_run("run-1")
+    deleted = await service.delete_run("run-1")
 
+    assert deleted is True
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "research.runs.delete.server"
     ]
-    assert client.calls == []
+    assert client.calls == [("delete_research_run", "run-1")]

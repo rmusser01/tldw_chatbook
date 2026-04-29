@@ -177,6 +177,14 @@ class AuthAccountScopeService:
             return credential_store, str(resolved_server_id)
         return credential_store, None
 
+    def _has_durable_credential_storage(self) -> bool:
+        credential_store, active_server_id = self._resolve_provider_credential_store_context()
+        if credential_store is None or not active_server_id:
+            return False
+        return callable(getattr(self.server_context_provider, "store_auth_tokens", None)) and callable(
+            getattr(self.server_context_provider, "clear_active_server_auth_tokens", None)
+        )
+
     @staticmethod
     def _normalize_session(mode: AuthAccountBackend, payload: dict[str, Any]) -> dict[str, Any]:
         record = dict(payload or {})
@@ -212,7 +220,16 @@ class AuthAccountScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == AuthAccountBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
-        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        unsupported = []
+        durable_storage_available = self._has_durable_credential_storage()
+        for item in _SERVER_UNSUPPORTED_CAPABILITIES:
+            if (
+                item["operation_id"] == "auth_account.durable_credential_storage.server"
+                and durable_storage_available
+            ):
+                continue
+            unsupported.append(dict(item))
+        return unsupported
 
     async def _call(
         self,

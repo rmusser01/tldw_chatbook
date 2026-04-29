@@ -17,7 +17,7 @@ from .research_normalizers import ResearchRecord, ResearchRecordList
 class ServerResearchService:
     """Policy-gated access to server deep research runs."""
 
-    supports_run_delete = False
+    supports_run_delete = True
 
     def __init__(
         self,
@@ -132,9 +132,23 @@ class ServerResearchService:
         )
         return self._dump(await self._require_client().create_research_run(request))
 
-    async def list_runs(self, *, limit: int = 25) -> list[dict[str, Any]]:
+    async def list_runs(
+        self,
+        *,
+        limit: int = 25,
+        offset: int = 0,
+        session_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
         self._enforce("research.runs.list.server")
-        return self._dump_list(await self._require_client().list_research_runs(limit=limit))
+        return self._dump_list(
+            await self._require_client().list_research_runs(
+                limit=limit,
+                offset=offset,
+                session_id=session_id,
+                status=status,
+            )
+        )
 
     async def get_run(self, session_id: str) -> dict[str, Any]:
         self._enforce("research.runs.detail.server")
@@ -171,9 +185,12 @@ class ServerResearchService:
         self._enforce("research.runs.update.server")
         return self._dump(await self._require_client().cancel_research_run(session_id))
 
-    async def delete_run(self, session_id: str, *, expected_version: int | None = None) -> None:
+    async def delete_run(self, session_id: str, *, expected_version: int | None = None) -> bool:
         self._enforce("research.runs.delete.server")
-        raise NotImplementedError("The current server API does not support research run deletion.")
+        response = await self._require_client().delete_research_run(session_id)
+        if isinstance(response, Mapping):
+            return bool(response.get("deleted"))
+        return bool(response)
 
     async def get_bundle(self, session_id: str) -> dict[str, Any]:
         self._enforce("research.runs.detail.server")

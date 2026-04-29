@@ -27,6 +27,8 @@ from ..tldw_api import (
 class ServerAudioServicesService:
     """Execute stable REST-backed audio operations against the active server."""
 
+    supports_websocket_streaming = False
+
     def __init__(
         self,
         client: Optional[TLDWAPIClient],

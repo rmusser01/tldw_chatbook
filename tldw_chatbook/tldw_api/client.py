@@ -328,6 +328,7 @@ from .feedback_schemas import (
     ExplicitFeedbackResponse,
     FeedbackDeleteResponse,
     FeedbackListResponse,
+    FeedbackRecord,
     FeedbackUpdateRequest,
 )
 from .collections_feeds_schemas import (
@@ -389,6 +390,7 @@ from .mcp_governance_schemas import (
     MCPEffectivePolicyResponse,
     MCPExternalServerCreate,
     MCPExternalServerUpdate,
+    MCPGovernanceEvent,
     MCPGovernanceObject,
     MCPGovernanceSummary,
     MCPPermissionProfileCreate,
@@ -735,6 +737,7 @@ from .flashcards_schemas import (
     StudyAssistantRespondResponse,
     StudyPackCreateJobRequest,
     StudyPackJobAcceptedResponse,
+    StudyPackJobListResponse,
     StudyPackJobStatusResponse,
     StudyPackSummaryResponse,
 )
@@ -782,6 +785,10 @@ from .writing_manuscript_schemas import (
     ManuscriptSceneResponse,
     ManuscriptSceneUpdate,
     ManuscriptStructureResponse,
+    ManuscriptTrashListResponse,
+    ManuscriptVersionCreateRequest,
+    ManuscriptVersionListResponse,
+    ManuscriptVersionResponse,
     ManuscriptWorldInfoCreate,
     ManuscriptWorldInfoResponse,
     ManuscriptWorldInfoUpdate,
@@ -1041,6 +1048,7 @@ from .research_search_schemas import (
     WebSearchRequest,
 )
 from .sharing_schemas import (
+    AuditLogResponse,
     CloneWorkspaceRequest,
     CloneWorkspaceResponse,
     CreateTokenRequest,
@@ -7502,11 +7510,27 @@ class TLDWAPIClient:
         )
         return ResearchRunResponse.model_validate(response)
 
-    async def list_research_runs(self, *, limit: int = 25) -> list[ResearchRunListItemResponse]:
+    async def list_research_runs(
+        self,
+        *,
+        limit: int = 25,
+        offset: int = 0,
+        session_id: str | None = None,
+        status: str | None = None,
+    ) -> list[ResearchRunListItemResponse]:
         response = await self._request(
             "GET",
             "/api/v1/research/runs",
-            params={"limit": limit},
+            params={
+                key: value
+                for key, value in {
+                    "limit": limit,
+                    "offset": offset,
+                    "session_id": session_id,
+                    "status": status,
+                }.items()
+                if value is not None
+            },
         )
         return [ResearchRunListItemResponse.model_validate(item) for item in response]
 
@@ -7538,6 +7562,9 @@ class TLDWAPIClient:
     async def cancel_research_run(self, session_id: str) -> ResearchRunResponse:
         response = await self._request("POST", f"/api/v1/research/runs/{session_id}/cancel")
         return ResearchRunResponse.model_validate(response)
+
+    async def delete_research_run(self, session_id: str) -> Dict[str, Any]:
+        return await self._request("DELETE", f"/api/v1/research/runs/{session_id}")
 
     async def get_research_bundle(self, session_id: str) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/research/runs/{session_id}/bundle")
@@ -7899,6 +7926,28 @@ class TLDWAPIClient:
     async def import_public_share(self, token: str) -> PublicShareImportResponse:
         response = await self._request("POST", f"/api/v1/sharing/public/{token}/import")
         return PublicShareImportResponse.model_validate(response)
+
+    async def list_sharing_audit_events(
+        self,
+        *,
+        owner_user_id: int | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> AuditLogResponse:
+        params: dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+        }
+        if owner_user_id is not None:
+            params["owner_user_id"] = owner_user_id
+        if resource_type is not None:
+            params["resource_type"] = resource_type
+        if resource_id is not None:
+            params["resource_id"] = resource_id
+        response = await self._request("GET", "/api/v1/sharing/admin/audit", params=params)
+        return AuditLogResponse.model_validate(response)
 
     async def save_web_clip(self, request_data: WebClipperSaveRequest) -> WebClipperSaveResponse:
         response = await self._request(
@@ -8679,6 +8728,13 @@ class TLDWAPIClient:
         )
         return FlashcardDeckResponse.model_validate(response)
 
+    async def delete_flashcard_deck(self, deck_id: int, *, expected_version: int) -> Dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/api/v1/flashcards/decks/{deck_id}",
+            params={"expected_version": expected_version},
+        )
+
     async def upload_flashcard_asset(self, file: tuple[str, bytes, str]) -> FlashcardAssetMetadata:
         response = await self._request(
             "POST",
@@ -9421,6 +9477,26 @@ class TLDWAPIClient:
         )
         return StudyPackJobAcceptedResponse.model_validate(response)
 
+    async def list_study_pack_jobs(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> StudyPackJobListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/flashcards/study-packs/jobs",
+            params={
+                key: value
+                for key, value in {
+                    "status": status,
+                    "limit": limit,
+                }.items()
+                if value is not None
+            },
+        )
+        return StudyPackJobListResponse.model_validate(response)
+
     async def get_study_pack_job_status(self, job_id: int) -> StudyPackJobStatusResponse:
         response = await self._request("GET", f"/api/v1/flashcards/study-packs/jobs/{job_id}")
         return StudyPackJobStatusResponse.model_validate(response)
@@ -10114,6 +10190,98 @@ class TLDWAPIClient:
             },
         )
         return ManuscriptAnalysisListResponse.model_validate(response)
+
+    async def create_manuscript_version(
+        self,
+        entity_type: str,
+        entity_id: str,
+        request_data: ManuscriptVersionCreateRequest,
+    ) -> ManuscriptVersionResponse:
+        response = await self._request(
+            "POST",
+            f"/api/v1/writing/manuscripts/{entity_type}/{entity_id}/versions",
+            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+        )
+        return ManuscriptVersionResponse.model_validate(response)
+
+    async def list_manuscript_versions(
+        self,
+        entity_type: str,
+        entity_id: str,
+    ) -> ManuscriptVersionListResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/{entity_type}/{entity_id}/versions",
+        )
+        return ManuscriptVersionListResponse.model_validate(response)
+
+    async def get_manuscript_version(
+        self,
+        entity_type: str,
+        entity_id: str,
+        version_number: int,
+    ) -> ManuscriptVersionResponse:
+        response = await self._request(
+            "GET",
+            f"/api/v1/writing/manuscripts/{entity_type}/{entity_id}/versions/{version_number}",
+        )
+        return ManuscriptVersionResponse.model_validate(response)
+
+    async def restore_manuscript_version(
+        self,
+        entity_type: str,
+        entity_id: str,
+        version_number: int,
+        *,
+        expected_version: int | None = None,
+    ) -> Any:
+        response = await self._request(
+            "POST",
+            f"/api/v1/writing/manuscripts/{entity_type}/{entity_id}/versions/{version_number}/restore",
+            headers={"expected-version": str(expected_version)} if expected_version is not None else None,
+        )
+        return self._validate_manuscript_entity_response(entity_type, response)
+
+    async def list_manuscript_trash(
+        self,
+        *,
+        entity_type: str | None = None,
+    ) -> ManuscriptTrashListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/writing/manuscripts/trash",
+            params={key: value for key, value in {"entity_type": entity_type}.items() if value is not None},
+        )
+        return ManuscriptTrashListResponse.model_validate(response)
+
+    async def restore_manuscript_trash(
+        self,
+        entity_type: str,
+        entity_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> Any:
+        response = await self._request(
+            "POST",
+            f"/api/v1/writing/manuscripts/trash/{entity_type}/{entity_id}/restore",
+            headers={"expected-version": str(expected_version)} if expected_version is not None else None,
+        )
+        return self._validate_manuscript_entity_response(entity_type, response)
+
+    @staticmethod
+    def _validate_manuscript_entity_response(entity_type: str, response: Any) -> Any:
+        normalized_type = "manuscript" if entity_type == "part" else entity_type
+        models = {
+            "project": ManuscriptProjectResponse,
+            "manuscript": ManuscriptPartResponse,
+            "chapter": ManuscriptChapterResponse,
+            "scene": ManuscriptSceneResponse,
+        }
+        try:
+            model = models[normalized_type]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported manuscript entity type: {entity_type}") from exc
+        return model.model_validate(response)
 
     async def create_quiz(
         self,
@@ -13375,6 +13543,10 @@ class TLDWAPIClient:
         )
         return FeedbackListResponse.model_validate(response)
 
+    async def get_feedback(self, feedback_id: str) -> FeedbackRecord:
+        response = await self._request("GET", f"/api/v1/feedback/{feedback_id}")
+        return FeedbackRecord.model_validate(response)
+
     async def update_feedback(
         self,
         feedback_id: str,
@@ -14241,6 +14413,34 @@ class TLDWAPIClient:
 
     async def delete_mcp_capability_mapping(self, capability_adapter_mapping_id: int) -> Dict[str, Any]:
         return await self._request("DELETE", f"/api/v1/mcp/hub/capability-mappings/{capability_adapter_mapping_id}")
+
+    async def stream_mcp_governance_events(
+        self,
+        *,
+        after_event_id: str | None = None,
+        event_types: list[str] | None = None,
+        owner_scope_type: str | None = None,
+        owner_scope_id: int | None = None,
+        replay: bool = True,
+        limit: int | None = None,
+    ) -> AsyncGenerator[MCPGovernanceEvent, None]:
+        params: Dict[str, Any] = {"replay": "true" if replay else "false"}
+        if after_event_id is not None:
+            params["after_event_id"] = after_event_id
+        if event_types is not None:
+            params["event_type"] = list(event_types)
+        if owner_scope_type is not None:
+            params["owner_scope_type"] = owner_scope_type
+        if owner_scope_id is not None:
+            params["owner_scope_id"] = owner_scope_id
+        if limit is not None:
+            params["limit"] = limit
+        async for event in self._stream_sse_request(
+            "/api/v1/mcp/hub/events/stream",
+            params=params,
+            event_model=MCPGovernanceEvent,
+        ):
+            yield event
 
     async def list_mcp_external_servers(
         self,

@@ -28,6 +28,7 @@ from ..tldw_api import (
     ManuscriptResearchRequest,
     ManuscriptSceneCreate,
     ManuscriptSceneUpdate,
+    ManuscriptVersionCreateRequest,
     ManuscriptWorldInfoCreate,
     ManuscriptWorldInfoUpdate,
     ReorderRequest,
@@ -764,15 +765,26 @@ class ServerWritingService:
 
     async def create_version(self, entity_type: str, entity_id: str, *, label: str | None = None) -> dict[str, Any]:
         self._enforce(self._action_id("versions", "create"))
-        raise NotImplementedError("Server writing version history is not exposed by the current server contract.")
+        response = await self._require_client().create_manuscript_version(
+            entity_type,
+            entity_id,
+            ManuscriptVersionCreateRequest(label=label),
+        )
+        return normalize_writing_record("server", "version", self._model_to_dict(response))
 
     async def list_versions(self, entity_type: str, entity_id: str) -> list[dict[str, Any]]:
         self._enforce(self._action_id("versions", "list"))
-        raise NotImplementedError("Server writing version history is not exposed by the current server contract.")
+        response = await self._require_client().list_manuscript_versions(entity_type, entity_id)
+        payload = self._model_to_dict(response)
+        return [
+            normalize_writing_record("server", "version", self._model_to_dict(item))
+            for item in list(payload.get("versions", []))
+        ]
 
     async def get_version(self, entity_type: str, entity_id: str, version_number: int) -> dict[str, Any]:
         self._enforce(self._action_id("versions", "detail"))
-        raise NotImplementedError("Server writing version history is not exposed by the current server contract.")
+        response = await self._require_client().get_manuscript_version(entity_type, entity_id, version_number)
+        return normalize_writing_record("server", "version", self._model_to_dict(response))
 
     async def restore_version(
         self,
@@ -783,11 +795,22 @@ class ServerWritingService:
         expected_version: int | None = None,
     ) -> dict[str, Any]:
         self._enforce(self._action_id("versions", "restore"))
-        raise NotImplementedError("Server writing version restore is not exposed by the current server contract.")
+        response = await self._require_client().restore_manuscript_version(
+            entity_type,
+            entity_id,
+            version_number,
+            expected_version=expected_version,
+        )
+        return normalize_writing_record("server", self._normalize_entity_type(entity_type), self._model_to_dict(response))
 
     async def list_trash(self, *, entity_type: str | None = None) -> list[dict[str, Any]]:
         self._enforce(self._action_id("trash", "list"))
-        raise NotImplementedError("Server writing trash listing is not exposed by the current server contract.")
+        response = await self._require_client().list_manuscript_trash(entity_type=entity_type)
+        payload = self._model_to_dict(response)
+        return [
+            normalize_writing_record("server", self._normalize_entity_type(str(item.get("entity_type") or entity_type or self._infer_entity_type(item))), item)
+            for item in list(payload.get("items", []))
+        ]
 
     async def restore_trash(
         self,
@@ -797,4 +820,23 @@ class ServerWritingService:
         expected_version: int | None = None,
     ) -> dict[str, Any]:
         self._enforce(self._action_id("trash", "restore"))
-        raise NotImplementedError("Server writing trash restore is not exposed by the current server contract.")
+        response = await self._require_client().restore_manuscript_trash(
+            entity_type,
+            entity_id,
+            expected_version=expected_version,
+        )
+        return normalize_writing_record("server", self._normalize_entity_type(entity_type), self._model_to_dict(response))
+
+    @staticmethod
+    def _normalize_entity_type(entity_type: str) -> str:
+        return "manuscript" if entity_type == "part" else entity_type
+
+    @staticmethod
+    def _infer_entity_type(item: Mapping[str, Any]) -> str:
+        if "chapter_id" in item:
+            return "scene"
+        if "part_id" in item:
+            return "chapter"
+        if "sort_order" in item and "project_id" in item:
+            return "manuscript"
+        return "project"

@@ -124,6 +124,10 @@ class ServerFeedbackService:
         self._enforce("feedback.list.server")
         return self._dump(await self._require_client().list_feedback(conversation_id))
 
+    async def get_feedback(self, feedback_id: str) -> dict[str, Any]:
+        self._enforce("feedback.detail.server")
+        return self._dump(await self._require_client().get_feedback(feedback_id))
+
     async def update_feedback(
         self,
         feedback_id: str,

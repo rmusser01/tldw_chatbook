@@ -10,8 +10,6 @@ from typing import Any
 from .server_writing_service import (
     REASON_DIRECT_MANUSCRIPT_SCENE,
     REASON_SCENE_REPARENT,
-    REASON_TRASH_RESTORE,
-    REASON_VERSION_HISTORY,
 )
 from .writing_normalizers import normalize_writing_record, normalize_writing_structure
 
@@ -30,30 +28,6 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "affected_action_ids": [
             "writing.scenes.create.server",
             "writing.scenes.list.server",
-        ],
-    },
-    {
-        "operation_id": "writing.versions.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "server_contract_missing",
-        "user_message": REASON_VERSION_HISTORY,
-        "affected_action_ids": [
-            "writing.versions.create.server",
-            "writing.versions.list.server",
-            "writing.versions.detail.server",
-            "writing.versions.restore.server",
-        ],
-    },
-    {
-        "operation_id": "writing.trash.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "server_contract_missing",
-        "user_message": REASON_TRASH_RESTORE,
-        "affected_action_ids": [
-            "writing.trash.list.server",
-            "writing.trash.restore.server",
         ],
     },
 ]
@@ -135,11 +109,7 @@ class WritingScopeService:
         normalized_mode = self._normalize_mode(mode)
         reason = None
         if normalized_mode == WritingBackend.SERVER:
-            if action == "create_version":
-                reason = REASON_VERSION_HISTORY
-            elif action == "restore_deleted":
-                reason = REASON_TRASH_RESTORE
-            elif action == "reparent" and entity_kind == "scene":
+            if action == "reparent" and entity_kind == "scene":
                 reason = REASON_SCENE_REPARENT
             elif action in {"create", "move"} and entity_kind == "scene" and parent_kind == "manuscript":
                 reason = REASON_DIRECT_MANUSCRIPT_SCENE

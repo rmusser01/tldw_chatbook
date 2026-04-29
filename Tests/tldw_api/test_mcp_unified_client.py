@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tldw_chatbook.tldw_api.mcp_unified_client import MCPUnifiedClient
+from tldw_chatbook.tldw_api.mcp_governance_schemas import MCPGovernanceEvent
 from tldw_chatbook.tldw_api.mcp_unified_schemas import (
     ApprovalPolicyUpdateRequest,
     CatalogConnectionTestRequest,
@@ -226,6 +227,50 @@ async def test_unified_client_routes_remaining_mcp_runtime_contract_edges():
     assert mocked.await_args_list[3].kwargs["params"] == {"client_id": "chatbook"}
     assert mocked.await_args_list[4].kwargs["params"] == {"client_id": "chatbook", "config": "encoded-config"}
     assert mocked.await_args_list[4].kwargs["headers"] == {"mcp-session-id": "session-1"}
+
+
+@pytest.mark.asyncio
+async def test_unified_client_streams_mcp_governance_events():
+    root = _DummyRootClient()
+    calls = []
+
+    async def fake_stream(endpoint, *, params=None, event_model=None, headers=None):
+        calls.append((endpoint, params, event_model, headers))
+        yield event_model.model_validate(
+            {
+                "event_id": "evt-2",
+                "event_type": "mcp_hub.approval_policy.created",
+                "resource_type": "mcp_approval_policy",
+                "resource_id": "12",
+            }
+        )
+
+    root._stream_sse_request = fake_stream
+    client = MCPUnifiedClient(root)
+
+    events = [
+        event
+        async for event in client.stream_governance_events(
+            after_event_id="evt-1",
+            event_types=["mcp_hub.approval_policy.created"],
+            replay=True,
+        )
+    ]
+
+    assert calls == [
+        (
+            "/api/v1/mcp/hub/events/stream",
+            {
+                "after_event_id": "evt-1",
+                "event_type": ["mcp_hub.approval_policy.created"],
+                "replay": "true",
+            },
+            MCPGovernanceEvent,
+            None,
+        )
+    ]
+    assert events[0].event_id == "evt-2"
+    assert events[0].resource_type == "mcp_approval_policy"
 
 
 @pytest.mark.asyncio

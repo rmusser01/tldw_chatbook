@@ -33,14 +33,6 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
 
 _SERVER_UNSUPPORTED_CAPABILITIES = [
     {
-        "operation_id": "llm.catalog.providers.configure.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "server_contract_missing",
-        "user_message": "Server provider configuration mutation is intentionally not exposed by the discovery/catalog endpoints.",
-        "affected_action_ids": ["llm.catalog.providers.configure.server"],
-    },
-    {
         "operation_id": "llm.catalog.provider_process_control.server",
         "source": "server",
         "supported": False,
@@ -154,6 +146,82 @@ class LLMProviderCatalogScopeService:
         if normalized_mode == LLMProviderCatalogBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+
+    @staticmethod
+    def _normalize_provider_configuration(
+        mode: LLMProviderCatalogBackend,
+        payload: dict[str, Any],
+        provider: str | None = None,
+    ) -> dict[str, Any]:
+        record = dict(payload or {})
+        record.setdefault("backend", mode.value)
+        provider_name = provider or record.get("provider") or record.get("name")
+        if provider_name is not None:
+            record.setdefault("record_id", f"{mode.value}:llm_provider_configuration:{provider_name}")
+        return record
+
+    @classmethod
+    def _normalize_provider_configurations(
+        cls,
+        mode: LLMProviderCatalogBackend,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        record = dict(payload or {})
+        record.setdefault("backend", mode.value)
+        record.setdefault("record_id", f"{mode.value}:llm_provider_configurations:list")
+        if isinstance(record.get("items"), list):
+            record["items"] = [
+                cls._normalize_provider_configuration(mode, item) if isinstance(item, dict) else item
+                for item in record["items"]
+            ]
+        return record
+
+    async def list_user_provider_keys(
+        self,
+        *,
+        mode: LLMProviderCatalogBackend | str | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("providers", "configure", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(service.list_user_provider_keys())
+        return self._normalize_provider_configurations(normalized_mode, result)
+
+    async def upsert_user_provider_key(
+        self,
+        *,
+        mode: LLMProviderCatalogBackend | str | None = None,
+        request_data: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("providers", "configure", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(service.upsert_user_provider_key(request_data))
+        return self._normalize_provider_configuration(normalized_mode, result)
+
+    async def test_user_provider_key(
+        self,
+        *,
+        mode: LLMProviderCatalogBackend | str | None = None,
+        request_data: Any,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("providers", "configure", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(service.test_user_provider_key(request_data))
+        return self._normalize_provider_configuration(normalized_mode, result)
+
+    async def delete_user_provider_key(
+        self,
+        *,
+        mode: LLMProviderCatalogBackend | str | None = None,
+        provider: str,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("providers", "configure", normalized_mode))
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(service.delete_user_provider_key(provider))
+        return self._normalize_provider_configuration(normalized_mode, result, provider=provider)
 
     async def get_health(self, *, mode: LLMProviderCatalogBackend | str | None = None) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)

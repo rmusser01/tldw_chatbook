@@ -65,6 +65,10 @@ class FakeVoiceAssistantService:
         return {"backend": "server", "record_id": "server:voice_command_dry_run:test"}
 
 
+class WebSocketCapableVoiceAssistantService(FakeVoiceAssistantService):
+    supports_websocket_sessions = True
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
         self.denied_reason = denied_reason
@@ -198,8 +202,23 @@ def test_voice_assistant_scope_service_reports_known_unsupported_capabilities():
             "operation_id": "voice_assistant.websocket.server",
             "source": "server",
             "supported": False,
-            "reason_code": "transport_deferred",
-            "user_message": "Voice Assistant WebSocket sessions are deferred until Chatbook adds a dedicated realtime voice transport.",
+            "reason_code": "client_adapter_missing",
+            "user_message": "The server exposes Voice Assistant websocket sessions; this Chatbook adapter currently exposes REST commands, sessions, and analytics only.",
             "affected_action_ids": [],
         },
+    ]
+
+
+def test_voice_assistant_scope_service_omits_websocket_gap_for_capable_adapter():
+    scope = VoiceAssistantScopeService(server_service=WebSocketCapableVoiceAssistantService())
+
+    assert scope.list_unsupported_capabilities(mode="server") == [
+        {
+            "operation_id": "voice_assistant.workflows.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "deferred_scope",
+            "user_message": "Voice Assistant workflow template/status/cancel routes are deferred with broader workflow parity.",
+            "affected_action_ids": [],
+        }
     ]

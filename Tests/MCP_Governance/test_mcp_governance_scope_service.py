@@ -40,6 +40,16 @@ class FakeServerMCPGovernanceService:
         self.calls.append(("get_effective_policy", kwargs))
         return {"policy": {"allowed_tools": ["search"]}, "provenance": []}
 
+    async def stream_events(self, **kwargs):
+        self.calls.append(("stream_events", kwargs))
+        yield {
+            "event_id": "evt-2",
+            "event_type": "mcp_hub.external_server.created",
+            "resource_type": "mcp_external_server",
+            "resource_id": "github",
+            "action": "external_server.created",
+        }
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
@@ -170,13 +180,44 @@ def test_mcp_governance_scope_service_reports_local_unavailable_and_server_follo
             "affected_action_ids": [],
         }
     ]
-    assert scope.list_unsupported_capabilities(mode="server") == [
+    assert scope.list_unsupported_capabilities(mode="server") == []
+
+
+@pytest.mark.asyncio
+async def test_mcp_governance_scope_service_observes_server_events():
+    server = FakeServerMCPGovernanceService()
+    policy = FakePolicyEnforcer()
+    scope = MCPGovernanceScopeService(server_service=server, policy_enforcer=policy)
+
+    events = [
+        event
+        async for event in scope.observe_events(
+            mode="server",
+            after_event_id="evt-1",
+            event_types=["mcp_hub.external_server.created"],
+            replay=True,
+        )
+    ]
+
+    assert events == [
         {
-            "operation_id": "mcp_governance.server_event_observe.deferred",
-            "source": "server",
-            "supported": False,
-            "reason_code": "server_contract_missing",
-            "user_message": "Remote MCP governance REST administration is available, but no governance event stream is exposed by the current server contract.",
-            "affected_action_ids": ["mcp.governance.events.observe.server"],
+            "event_id": "evt-2",
+            "event_type": "mcp_hub.external_server.created",
+            "resource_type": "mcp_external_server",
+            "resource_id": "github",
+            "action": "external_server.created",
+            "backend": "server",
+            "record_id": "server:mcp_governance_event:evt-2",
         }
     ]
+    assert server.calls == [
+        (
+            "stream_events",
+            {
+                "after_event_id": "evt-1",
+                "event_types": ["mcp_hub.external_server.created"],
+                "replay": True,
+            },
+        )
+    ]
+    assert policy.calls == ["mcp.governance.events.observe.server"]

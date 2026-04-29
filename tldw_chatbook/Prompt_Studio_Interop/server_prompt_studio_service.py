@@ -33,6 +33,8 @@ from ..tldw_api import (
 class ServerPromptStudioService:
     """Execute REST/SSE-backed Prompt Studio operations against the active server."""
 
+    supports_websocket_realtime = False
+
     def __init__(
         self,
         client: Optional[TLDWAPIClient] = None,

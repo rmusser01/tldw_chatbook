@@ -23,16 +23,7 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
     }
 ]
 
-_SERVER_UNSUPPORTED_CAPABILITIES = [
-    {
-        "operation_id": "mcp_governance.server_event_observe.deferred",
-        "source": "server",
-        "supported": False,
-        "reason_code": "server_contract_missing",
-        "user_message": "Remote MCP governance REST administration is available, but no governance event stream is exposed by the current server contract.",
-        "affected_action_ids": ["mcp.governance.events.observe.server"],
-    }
-]
+_SERVER_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 
 
 class MCPGovernanceScopeService:
@@ -643,3 +634,35 @@ class MCPGovernanceScopeService:
             request_data,
             mode=mode,
         )
+
+    async def observe_events(
+        self,
+        *,
+        mode: MCPGovernanceBackend | str | None = None,
+        after_event_id: str | None = None,
+        event_types: list[str] | None = None,
+        owner_scope_type: str | None = None,
+        owner_scope_id: int | None = None,
+        replay: bool = True,
+    ):
+        normalized_mode = self._normalize_mode(mode)
+        service = self._require_server_service(normalized_mode)
+        self._enforce_policy("mcp.governance.events.observe.server")
+        stream_kwargs = {
+            "after_event_id": after_event_id,
+            "event_types": event_types,
+            "replay": replay,
+        }
+        if owner_scope_type is not None:
+            stream_kwargs["owner_scope_type"] = owner_scope_type
+        if owner_scope_id is not None:
+            stream_kwargs["owner_scope_id"] = owner_scope_id
+        async for event in service.stream_events(**stream_kwargs):
+            event_dict = dict(event) if isinstance(event, dict) else {"value": event}
+            source_id = event_dict.get("event_id") or event_dict.get("id")
+            yield self._normalize_record(
+                normalized_mode,
+                "mcp_governance_event",
+                event_dict,
+                source_id=source_id,
+            )

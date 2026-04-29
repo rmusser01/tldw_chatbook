@@ -182,6 +182,91 @@ class FakeWritingClient:
             }
         ]
 
+    async def create_manuscript_version(self, entity_type, entity_id, request_data):
+        self.calls.append(("create_manuscript_version", entity_type, entity_id, request_data.model_dump(mode="json", exclude_none=True)))
+        return {
+            "id": "version-1",
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "project_id": "project-1",
+            "version_number": 1,
+            "label": request_data.label,
+            "payload": {"title": "Snapshot", "content_plain": "Opening line."},
+            "created_at": "2026-04-21T00:02:00Z",
+            "client_id": "server-client",
+        }
+
+    async def list_manuscript_versions(self, entity_type, entity_id):
+        self.calls.append(("list_manuscript_versions", entity_type, entity_id))
+        return {
+            "versions": [
+                {
+                    "id": "version-1",
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "project_id": "project-1",
+                    "version_number": 1,
+                    "payload": {"title": "Snapshot", "content_plain": "Opening line."},
+                    "created_at": "2026-04-21T00:02:00Z",
+                    "client_id": "server-client",
+                }
+            ],
+            "total": 1,
+        }
+
+    async def get_manuscript_version(self, entity_type, entity_id, version_number):
+        self.calls.append(("get_manuscript_version", entity_type, entity_id, version_number))
+        return {
+            "id": "version-1",
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "project_id": "project-1",
+            "version_number": version_number,
+            "payload": {"title": "Snapshot", "content_plain": "Opening line."},
+            "created_at": "2026-04-21T00:02:00Z",
+            "client_id": "server-client",
+        }
+
+    async def restore_manuscript_version(self, entity_type, entity_id, version_number, *, expected_version=None):
+        self.calls.append(("restore_manuscript_version", entity_type, entity_id, version_number, expected_version))
+        return {
+            "id": entity_id,
+            "chapter_id": "chapter-1",
+            "project_id": "project-1",
+            "title": "Snapshot",
+            "content_plain": "Opening line.",
+            "version": 2,
+        }
+
+    async def list_manuscript_trash(self, *, entity_type=None):
+        self.calls.append(("list_manuscript_trash", entity_type))
+        return {
+            "items": [
+                {
+                    "id": "scene-1",
+                    "chapter_id": "chapter-1",
+                    "project_id": "project-1",
+                    "title": "Deleted Scene",
+                    "content_plain": "Draft",
+                    "deleted": True,
+                    "version": 3,
+                }
+            ],
+            "total": 1,
+        }
+
+    async def restore_manuscript_trash(self, entity_type, entity_id, *, expected_version=None):
+        self.calls.append(("restore_manuscript_trash", entity_type, entity_id, expected_version))
+        return {
+            "id": entity_id,
+            "chapter_id": "chapter-1",
+            "project_id": "project-1",
+            "title": "Deleted Scene",
+            "content_plain": "Draft",
+            "deleted": False,
+            "version": 4,
+        }
+
 
 class FakeClientProvider:
     def __init__(self, client):
@@ -415,6 +500,34 @@ async def test_server_writing_service_routes_auxiliary_manuscript_surfaces():
 
 
 @pytest.mark.asyncio
+async def test_server_writing_service_routes_version_history_and_trash_surfaces():
+    client = FakeWritingClient()
+    service = ServerWritingService(client=client)
+
+    version = await service.create_version("scene", "scene-1", label="First draft")
+    versions = await service.list_versions("scene", "scene-1")
+    fetched = await service.get_version("scene", "scene-1", 1)
+    restored_version = await service.restore_version("scene", "scene-1", 1, expected_version=2)
+    trash = await service.list_trash(entity_type="scene")
+    restored_trash = await service.restore_trash("scene", "scene-1", expected_version=3)
+
+    assert version["record_id"] == "server:writing_version:version-1"
+    assert versions[0]["record_id"] == "server:writing_version:version-1"
+    assert fetched["version_number"] == 1
+    assert restored_version["record_id"] == "server:writing_scene:scene-1"
+    assert trash[0]["record_id"] == "server:writing_scene:scene-1"
+    assert restored_trash["deleted"] is False
+    assert client.calls == [
+        ("create_manuscript_version", "scene", "scene-1", {"label": "First draft"}),
+        ("list_manuscript_versions", "scene", "scene-1"),
+        ("get_manuscript_version", "scene", "scene-1", 1),
+        ("restore_manuscript_version", "scene", "scene-1", 1, 2),
+        ("list_manuscript_trash", "scene"),
+        ("restore_manuscript_trash", "scene", "scene-1", 3),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_server_writing_service_rejects_direct_manuscript_scene_creation():
     service = ServerWritingService(client=FakeWritingClient())
 
@@ -443,8 +556,7 @@ async def test_server_writing_service_enforces_policy_actions():
         "manuscripts",
         [{"id": "manuscript-1", "sort_order": 2.0, "version": 1}],
     )
-    with pytest.raises(NotImplementedError, match="Server writing version history"):
-        await service.create_version("scene", "scene-1")
+    await service.create_version("scene", "scene-1")
 
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "writing.projects.create.server",

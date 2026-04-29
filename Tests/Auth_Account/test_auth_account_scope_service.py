@@ -538,3 +538,21 @@ def test_auth_account_scope_service_reports_known_unsupported_capabilities():
             "affected_action_ids": [],
         },
     ]
+
+
+def test_auth_account_scope_service_omits_durable_credential_gap_when_provider_is_available():
+    scope = AuthAccountScopeService(
+        server_service=None,
+        server_context_provider=FakeServerContextProvider(),
+    )
+
+    assert scope.list_unsupported_capabilities(mode="server") == [
+        {
+            "operation_id": "auth_account.admin_user_management.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "out_of_scope_admin_surface",
+            "user_message": "Admin/ops user-management surfaces are intentionally outside Chatbook client parity.",
+            "affected_action_ids": [],
+        },
+    ]

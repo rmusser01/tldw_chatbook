@@ -66,8 +66,8 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "operation_id": "audio.websocket_streaming.server",
         "source": "server",
         "supported": False,
-        "reason_code": "server_contract_followup",
-        "user_message": "Server websocket speech/chat streaming is not part of this REST-backed audio seam; REST status, limits, test, and non-streaming speech-chat helpers plus SSE job observation remain available.",
+        "reason_code": "client_adapter_missing",
+        "user_message": "The server exposes websocket speech/chat streaming endpoints, but this Chatbook audio adapter only exposes REST status, limits, test, non-streaming speech-chat, and SSE job observation.",
         "affected_action_ids": [],
     },
     {
@@ -261,7 +261,29 @@ class AudioServicesScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == AudioServicesBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
-        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        reports = []
+        for item in _SERVER_UNSUPPORTED_CAPABILITIES:
+            if item["operation_id"] == "audio.websocket_streaming.server" and self._has_websocket_streaming_adapter():
+                continue
+            reports.append(dict(item))
+        return reports
+
+    def _has_websocket_streaming_adapter(self) -> bool:
+        service = self.server_service
+        if service is None:
+            return False
+        explicit_support = getattr(service, "supports_websocket_streaming", None)
+        if explicit_support is False:
+            return False
+        if explicit_support is True:
+            return True
+        websocket_methods = (
+            "stream_audio_transcription_websocket",
+            "stream_speech_chat_websocket",
+            "stream_tts_websocket",
+            "stream_realtime_tts_websocket",
+        )
+        return any(callable(getattr(service, method_name, None)) for method_name in websocket_methods)
 
     async def get_tts_health(self, *, mode: AudioServicesBackend | str | None = None) -> dict[str, Any]:
         normalized_mode, result = await self._call(

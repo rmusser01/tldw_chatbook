@@ -664,7 +664,7 @@ class FakeServerStudyService:
 
     async def delete_deck(self, deck_id, *, expected_version=None, hard_delete=False):
         self.calls.append(("delete_deck", deck_id, expected_version, hard_delete))
-        raise NotImplementedError("Flashcard deck deletion is not supported by the current server API.")
+        return {"deleted": True}
 
     async def update_deck(self, deck_id, *, name=None, description=None, workspace_id=None, review_prompt_side=None, scheduler_type=None, scheduler_settings=None, expected_version=None):
         self.calls.append(("update_deck", deck_id, name, description, workspace_id, review_prompt_side, scheduler_type, scheduler_settings, expected_version))
@@ -1057,6 +1057,21 @@ class FakeServerStudyService:
                 "queue": "study",
                 "job_type": "generate_study_pack",
             }
+        }
+
+    async def list_study_pack_jobs(self, *, status=None, limit=100):
+        self.calls.append(("list_study_pack_jobs", status, limit))
+        return {
+            "jobs": [
+                {
+                    "id": 41,
+                    "status": "queued",
+                    "domain": "study_packs",
+                    "queue": "default",
+                    "job_type": "study_pack_generate",
+                }
+            ],
+            "total": 1,
         }
 
     async def get_study_pack_job_status(self, job_id):
@@ -2456,27 +2471,8 @@ async def test_scope_service_accepts_legacy_status_deleted_mapping():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_does_not_swallow_server_deck_delete_unsupported_error():
-    scope = StudyScopeService(
-        local_service=FakeLocalStudyService(),
-        server_service=FakeServerStudyService(),
-    )
-
-    with pytest.raises(
-        NotImplementedError,
-        match="Flashcard deck deletion is not supported by the current server API\\.",
-    ):
-        await scope.delete_deck(mode="server", deck_id=7, expected_version=2)
-
-
-@pytest.mark.asyncio
 async def test_scope_service_routes_server_deck_delete_when_adapter_provides_it():
-    class ServerStudyServiceWithDelete(FakeServerStudyService):
-        async def delete_deck(self, deck_id, *, expected_version=None, hard_delete=False):
-            self.calls.append(("delete_deck", deck_id, expected_version, hard_delete))
-            return {"status": "deleted"}
-
-    server = ServerStudyServiceWithDelete()
+    server = FakeServerStudyService()
     policy_enforcer = FakePolicyEnforcer()
     scope = StudyScopeService(
         local_service=FakeLocalStudyService(),
@@ -2507,6 +2503,7 @@ async def test_scope_service_routes_study_pack_jobs_to_server_with_policy():
         workspace_id="ws-1",
         source_items=[{"source_type": "note", "source_id": "note-1"}],
     )
+    listed = await scope.list_study_pack_jobs(mode="server", status="queued", limit=25)
     status = await scope.get_study_pack_job_status(mode="server", job_id=42)
     pack = await scope.get_study_pack(mode="server", pack_id=9)
     regenerated = await scope.regenerate_study_pack(mode="server", pack_id=9)
@@ -2514,6 +2511,8 @@ async def test_scope_service_routes_study_pack_jobs_to_server_with_policy():
     assert created["job"]["id"] == 42
     assert created["backend"] == "server"
     assert created["job"]["record_id"] == "server:study_pack_job:42"
+    assert listed["jobs"][0]["id"] == 41
+    assert listed["jobs"][0]["record_id"] == "server:study_pack_job:41"
     assert status["study_pack"]["id"] == 9
     assert status["study_pack"]["record_id"] == "server:study_pack:9"
     assert pack["id"] == 9
@@ -2522,12 +2521,14 @@ async def test_scope_service_routes_study_pack_jobs_to_server_with_policy():
     assert regenerated["job"]["record_id"] == "server:study_pack_job:43"
     assert policy_enforcer.calls == [
         "study.packs.jobs.launch.server",
+        "study.packs.jobs.list.server",
         "study.packs.jobs.observe.server",
         "study.packs.jobs.observe.server",
         "study.packs.jobs.launch.server",
     ]
-    assert server.calls[-4:] == [
+    assert server.calls[-5:] == [
         ("create_study_pack_job", "Cell biology pack", "ws-1", [{"source_type": "note", "source_id": "note-1"}]),
+        ("list_study_pack_jobs", "queued", 25),
         ("get_study_pack_job_status", 42),
         ("get_study_pack", 9),
         ("regenerate_study_pack", 9),
@@ -2686,21 +2687,4 @@ def test_scope_service_reports_study_pack_and_suggestion_unsupported_capabilitie
             ],
         },
     ]
-    assert server_report == [
-        {
-            "operation_id": "study.deck.delete.server",
-            "source": "server",
-            "supported": False,
-            "reason_code": "server_contract_missing",
-            "user_message": "Flashcard deck deletion is not supported by the current server API.",
-            "affected_action_ids": ["study.deck.delete.server"],
-        },
-        {
-            "operation_id": "study.packs.jobs.list.server",
-            "source": "server",
-            "supported": False,
-            "reason_code": "server_contract_missing",
-            "user_message": "The current server study-pack contract exposes launch, job status, pack detail, and regenerate, but not job listing/discovery.",
-            "affected_action_ids": ["study.packs.jobs.list.server"],
-        }
-    ]
+    assert server_report == []

@@ -137,6 +137,26 @@ class ServerSharingService:
         self._enforce("sharing.links.launch.server")
         return self._dump(await self._require_client().import_public_share(token))
 
+    async def observe_link_events(
+        self,
+        *,
+        owner_user_id: int | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        self._enforce("sharing.links.observe.server")
+        return self._dump(
+            await self._require_client().list_sharing_audit_events(
+                owner_user_id=owner_user_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                limit=limit,
+                offset=offset,
+            )
+        )
+
     async def share_workspace(
         self,
         *,

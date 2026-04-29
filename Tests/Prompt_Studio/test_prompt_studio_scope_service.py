@@ -38,6 +38,10 @@ class FakeServerPromptStudioService:
         yield {"event": "optimization.started", "project_id": project_id}
 
 
+class WebSocketCapablePromptStudioService(FakeServerPromptStudioService):
+    supports_websocket_realtime = True
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
         self.denied_reason = denied_reason
@@ -189,8 +193,14 @@ def test_prompt_studio_scope_service_reports_local_and_server_contract_gaps():
             "operation_id": "prompt_studio.websocket_realtime.server",
             "source": "server",
             "supported": False,
-            "reason_code": "server_contract_followup",
-            "user_message": "REST Prompt Studio operations and SSE observation are available; websocket realtime transport, background ping diagnostics, and local project mirrors remain follow-on.",
+            "reason_code": "client_adapter_missing",
+            "user_message": "The server exposes Prompt Studio websocket realtime endpoints; this Chatbook adapter currently exposes REST operations and SSE event observation only.",
             "affected_action_ids": [],
         }
     ]
+
+
+def test_prompt_studio_scope_service_omits_websocket_gap_for_capable_adapter():
+    scope = PromptStudioScopeService(server_service=WebSocketCapablePromptStudioService())
+
+    assert scope.list_unsupported_capabilities(mode="server") == []

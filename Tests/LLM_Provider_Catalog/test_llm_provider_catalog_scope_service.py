@@ -42,6 +42,22 @@ class FakeCatalogService:
         self.calls.append(("get_model_metadata", model_id, kwargs))
         return {"id": model_id, "name": "gpt-4.1", "provider": "openai"}
 
+    async def list_user_provider_keys(self):
+        self.calls.append(("list_user_provider_keys",))
+        return {"items": [{"provider": "openai", "has_key": True}]}
+
+    async def upsert_user_provider_key(self, request_data):
+        self.calls.append(("upsert_user_provider_key", request_data))
+        return {"provider": request_data["provider"], "has_key": True}
+
+    async def test_user_provider_key(self, request_data):
+        self.calls.append(("test_user_provider_key", request_data))
+        return {"provider": request_data["provider"], "valid": True}
+
+    async def delete_user_provider_key(self, provider):
+        self.calls.append(("delete_user_provider_key", provider))
+        return {"provider": provider, "deleted": True}
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
@@ -171,14 +187,6 @@ def test_llm_provider_catalog_scope_service_reports_known_unsupported_capabiliti
     ]
     assert scope.list_unsupported_capabilities(mode="server") == [
         {
-            "operation_id": "llm.catalog.providers.configure.server",
-            "source": "server",
-            "supported": False,
-            "reason_code": "server_contract_missing",
-            "user_message": "Server provider configuration mutation is intentionally not exposed by the discovery/catalog endpoints.",
-            "affected_action_ids": ["llm.catalog.providers.configure.server"],
-        },
-        {
             "operation_id": "llm.catalog.provider_process_control.server",
             "source": "server",
             "supported": False,
@@ -186,4 +194,44 @@ def test_llm_provider_catalog_scope_service_reports_known_unsupported_capabiliti
             "user_message": "Server-side provider process control remains deferred; the catalog seam only observes active-server availability.",
             "affected_action_ids": [],
         },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_llm_provider_catalog_scope_service_routes_server_provider_configuration():
+    server = FakeCatalogService("server")
+    policy = FakePolicyEnforcer()
+    scope = LLMProviderCatalogScopeService(
+        local_service=None,
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    listing = await scope.list_user_provider_keys(mode="server")
+    upserted = await scope.upsert_user_provider_key(
+        mode="server",
+        request_data={"provider": "openai", "api_key": "sk-test"},
+    )
+    tested = await scope.test_user_provider_key(
+        mode="server",
+        request_data={"provider": "openai", "api_key": "sk-test"},
+    )
+    deleted = await scope.delete_user_provider_key(mode="server", provider="openai")
+
+    assert listing["record_id"] == "server:llm_provider_configurations:list"
+    assert listing["items"][0]["record_id"] == "server:llm_provider_configuration:openai"
+    assert upserted["record_id"] == "server:llm_provider_configuration:openai"
+    assert tested["record_id"] == "server:llm_provider_configuration:openai"
+    assert deleted["record_id"] == "server:llm_provider_configuration:openai"
+    assert server.calls == [
+        ("list_user_provider_keys",),
+        ("upsert_user_provider_key", {"provider": "openai", "api_key": "sk-test"}),
+        ("test_user_provider_key", {"provider": "openai", "api_key": "sk-test"}),
+        ("delete_user_provider_key", "openai"),
+    ]
+    assert policy.calls == [
+        "llm.catalog.providers.configure.server",
+        "llm.catalog.providers.configure.server",
+        "llm.catalog.providers.configure.server",
+        "llm.catalog.providers.configure.server",
     ]

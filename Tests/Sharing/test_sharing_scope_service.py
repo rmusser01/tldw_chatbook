@@ -28,6 +28,21 @@ class FakeSharingService:
         self.calls.append(("chat_with_shared_workspace", share_id, kwargs))
         return {"answer": "ok"}
 
+    async def observe_link_events(self, **kwargs):
+        self.calls.append(("observe_link_events", kwargs))
+        return {
+            "events": [
+                {
+                    "id": 12,
+                    "event_type": "share.created",
+                    "resource_type": "workspace",
+                    "resource_id": kwargs.get("resource_id") or "ws-1",
+                    "owner_user_id": 1,
+                }
+            ],
+            "total": 1,
+        }
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
@@ -57,6 +72,7 @@ async def test_sharing_scope_service_routes_server_operations_and_normalizes_rec
     shared = await scope.list_shared_with_me(mode="server")
     sources = await scope.list_shared_workspace_sources(mode="server", share_id=7)
     chat = await scope.chat_with_shared_workspace(mode="server", share_id=7, query="summarize")
+    events = await scope.observe_link_events(mode="server", resource_type="workspace", resource_id="ws-1")
 
     assert links["tokens"][0]["record_id"] == "server:sharing_token:9"
     assert links["tokens"][0]["backend"] == "server"
@@ -64,12 +80,14 @@ async def test_sharing_scope_service_routes_server_operations_and_normalizes_rec
     assert shared["items"][0]["record_id"] == "server:shared_workspace:7"
     assert sources[0]["record_id"] == "server:shared_workspace_source:src-1"
     assert chat["backend"] == "server"
+    assert events["events"][0]["record_id"] == "server:sharing_event:12"
     assert server.calls == [
         ("list_links",),
         ("create_link", {"resource_type": "workspace", "resource_id": "ws-1"}),
         ("list_shared_with_me",),
         ("list_shared_workspace_sources", 7),
         ("chat_with_shared_workspace", 7, {"query": "summarize"}),
+        ("observe_link_events", {"resource_type": "workspace", "resource_id": "ws-1"}),
     ]
     assert policy.calls == [
         "sharing.links.list.server",
@@ -77,6 +95,7 @@ async def test_sharing_scope_service_routes_server_operations_and_normalizes_rec
         "sharing.links.list.server",
         "sharing.links.inspect.server",
         "sharing.links.launch.server",
+        "sharing.links.observe.server",
     ]
 
 
@@ -122,13 +141,4 @@ def test_sharing_scope_service_reports_known_unsupported_capabilities():
             "affected_action_ids": [],
         }
     ]
-    assert server_report == [
-        {
-            "operation_id": "sharing.links.observe.server",
-            "source": "server",
-            "supported": False,
-            "reason_code": "server_contract_missing",
-            "user_message": "The current server sharing API does not expose share-link observation events.",
-            "affected_action_ids": ["sharing.links.observe.server"],
-        }
-    ]
+    assert server_report == []

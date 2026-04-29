@@ -38,6 +38,21 @@ class FakeSharingClient:
         self.calls.append(("preview_public_share", token))
         return {"resource_type": "workspace", "access_level": "view_chat"}
 
+    async def list_sharing_audit_events(self, **kwargs):
+        self.calls.append(("list_sharing_audit_events", kwargs))
+        return {
+            "events": [
+                {
+                    "id": 12,
+                    "event_type": "share.created",
+                    "resource_type": kwargs.get("resource_type") or "workspace",
+                    "resource_id": kwargs.get("resource_id") or "ws-1",
+                    "owner_user_id": 1,
+                }
+            ],
+            "total": 1,
+        }
+
 
 class FakeClientProvider:
     def __init__(self, client):
@@ -191,6 +206,7 @@ async def test_server_sharing_service_routes_links_and_permissions_with_policy_a
     share = await service.share_workspace(workspace_id="ws-1", share_scope_type="team", share_scope_id=3)
     shared = await service.list_shared_with_me()
     preview = await service.inspect_public_link("secret-token")
+    events = await service.observe_link_events(resource_type="workspace", resource_id="ws-1")
 
     assert created["raw_token"] == "secret-token"
     assert links["total"] == 0
@@ -198,6 +214,7 @@ async def test_server_sharing_service_routes_links_and_permissions_with_policy_a
     assert share["workspace_id"] == "ws-1"
     assert shared["total"] == 0
     assert preview["resource_type"] == "workspace"
+    assert events["events"][0]["event_type"] == "share.created"
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "sharing.links.create.server",
         "sharing.links.list.server",
@@ -205,6 +222,7 @@ async def test_server_sharing_service_routes_links_and_permissions_with_policy_a
         "sharing.permissions.configure.server",
         "sharing.links.list.server",
         "sharing.links.inspect.server",
+        "sharing.links.observe.server",
     ]
 
 

@@ -85,24 +85,7 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
     },
 ]
 
-_SERVER_UNSUPPORTED_CAPABILITIES = [
-    {
-        "operation_id": "study.deck.delete.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "server_contract_missing",
-        "user_message": "Flashcard deck deletion is not supported by the current server API.",
-        "affected_action_ids": ["study.deck.delete.server"],
-    },
-    {
-        "operation_id": "study.packs.jobs.list.server",
-        "source": "server",
-        "supported": False,
-        "reason_code": "server_contract_missing",
-        "user_message": "The current server study-pack contract exposes launch, job status, pack detail, and regenerate, but not job listing/discovery.",
-        "affected_action_ids": ["study.packs.jobs.list.server"],
-    }
-]
+_SERVER_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 
 
 class StudyScopeService:
@@ -301,10 +284,6 @@ class StudyScopeService:
             raise ValueError(f"{feature_name} are server-only.")
 
     @staticmethod
-    def _raise_server_deck_delete_unsupported() -> None:
-        raise NotImplementedError("Flashcard deck deletion is not supported by the current server API.")
-
-    @staticmethod
     def _coerce_delete_result(result: Any) -> bool:
         if isinstance(result, Mapping):
             if "deleted" in result:
@@ -349,6 +328,17 @@ class StudyScopeService:
                 payload=job,
                 source_id=job.get("id"),
             )
+        if isinstance(record.get("jobs"), list):
+            record["jobs"] = [
+                self._with_backend_record(
+                    backend=StudyBackend.SERVER,
+                    kind="study_pack_job",
+                    payload=job,
+                    source_id=job.get("id"),
+                )
+                for job in record["jobs"]
+                if isinstance(job, Mapping)
+            ]
         if isinstance(record.get("study_pack"), Mapping):
             study_pack = record["study_pack"]
             record["study_pack"] = self._with_backend_record(
@@ -2163,6 +2153,24 @@ class StudyScopeService:
         self._enforce_policy(self._study_pack_action_id("observe"))
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).get_study_pack_job_status(job_id)
+        )
+        return self._normalize_study_pack_payload(result)
+
+    async def list_study_pack_jobs(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        self._require_server_only(normalized_mode, "Study packs")
+        self._enforce_policy(self._study_pack_action_id("list"))
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).list_study_pack_jobs(
+                status=status,
+                limit=limit,
+            )
         )
         return self._normalize_study_pack_payload(result)
 

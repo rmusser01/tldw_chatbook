@@ -12,6 +12,7 @@ from tldw_chatbook.tldw_api import (
     MCPCatalogEntryCreate,
     MCPExternalServerCreate,
     MCPExternalServerUpdate,
+    MCPGovernanceEvent,
     MCPGovernanceObject,
     MCPSecretSetRequest,
     TLDWAPIClient,
@@ -201,3 +202,52 @@ async def test_mcp_governance_client_routes_catalog_and_registry_calls(monkeypat
     assert created.id == 21
     assert updated.is_active is False
     assert deleted["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_governance_client_streams_governance_events(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    calls = []
+
+    async def fake_sse(method, endpoint, params=None, headers=None):
+        calls.append((method, endpoint, params, headers))
+        yield {
+            "event": "mcp_hub.external_server.created",
+            "event_id": "evt-2",
+            "data": {
+                "event_id": "evt-2",
+                "event_type": "mcp_hub.external_server.created",
+                "action": "external_server.created",
+                "resource_type": "mcp_external_server",
+                "resource_id": "docs",
+                "actor_id": 1,
+                "metadata": {"owner_scope_type": "team"},
+            },
+        }
+
+    monkeypatch.setattr(client, "_sse_request", fake_sse)
+
+    events = [
+        event
+        async for event in client.stream_mcp_governance_events(
+            after_event_id="evt-1",
+            event_types=["mcp_hub.external_server.created"],
+            replay=True,
+        )
+    ]
+
+    assert calls == [
+        (
+            "GET",
+            "/api/v1/mcp/hub/events/stream",
+            {
+                "after_event_id": "evt-1",
+                "event_type": ["mcp_hub.external_server.created"],
+                "replay": "true",
+            },
+            None,
+        )
+    ]
+    assert isinstance(events[0], MCPGovernanceEvent)
+    assert events[0].event_id == "evt-2"
+    assert events[0].event_type == "mcp_hub.external_server.created"

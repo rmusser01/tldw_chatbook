@@ -28,8 +28,8 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "operation_id": "meetings.websocket_live_ingest.server",
         "source": "server",
         "supported": False,
-        "reason_code": "server_contract_followup",
-        "user_message": "REST meeting CRUD/finalization/sharing and SSE event observation are available; websocket live transcript ingestion remains follow-on.",
+        "reason_code": "client_adapter_missing",
+        "user_message": "The server exposes websocket live transcript ingestion, but this Chatbook meetings adapter only exposes REST CRUD/finalization/sharing and SSE event observation.",
         "affected_action_ids": [],
     }
 ]
@@ -127,7 +127,23 @@ class MeetingsScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == MeetingsBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
-        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        reports = []
+        for item in _SERVER_UNSUPPORTED_CAPABILITIES:
+            if item["operation_id"] == "meetings.websocket_live_ingest.server" and self._has_websocket_live_ingest_adapter():
+                continue
+            reports.append(dict(item))
+        return reports
+
+    def _has_websocket_live_ingest_adapter(self) -> bool:
+        service = self.server_service
+        if service is None:
+            return False
+        explicit_support = getattr(service, "supports_websocket_live_ingest", None)
+        if explicit_support is False:
+            return False
+        if explicit_support is True:
+            return True
+        return callable(getattr(service, "stream_meeting_session_websocket", None))
 
     async def _call(
         self,

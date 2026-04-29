@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 MCPScopeType = Literal["global", "org", "team", "user"]
@@ -45,6 +45,33 @@ class MCPGovernanceObject(MCPFlexibleModel):
 class MCPGovernanceSummary(MCPFlexibleModel):
     entries: list[MCPGovernanceObject] = Field(default_factory=list)
     modules: list[MCPGovernanceObject] = Field(default_factory=list)
+
+
+class MCPGovernanceEvent(MCPFlexibleModel):
+    event_id: str
+    event_type: str
+    action: str | None = None
+    source: str | None = None
+    actor_id: int | None = None
+    resource_type: str | None = None
+    resource_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _unwrap_sse_frame(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        data = value.get("data")
+        if isinstance(data, dict):
+            merged = dict(data)
+            if value.get("event_id") is not None:
+                merged.setdefault("event_id", value.get("event_id"))
+            if value.get("event") is not None:
+                merged.setdefault("event_type", value.get("event"))
+            return merged
+        return value
 
 
 class MCPEffectivePolicyResponse(MCPFlexibleModel):
@@ -206,6 +233,7 @@ __all__ = [
     "MCPExternalServerCreate",
     "MCPExternalServerUpdate",
     "MCPFlexibleModel",
+    "MCPGovernanceEvent",
     "MCPGovernanceObject",
     "MCPGovernanceSummary",
     "MCPPermissionProfileCreate",

@@ -58,6 +58,10 @@ class FakeClient:
             }
         )
 
+    async def delete_flashcard_deck(self, deck_id, *, expected_version):
+        self.calls.append(("delete_flashcard_deck", deck_id, expected_version))
+        return {"deleted": True}
+
     async def upload_flashcard_asset(self, file):
         self.calls.append(("upload_flashcard_asset", file))
         return FlashcardAssetMetadata.model_validate(
@@ -468,6 +472,21 @@ class FakeClient:
             }
         )
 
+    async def list_study_pack_jobs(self, *, status=None, limit=100):
+        self.calls.append(("list_study_pack_jobs", status, limit))
+        return {
+            "jobs": [
+                {
+                    "id": 41,
+                    "status": "queued",
+                    "domain": "study_packs",
+                    "queue": "default",
+                    "job_type": "study_pack_generate",
+                }
+            ],
+            "total": 1,
+        }
+
     async def get_study_pack(self, pack_id):
         self.calls.append(("get_study_pack", pack_id))
         return StudyPackSummaryResponse.model_validate(
@@ -871,14 +890,14 @@ async def test_server_study_service_rejects_non_positive_expected_version_for_de
 
 
 @pytest.mark.asyncio
-async def test_server_deck_delete_is_explicitly_unsupported():
-    server = ServerStudyService(client=FakeClient())
+async def test_server_study_service_deletes_deck_with_expected_version():
+    client = FakeClient()
+    server = ServerStudyService(client=client)
 
-    with pytest.raises(
-        NotImplementedError,
-        match="Flashcard deck deletion is not supported by the current server API\\.",
-    ):
-        await server.delete_deck(deck_id=7, expected_version=2)
+    deleted = await server.delete_deck(deck_id=7, expected_version=2)
+
+    assert deleted == {"deleted": True}
+    assert client.calls == [("delete_flashcard_deck", 7, 2)]
 
 
 @pytest.mark.asyncio
@@ -891,11 +910,13 @@ async def test_server_study_service_wraps_study_pack_job_endpoints():
         workspace_id="ws-1",
         source_items=[{"source_type": "note", "source_id": "note-1", "label": "Notes"}],
     )
+    listed = await service.list_study_pack_jobs(status="queued", limit=25)
     status = await service.get_study_pack_job_status(42)
     pack = await service.get_study_pack(9)
     regenerated = await service.regenerate_study_pack(9)
 
     assert created["job"]["id"] == 42
+    assert listed["jobs"][0]["id"] == 41
     assert status["study_pack"]["id"] == 9
     assert pack["id"] == 9
     assert regenerated["job"]["id"] == 43
@@ -909,6 +930,7 @@ async def test_server_study_service_wraps_study_pack_job_endpoints():
                 "source_items": [{"source_type": "note", "source_id": "note-1", "label": "Notes", "locator": {}}],
             },
         ),
+        ("list_study_pack_jobs", "queued", 25),
         ("get_study_pack_job_status", 42),
         ("get_study_pack", 9),
         ("regenerate_study_pack", 9),
@@ -969,6 +991,7 @@ async def test_server_study_service_enforces_remote_study_pack_and_suggestion_ac
         workspace_id="ws-1",
         source_items=[{"source_type": "note", "source_id": "note-1", "label": "Notes"}],
     )
+    await service.list_study_pack_jobs(status="queued", limit=25)
     await service.get_study_pack_job_status(42)
     await service.get_study_pack(9)
     await service.regenerate_study_pack(9)
@@ -986,6 +1009,7 @@ async def test_server_study_service_enforces_remote_study_pack_and_suggestion_ac
 
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "study.packs.jobs.launch.server",
+        "study.packs.jobs.list.server",
         "study.packs.jobs.observe.server",
         "study.packs.jobs.observe.server",
         "study.packs.jobs.launch.server",

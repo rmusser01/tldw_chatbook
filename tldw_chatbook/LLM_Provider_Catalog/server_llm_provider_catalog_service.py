@@ -162,3 +162,20 @@ class ServerLLMProviderCatalogService:
             if model_id in candidates:
                 return dict(model)
         raise ValueError(f"Unknown server LLM model: {model_id}")
+
+    async def list_user_provider_keys(self) -> dict[str, Any]:
+        self._enforce("llm.catalog.providers.configure.server")
+        return self._dump(await self._require_client().list_user_provider_keys())
+
+    async def upsert_user_provider_key(self, request_data: Any) -> dict[str, Any]:
+        self._enforce("llm.catalog.providers.configure.server")
+        return self._dump(await self._require_client().upsert_user_provider_key(request_data))
+
+    async def test_user_provider_key(self, request_data: Any) -> dict[str, Any]:
+        self._enforce("llm.catalog.providers.configure.server")
+        return self._dump(await self._require_client().test_user_provider_key(request_data))
+
+    async def delete_user_provider_key(self, provider: str) -> dict[str, Any]:
+        self._enforce("llm.catalog.providers.configure.server")
+        deleted = await self._require_client().delete_user_provider_key(provider)
+        return {"provider": provider, "deleted": bool(deleted)}

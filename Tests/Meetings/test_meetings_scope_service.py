@@ -25,6 +25,14 @@ class FakeServerMeetingsService:
         yield {"type": "session.status", "session_id": session_id}
 
 
+class WebSocketCapableMeetingsService(FakeServerMeetingsService):
+    supports_websocket_live_ingest = True
+
+    async def stream_meeting_session_websocket(self, session_id, **kwargs):
+        self.calls.append(("stream_meeting_session_websocket", session_id, kwargs))
+        yield {"type": "transcript.partial", "session_id": session_id}
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
         self.denied_reason = denied_reason
@@ -117,8 +125,14 @@ def test_meetings_scope_service_reports_local_and_server_contract_gaps():
             "operation_id": "meetings.websocket_live_ingest.server",
             "source": "server",
             "supported": False,
-            "reason_code": "server_contract_followup",
-            "user_message": "REST meeting CRUD/finalization/sharing and SSE event observation are available; websocket live transcript ingestion remains follow-on.",
+            "reason_code": "client_adapter_missing",
+            "user_message": "The server exposes websocket live transcript ingestion, but this Chatbook meetings adapter only exposes REST CRUD/finalization/sharing and SSE event observation.",
             "affected_action_ids": [],
         }
     ]
+
+
+def test_meetings_scope_service_omits_websocket_gap_for_capable_adapter():
+    scope = MeetingsScopeService(server_service=WebSocketCapableMeetingsService())
+
+    assert scope.list_unsupported_capabilities(mode="server") == []

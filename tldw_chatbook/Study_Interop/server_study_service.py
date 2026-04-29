@@ -890,8 +890,15 @@ class ServerStudyService:
         hard_delete: bool = False,
     ) -> Any:
         self._enforce(self._deck_action_id("delete"))
-        raise NotImplementedError(
-            "Flashcard deck deletion is not supported by the current server API."
+        if hard_delete:
+            raise ValueError("hard_delete is not supported for server flashcard deck deletion.")
+        if expected_version is None or int(expected_version) < 1:
+            raise ValueError("expected_version must be >= 1 for server flashcard deck deletion.")
+        return self._model_to_dict(
+            await self._require_client().delete_flashcard_deck(
+                int(deck_id),
+                expected_version=int(expected_version),
+            )
         )
 
     async def get_next_review_candidate(self, *, deck_id: Optional[int] = None) -> dict[str, Any]:
@@ -939,6 +946,16 @@ class ServerStudyService:
                 source_items=source_items,
             )
         )
+        return self._model_to_dict(response)
+
+    async def list_study_pack_jobs(
+        self,
+        *,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        self._enforce(self._study_pack_action_id("list"))
+        response = await self._require_client().list_study_pack_jobs(status=status, limit=limit)
         return self._model_to_dict(response)
 
     async def get_study_pack_job_status(self, job_id: int) -> dict[str, Any]:

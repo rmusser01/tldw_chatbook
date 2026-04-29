@@ -184,3 +184,8 @@ class AuditEventResponse(BaseModel):
     ip_address: str | None = None
     user_agent: str | None = None
     created_at: str | None = None
+
+
+class AuditLogResponse(BaseModel):
+    events: list[AuditEventResponse]
+    total: int

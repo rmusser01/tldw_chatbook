@@ -310,6 +310,28 @@ class ServerMCPGovernanceService:
             )
         )
 
+    async def stream_events(
+        self,
+        *,
+        after_event_id: str | None = None,
+        event_types: list[str] | None = None,
+        owner_scope_type: str | None = None,
+        owner_scope_id: int | None = None,
+        replay: bool = True,
+    ):
+        self._enforce("mcp.governance.events.observe.server")
+        stream_kwargs = {
+            "after_event_id": after_event_id,
+            "event_types": event_types,
+            "replay": replay,
+        }
+        if owner_scope_type is not None:
+            stream_kwargs["owner_scope_type"] = owner_scope_type
+        if owner_scope_id is not None:
+            stream_kwargs["owner_scope_id"] = owner_scope_id
+        async for event in self._require_client().stream_mcp_governance_events(**stream_kwargs):
+            yield self._dump(event)
+
     async def list_org_tool_catalogs(self, *, org_id: int) -> list[dict[str, Any]]:
         self._enforce("mcp.governance.catalogs.list.server")
         return self._dump(await self._require_client().list_mcp_org_tool_catalogs(org_id))

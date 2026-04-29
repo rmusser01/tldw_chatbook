@@ -361,75 +361,75 @@ async def test_writing_scope_service_routes_update_and_delete_crud_actions():
 
 @pytest.mark.asyncio
 async def test_writing_scope_service_routes_manual_version_actions():
-    local = FakeWritingService("local")
+    server = FakeWritingService("server")
     policy = FakePolicyEnforcer()
     scope = WritingScopeService(
-        local_service=local,
-        server_service=FakeWritingService("server"),
+        local_service=FakeWritingService("local"),
+        server_service=server,
         policy_enforcer=policy,
     )
 
     version = await scope.create_version(
-        mode="local",
+        mode="server",
         entity_type="scene",
         entity_id="scene-1",
         label="First draft",
     )
-    versions = await scope.list_versions(mode="local", entity_type="scene", entity_id="scene-1")
-    fetched = await scope.get_version(mode="local", entity_type="scene", entity_id="scene-1", version_number=1)
+    versions = await scope.list_versions(mode="server", entity_type="scene", entity_id="scene-1")
+    fetched = await scope.get_version(mode="server", entity_type="scene", entity_id="scene-1", version_number=1)
     restored = await scope.restore_version(
-        mode="local",
+        mode="server",
         entity_type="scene",
         entity_id="scene-1",
         version_number=1,
         expected_version=1,
     )
 
-    assert version["record_id"] == "local:writing_version:local-version-1"
-    assert versions[0]["record_id"] == "local:writing_version:local-version-1"
+    assert version["record_id"] == "server:writing_version:server-version-1"
+    assert versions[0]["record_id"] == "server:writing_version:server-version-1"
     assert fetched["version_number"] == 1
-    assert restored["record_id"] == "local:writing_scene:scene-1"
-    assert local.calls == [
+    assert restored["record_id"] == "server:writing_scene:scene-1"
+    assert server.calls == [
         ("create_version", "scene", "scene-1", "First draft"),
         ("list_versions", "scene", "scene-1"),
         ("get_version", "scene", "scene-1", 1),
         ("restore_version", "scene", "scene-1", 1, 1),
     ]
     assert policy.calls == [
-        "writing.versions.create.local",
-        "writing.versions.list.local",
-        "writing.versions.detail.local",
-        "writing.versions.restore.local",
+        "writing.versions.create.server",
+        "writing.versions.list.server",
+        "writing.versions.detail.server",
+        "writing.versions.restore.server",
     ]
 
 
 @pytest.mark.asyncio
 async def test_writing_scope_service_routes_trash_actions():
-    local = FakeWritingService("local")
+    server = FakeWritingService("server")
     policy = FakePolicyEnforcer()
     scope = WritingScopeService(
-        local_service=local,
-        server_service=FakeWritingService("server"),
+        local_service=FakeWritingService("local"),
+        server_service=server,
         policy_enforcer=policy,
     )
 
-    trash = await scope.list_trash(mode="local", entity_type="scene")
+    trash = await scope.list_trash(mode="server", entity_type="scene")
     restored = await scope.restore_trash(
-        mode="local",
+        mode="server",
         entity_type="scene",
-        entity_id="local-scene-1",
+        entity_id="server-scene-1",
         expected_version=1,
     )
 
-    assert trash[0]["record_id"] == "local:writing_scene:local-scene-1"
-    assert restored["record_id"] == "local:writing_scene:local-scene-1"
-    assert local.calls == [
+    assert trash[0]["record_id"] == "server:writing_scene:server-scene-1"
+    assert restored["record_id"] == "server:writing_scene:server-scene-1"
+    assert server.calls == [
         ("list_trash", "scene"),
-        ("restore_trash", "scene", "local-scene-1", 1),
+        ("restore_trash", "scene", "server-scene-1", 1),
     ]
     assert policy.calls == [
-        "writing.trash.list.local",
-        "writing.trash.restore.local",
+        "writing.trash.list.server",
+        "writing.trash.restore.server",
     ]
 
 
@@ -571,8 +571,6 @@ def test_writing_scope_service_reports_known_unsupported_server_capabilities():
     assert local_report == []
     assert [item["operation_id"] for item in server_report] == [
         "writing.scenes.direct_manuscript_level.server",
-        "writing.versions.server",
-        "writing.trash.server",
     ]
     assert server_report[0]["reason_code"] == "server_contract_missing"
     assert server_report[0]["affected_action_ids"] == [

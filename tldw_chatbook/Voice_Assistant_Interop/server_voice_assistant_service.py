@@ -18,6 +18,8 @@ from ..tldw_api import (
 class ServerVoiceAssistantService:
     """Execute server-owned Voice Assistant REST actions against the active server."""
 
+    supports_websocket_sessions = False
+
     def __init__(
         self,
         client: Optional[TLDWAPIClient],

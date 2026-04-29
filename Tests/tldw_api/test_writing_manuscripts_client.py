@@ -39,6 +39,10 @@ from tldw_chatbook.tldw_api import (
     ManuscriptSceneResponse,
     ManuscriptSceneUpdate,
     ManuscriptStructureResponse,
+    ManuscriptTrashListResponse,
+    ManuscriptVersionCreateRequest,
+    ManuscriptVersionListResponse,
+    ManuscriptVersionResponse,
     ManuscriptWorldInfoCreate,
     ManuscriptWorldInfoResponse,
     ManuscriptWorldInfoUpdate,
@@ -131,6 +135,22 @@ def _scene_payload(**overrides):
         "deleted": False,
         "client_id": "server-client",
         "version": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _version_payload(**overrides):
+    payload = {
+        "id": "version-1",
+        "entity_type": "scene",
+        "entity_id": "scene-1",
+        "project_id": "project-1",
+        "version_number": 1,
+        "label": "First draft",
+        "payload": {"title": "Scene 1", "content_plain": "Opening line."},
+        "created_at": "2026-04-21T00:02:00Z",
+        "client_id": "server-client",
     }
     payload.update(overrides)
     return payload
@@ -510,6 +530,57 @@ async def test_writing_hierarchy_routes_wire_and_return_typed_models(monkeypatch
     assert isinstance(structure, ManuscriptStructureResponse)
     assert reordered is True
     assert deleted_scene is True
+
+
+@pytest.mark.asyncio
+async def test_writing_version_and_trash_routes_wire_and_return_typed_models(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        side_effect=[
+            _version_payload(),
+            {"versions": [_version_payload()], "total": 1},
+            _version_payload(),
+            _scene_payload(content_plain="Opening line.", version=3),
+            {"items": [_scene_payload(deleted=True, version=4)], "total": 1},
+            _scene_payload(deleted=False, version=5),
+        ]
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    created = await client.create_manuscript_version(
+        "scene",
+        "scene-1",
+        ManuscriptVersionCreateRequest(label="First draft"),
+    )
+    versions = await client.list_manuscript_versions("scene", "scene-1")
+    fetched = await client.get_manuscript_version("scene", "scene-1", 1)
+    restored_version = await client.restore_manuscript_version(
+        "scene",
+        "scene-1",
+        1,
+        expected_version=2,
+    )
+    trash = await client.list_manuscript_trash(entity_type="scene")
+    restored_trash = await client.restore_manuscript_trash("scene", "scene-1", expected_version=4)
+
+    assert [call.args[:2] for call in mocked.await_args_list] == [
+        ("POST", "/api/v1/writing/manuscripts/scene/scene-1/versions"),
+        ("GET", "/api/v1/writing/manuscripts/scene/scene-1/versions"),
+        ("GET", "/api/v1/writing/manuscripts/scene/scene-1/versions/1"),
+        ("POST", "/api/v1/writing/manuscripts/scene/scene-1/versions/1/restore"),
+        ("GET", "/api/v1/writing/manuscripts/trash"),
+        ("POST", "/api/v1/writing/manuscripts/trash/scene/scene-1/restore"),
+    ]
+    assert mocked.await_args_list[0].kwargs["json_data"] == {"label": "First draft"}
+    assert mocked.await_args_list[3].kwargs["headers"] == {"expected-version": "2"}
+    assert mocked.await_args_list[4].kwargs["params"] == {"entity_type": "scene"}
+    assert mocked.await_args_list[5].kwargs["headers"] == {"expected-version": "4"}
+    assert isinstance(created, ManuscriptVersionResponse)
+    assert isinstance(versions, ManuscriptVersionListResponse)
+    assert isinstance(fetched, ManuscriptVersionResponse)
+    assert isinstance(restored_version, ManuscriptSceneResponse)
+    assert isinstance(trash, ManuscriptTrashListResponse)
+    assert isinstance(restored_trash, ManuscriptSceneResponse)
 
 
 @pytest.mark.asyncio

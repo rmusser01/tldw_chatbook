@@ -30,8 +30,8 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "operation_id": "prompt_studio.websocket_realtime.server",
         "source": "server",
         "supported": False,
-        "reason_code": "server_contract_followup",
-        "user_message": "REST Prompt Studio operations and SSE observation are available; websocket realtime transport, background ping diagnostics, and local project mirrors remain follow-on.",
+        "reason_code": "client_adapter_missing",
+        "user_message": "The server exposes Prompt Studio websocket realtime endpoints; this Chatbook adapter currently exposes REST operations and SSE event observation only.",
         "affected_action_ids": [],
     }
 ]
@@ -120,7 +120,26 @@ class PromptStudioScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == PromptStudioBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
-        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        report: list[dict[str, Any]] = []
+        for item in _SERVER_UNSUPPORTED_CAPABILITIES:
+            if item["operation_id"] == "prompt_studio.websocket_realtime.server" and self._has_websocket_realtime_adapter():
+                continue
+            report.append(dict(item))
+        return report
+
+    def _has_websocket_realtime_adapter(self) -> bool:
+        service = self.server_service
+        if service is None:
+            return False
+        explicit_support = getattr(service, "supports_websocket_realtime", None)
+        if explicit_support is not None:
+            return bool(explicit_support)
+        websocket_methods = (
+            "connect_prompt_studio_websocket",
+            "stream_prompt_studio_websocket",
+            "stream_realtime_websocket",
+        )
+        return any(callable(getattr(service, method_name, None)) for method_name in websocket_methods)
 
     async def _call(
         self,

@@ -29,6 +29,10 @@ class FakeFeedbackClient:
             ],
         }
 
+    async def get_feedback(self, feedback_id):
+        self.calls.append(("get_feedback", feedback_id))
+        return {"id": feedback_id, "conversation_id": "conv-1", "message_id": "msg-1", "helpful": True}
+
     async def update_feedback(self, feedback_id, request_data):
         self.calls.append(("update_feedback", feedback_id, request_data.model_dump(exclude_none=True, mode="json")))
         return {"ok": True, "feedback_id": feedback_id}
@@ -52,11 +56,13 @@ async def test_server_feedback_service_routes_crud_with_policy_actions():
         query="Summarize",
     )
     listed = await service.list_feedback("conv-1")
+    detail = await service.get_feedback("fb-1")
     updated = await service.update_feedback("fb-1", issues=["missing_details"], user_notes="Needs detail")
     deleted = await service.delete_feedback("fb-1")
 
     assert submitted["feedback_id"] == "fb-1"
     assert listed["feedback"][0]["id"] == "fb-1"
+    assert detail["id"] == "fb-1"
     assert updated["feedback_id"] == "fb-1"
     assert deleted["deleted"] is True
     assert client.calls == [
@@ -71,12 +77,14 @@ async def test_server_feedback_service_routes_crud_with_policy_actions():
             },
         ),
         ("list_feedback", "conv-1"),
+        ("get_feedback", "fb-1"),
         ("update_feedback", "fb-1", {"issues": ["missing_details"], "user_notes": "Needs detail"}),
         ("delete_feedback", "fb-1"),
     ]
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "feedback.create.server",
         "feedback.list.server",
+        "feedback.detail.server",
         "feedback.update.server",
         "feedback.delete.server",
     ]

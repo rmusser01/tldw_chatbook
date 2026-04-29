@@ -594,6 +594,34 @@ class ManuscriptAnalysisListResponse(BaseModel):
     total: int
 
 
+class ManuscriptVersionCreateRequest(BaseModel):
+    label: str | None = Field(None, max_length=255)
+
+
+class ManuscriptVersionResponse(BaseModel):
+    id: str
+    entity_type: Literal["manuscript", "chapter", "scene"]
+    entity_id: str
+    project_id: str
+    version_number: int
+    label: str | None = None
+    payload: dict[str, Any]
+    created_at: datetime | str
+    client_id: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ManuscriptVersionListResponse(BaseModel):
+    versions: list[ManuscriptVersionResponse]
+    total: int
+
+
+class ManuscriptTrashListResponse(BaseModel):
+    items: list[dict[str, Any]]
+    total: int
+
+
 class ReorderItem(BaseModel):
     id: str
     sort_order: float

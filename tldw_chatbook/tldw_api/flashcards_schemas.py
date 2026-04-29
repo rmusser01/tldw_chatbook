@@ -498,6 +498,15 @@ class StudyPackJobStatusResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class StudyPackJobListResponse(BaseModel):
+    """Envelope returned by server-side study-pack job discovery."""
+
+    jobs: list[StudyPackJobSummaryResponse] = Field(default_factory=list)
+    total: int = Field(default=0, ge=0)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class FlashcardCitationResponse(BaseModel):
     """Serialized flashcard citation row used by remediation UI."""
 

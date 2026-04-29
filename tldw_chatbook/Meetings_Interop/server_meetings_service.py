@@ -20,6 +20,8 @@ from ..tldw_api import (
 class ServerMeetingsService:
     """Execute stable REST/SSE-backed meeting operations against the active server."""
 
+    supports_websocket_live_ingest = False
+
     def __init__(
         self,
         client: Optional[TLDWAPIClient],

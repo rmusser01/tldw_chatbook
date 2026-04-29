@@ -30,6 +30,18 @@ class FakeMCPGovernanceClient:
         self.calls.append(("get_mcp_effective_policy", kwargs))
         return {"policy": {"allowed_tools": ["search"]}, "provenance": []}
 
+    async def stream_mcp_governance_events(self, **kwargs):
+        self.calls.append(("stream_mcp_governance_events", kwargs))
+        yield {
+            "event_id": "evt-2",
+            "event_type": "mcp_hub.external_server.created",
+            "action": "external_server.created",
+            "resource_type": "mcp_external_server",
+            "resource_id": "github",
+            "actor_id": 1,
+            "metadata": {"owner_scope_type": "team"},
+        }
+
 
 @pytest.mark.asyncio
 async def test_server_mcp_governance_service_enforces_action_level_policy_and_routes_core_surfaces():
@@ -203,3 +215,40 @@ def test_server_mcp_governance_service_from_config_returns_provider_backed_servi
     assert service.client is None
     assert client.base_url == "https://example.com"
     assert service.client_provider.build_client() is client
+
+
+@pytest.mark.asyncio
+async def test_server_mcp_governance_service_streams_events_with_policy_gate():
+    client = FakeMCPGovernanceClient()
+    policy = Mock()
+    service = ServerMCPGovernanceService(client=client, policy_enforcer=policy)
+
+    events = [
+        event
+        async for event in service.stream_events(
+            after_event_id="evt-1",
+            event_types=["mcp_hub.external_server.created"],
+            replay=True,
+        )
+    ]
+
+    assert events == [
+        {
+            "event_id": "evt-2",
+            "event_type": "mcp_hub.external_server.created",
+            "action": "external_server.created",
+            "resource_type": "mcp_external_server",
+            "resource_id": "github",
+            "actor_id": 1,
+            "metadata": {"owner_scope_type": "team"},
+        }
+    ]
+    assert client.calls[-1] == (
+        "stream_mcp_governance_events",
+        {
+            "after_event_id": "evt-1",
+            "event_types": ["mcp_hub.external_server.created"],
+            "replay": True,
+        },
+    )
+    assert policy.require_allowed.call_args_list[-1].kwargs["action_id"] == "mcp.governance.events.observe.server"

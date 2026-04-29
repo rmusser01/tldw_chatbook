@@ -167,6 +167,14 @@ class FakeAudioService:
         return {"content": b"1\nHello", "content_type": "text/plain"}
 
 
+class WebSocketCapableAudioService(FakeAudioService):
+    supports_websocket_streaming = True
+
+    async def stream_audio_transcription_websocket(self, **kwargs):
+        self.calls.append(("stream_audio_transcription_websocket", kwargs))
+        yield {"type": "partial", "text": "Hello"}
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
         self.denied_reason = denied_reason
@@ -354,8 +362,8 @@ def test_audio_services_scope_service_reports_known_unsupported_capabilities():
             "operation_id": "audio.websocket_streaming.server",
             "source": "server",
             "supported": False,
-            "reason_code": "server_contract_followup",
-            "user_message": "Server websocket speech/chat streaming is not part of this REST-backed audio seam; REST status, limits, test, and non-streaming speech-chat helpers plus SSE job observation remain available.",
+            "reason_code": "client_adapter_missing",
+            "user_message": "The server exposes websocket speech/chat streaming endpoints, but this Chatbook audio adapter only exposes REST status, limits, test, non-streaming speech-chat, and SSE job observation.",
             "affected_action_ids": [],
         },
         {
@@ -366,6 +374,19 @@ def test_audio_services_scope_service_reports_known_unsupported_capabilities():
             "user_message": "Admin audio-job controls are outside Chatbook client parity for this slice.",
             "affected_action_ids": [],
         },
+    ]
+
+
+def test_audio_services_scope_service_omits_websocket_gap_for_capable_adapter():
+    scope = AudioServicesScopeService(
+        local_service=None,
+        server_service=WebSocketCapableAudioService("server"),
+    )
+
+    report = scope.list_unsupported_capabilities(mode="server")
+
+    assert [item["operation_id"] for item in report] == [
+        "audio.admin_job_controls.server",
     ]
 
 
