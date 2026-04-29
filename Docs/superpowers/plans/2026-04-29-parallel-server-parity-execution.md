@@ -54,7 +54,7 @@ Expected: each worktree checks out a dedicated lane branch. If any command fails
   - Shared dataclasses/enums for event, notification, sync, and provider migration metadata.
 - Modify `tldw_chatbook/runtime_policy/__init__.py`
   - Export the shared records.
-- Create `tests/RuntimePolicy/test_server_parity_models.py`
+- Create `Tests/RuntimePolicy/test_server_parity_models.py`
   - Covers defaults, immutability/copy behavior, cursor scoping, dedupe keys, sync readiness failures, and provider migration status records.
 
 ### Lane B1a Provider Migration: Chat And Character
@@ -64,18 +64,18 @@ Expected: each worktree checks out a dedicated lane branch. If any command fails
 - Modify `tldw_chatbook/Character_Chat/server_character_persona_service.py`
 - Modify `tldw_chatbook/Character_Chat/server_chat_dictionary_service.py`
 - Modify tests:
-  - `tests/Chat/test_server_chat_conversation_service.py`
-  - `tests/Chat/test_server_chat_loop_service.py`
-  - `tests/Character_Chat/test_server_chat_dictionary_service.py`
-  - `tests/Character_Chat/test_character_persona_scope_service.py` only if scope behavior changes.
+  - `Tests/Chat/test_server_chat_conversation_service.py`
+  - `Tests/Chat/test_server_chat_loop_service.py`
+  - `Tests/Character_Chat/test_server_chat_dictionary_service.py`
+  - `Tests/Character_Chat/test_character_persona_scope_service.py` only if scope behavior changes.
 
 ### Lane B1b Provider Migration: Media And Notes
 
 - Modify `tldw_chatbook/Media/server_media_reading_service.py`
 - Modify `tldw_chatbook/Notes/server_notes_workspace_service.py`
 - Modify tests:
-  - `tests/Media/test_server_media_reading_service.py`
-  - `tests/Notes/test_server_notes_workspace_service.py`
+  - `Tests/Media/test_server_media_reading_service.py`
+  - `Tests/Notes/test_server_notes_workspace_service.py`
 
 ### Lane B1c Provider Migration: Prompt, Chatbook, Prompt Studio
 
@@ -84,9 +84,9 @@ Expected: each worktree checks out a dedicated lane branch. If any command fails
 - Modify `tldw_chatbook/Prompt_Management/prompt_scope_service.py`
 - Modify `tldw_chatbook/Prompt_Studio_Interop/server_prompt_studio_service.py`
 - Modify tests:
-  - `tests/Chatbooks/test_server_chatbook_service.py`
-  - `tests/Prompt_Management/test_prompt_chatbook_scope_service.py`
-  - `tests/Prompt_Studio/test_prompt_studio_scope_service.py`
+  - `Tests/Chatbooks/test_server_chatbook_service.py`
+  - `Tests/Prompt_Management/test_prompt_chatbook_scope_service.py`
+  - `Tests/Prompt_Studio/test_prompt_studio_scope_service.py`
 
 ### Lane B1 Integration And Audit Guard
 
@@ -94,9 +94,9 @@ Expected: each worktree checks out a dedicated lane branch. If any command fails
   - Wire migrated services through `self.server_context_provider`.
 - Modify `Docs/Development/server-client-provider-migration-audit.md`
   - Move landed services from backlog to migrated list and keep intentional compatibility entries explicit.
-- Modify `tests/UI/test_screen_navigation.py`
+- Modify `Tests/UI/test_screen_navigation.py`
   - Service wiring only.
-- Create `tests/RuntimePolicy/test_server_client_provider_migration_audit.py`
+- Create `Tests/RuntimePolicy/test_server_client_provider_migration_audit.py`
   - Static audit guard for new direct/indirect legacy builders.
 
 ### Lane A Events And Notifications
@@ -107,10 +107,10 @@ Expected: each worktree checks out a dedicated lane branch. If any command fails
 - Create `tldw_chatbook/Notifications/notification_presentation.py`
 - Modify `tldw_chatbook/Notifications/__init__.py` if present, otherwise do not create package exports unless needed.
 - Create tests:
-  - `tests/Notifications/test_event_cursor_store.py`
-  - `tests/Notifications/test_event_observer.py`
-  - `tests/Notifications/test_local_event_producer.py`
-  - `tests/Notifications/test_notification_presentation.py`
+  - `Tests/Notifications/test_event_cursor_store.py`
+  - `Tests/Notifications/test_event_observer.py`
+  - `Tests/Notifications/test_local_event_producer.py`
+  - `Tests/Notifications/test_notification_presentation.py`
 
 ### Lane C Sync Dry-Run
 
@@ -119,10 +119,10 @@ Expected: each worktree checks out a dedicated lane branch. If any command fails
 - Create `tldw_chatbook/Sync_Interop/sync_mirror_report.py`
 - Modify `tldw_chatbook/Sync_Interop/sync_scope_service.py` only for read-only readiness/report exposure.
 - Create tests:
-  - `tests/Sync_Interop/test_sync_readiness.py`
-  - `tests/Sync_Interop/test_sync_state.py`
-  - `tests/Sync_Interop/test_sync_mirror_report.py`
-  - Modify `tests/Sync_Interop/test_sync_scope_service.py` only for unsupported-capability/readiness exposure.
+  - `Tests/Sync_Interop/test_sync_readiness.py`
+  - `Tests/Sync_Interop/test_sync_state.py`
+  - `Tests/Sync_Interop/test_sync_mirror_report.py`
+  - Modify `Tests/Sync_Interop/test_sync_scope_service.py` only for unsupported-capability/readiness exposure.
 
 ### Lane D Domain Edge Contracts
 
@@ -135,7 +135,7 @@ Expected: each worktree checks out a dedicated lane branch. If any command fails
 
 - Create `tldw_chatbook/UX_Interop/server_parity_contracts.py`
 - Create `tldw_chatbook/UX_Interop/__init__.py`
-- Create `tests/UX_Interop/test_server_parity_contracts.py`
+- Create `Tests/UX_Interop/test_server_parity_contracts.py`
 - Do not modify current UI screens.
 
 ---
@@ -175,7 +175,7 @@ Expected: one docs-only commit.
 
 - Create: `tldw_chatbook/runtime_policy/server_parity_models.py`
 - Modify: `tldw_chatbook/runtime_policy/__init__.py`
-- Test: `tests/RuntimePolicy/test_server_parity_models.py`
+- Test: `Tests/RuntimePolicy/test_server_parity_models.py`
 
 - [ ] **Step 1: Write failing tests for event identity and cursor scoping**
 
@@ -230,7 +230,7 @@ def test_sync_readiness_defaults_to_not_eligible():
 Run:
 
 ```bash
-python -m pytest tests/RuntimePolicy/test_server_parity_models.py -q
+python -m pytest Tests/RuntimePolicy/test_server_parity_models.py -q
 ```
 
 Expected: fails because the module does not exist.
@@ -254,7 +254,7 @@ Modify `tldw_chatbook/runtime_policy/__init__.py` to export the new records.
 Run:
 
 ```bash
-python -m pytest tests/RuntimePolicy/test_server_parity_models.py -q
+python -m pytest Tests/RuntimePolicy/test_server_parity_models.py -q
 python -m compileall tldw_chatbook/runtime_policy
 ```
 
@@ -263,7 +263,7 @@ Expected: tests pass and compileall succeeds.
 - [ ] **Step 7: Commit Lane 0**
 
 ```bash
-git add tldw_chatbook/runtime_policy/server_parity_models.py tldw_chatbook/runtime_policy/__init__.py tests/RuntimePolicy/test_server_parity_models.py
+git add tldw_chatbook/runtime_policy/server_parity_models.py tldw_chatbook/runtime_policy/__init__.py Tests/RuntimePolicy/test_server_parity_models.py
 git commit -m "Add shared server parity models"
 ```
 
@@ -275,9 +275,9 @@ git commit -m "Add shared server parity models"
 - Modify: `tldw_chatbook/Chat/server_chat_loop_service.py`
 - Modify: `tldw_chatbook/Character_Chat/server_character_persona_service.py`
 - Modify: `tldw_chatbook/Character_Chat/server_chat_dictionary_service.py`
-- Test: `tests/Chat/test_server_chat_conversation_service.py`
-- Test: `tests/Chat/test_server_chat_loop_service.py`
-- Test: `tests/Character_Chat/test_server_chat_dictionary_service.py`
+- Test: `Tests/Chat/test_server_chat_conversation_service.py`
+- Test: `Tests/Chat/test_server_chat_loop_service.py`
+- Test: `Tests/Character_Chat/test_server_chat_dictionary_service.py`
 
 - [ ] **Step 1: Add provider-backed service tests**
 
@@ -325,7 +325,7 @@ Use an exploding provider and assert denied policy raises before `build_client()
 Run the focused files:
 
 ```bash
-python -m pytest tests/Chat/test_server_chat_conversation_service.py tests/Chat/test_server_chat_loop_service.py tests/Character_Chat/test_server_chat_dictionary_service.py -q
+python -m pytest Tests/Chat/test_server_chat_conversation_service.py Tests/Chat/test_server_chat_loop_service.py Tests/Character_Chat/test_server_chat_dictionary_service.py -q
 ```
 
 Expected: fails because provider factories do not exist.
@@ -345,7 +345,7 @@ For each service:
 Run:
 
 ```bash
-python -m pytest tests/Chat/test_server_chat_conversation_service.py tests/Chat/test_server_chat_loop_service.py tests/Character_Chat/test_server_chat_dictionary_service.py -q
+python -m pytest Tests/Chat/test_server_chat_conversation_service.py Tests/Chat/test_server_chat_loop_service.py Tests/Character_Chat/test_server_chat_dictionary_service.py -q
 python -m compileall tldw_chatbook/Chat tldw_chatbook/Character_Chat
 ```
 
@@ -354,7 +354,7 @@ Expected: tests pass and compileall succeeds.
 - [ ] **Step 6: Commit Lane B1a**
 
 ```bash
-git add tldw_chatbook/Chat/server_chat_conversation_service.py tldw_chatbook/Chat/server_chat_loop_service.py tldw_chatbook/Character_Chat/server_character_persona_service.py tldw_chatbook/Character_Chat/server_chat_dictionary_service.py tests/Chat/test_server_chat_conversation_service.py tests/Chat/test_server_chat_loop_service.py tests/Character_Chat/test_server_chat_dictionary_service.py
+git add tldw_chatbook/Chat/server_chat_conversation_service.py tldw_chatbook/Chat/server_chat_loop_service.py tldw_chatbook/Character_Chat/server_character_persona_service.py tldw_chatbook/Character_Chat/server_chat_dictionary_service.py Tests/Chat/test_server_chat_conversation_service.py Tests/Chat/test_server_chat_loop_service.py Tests/Character_Chat/test_server_chat_dictionary_service.py
 git commit -m "Migrate chat and character services to server context provider"
 ```
 
@@ -364,8 +364,8 @@ git commit -m "Migrate chat and character services to server context provider"
 
 - Modify: `tldw_chatbook/Media/server_media_reading_service.py`
 - Modify: `tldw_chatbook/Notes/server_notes_workspace_service.py`
-- Test: `tests/Media/test_server_media_reading_service.py`
-- Test: `tests/Notes/test_server_notes_workspace_service.py`
+- Test: `Tests/Media/test_server_media_reading_service.py`
+- Test: `Tests/Notes/test_server_notes_workspace_service.py`
 
 - [ ] **Step 1: Add provider-backed tests for media and notes**
 
@@ -380,7 +380,7 @@ Add tests for:
 - [ ] **Step 2: Run tests and verify failure**
 
 ```bash
-python -m pytest tests/Media/test_server_media_reading_service.py tests/Notes/test_server_notes_workspace_service.py -q
+python -m pytest Tests/Media/test_server_media_reading_service.py Tests/Notes/test_server_notes_workspace_service.py -q
 ```
 
 Expected: fails because provider factories do not exist.
@@ -392,7 +392,7 @@ Use the same pattern from Task 2. Do not edit `app.py`.
 - [ ] **Step 4: Verify Lane B1b**
 
 ```bash
-python -m pytest tests/Media/test_server_media_reading_service.py tests/Notes/test_server_notes_workspace_service.py -q
+python -m pytest Tests/Media/test_server_media_reading_service.py Tests/Notes/test_server_notes_workspace_service.py -q
 python -m compileall tldw_chatbook/Media tldw_chatbook/Notes
 ```
 
@@ -401,7 +401,7 @@ Expected: tests pass and compileall succeeds.
 - [ ] **Step 5: Commit Lane B1b**
 
 ```bash
-git add tldw_chatbook/Media/server_media_reading_service.py tldw_chatbook/Notes/server_notes_workspace_service.py tests/Media/test_server_media_reading_service.py tests/Notes/test_server_notes_workspace_service.py
+git add tldw_chatbook/Media/server_media_reading_service.py tldw_chatbook/Notes/server_notes_workspace_service.py Tests/Media/test_server_media_reading_service.py Tests/Notes/test_server_notes_workspace_service.py
 git commit -m "Migrate media and notes services to server context provider"
 ```
 
@@ -413,9 +413,9 @@ git commit -m "Migrate media and notes services to server context provider"
 - Modify: `tldw_chatbook/Prompt_Management/server_prompt_service.py`
 - Modify: `tldw_chatbook/Prompt_Management/prompt_scope_service.py`
 - Modify: `tldw_chatbook/Prompt_Studio_Interop/server_prompt_studio_service.py`
-- Test: `tests/Chatbooks/test_server_chatbook_service.py`
-- Test: `tests/Prompt_Management/test_prompt_chatbook_scope_service.py`
-- Test: `tests/Prompt_Studio/test_prompt_studio_scope_service.py`
+- Test: `Tests/Chatbooks/test_server_chatbook_service.py`
+- Test: `Tests/Prompt_Management/test_prompt_chatbook_scope_service.py`
+- Test: `Tests/Prompt_Studio/test_prompt_studio_scope_service.py`
 
 - [ ] **Step 1: Add provider-backed tests**
 
@@ -428,7 +428,7 @@ Add or update a `PromptScopeService` test proving server prompt operations can u
 - [ ] **Step 3: Run tests and verify failure**
 
 ```bash
-python -m pytest tests/Chatbooks/test_server_chatbook_service.py tests/Prompt_Management/test_prompt_chatbook_scope_service.py tests/Prompt_Studio/test_prompt_studio_scope_service.py -q
+python -m pytest Tests/Chatbooks/test_server_chatbook_service.py Tests/Prompt_Management/test_prompt_chatbook_scope_service.py Tests/Prompt_Studio/test_prompt_studio_scope_service.py -q
 ```
 
 Expected: fails because provider factories and/or prompt scope provider wiring do not exist.
@@ -444,7 +444,7 @@ Modify `prompt_scope_service.py` so server operations use an injected server ser
 - [ ] **Step 6: Verify Lane B1c**
 
 ```bash
-python -m pytest tests/Chatbooks/test_server_chatbook_service.py tests/Prompt_Management/test_prompt_chatbook_scope_service.py tests/Prompt_Studio/test_prompt_studio_scope_service.py -q
+python -m pytest Tests/Chatbooks/test_server_chatbook_service.py Tests/Prompt_Management/test_prompt_chatbook_scope_service.py Tests/Prompt_Studio/test_prompt_studio_scope_service.py -q
 python -m compileall tldw_chatbook/Chatbooks tldw_chatbook/Prompt_Management tldw_chatbook/Prompt_Studio_Interop
 ```
 
@@ -453,7 +453,7 @@ Expected: tests pass and compileall succeeds.
 - [ ] **Step 7: Commit Lane B1c**
 
 ```bash
-git add tldw_chatbook/Chatbooks/server_chatbook_service.py tldw_chatbook/Prompt_Management/server_prompt_service.py tldw_chatbook/Prompt_Management/prompt_scope_service.py tldw_chatbook/Prompt_Studio_Interop/server_prompt_studio_service.py tests/Chatbooks/test_server_chatbook_service.py tests/Prompt_Management/test_prompt_chatbook_scope_service.py tests/Prompt_Studio/test_prompt_studio_scope_service.py
+git add tldw_chatbook/Chatbooks/server_chatbook_service.py tldw_chatbook/Prompt_Management/server_prompt_service.py tldw_chatbook/Prompt_Management/prompt_scope_service.py tldw_chatbook/Prompt_Studio_Interop/server_prompt_studio_service.py Tests/Chatbooks/test_server_chatbook_service.py Tests/Prompt_Management/test_prompt_chatbook_scope_service.py Tests/Prompt_Studio/test_prompt_studio_scope_service.py
 git commit -m "Migrate prompt and chatbook services to server context provider"
 ```
 
@@ -463,8 +463,8 @@ git commit -m "Migrate prompt and chatbook services to server context provider"
 
 - Modify: `tldw_chatbook/app.py`
 - Modify: `Docs/Development/server-client-provider-migration-audit.md`
-- Modify: `tests/UI/test_screen_navigation.py`
-- Create: `tests/RuntimePolicy/test_server_client_provider_migration_audit.py`
+- Modify: `Tests/UI/test_screen_navigation.py`
+- Create: `Tests/RuntimePolicy/test_server_client_provider_migration_audit.py`
 
 - [ ] **Step 1: Add app wiring assertions**
 
@@ -477,7 +477,7 @@ Create a static test that scans for direct and indirect client builders and comp
 - [ ] **Step 3: Run tests and verify failure before app wiring**
 
 ```bash
-python -m pytest tests/UI/test_screen_navigation.py tests/RuntimePolicy/test_server_client_provider_migration_audit.py -q
+python -m pytest Tests/UI/test_screen_navigation.py Tests/RuntimePolicy/test_server_client_provider_migration_audit.py -q
 ```
 
 Expected: app wiring assertions fail until `app.py` uses provider-backed factories.
@@ -493,7 +493,7 @@ Move B1a/B1b/B1c services to migrated or partially migrated status. Keep compati
 - [ ] **Step 6: Verify Lane B1 integration**
 
 ```bash
-python -m pytest tests/UI/test_screen_navigation.py tests/RuntimePolicy/test_server_client_provider_migration_audit.py -q
+python -m pytest Tests/UI/test_screen_navigation.py Tests/RuntimePolicy/test_server_client_provider_migration_audit.py -q
 python -m compileall tldw_chatbook
 ```
 
@@ -502,7 +502,7 @@ Expected: service-wiring tests pass, audit guard passes, compileall succeeds.
 - [ ] **Step 7: Commit Lane B1 integration**
 
 ```bash
-git add tldw_chatbook/app.py Docs/Development/server-client-provider-migration-audit.md tests/UI/test_screen_navigation.py tests/RuntimePolicy/test_server_client_provider_migration_audit.py
+git add tldw_chatbook/app.py Docs/Development/server-client-provider-migration-audit.md Tests/UI/test_screen_navigation.py Tests/RuntimePolicy/test_server_client_provider_migration_audit.py
 git commit -m "Wire migrated services through server context provider"
 ```
 
@@ -514,10 +514,10 @@ git commit -m "Wire migrated services through server context provider"
 - Create: `tldw_chatbook/Notifications/event_observer.py`
 - Create: `tldw_chatbook/Notifications/local_event_producer.py`
 - Create: `tldw_chatbook/Notifications/notification_presentation.py`
-- Test: `tests/Notifications/test_event_cursor_store.py`
-- Test: `tests/Notifications/test_event_observer.py`
-- Test: `tests/Notifications/test_local_event_producer.py`
-- Test: `tests/Notifications/test_notification_presentation.py`
+- Test: `Tests/Notifications/test_event_cursor_store.py`
+- Test: `Tests/Notifications/test_event_observer.py`
+- Test: `Tests/Notifications/test_local_event_producer.py`
+- Test: `Tests/Notifications/test_notification_presentation.py`
 
 - [ ] **Step 1: Write event cursor store tests**
 
@@ -549,7 +549,7 @@ Prove local notification delivery state is separate from server-owned read/dismi
 - [ ] **Step 6: Run tests and verify failure**
 
 ```bash
-python -m pytest tests/Notifications/test_event_cursor_store.py tests/Notifications/test_event_observer.py tests/Notifications/test_local_event_producer.py tests/Notifications/test_notification_presentation.py -q
+python -m pytest Tests/Notifications/test_event_cursor_store.py Tests/Notifications/test_event_observer.py Tests/Notifications/test_local_event_producer.py Tests/Notifications/test_notification_presentation.py -q
 ```
 
 Expected: fails because event foundation modules do not exist.
@@ -570,7 +570,7 @@ Requirements:
 - [ ] **Step 8: Verify Lane A**
 
 ```bash
-python -m pytest tests/Notifications/test_event_cursor_store.py tests/Notifications/test_event_observer.py tests/Notifications/test_local_event_producer.py tests/Notifications/test_notification_presentation.py -q
+python -m pytest Tests/Notifications/test_event_cursor_store.py Tests/Notifications/test_event_observer.py Tests/Notifications/test_local_event_producer.py Tests/Notifications/test_notification_presentation.py -q
 python -m compileall tldw_chatbook/Notifications
 ```
 
@@ -579,7 +579,7 @@ Expected: tests pass and compileall succeeds.
 - [ ] **Step 9: Commit Lane A**
 
 ```bash
-git add tldw_chatbook/Notifications/event_cursor_store.py tldw_chatbook/Notifications/event_observer.py tldw_chatbook/Notifications/local_event_producer.py tldw_chatbook/Notifications/notification_presentation.py tests/Notifications/test_event_cursor_store.py tests/Notifications/test_event_observer.py tests/Notifications/test_local_event_producer.py tests/Notifications/test_notification_presentation.py
+git add tldw_chatbook/Notifications/event_cursor_store.py tldw_chatbook/Notifications/event_observer.py tldw_chatbook/Notifications/local_event_producer.py tldw_chatbook/Notifications/notification_presentation.py Tests/Notifications/test_event_cursor_store.py Tests/Notifications/test_event_observer.py Tests/Notifications/test_local_event_producer.py Tests/Notifications/test_notification_presentation.py
 git commit -m "Add realtime event and notification foundation"
 ```
 
@@ -591,10 +591,10 @@ git commit -m "Add realtime event and notification foundation"
 - Create: `tldw_chatbook/Sync_Interop/sync_state.py`
 - Create: `tldw_chatbook/Sync_Interop/sync_mirror_report.py`
 - Modify: `tldw_chatbook/Sync_Interop/sync_scope_service.py`
-- Test: `tests/Sync_Interop/test_sync_readiness.py`
-- Test: `tests/Sync_Interop/test_sync_state.py`
-- Test: `tests/Sync_Interop/test_sync_mirror_report.py`
-- Test: `tests/Sync_Interop/test_sync_scope_service.py`
+- Test: `Tests/Sync_Interop/test_sync_readiness.py`
+- Test: `Tests/Sync_Interop/test_sync_state.py`
+- Test: `Tests/Sync_Interop/test_sync_mirror_report.py`
+- Test: `Tests/Sync_Interop/test_sync_scope_service.py`
 
 - [ ] **Step 1: Write readiness default-false tests**
 
@@ -622,7 +622,7 @@ Readiness, cursor state, outbox shape, and mirror reports must be scoped by acti
 - [ ] **Step 5: Run tests and verify failure**
 
 ```bash
-python -m pytest tests/Sync_Interop/test_sync_readiness.py tests/Sync_Interop/test_sync_state.py tests/Sync_Interop/test_sync_mirror_report.py tests/Sync_Interop/test_sync_scope_service.py -q
+python -m pytest Tests/Sync_Interop/test_sync_readiness.py Tests/Sync_Interop/test_sync_state.py Tests/Sync_Interop/test_sync_mirror_report.py Tests/Sync_Interop/test_sync_scope_service.py -q
 ```
 
 Expected: fails because dry-run substrate modules do not exist.
@@ -646,7 +646,7 @@ Requirements:
 - [ ] **Step 7: Verify Lane C**
 
 ```bash
-python -m pytest tests/Sync_Interop/test_sync_readiness.py tests/Sync_Interop/test_sync_state.py tests/Sync_Interop/test_sync_mirror_report.py tests/Sync_Interop/test_sync_scope_service.py -q
+python -m pytest Tests/Sync_Interop/test_sync_readiness.py Tests/Sync_Interop/test_sync_state.py Tests/Sync_Interop/test_sync_mirror_report.py Tests/Sync_Interop/test_sync_scope_service.py -q
 python -m compileall tldw_chatbook/Sync_Interop
 ```
 
@@ -655,7 +655,7 @@ Expected: tests pass and compileall succeeds.
 - [ ] **Step 8: Commit Lane C**
 
 ```bash
-git add tldw_chatbook/Sync_Interop/sync_readiness.py tldw_chatbook/Sync_Interop/sync_state.py tldw_chatbook/Sync_Interop/sync_mirror_report.py tldw_chatbook/Sync_Interop/sync_scope_service.py tests/Sync_Interop/test_sync_readiness.py tests/Sync_Interop/test_sync_state.py tests/Sync_Interop/test_sync_mirror_report.py tests/Sync_Interop/test_sync_scope_service.py
+git add tldw_chatbook/Sync_Interop/sync_readiness.py tldw_chatbook/Sync_Interop/sync_state.py tldw_chatbook/Sync_Interop/sync_mirror_report.py tldw_chatbook/Sync_Interop/sync_scope_service.py Tests/Sync_Interop/test_sync_readiness.py Tests/Sync_Interop/test_sync_state.py Tests/Sync_Interop/test_sync_mirror_report.py Tests/Sync_Interop/test_sync_scope_service.py
 git commit -m "Add sync dry-run readiness substrate"
 ```
 
@@ -705,7 +705,7 @@ If a contract identifies a currently missing unsupported-capability hard stop, a
 Run any added tests plus markdown sanity:
 
 ```bash
-python -m pytest tests/Chat tests/Media tests/Notes -q
+python -m pytest Tests/Chat Tests/Media Tests/Notes -q
 ```
 
 Expected: relevant backend tests pass. Ignore unrelated broad UI failures.
@@ -714,7 +714,7 @@ Expected: relevant backend tests pass. Ignore unrelated broad UI failures.
 
 ```bash
 git add Docs/Parity/domain-edge-contracts
-git add tests/Chat tests/Media tests/Notes
+git add Tests/Chat Tests/Media Tests/Notes
 git commit -m "Document domain edge contracts"
 ```
 
@@ -724,7 +724,7 @@ git commit -m "Document domain edge contracts"
 
 - Create: `tldw_chatbook/UX_Interop/__init__.py`
 - Create: `tldw_chatbook/UX_Interop/server_parity_contracts.py`
-- Test: `tests/UX_Interop/test_server_parity_contracts.py`
+- Test: `Tests/UX_Interop/test_server_parity_contracts.py`
 
 - [ ] **Step 1: Write contract fixture tests**
 
@@ -740,7 +740,7 @@ Cover fixtures for:
 - [ ] **Step 2: Run tests and verify failure**
 
 ```bash
-python -m pytest tests/UX_Interop/test_server_parity_contracts.py -q
+python -m pytest Tests/UX_Interop/test_server_parity_contracts.py -q
 ```
 
 Expected: fails because UX contract module does not exist.
@@ -757,7 +757,7 @@ Requirements:
 - [ ] **Step 4: Verify Lane E**
 
 ```bash
-python -m pytest tests/UX_Interop/test_server_parity_contracts.py -q
+python -m pytest Tests/UX_Interop/test_server_parity_contracts.py -q
 python -m compileall tldw_chatbook/UX_Interop
 ```
 
@@ -766,7 +766,7 @@ Expected: tests pass and compileall succeeds.
 - [ ] **Step 5: Commit Lane E**
 
 ```bash
-git add tldw_chatbook/UX_Interop tests/UX_Interop/test_server_parity_contracts.py
+git add tldw_chatbook/UX_Interop Tests/UX_Interop/test_server_parity_contracts.py
 git commit -m "Add server parity UX handoff contracts"
 ```
 
@@ -792,18 +792,18 @@ Merge order:
 
 ```bash
 python -m pytest \
-  tests/RuntimePolicy \
-  tests/Chat/test_server_chat_conversation_service.py \
-  tests/Chat/test_server_chat_loop_service.py \
-  tests/Character_Chat/test_server_chat_dictionary_service.py \
-  tests/Media/test_server_media_reading_service.py \
-  tests/Notes/test_server_notes_workspace_service.py \
-  tests/Chatbooks/test_server_chatbook_service.py \
-  tests/Prompt_Management/test_prompt_chatbook_scope_service.py \
-  tests/Prompt_Studio/test_prompt_studio_scope_service.py \
-  tests/Notifications \
-  tests/Sync_Interop \
-  tests/UX_Interop \
+  Tests/RuntimePolicy \
+  Tests/Chat/test_server_chat_conversation_service.py \
+  Tests/Chat/test_server_chat_loop_service.py \
+  Tests/Character_Chat/test_server_chat_dictionary_service.py \
+  Tests/Media/test_server_media_reading_service.py \
+  Tests/Notes/test_server_notes_workspace_service.py \
+  Tests/Chatbooks/test_server_chatbook_service.py \
+  Tests/Prompt_Management/test_prompt_chatbook_scope_service.py \
+  Tests/Prompt_Studio/test_prompt_studio_scope_service.py \
+  Tests/Notifications \
+  Tests/Sync_Interop \
+  Tests/UX_Interop \
   -q
 ```
 
@@ -812,7 +812,7 @@ Expected: focused backend/service/contract tests pass.
 - [ ] **Step 3: Run service-wiring UI tests only**
 
 ```bash
-python -m pytest tests/UI/test_screen_navigation.py -q
+python -m pytest Tests/UI/test_screen_navigation.py -q
 ```
 
 Expected: service-wiring tests pass. Do not expand to broad UI tests in this sprint.
