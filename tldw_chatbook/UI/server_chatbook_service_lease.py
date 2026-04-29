@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from ..Chatbooks.server_chatbook_service import ServerChatbookService
-from ..runtime_policy.bootstrap import derive_configured_server_binding
+from ..runtime_policy.bootstrap import (
+    build_runtime_api_client_provider_from_config,
+    derive_configured_server_binding,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,8 +39,7 @@ def server_chatbook_service_lease(
 
     if client_provider is not None:
         return ServerChatbookServiceLease(
-            service=ServerChatbookService.from_config(
-                config or {},
+            service=ServerChatbookService(
                 client_provider=client_provider,
                 policy_enforcer=policy_enforcer,
             ),
@@ -47,11 +49,12 @@ def server_chatbook_service_lease(
     if not derive_configured_server_binding(config).server_configured:
         raise ValueError("TLDW API base URL is not configured.")
 
-    service = ServerChatbookService.from_config(
-        config or {},
+    provider = build_runtime_api_client_provider_from_config(config or {})
+    service = ServerChatbookService(
+        client_provider=provider,
         policy_enforcer=policy_enforcer,
     )
-    return ServerChatbookServiceLease(service=service, close_owner=service)
+    return ServerChatbookServiceLease(service=service, close_owner=provider)
 
 
 async def close_server_chatbook_service_lease(lease: ServerChatbookServiceLease) -> None:
