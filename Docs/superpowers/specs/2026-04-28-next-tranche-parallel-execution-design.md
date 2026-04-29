@@ -76,7 +76,7 @@ Responsibilities:
 - consistent unavailable, auth-required, session-invalid, and unreachable result mapping
 - target-store last-known status alignment with runtime-policy state
 
-This lane must remain derived-only. It must not become a second authority for selected server or auth state.
+This lane must remain derived-only. It must not become a second authority for selected server or auth state. Status alignment here means normalizing and persisting the projection between existing runtime-policy state and target-store last-known status metadata, not creating a new source of truth.
 
 ### Lane C: Remaining Provider Migration
 
@@ -86,7 +86,7 @@ Responsibilities:
 
 - remaining compatibility-factory cleanup
 - audited migration of holdout services
-- migration-audit updates after each sub-batch
+- migration-audit updates after each sub-batch, routed through one `Lane C` migration-audit owner
 - enforcement that no new direct `tldw_api` config builders appear
 
 This lane stays domain-sliced internally and uses the existing provider migration ownership model rather than inventing a new integration pattern.
@@ -121,7 +121,15 @@ Owned files:
 - `tldw_chatbook/runtime_policy/server_context.py`
 - `tldw_chatbook/runtime_policy/server_credentials.py`
 - any new credential-index or secure-store helper files under `tldw_chatbook/runtime_policy/`
-- the exact `app.py` startup, logout, and server-switch invalidation blocks that touch provider cache and credential lifecycle
+- the exact `app.py` methods and direct caller blocks that initialize or tear down the provider/credential seam:
+  - `_wire_server_context_provider()`
+  - `_close_server_context_provider_cached_client()`
+  - any logout/server-switch handler blocks that directly clear `server_credential_store`, call `server_context_provider` credential-clear methods, or invalidate provider-bound clients
+
+App-wiring rule:
+
+- `Lane A` is the only tranche lane allowed to edit those reserved `app.py` methods/blocks.
+- `Lane B` and `Lane C` must treat all other `app.py` changes as out of scope for this tranche unless a separate integration-owner follow-up is declared.
 
 Allowed tests:
 
@@ -149,7 +157,9 @@ Owned files:
 
 - `tldw_chatbook/runtime_policy/server_capabilities.py`
 - auth-state classification helpers used by capability refresh
-- runtime-policy status normalization helpers, if needed
+- `tldw_chatbook/runtime_policy/types.py` only for server reachability/auth-state type changes required by normalization
+- `tldw_chatbook/runtime_policy/source_state.py` only for runtime-policy status normalization and persistence behavior required by freshness/alignment rules
+- `tldw_chatbook/MCP/server_target_store.py` only for `update_target_status()` and related last-known status metadata handling needed to keep target-store projections aligned with runtime-policy state
 
 Allowed tests:
 
@@ -162,6 +172,7 @@ Forbidden edits:
 - credential-store internals
 - provider cache key or invalidation internals
 - provider-migrated domain service modules
+- reserved `Lane A` `app.py` methods/blocks
 
 Acceptance criteria:
 
@@ -174,8 +185,18 @@ Acceptance criteria:
 Owned files:
 
 - only the service modules assigned to that migration sub-batch
-- migration-audit entries for those modules
 - additive lane-specific migration tests
+
+Shared-file rule:
+
+- `Docs/Development/server-client-provider-migration-audit.md` is owned by one `Lane C` migration-audit integration owner for this tranche.
+- Domain migration sub-batches must not edit the shared audit file directly.
+- Each sub-batch must instead hand off a pending audit delta describing:
+  - migrated modules
+  - removed compatibility factories
+  - new provider-backed seams
+  - any remaining intentional holdouts
+- The migration-audit integration owner is responsible for applying those deltas to the shared audit file after reviewing the sub-batch changes.
 
 Allowed tests:
 
@@ -195,6 +216,7 @@ Acceptance criteria:
 - all migrated services resolve clients through `RuntimeServerContextProvider`
 - migration-audit updates continue to use stable semantic matching only
 - compatibility holdouts remain explicitly listed
+- shared audit updates land only through the `Lane C` migration-audit integration owner
 
 ## Test Ownership Rules
 
