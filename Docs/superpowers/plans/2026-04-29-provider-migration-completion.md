@@ -22,7 +22,7 @@
 - Test paths use `Tests/`, not `tests/`.
 - Keep UI tests out of this tranche unless a task explicitly changes service wiring.
 - Do not use the MCP SDK.
-- Do not edit `Docs/Development/server-client-provider-migration-audit.md` from domain migration tasks. Only Task 8 owns that file.
+- Do not edit `Docs/Development/server-client-provider-migration-audit.md` from domain migration tasks. Only audit-owner tasks, Task 0 and Task 8, own that file.
 
 ## Shared Provider Pattern
 
@@ -82,6 +82,46 @@ Pending audit delta
   - <path>: <reason>, only for UI/event helper tasks
 - Notes:
   - test command, risks, or exact caller shape preserved
+```
+
+---
+
+## Task 0: Audit Owner Setup
+
+**Files:**
+- Modify: `Docs/Development/server-client-provider-migration-audit.md`
+
+- [ ] **Step 1: Rename the audit-owner heading**
+
+In `Docs/Development/server-client-provider-migration-audit.md`, rename:
+
+```markdown
+## Lane C Migration-Audit Owner Workflow
+```
+
+to:
+
+```markdown
+## Provider Migration Audit Owner Workflow
+```
+
+Keep the existing ownership rules and pending-delta handoff format intact.
+
+- [ ] **Step 2: Verify no domain audit rows changed**
+
+Run:
+
+```bash
+git diff -- Docs/Development/server-client-provider-migration-audit.md
+```
+
+Expected: the diff only renames the heading.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add Docs/Development/server-client-provider-migration-audit.md
+git commit -m "chore: rename provider migration audit owner heading"
 ```
 
 ---
@@ -772,11 +812,7 @@ If no code changed, do not create an empty commit. Hand off explicit holdout cla
 - Modify: `Docs/Development/server-client-provider-migration-audit.md`
 - Modify: `Tests/RuntimePolicy/test_server_client_provider_migration_audit.py`
 
-- [ ] **Step 1: Rename the audit-owner heading**
-
-In `Docs/Development/server-client-provider-migration-audit.md`, rename `Lane C Migration-Audit Owner Workflow` to `Provider Migration Audit Owner Workflow`.
-
-- [ ] **Step 2: Run the current semantic scan**
+- [ ] **Step 1: Run the current semantic scan**
 
 Run:
 
@@ -791,7 +827,7 @@ Classify every remaining match as one of:
 - stale audit row to remove
 - failure that must go back to the owning service lane
 
-- [ ] **Step 3: Update the audit document**
+- [ ] **Step 2: Update the audit document**
 
 Expected final shape:
 
@@ -802,11 +838,11 @@ Expected final shape:
 - UI/event helper holdouts listed with source and reason if they remain.
 - No domain service row remains as an ordinary holdout without explicit human approval.
 
-- [ ] **Step 4: Update the audit guard if needed**
+- [ ] **Step 3: Update the audit guard if needed**
 
 If the guard's indirect matcher no longer reflects remaining holdouts, update `Tests/RuntimePolicy/test_server_client_provider_migration_audit.py` so it enforces the new baseline with semantic matching. Keep line-number-only matching forbidden.
 
-- [ ] **Step 5: Run audit guard**
+- [ ] **Step 4: Run audit guard**
 
 Run:
 
@@ -816,7 +852,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Docs/Development/server-client-provider-migration-audit.md Tests/RuntimePolicy/test_server_client_provider_migration_audit.py
@@ -868,6 +904,7 @@ Run:
   Tests/Companion/test_server_companion_service.py \
   Tests/Companion/test_server_personalization_service.py \
   Tests/Notifications/test_server_notifications_service.py \
+  Tests/Sync_Interop/test_server_sync_service.py \
   Tests/RAG_Admin/test_server_rag_admin_service.py \
   Tests/Audio_Services/test_server_audio_services_service.py \
   Tests/Evaluations_Interop/test_server_evaluations_service.py \
