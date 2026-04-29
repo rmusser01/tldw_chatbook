@@ -24,8 +24,20 @@ class ActiveServerCapabilityService:
         state = self._current_state()
         now = datetime.now(timezone.utc)
         if not state.server_configured or not state.active_server_id:
+            updated_state = replace(
+                state,
+                server_reachability="unknown",
+                server_reachability_checked_at=None,
+                server_auth_state="unknown",
+                server_auth_checked_at=None,
+            )
+            if updated_state != state:
+                self.runtime_context.state = updated_state
+                persist = getattr(self.runtime_context, "persist", None)
+                if callable(persist):
+                    persist()
             return self._snapshot(
-                state=state,
+                state=updated_state,
                 now=now,
                 reachability="unknown",
                 auth_state="unknown",

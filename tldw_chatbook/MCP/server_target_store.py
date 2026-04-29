@@ -103,20 +103,22 @@ class ConfiguredServerTargetStore:
                 last_known_reachability,
                 valid_values={"unknown", "reachable", "unreachable"},
             )
-            if last_known_reachability is None:
+            if normalized_reachability is None:
                 normalized_reachability = target.last_known_reachability
 
             normalized_auth_state = _normalize_status_choice(
                 last_known_auth_state,
                 valid_values={"unknown", "authenticated", "auth_required", "session_invalid"},
             )
-            if last_known_auth_state is None:
+            if normalized_auth_state is None:
                 normalized_auth_state = target.last_known_auth_state
 
+            normalized_server_label = _normalize_optional_text(last_known_server_label)
+            if normalized_server_label is None:
+                normalized_server_label = target.last_known_server_label
+
             status = TargetStatusMetadata(
-                last_known_server_label=last_known_server_label
-                if last_known_server_label is not None
-                else target.last_known_server_label,
+                last_known_server_label=normalized_server_label,
                 last_known_reachability=normalized_reachability,
                 last_known_auth_state=normalized_auth_state,
                 last_connected_at=last_connected_at if last_connected_at is not None else target.last_connected_at,
@@ -216,3 +218,10 @@ def _normalize_status_choice(value: str | None, *, valid_values: set[str]) -> st
     if normalized in valid_values:
         return normalized
     return None
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None

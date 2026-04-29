@@ -31,15 +31,29 @@ def normalize_runtime_source_state(
     now: datetime,
     freshness_window: timedelta,
 ) -> RuntimeSourceState:
+    server_is_authoritative = (
+        state.active_source == "server"
+        and state.server_configured
+        and bool(state.active_server_id)
+    )
+
     server_reachability = state.server_reachability
     server_reachability_checked_at = state.server_reachability_checked_at
-    if not _is_fresh(server_reachability_checked_at, now=now, freshness_window=freshness_window):
+    if not server_is_authoritative or not _is_fresh(
+        server_reachability_checked_at,
+        now=now,
+        freshness_window=freshness_window,
+    ):
         server_reachability = "unknown"
         server_reachability_checked_at = None
 
     server_auth_state = state.server_auth_state
     server_auth_checked_at = state.server_auth_checked_at
-    if not _is_fresh(server_auth_checked_at, now=now, freshness_window=freshness_window):
+    if not server_is_authoritative or not _is_fresh(
+        server_auth_checked_at,
+        now=now,
+        freshness_window=freshness_window,
+    ):
         server_auth_state = "unknown"
         server_auth_checked_at = None
 

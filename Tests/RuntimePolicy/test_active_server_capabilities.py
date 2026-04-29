@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -270,3 +271,48 @@ async def test_active_server_capabilities_does_not_call_server_when_unconfigured
     assert snapshot["errors"][0]["reason_code"] == "server_not_configured"
     assert runtime_scope.calls == []
     context.persist.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_active_server_capabilities_invalidates_persisted_probe_state_when_server_is_cleared():
+    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+
+    context = _context(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="https://server.example.com/api",
+            server_configured=True,
+            server_reachability="reachable",
+            server_reachability_checked_at=datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc),
+            server_auth_state="authenticated",
+            server_auth_checked_at=datetime(2026, 4, 28, 12, 1, tzinfo=timezone.utc),
+            last_known_server_label="server.example.com",
+        )
+    )
+    runtime_scope = FakeServerRuntimeScope()
+    service = ActiveServerCapabilityService(
+        runtime_context=context,
+        server_runtime_scope_service=runtime_scope,
+    )
+    context.state = RuntimeSourceState(
+        active_source="local",
+        active_server_id=None,
+        server_configured=False,
+        server_reachability="reachable",
+        server_reachability_checked_at=datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc),
+        server_auth_state="authenticated",
+        server_auth_checked_at=datetime(2026, 4, 28, 12, 1, tzinfo=timezone.utc),
+        last_known_server_label="server.example.com",
+    )
+
+    snapshot = await service.refresh()
+
+    assert snapshot["active_server_id"] is None
+    assert snapshot["reachability"] == "unknown"
+    assert snapshot["auth_state"] == "unknown"
+    assert context.state.server_reachability == "unknown"
+    assert context.state.server_reachability_checked_at is None
+    assert context.state.server_auth_state == "unknown"
+    assert context.state.server_auth_checked_at is None
+    context.persist.assert_called_once()
+    assert runtime_scope.calls == []
