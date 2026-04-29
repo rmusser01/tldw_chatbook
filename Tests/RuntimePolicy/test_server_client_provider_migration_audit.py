@@ -20,7 +20,7 @@ INDIRECT_BUILDER_RE = re.compile(
     r"\b(?:"
     r"build_server_chatbook_service|"
     r"build_server_chatbook_service_from_config|"
-    r"Server(?:ChatConversation|ChatLoop|CharacterPersona|ChatDictionary|MediaReading|NotesWorkspace|Prompt|Chatbook|PromptStudio)Service\.from_config"
+    r"Server[A-Za-z]+Service\.from_config"
     r")\s*\("
 )
 AUDIT_ROW_RE = re.compile(
@@ -127,6 +127,27 @@ def test_audit_guard_rejects_new_unlisted_legacy_builder(tmp_path: Path):
     assert "example.py" in drift[0]
 
 
+def test_audit_guard_rejects_new_unlisted_server_service_from_config(tmp_path: Path):
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "tldw_chatbook"
+    source_root.mkdir(parents=True)
+    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path.parent.mkdir(parents=True)
+    audit_path.write_text(
+        "| Module | Audit lines | Notes |\n| --- | ---: | --- |\n",
+        encoding="utf-8",
+    )
+    (source_root / "example.py").write_text(
+        "ServerRAGAdminService.from_config(app_config)\n",
+        encoding="utf-8",
+    )
+
+    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+
+    assert drift
+    assert "ServerRAGAdminService.from_config(app_config)" in drift[0]
+
+
 def test_audit_guard_uses_semantic_not_line_number_matching(tmp_path: Path):
     repo_root = tmp_path / "repo"
     source_root = repo_root / "tldw_chatbook"
@@ -153,6 +174,35 @@ def test_audit_guard_uses_semantic_not_line_number_matching(tmp_path: Path):
 
     assert drift == [
         "tldw_chatbook/example.py: semantic match drift; missing=['build_runtime_api_client_from_config(app_config)'] extra=['build_runtime_api_client(app_config)']"
+    ]
+
+
+def test_audit_guard_rejects_line_number_only_rows(tmp_path: Path):
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "tldw_chatbook"
+    source_root.mkdir(parents=True)
+    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path.parent.mkdir(parents=True)
+    audit_path.write_text(
+        "\n".join(
+            [
+                "| Module | Audit lines | Notes |",
+                "| --- | ---: | --- |",
+                "| `tldw_chatbook/example.py` | 1 | Line-only audit row. |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (source_root / "example.py").write_text(
+        "build_runtime_api_client_from_config(app_config)\n",
+        encoding="utf-8",
+    )
+
+    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+
+    assert drift == [
+        "tldw_chatbook/example.py: semantic match drift; missing=['build_runtime_api_client_from_config(app_config)'] extra=[]"
     ]
 
 

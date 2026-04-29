@@ -1,6 +1,6 @@
 # Server Client Provider Migration Audit
 
-Date: 2026-04-28
+Date: 2026-04-29
 
 ## Purpose
 
@@ -44,105 +44,45 @@ Pending audit delta
 
 ## Migrated Modules
 
-- `ServerRuntimeService`: app wiring now uses `ServerRuntimeService.from_server_context_provider(...)`. Compatibility holdouts remain in `from_config()` and `from_app_config()`.
-- `ServerAuthAccountService`: app wiring now uses `ServerAuthAccountService.from_server_context_provider(...)`. Compatibility holdouts remain in `from_config()` and `from_app_config()`.
-- `ServerChatConversationService`: app wiring now uses `ServerChatConversationService.from_server_context_provider(...)`. The `from_config()` factory remains a compatibility holdout.
-- `ServerCharacterPersonaService`: app wiring now uses `ServerCharacterPersonaService.from_server_context_provider(...)`. The `from_config()` factory remains a compatibility holdout.
-- `ServerChatDictionaryService`: app wiring now uses `ServerChatDictionaryService.from_server_context_provider(...)`. The `from_config()` factory remains a compatibility holdout.
-- `ServerMediaReadingService`: app wiring now uses `ServerMediaReadingService.from_server_context_provider(...)`. The `from_config()` factory remains a compatibility holdout.
-- `ServerNotesWorkspaceService`: app wiring now uses `ServerNotesWorkspaceService.from_server_context_provider(...)`. The `from_config()` factory remains a compatibility holdout.
-- `ServerPromptService`: app wiring now uses `ServerPromptService.from_server_context_provider(...)`, and `build_prompt_scope_service(...)` now receives the app `RuntimeServerContextProvider`. The `from_config()` factory and legacy prompt-scope fallback remain compatibility holdouts.
-- `ServerChatbookService`: app wiring now uses `ServerChatbookService.from_server_context_provider(...)`. Compatibility holdouts remain in `build_tldw_api_client_from_config(...)`, `build_server_chatbook_service_from_config(...)`, and `ServerChatbookService.from_config(...)`.
-- `ServerPromptStudioService`: app wiring now uses `ServerPromptStudioService.from_server_context_provider(...)`. The `from_config()` factory remains a compatibility holdout.
-- `ServerChatLoopService`: the provider-backed constructor and `from_server_context_provider(...)` seam exist, but there is still no app wiring call site in this tranche. The `from_config()` factory remains a compatibility holdout.
+- High, medium, and low priority server service modules in this audit tranche have been migrated to provider-backed compatibility adapters.
+- Public `from_config(...)` compatibility APIs are preserved as provider-backed adapters using the runtime-policy provider seam. They are no longer classified as ordinary migration holdouts.
+- `ServerRuntimeService`, `ServerAuthAccountService`, `ServerChatConversationService`, `ServerCharacterPersonaService`, `ServerChatDictionaryService`, `ServerMediaReadingService`, `ServerNotesWorkspaceService`, `ServerPromptService`, `ServerChatbookService`, `ServerPromptStudioService`, and the remaining tranche service adapters now route through provider-backed construction where their public compatibility APIs remain.
+- `tldw_chatbook/UI/server_chatbook_service_lease.py` is provider-backed and is not listed as a legacy holdout because the semantic scan has no legacy builder match in that file.
 
 ## Direct Builder Audit Command
 
 Generated with:
 
 ```bash
-rg -n "build_runtime_api_client_from_config|build_runtime_api_client\(" tldw_chatbook
+rg -n "build_runtime_api_client_from_config|build_runtime_api_client\(|build_tldw_api_client_from_config|build_server_chatbook_service|build_server_chatbook_service_from_config|Server[A-Za-z]+Service\.from_config" tldw_chatbook
 ```
 
-## Indirect Factory Audit Command
+## Remaining Semantic Matches
 
-The direct builder scan does not catch compatibility wrappers that still construct server clients from `app_config`. The targeted prompt/chatbook indirect factory scan used for this audit is:
+There are no ordinary domain service holdouts for this tranche. Remaining scan matches are classified below as intentional runtime-policy/provider seams, provider-backed compatibility adapter uses, or the explicit event/UI helper holdout.
 
-```bash
-rg -n "build_tldw_api_client_from_config|ServerPromptService\.from_config|build_server_chatbook_service|build_server_chatbook_service_from_config" tldw_chatbook
-```
+### Provider-Backed Compatibility Adapter Uses
 
-This second scan is intentionally limited to known prompt/chatbook compatibility factories. Broad `app_config` scans are too noisy for this audit, but these wrappers still route through legacy config-based client construction and must remain in the migration backlog.
-
-## Remaining Compatibility Factories
-
-### High Priority
-
-These are core interaction, identity, chat, media, note, prompt, and chatbook surfaces where active-server switching and credential freshness are most user-visible.
+These `from_config(...)` call sites continue to use public compatibility APIs, but those APIs now construct through provider-backed adapters rather than direct legacy client builders.
 
 | Module | Audit lines | Notes |
 | --- | ---: | --- |
-| `tldw_chatbook/Auth_Account_Interop/server_auth_account_service.py` | 38 | Migrated app wiring; compatibility property builder still calls the legacy config builder on first access. Semantic match: `self._client = build_runtime_api_client_from_config(self.app_config)`. |
-| `tldw_chatbook/Server_Runtime_Interop/server_runtime_service.py` | 20 | Migrated app wiring; compatibility property builder still calls the legacy config builder on first access. Semantic match: `self._client = build_runtime_api_client_from_config(self.app_config)`. |
-| `tldw_chatbook/Chat/server_chat_conversation_service.py` | 27 | Migrated app wiring; compatibility property builder still calls the legacy config builder on first access. Semantic match: `self._client = build_runtime_api_client_from_config(self.app_config)`. |
-| `tldw_chatbook/Chat/server_chat_loop_service.py` | 19 | Partially migrated service seam; no app wiring call site in this tranche, and the compatibility property builder still calls the legacy config builder on first access. Semantic match: `self._client = build_runtime_api_client_from_config(self.app_config)`. |
-| `tldw_chatbook/Character_Chat/server_character_persona_service.py` | 39 | Migrated app wiring; compatibility property builder still calls the legacy config builder on first access. Semantic match: `self._client = build_runtime_api_client_from_config(self.app_config)`. |
-| `tldw_chatbook/Character_Chat/server_chat_dictionary_service.py` | 20 | Migrated app wiring; compatibility property builder still calls the legacy config builder on first access. Semantic match: `self._client = build_runtime_api_client(app_config=self.app_config)`. |
-| `tldw_chatbook/Chatbooks/server_chatbook_service.py` | 29, 31, 70, 181 | Migrated app wiring; compatibility helpers/factory still call the legacy config builder. Semantic matches: `def build_tldw_api_client_from_config(config: Mapping[str, Any]) -> TLDWAPIClient:`, `return build_runtime_api_client_from_config(config)`, `def build_server_chatbook_service_from_config(`, `build_runtime_api_client_from_config(app_config or {}),`. |
-| `tldw_chatbook/Media/server_media_reading_service.py` | 87 | Migrated app wiring; compatibility factory still calls the legacy config builder. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Notes/server_notes_workspace_service.py` | 52 | Migrated app wiring; compatibility factory still calls the legacy config builder. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Prompt_Management/server_prompt_service.py` | 35 | Migrated app wiring; compatibility factory still calls the legacy config builder. Semantic match: `build_runtime_api_client(app_config=app_config),`. |
-| `tldw_chatbook/Prompt_Management/prompt_scope_service.py` | 77, 677 | Migrated app wiring passes a provider into `build_prompt_scope_service(...)`; legacy prompt-scope fallback still constructs from `app_config`. Semantic matches: `return cls(client=build_tldw_api_client_from_config(app_config))`, `return ServerPromptService.from_config(app_config or {})`. |
-| `tldw_chatbook/Prompt_Studio_Interop/server_prompt_studio_service.py` | 55 | Migrated app wiring; compatibility factory still calls the legacy config builder. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-
-### Medium Priority
-
-These are user-facing feature services that should move to provider-backed construction after the core interaction paths are stable.
-
-| Module | Audit lines | Notes |
-| --- | ---: | --- |
-| `tldw_chatbook/Writing_Interop/server_writing_service.py` | 67 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Research_Interop/server_research_service.py` | 37 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Research_Interop/server_research_search_service.py` | 41 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Collections_Interop/server_collections_feeds_service.py` | 37 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Subscriptions/server_watchlists_service.py` | 42 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Sharing/server_sharing_service.py` | 28 | Service migration target. Semantic match: `return cls(client=build_runtime_api_client_from_config(app_config))`. |
-| `tldw_chatbook/Sharing_Interop/server_sharing_service.py` | 40 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Outputs/server_outputs_service.py` | 28 | Service migration target. Semantic match: `return cls(client=build_runtime_api_client_from_config(app_config))`. |
-| `tldw_chatbook/Outputs_Interop/server_outputs_service.py` | 39 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/WebClipper/server_web_clipper_service.py` | 24 | Service migration target. Semantic match: `return cls(client=build_runtime_api_client_from_config(app_config))`. |
-| `tldw_chatbook/Web_Clipper_Interop/server_web_clipper_service.py` | 36 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Study_Interop/server_study_service.py` | 48 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Study_Interop/server_quiz_service.py` | 31 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Kanban_Interop/server_kanban_service.py` | 178 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Claims_Interop/server_claims_service.py` | 47 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Meetings_Interop/server_meetings_service.py` | 40 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Voice_Assistant_Interop/server_voice_assistant_service.py` | 38 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Companion_Interop/server_companion_service.py` | 40 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Personalization_Interop/server_personalization_service.py` | 40 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Notifications/server_notifications_service.py` | 38 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-
-### Low Priority
-
-These are admin, catalog, governance, integration, or out-of-scope-for-this-workstream services. They still need migration, but can follow the higher traffic service paths.
-
-| Module | Audit lines | Notes |
-| --- | ---: | --- |
-| `tldw_chatbook/Sync_Interop/server_sync_service.py` | 32 | Service migration target; sync/mirror behavior is outside this workstream. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/RAG_Admin/server_rag_admin_service.py` | 40 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Audio_Services_Interop/server_audio_services_service.py` | 47 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Evaluations_Interop/server_evaluations_service.py` | 49 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Chat_Grammars_Interop/server_chat_grammars_service.py` | 32 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Tools_Interop/server_tools_service.py` | 32 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Web_Scraping_Interop/server_web_scraping_service.py` | 32 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/External_Connectors_Interop/server_connectors_service.py` | 36 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/User_Governance_Interop/server_user_governance_service.py` | 32 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/MCP_Governance_Interop/server_mcp_governance_service.py` | 52 | Service migration target. No MCP SDK changes are implied by this audit. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Text2SQL_Interop/server_text2sql_service.py` | 32 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Skills_Interop/server_skills_service.py` | 38 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Feedback_Interop/server_feedback_service.py` | 36 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/Translation_Interop/server_translation_service.py` | 32 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
-| `tldw_chatbook/LLM_Provider_Catalog/server_llm_provider_catalog_service.py` | 32 | Service migration target. Semantic match: `client=build_runtime_api_client_from_config(app_config),`. |
+| `tldw_chatbook/app.py` | 1460 | App wiring compatibility adapter use. Semantic match: `self.server_rag_admin_service = ServerRAGAdminService.from_config(`. |
+| `tldw_chatbook/app.py` | 1594 | App wiring compatibility adapter use. Semantic match: `self.server_writing_service = ServerWritingService.from_config(`. |
+| `tldw_chatbook/app.py` | 1647 | App wiring compatibility adapter use. Semantic match: `self.server_evaluation_service = ServerEvaluationsService.from_config(`. |
+| `tldw_chatbook/app.py` | 1689, 1699 | App wiring compatibility adapter uses. Semantic matches: `self.server_study_service = ServerStudyService.from_config(`, `self.server_quiz_service = ServerQuizService.from_config(`. |
+| `tldw_chatbook/app.py` | 1734, 1752, 1951, 1969 | App wiring compatibility adapter uses. Semantic matches: `self.server_research_service = ServerResearchService.from_config(`, `self.server_research_search_service = ServerResearchSearchService.from_config(`, `self.server_research_service = ServerResearchService.from_config(`, `self.server_research_search_service = ServerResearchSearchService.from_config(`. |
+| `tldw_chatbook/app.py` | 1773, 1783 | App wiring compatibility adapter uses. Semantic matches: `self.server_watchlists_service = ServerWatchlistsService.from_config(`, `self.server_notifications_service = ServerNotificationsService.from_config(`. |
+| `tldw_chatbook/app.py` | 1821, 1835, 1857 | App wiring compatibility adapter uses. Semantic matches: `self.server_claims_service = ServerClaimsService.from_config(`, `self.server_meetings_service = ServerMeetingsService.from_config(`, `self.server_kanban_service = ServerKanbanService.from_config(`. |
+| `tldw_chatbook/app.py` | 1871, 1885, 1899, 1913 | App wiring compatibility adapter uses. Semantic matches: `self.server_translation_service = ServerTranslationService.from_config(`, `self.server_voice_assistant_service = ServerVoiceAssistantService.from_config(`, `self.server_companion_service = ServerCompanionService.from_config(`, `self.server_personalization_service = ServerPersonalizationService.from_config(`. |
+| `tldw_chatbook/app.py` | 1927, 1988, 2007, 2022 | App wiring compatibility adapter uses. Semantic matches: `self.server_outputs_service = ServerOutputsService.from_config(`, `self.server_chat_grammars_service = ServerChatGrammarsService.from_config(`, `self.server_feedback_service = ServerFeedbackService.from_config(`, `self.server_collections_feeds_service = ServerCollectionsFeedsService.from_config(`. |
+| `tldw_chatbook/app.py` | 2037, 2051, 2065, 2079 | App wiring compatibility adapter uses. Semantic matches: `self.server_connectors_service = ServerConnectorsService.from_config(`, `self.server_skills_service = ServerSkillsService.from_config(`, `self.server_tools_service = ServerToolsService.from_config(`, `self.server_mcp_governance_service = ServerMCPGovernanceService.from_config(`. |
+| `tldw_chatbook/app.py` | 2144, 2176, 2198 | App wiring compatibility adapter uses. Semantic matches: `self.server_sync_service = ServerSyncService.from_config(`, `self.server_llm_provider_catalog_service = ServerLLMProviderCatalogService.from_config(`, `self.server_audio_services_service = ServerAudioServicesService.from_config(`. |
+| `tldw_chatbook/app.py` | 2222, 2236, 2250, 2264 | App wiring compatibility adapter uses. Semantic matches: `self.server_user_governance_service = ServerUserGovernanceService.from_config(`, `self.server_sharing_service = ServerSharingService.from_config(`, `self.server_web_clipper_service = ServerWebClipperService.from_config(`, `self.server_web_scraping_service = ServerWebScrapingService.from_config(`. |
+| `tldw_chatbook/Prompt_Management/prompt_scope_service.py` | 691 | Lazy prompt scope compatibility adapter use when no app provider is passed. Semantic match: `return ServerPromptService.from_config(app_config or {})`. |
+| `tldw_chatbook/UI/Study_Modules/flashcards_handler.py` | 173 | Fallback study handler compatibility adapter use when the app scope service is not already available. Semantic match: `server_service = ServerStudyService.from_config(getattr(self.app_instance, "app_config", {}) or {})`. |
+| `tldw_chatbook/UI/Study_Modules/quizzes_handler.py` | 205 | Fallback quiz handler compatibility adapter use when the app scope service is not already available. Semantic match: `server_service = ServerQuizService.from_config(getattr(self.app_instance, "app_config", {}) or {})`. |
+| `tldw_chatbook/Chatbooks/server_chatbook_service.py` | 28, 69 | Chatbook public helper compatibility API definitions now delegate through `build_runtime_api_client_provider_from_config(...)`. Semantic matches: `def build_tldw_api_client_from_config(config: Mapping[str, Any]) -> TLDWAPIClient:`, `def build_server_chatbook_service_from_config(`. |
 
 ## Explicit Holdouts
 
@@ -152,11 +92,7 @@ These are direct helper call sites rather than service classes. They should be r
 
 | Module | Audit lines | Notes |
 | --- | ---: | --- |
-| `tldw_chatbook/UI/MediaIngestWindowRebuilt.py` | 777 | UI helper call site. Semantic match: `self.api_client = build_runtime_api_client(`. |
-| `tldw_chatbook/Event_Handlers/tldw_api_events.py` | 572 | Event helper call site. Semantic match: `api_client = build_runtime_api_client(`. |
-| `tldw_chatbook/UI/ChatbookExportManagementWindow.py` | 486, 588 | UI helper indirect chatbook factory consumer through `build_server_chatbook_service_from_config(...)`. Semantic matches: `service, client = build_server_chatbook_service_from_config(`, `service, client = build_server_chatbook_service_from_config(`. |
-| `tldw_chatbook/UI/Wizards/ChatbookImportWizard.py` | 706 | UI wizard indirect chatbook factory consumer through `build_server_chatbook_service(...)`. Semantic match: `service = build_server_chatbook_service(app_config=config)`. |
-| `tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py` | 654 | UI wizard indirect chatbook factory consumer through `build_server_chatbook_service(...)`. Semantic match: `service = build_server_chatbook_service(app_config=config)`. |
+| `tldw_chatbook/Event_Handlers/tldw_api_events.py` | 572 | Explicit UI/event helper holdout. Direct endpoint/auth form flow is not safely replaceable by the current app provider without a broader event/UI state refactor. Semantic match: `api_client = build_runtime_api_client(`. |
 
 ### Intentional Current Provider And Bootstrap Usage
 
@@ -166,7 +102,7 @@ These `rg` matches are intentional current seams, not remaining service migratio
 | --- | ---: | --- |
 | `tldw_chatbook/app.py` | 2105, 2111 | Unified MCP target-specific client factory. This currently builds a client for the selected MCP target and is separate from server service migration. Semantic matches: `root_client = build_runtime_api_client(`, `root_client = build_runtime_api_client(`. |
 | `tldw_chatbook/runtime_policy/server_context.py` | 109 | `RuntimeServerContextProvider.build_client()` provider seam. This is the desired construction point for migrated services. Semantic match: `self._cached_client = build_runtime_api_client(`. |
-| `tldw_chatbook/runtime_policy/bootstrap.py` | 34, 75, 76, 79, 88 | Runtime-policy bootstrap and legacy compatibility helpers. These stay as compatibility seams until consumers are fully migrated. Semantic matches: `def build_runtime_api_client(`, `def build_runtime_api_client_from_config(app_config: Mapping[str, Any] | None) -> TLDWAPIClient:`, `return build_runtime_api_client(app_config=app_config)`, `def build_server_chatbook_service(`, `client = build_runtime_api_client(app_config=app_config)`. |
+| `tldw_chatbook/runtime_policy/bootstrap.py` | 34, 75, 76, 89, 105, 114 | Runtime-policy bootstrap and provider-backed legacy compatibility helpers. These stay as compatibility seams while public compatibility APIs are preserved. Semantic matches: `def build_runtime_api_client(`, `def build_runtime_api_client_from_config(app_config: Mapping[str, Any] | None) -> TLDWAPIClient:`, `return build_runtime_api_client(app_config=app_config)`, `self._cached_client = build_runtime_api_client_from_config(self.app_config)`, `def build_server_chatbook_service(`, `client = build_runtime_api_client(app_config=app_config)`. |
 
 ## Follow-Up Guardrails
 
