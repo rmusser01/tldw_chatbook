@@ -124,18 +124,19 @@ class RuntimeServerContextProvider:
             await asyncio.gather(*pending_tasks)
 
     def clear_active_server_credentials(self) -> None:
-        self.credential_store.clear_server(self._require_active_server_id())
+        active_server_id = self._require_active_server_id()
+        self.credential_store.clear_server(active_server_id)
+        self._mark_legacy_server_id_cleared(active_server_id)
         self._invalidate_cached_client()
 
     def clear_server_credentials(self, server_id: str) -> None:
         self.credential_store.clear_server(server_id)
+        self._mark_legacy_server_id_cleared(server_id)
         self._invalidate_cached_client()
 
     def clear_all_credentials(self) -> None:
-        active_server_id = self._active_server_id_or_none()
         self.credential_store.clear_all()
-        if active_server_id is not None:
-            self._legacy_cleared_server_ids.add(active_server_id)
+        self._legacy_cleared_server_ids.update(self._legacy_server_ids_for_signout())
         self._invalidate_cached_client()
 
     def clear_active_server_auth_tokens(self) -> None:
@@ -184,12 +185,6 @@ class RuntimeServerContextProvider:
         if state.active_source != "server" or not state.server_configured or not active_server_id:
             raise ServerContextUnavailable("Runtime policy does not have an active configured server")
         return active_server_id
-
-    def _active_server_id_or_none(self) -> str | None:
-        try:
-            return self._require_active_server_id()
-        except ServerContextUnavailable:
-            return None
 
     def _legacy_target_for_active_server(self, active_server_id: str) -> ConfiguredServerTarget | None:
         legacy_binding = derive_configured_server_binding(self.app_config)
@@ -272,6 +267,24 @@ class RuntimeServerContextProvider:
 
         legacy_binding = derive_configured_server_binding(self.app_config)
         return legacy_binding.server_configured and legacy_binding.active_server_id == active_server_id
+
+    def _mark_legacy_server_id_cleared(self, server_id: str) -> None:
+        normalized_server_id = str(server_id or "").strip()
+        if not normalized_server_id:
+            return
+        if normalized_server_id in self._legacy_server_ids_for_signout():
+            self._legacy_cleared_server_ids.add(normalized_server_id)
+
+    def _legacy_server_ids_for_signout(self) -> set[str]:
+        server_ids = {
+            target.server_id
+            for target in self.target_store.list_targets()
+            if target.auth_reference == "legacy:tldw_api"
+        }
+        legacy_binding = derive_configured_server_binding(self.app_config)
+        if legacy_binding.server_configured and legacy_binding.active_server_id:
+            server_ids.add(legacy_binding.active_server_id)
+        return server_ids
 
     def _import_legacy_token(self, server_id: str, auth_mode: str, token: str) -> str | None:
         purposes = self._purposes_for_auth_mode(auth_mode)

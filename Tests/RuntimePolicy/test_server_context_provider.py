@@ -774,6 +774,54 @@ async def test_clear_all_credentials_invalidates_cached_client_and_removes_impor
     ) is None
 
 
+def test_clear_all_credentials_blocks_other_legacy_backed_profile_after_server_switch(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server-a.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "server-a-secret")
+    runtime_context = _runtime_context(active_server_id="https://server-a.example.com/api")
+    provider = _provider(
+        tmp_path,
+        runtime_context=runtime_context,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server-a.example.com/api",
+                label="Server A",
+                base_url="https://server-a.example.com/api/",
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            ),
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Server B",
+                base_url="https://server.example.com/api/",
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+            ),
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    provider.clear_all_credentials()
+    runtime_context.state = replace(
+        runtime_context.state,
+        active_server_id="https://server.example.com/api",
+    )
+
+    with pytest.raises(ServerCredentialsUnavailable):
+        provider.get_active_context()
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) is None
+
+
 def test_clear_all_credentials_preserves_original_credential_store_error_for_legacy_profile(tmp_path):
     provider = _provider(
         tmp_path,
@@ -863,6 +911,41 @@ def test_clear_active_server_credentials_and_clear_server_credentials_clear_per_
     provider.clear_server_credentials("server-b")
 
     assert credentials.get_secret("server-b", SERVER_CREDENTIAL_BEARER_TOKEN) is None
+
+
+def test_clear_active_server_credentials_blocks_legacy_profile_reimport(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api/",
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    provider.get_active_context()
+    provider.clear_active_server_credentials()
+
+    with pytest.raises(ServerCredentialsUnavailable):
+        provider.get_active_context()
+    assert credentials.get_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+    ) is None
 
 
 @pytest.mark.asyncio
