@@ -1,5 +1,6 @@
 import pytest
 
+from tldw_chatbook.Prompt_Studio_Interop.server_prompt_studio_service import ServerPromptStudioService
 from tldw_chatbook.Prompt_Studio_Interop.prompt_studio_scope_service import PromptStudioScopeService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
@@ -52,6 +53,52 @@ class FakePolicyEnforcer:
                 effective_source="server",
                 authority_owner="server",
             )
+
+
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_studio_service_uses_provider_client_when_no_direct_client():
+    class FakeClient:
+        async def list_prompt_studio_projects(self, **kwargs):
+            return {"success": True, "data": [{"id": 7, "name": "Provider", **kwargs}]}
+
+    provider = FakeClientProvider(FakeClient())
+    service = ServerPromptStudioService.from_server_context_provider(provider)
+
+    result = await service.list_projects(search="provider")
+
+    assert result["data"][0]["record_id"] == "server:prompt_studio_project:7"
+    assert result["data"][0]["search"] == "provider"
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_studio_service_prefers_direct_client_over_provider():
+    class FakeClient:
+        def __init__(self, project_id):
+            self.project_id = project_id
+
+        async def list_prompt_studio_projects(self, **_kwargs):
+            return {"success": True, "data": [{"id": self.project_id, "name": "Project"}]}
+
+    provider = FakeClientProvider(FakeClient(8))
+    service = ServerPromptStudioService(client=FakeClient(9), client_provider=provider)
+
+    result = await service.list_projects()
+
+    assert result["data"][0]["record_id"] == "server:prompt_studio_project:9"
+    assert provider.build_calls == 0
 
 
 @pytest.mark.asyncio

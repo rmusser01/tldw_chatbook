@@ -38,6 +38,16 @@ class FakePolicyEnforcer:
         self.calls.append(action_id)
 
 
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
 def test_service_rejects_server_unsupported_import_content_types():
     service = ServerChatbookService(client=None)
 
@@ -91,6 +101,43 @@ def test_build_server_chatbook_service_from_config_threads_policy_enforcer():
 
     assert service.client is client
     assert service.policy_enforcer is policy
+
+
+@pytest.mark.asyncio
+async def test_server_chatbook_service_uses_provider_client_when_no_direct_client():
+    class FakeClient:
+        async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0):
+            return {"items": [{"job_id": "provider-export-1"}], "limit": limit, "offset": offset}
+
+    provider = FakeClientProvider(FakeClient())
+    service = ServerChatbookService.from_server_context_provider(provider)
+
+    result = await service.list_export_jobs(limit=5, offset=2)
+
+    assert result["items"][0]["job_id"] == "provider-export-1"
+    assert result["limit"] == 5
+    assert result["offset"] == 2
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_server_chatbook_service_prefers_direct_client_over_provider():
+    class FakeClient:
+        def __init__(self, job_id):
+            self.job_id = job_id
+
+        async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0):
+            return {"items": [{"job_id": self.job_id}]}
+
+    provider = FakeClientProvider(FakeClient("provider-export-1"))
+    service = ServerChatbookService(client=FakeClient("direct-export-1"), client_provider=provider)
+
+    result = await service.list_export_jobs()
+
+    assert result["items"][0]["job_id"] == "direct-export-1"
+    assert provider.build_calls == 0
 
 
 @pytest.mark.asyncio

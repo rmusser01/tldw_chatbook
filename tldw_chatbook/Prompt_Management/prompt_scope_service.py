@@ -63,17 +63,29 @@ def _prompt_create_request_from_payload(payload: dict[str, Any]) -> PromptCreate
 class ServerPromptService:
     """Thin prompt service around the shared server API client."""
 
-    def __init__(self, client: TLDWAPIClient | None):
+    def __init__(
+        self,
+        client: TLDWAPIClient | None = None,
+        *,
+        client_provider: Any | None = None,
+    ):
         self.client = client
+        self.client_provider = client_provider
 
     @classmethod
     def from_config(cls, app_config: dict[str, Any]) -> "ServerPromptService":
         return cls(client=build_tldw_api_client_from_config(app_config))
 
+    @classmethod
+    def from_server_context_provider(cls, provider: Any) -> "ServerPromptService":
+        return cls(client_provider=provider)
+
     def _require_client(self) -> TLDWAPIClient:
-        if self.client is None:
-            raise ValueError("TLDW API client is required for server prompt operations.")
-        return self.client
+        if self.client is not None:
+            return self.client
+        if self.client_provider is not None:
+            return self.client_provider.build_client()
+        raise ValueError("TLDW API client is required for server prompt operations.")
 
     async def list_prompts(
         self,
@@ -659,18 +671,29 @@ class PromptScopeService:
         return normalize_prompt_collection_record(response, backend=normalized_mode.value)
 
 
+def _build_legacy_server_prompt_service_from_config(app_config: dict[str, Any] | None) -> ServerPromptService:
+    """Legacy config fallback for startup paths that have not been provider-wired yet."""
+    try:
+        return ServerPromptService.from_config(app_config or {})
+    except ValueError:
+        return ServerPromptService(client=None)
+
+
 def build_prompt_scope_service(
     *,
     prompt_db: Any,
     app_config: dict[str, Any] | None = None,
     policy_enforcer: Any = None,
+    server_service: Any = None,
+    client_provider: Any | None = None,
 ) -> PromptScopeService:
     """Build the source-aware prompt service from app startup dependencies."""
     local_service = LocalPromptService(prompt_db) if prompt_db is not None else None
-    try:
-        server_service = ServerPromptService.from_config(app_config or {})
-    except ValueError:
-        server_service = ServerPromptService(client=None)
+    if server_service is None:
+        if client_provider is not None:
+            server_service = ServerPromptService.from_server_context_provider(client_provider)
+        else:
+            server_service = _build_legacy_server_prompt_service_from_config(app_config)
 
     return PromptScopeService(
         local_service=local_service,

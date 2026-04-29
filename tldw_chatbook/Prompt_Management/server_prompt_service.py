@@ -11,9 +11,16 @@ from tldw_chatbook.tldw_api.prompt_chatbook_schemas import PromptCreateRequest, 
 class ServerPromptService:
     """Delegate prompt operations to the configured tldw_server API client."""
 
-    def __init__(self, client: Any, *, policy_enforcer: Any | None = None):
+    def __init__(
+        self,
+        client: Any | None = None,
+        *,
+        policy_enforcer: Any | None = None,
+        client_provider: Any | None = None,
+    ):
         self.client = client
         self.policy_enforcer = policy_enforcer
+        self.client_provider = client_provider
 
     @classmethod
     def from_config(
@@ -29,10 +36,21 @@ class ServerPromptService:
             policy_enforcer=policy_enforcer,
         )
 
+    @classmethod
+    def from_server_context_provider(
+        cls,
+        provider: Any,
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerPromptService":
+        return cls(client_provider=provider, policy_enforcer=policy_enforcer)
+
     def _require_client(self) -> Any:
-        if self.client is None:
-            raise ValueError("Server prompt client is unavailable.")
-        return self.client
+        if self.client is not None:
+            return self.client
+        if self.client_provider is not None:
+            return self.client_provider.build_client()
+        raise ValueError("Server prompt client is unavailable.")
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:

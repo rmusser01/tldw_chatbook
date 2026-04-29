@@ -159,9 +159,16 @@ class ServerChatbookService:
         ContentType.CHARACTER.value,
     }
 
-    def __init__(self, client: Optional[TLDWAPIClient], *, policy_enforcer: Any | None = None):
+    def __init__(
+        self,
+        client: Optional[TLDWAPIClient] = None,
+        *,
+        policy_enforcer: Any | None = None,
+        client_provider: Any | None = None,
+    ):
         self.client = client
         self.policy_enforcer = policy_enforcer
+        self.client_provider = client_provider
 
     @classmethod
     def from_config(
@@ -175,10 +182,21 @@ class ServerChatbookService:
             policy_enforcer=policy_enforcer,
         )
 
+    @classmethod
+    def from_server_context_provider(
+        cls,
+        provider: Any,
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerChatbookService":
+        return cls(client_provider=provider, policy_enforcer=policy_enforcer)
+
     def _require_client(self) -> TLDWAPIClient:
-        if self.client is None:
-            raise ValueError("TLDW API client is required for server chatbook operations.")
-        return self.client
+        if self.client is not None:
+            return self.client
+        if self.client_provider is not None:
+            return self.client_provider.build_client()
+        raise ValueError("TLDW API client is required for server chatbook operations.")
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:

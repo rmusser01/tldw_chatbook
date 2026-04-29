@@ -1,6 +1,11 @@
 import pytest
 
+from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+    ServerPromptService as ScopedServerPromptService,
+    build_prompt_scope_service,
+)
 from tldw_chatbook.Prompt_Management.prompt_chatbook_scope_service import PromptChatbookScopeService
+from tldw_chatbook.Prompt_Management.server_prompt_service import ServerPromptService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -214,6 +219,119 @@ class FakePolicyEnforcer:
                 effective_source="server",
                 authority_owner="server",
             )
+
+
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_service_uses_provider_client_when_no_direct_client():
+    class FakeClient:
+        async def get_prompts_health(self):
+            return {"status": "healthy"}
+
+    provider = FakeClientProvider(FakeClient())
+    service = ServerPromptService.from_server_context_provider(provider)
+
+    result = await service.get_prompts_health()
+
+    assert result == {"status": "healthy"}
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_server_prompt_service_prefers_direct_client_over_provider():
+    class FakeClient:
+        def __init__(self, status):
+            self.status = status
+
+        async def get_prompts_health(self):
+            return {"status": self.status}
+
+    provider = FakeClientProvider(FakeClient("provider"))
+    service = ServerPromptService(client=FakeClient("direct"), client_provider=provider)
+
+    result = await service.get_prompts_health()
+
+    assert result == {"status": "direct"}
+    assert provider.build_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_build_prompt_scope_service_uses_injected_server_service_without_from_config(monkeypatch):
+    class FakeScopedServerPrompts:
+        def __init__(self):
+            self.calls = []
+
+        async def list_prompts(self, **kwargs):
+            self.calls.append(("list_prompts", kwargs))
+            return {
+                "items": [{"id": "injected-prompt-1", "name": "Injected"}],
+                "page": kwargs["page"],
+                "per_page": kwargs["per_page"],
+                "total_items": 1,
+            }
+
+    server_prompts = FakeScopedServerPrompts()
+
+    def fail_from_config(_app_config):
+        raise AssertionError("from_config should not be used for injected server services")
+
+    monkeypatch.setattr(ScopedServerPromptService, "from_config", fail_from_config)
+    scope = build_prompt_scope_service(
+        prompt_db=None,
+        app_config={"tldw_api": {"base_url": "https://unused.invalid"}},
+        server_service=server_prompts,
+    )
+
+    result = await scope.list_prompts(mode="server")
+
+    assert result["items"][0]["id"] == "server:prompt:injected-prompt-1"
+    assert server_prompts.calls == [
+        (
+            "list_prompts",
+            {
+                "page": 1,
+                "per_page": 10,
+                "include_deleted": False,
+                "sort_by": "last_modified",
+                "sort_order": "desc",
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_build_prompt_scope_service_uses_provider_backed_server_service_without_from_config(monkeypatch):
+    class FakeClient:
+        async def list_prompts(self, **kwargs):
+            return {
+                "items": [{"id": "provider-prompt-1", "name": "Provider"}],
+                "page": kwargs["page"],
+                "per_page": kwargs["per_page"],
+                "total": 1,
+            }
+
+    def fail_from_config(_app_config):
+        raise AssertionError("from_config should not be used when a client provider is supplied")
+
+    provider = FakeClientProvider(FakeClient())
+    monkeypatch.setattr(ScopedServerPromptService, "from_config", fail_from_config)
+    scope = build_prompt_scope_service(prompt_db=None, client_provider=provider)
+
+    result = await scope.list_prompts(mode="server", page=2, per_page=3)
+
+    assert result["items"][0]["id"] == "server:prompt:provider-prompt-1"
+    assert provider.build_calls == 1
 
 
 @pytest.mark.asyncio
