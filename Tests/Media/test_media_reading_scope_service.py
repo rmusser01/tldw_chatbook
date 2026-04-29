@@ -936,6 +936,8 @@ class FakeLocalMediaService:
 
 
 class FakeServerMediaService:
+    supports_ingestion_source_delete = False
+
     def __init__(self):
         self.calls = []
 
@@ -2005,6 +2007,14 @@ class FakeServerMediaService:
         return {"removed": 2, "files_deleted": 1}
 
 
+class DeleteCapableServerMediaService(FakeServerMediaService):
+    supports_ingestion_source_delete = True
+
+    async def delete_ingestion_source(self, source_id):
+        self.calls.append(("delete_ingestion_source", source_id))
+        return {"deleted": True, "source_id": source_id}
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
         self.denied_reason = denied_reason
@@ -2169,6 +2179,19 @@ def test_scope_service_reports_known_media_reading_capability_gaps():
             "user_message": "The current server ingestion-source API does not expose deletion.",
             "affected_action_ids": ["media.ingestion_sources.delete.server"],
         },
+    ]
+
+
+def test_scope_service_omits_server_ingestion_source_delete_gap_for_capable_adapter():
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=DeleteCapableServerMediaService(),
+    )
+
+    server_report = scope_service.list_unsupported_capabilities(mode="server")
+
+    assert [item["operation_id"] for item in server_report] == [
+        "collections.reading_list.per_media_type.server",
     ]
 
 
@@ -3989,22 +4012,33 @@ async def test_scope_service_can_create_server_ingestion_source():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_rejects_unsupported_server_ingestion_source_type_before_dispatch():
+async def test_scope_service_routes_server_local_directory_ingestion_source_type():
     server = FakeServerMediaService()
     scope = MediaReadingScopeService(local_service=None, server_service=server)
 
-    assert "local_directory" not in ALLOWED_SERVER_CREATE_SOURCE_TYPES
+    assert "local_directory" in ALLOWED_SERVER_CREATE_SOURCE_TYPES
 
-    with pytest.raises(ValueError, match="Unsupported server ingestion source type"):
-        await scope.create_ingestion_source(
-            mode="server",
-            source_type="local_directory",
-            sink_type="media",
-            policy="canonical",
-            config={"path": "/srv/media"},
-        )
+    created = await scope.create_ingestion_source(
+        mode="server",
+        source_type="local_directory",
+        sink_type="media",
+        policy="canonical",
+        config={"path": "/srv/media"},
+    )
 
-    assert not any(call[0] == "create_ingestion_source" for call in server.calls)
+    assert created["source_type"] == "local_directory"
+    assert server.calls[-1] == (
+        "create_ingestion_source",
+        {
+            "source_type": "local_directory",
+            "sink_type": "media",
+            "policy": "canonical",
+            "enabled": True,
+            "schedule_enabled": False,
+            "schedule": None,
+            "config": {"path": "/srv/media"},
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -4136,6 +4170,23 @@ async def test_scope_service_server_ingestion_source_delete_enforces_policy_then
     with pytest.raises(NotImplementedError, match="not exposed by tldw_server"):
         await scope_service.delete_ingestion_source(mode="server", source_id=7)
 
+    assert policy_enforcer.calls[-1:] == ["media.ingestion_sources.delete.server"]
+    assert server.calls == [("delete_ingestion_source", 7)]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_ingestion_source_delete_for_capable_adapter():
+    policy_enforcer = FakePolicyEnforcer()
+    server = DeleteCapableServerMediaService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    deleted = await scope_service.delete_ingestion_source(mode="server", source_id=7)
+
+    assert deleted == {"deleted": True, "source_id": 7}
     assert policy_enforcer.calls[-1:] == ["media.ingestion_sources.delete.server"]
     assert server.calls == [("delete_ingestion_source", 7)]
 

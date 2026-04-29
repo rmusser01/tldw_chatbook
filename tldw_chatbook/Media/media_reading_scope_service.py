@@ -22,7 +22,7 @@ from .media_reading_normalizers import (
 )
 from ..tldw_api import ProcessWebScrapingRequest
 
-ALLOWED_SERVER_CREATE_SOURCE_TYPES = ("archive_snapshot", "git_repository")
+ALLOWED_SERVER_CREATE_SOURCE_TYPES = ("local_directory", "archive_snapshot", "git_repository")
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
@@ -151,7 +151,20 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == MediaReadingBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
-        return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        reports = [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+        if self._server_supports_ingestion_source_delete():
+            reports = [
+                item
+                for item in reports
+                if item["operation_id"] != "media.ingestion_sources.delete.server"
+            ]
+        return reports
+
+    def _server_supports_ingestion_source_delete(self) -> bool:
+        delete_method = getattr(self.server_service, "delete_ingestion_source", None)
+        if not callable(delete_method):
+            return False
+        return bool(getattr(self.server_service, "supports_ingestion_source_delete", True))
 
     @staticmethod
     def _reading_action_id(mode: MediaReadingBackend, action: str) -> str:

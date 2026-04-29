@@ -62,6 +62,8 @@ from ..tldw_api import (
 class ServerMediaReadingService:
     """Thin wrapper around server-backed media-reading endpoints."""
 
+    supports_ingestion_source_delete = False
+
     _SUPPORTED_METADATA_FIELDS = {"status", "favorite", "tags", "notes", "title"}
 
     def __init__(
