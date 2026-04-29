@@ -38,7 +38,10 @@ from ...Chatbooks.server_chatbook_service import (
     get_server_import_blockers_from_manifest,
     record_server_job,
 )
-from ...runtime_policy.bootstrap import build_server_chatbook_service
+from ..server_chatbook_service_lease import (
+    close_server_chatbook_service_lease,
+    server_chatbook_service_lease,
+)
 from ...Widgets.enhanced_file_picker import EnhancedFileOpen
 
 if TYPE_CHECKING:
@@ -703,7 +706,12 @@ class ImportProgressStep(WizardStep):
                     from ...config import load_settings
                     config = load_settings()
 
-                service = build_server_chatbook_service(app_config=config)
+                lease = server_chatbook_service_lease(
+                    self.wizard.app_instance,
+                    config=config,
+                    policy_enforcer=getattr(self.wizard.app_instance, "service_policy_enforcer", None),
+                )
+                service = lease.service
                 try:
                     server_selections = build_server_import_selections_from_manifest(
                         manifest,
@@ -770,8 +778,7 @@ class ImportProgressStep(WizardStep):
                     await self._show_completion()
                     return
                 finally:
-                    if service.client is not None:
-                        await service.client.close()
+                    await close_server_chatbook_service_lease(lease)
             
             # Create importer
             db_config = self.wizard.app_instance.config_data.get("database", {})

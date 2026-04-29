@@ -102,32 +102,13 @@ async def test_management_window_lists_live_remote_server_jobs(monkeypatch):
                 "total": 1,
             }
 
-    policy_enforcer = object()
-    observed_policy = []
-
-    def fake_client_factory(config, policy_enforcer=None):
-        assert config["tldw_api"]["base_url"] == "http://server.test"
-        observed_policy.append(policy_enforcer)
-        client = FakeClient()
-        return FakeServerChatbookService(client), client
-
     monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh)
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.ChatbookExportManagementWindow.build_server_chatbook_service_from_config",
-        fake_client_factory,
-    )
 
     class ManagementApp(App):
         def __init__(self):
             super().__init__()
-            self.config_data = {
-                "tldw_api": {
-                    "base_url": "http://server.test",
-                    "api_key": "token",
-                }
-            }
+            self.server_chatbook_service = FakeServerChatbookService(FakeClient())
             self._chatbook_server_jobs = []
-            self.service_policy_enforcer = policy_enforcer
 
         def compose(self) -> ComposeResult:
             yield ChatbookExportManagementWindow(self)
@@ -143,7 +124,70 @@ async def test_management_window_lists_live_remote_server_jobs(monkeypatch):
         assert table.row_count == 2
         assert ["export", "completed", "100%", "Remote Export", "server"] in rows
         assert ["import", "in_progress", "40%", "remote-import.chatbook.zip", "server"] in rows
-        assert observed_policy == [policy_enforcer]
+
+
+@pytest.mark.asyncio
+async def test_management_window_prefers_app_server_chatbook_service_for_live_jobs(monkeypatch):
+    async def no_refresh(self):
+        self.chatbook_files = []
+        self.chatbook_count = 0
+        self.total_size = 0
+        self._update_list_count()
+        self._update_status()
+
+    class FakeServerChatbookService:
+        def __init__(self):
+            self.calls = []
+
+        async def list_export_jobs(self, limit=100, offset=0):
+            self.calls.append(("list_export_jobs", limit, offset))
+            return {
+                "jobs": [
+                    {
+                        "job_id": "provider-export-1",
+                        "status": "completed",
+                        "progress_percentage": 100,
+                        "chatbook_name": "Provider Export",
+                        "created_at": "2026-04-22T13:00:00Z",
+                    }
+                ],
+                "total": 1,
+            }
+
+        async def list_import_jobs(self, limit=100, offset=0):
+            self.calls.append(("list_import_jobs", limit, offset))
+            return {"jobs": [], "total": 0}
+
+    monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.ChatbookExportManagementWindow.build_server_chatbook_service_from_config",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("config helper should not be used")),
+        raising=False,
+    )
+
+    class ManagementApp(App):
+        def __init__(self):
+            super().__init__()
+            self.server_chatbook_service = FakeServerChatbookService()
+            self._chatbook_server_jobs = []
+
+        def compose(self) -> ComposeResult:
+            yield ChatbookExportManagementWindow(self)
+
+        def notify(self, *args, **kwargs):
+            return None
+
+    app = ManagementApp()
+    async with app.run_test() as pilot:
+        table = app.query_one("#server-job-table", DataTable)
+        rows = [table.get_row_at(index) for index in range(table.row_count)]
+
+        assert table.row_count == 1
+        assert ["export", "completed", "100%", "Provider Export", "server"] in rows
+        assert app.server_chatbook_service.calls == [
+            ("list_export_jobs", 50, 0),
+            ("list_import_jobs", 50, 0),
+        ]
 
 
 @pytest.mark.asyncio
@@ -207,15 +251,11 @@ async def test_management_window_remote_job_actions_call_server(monkeypatch, tmp
             return Path(destination_path)
 
     monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh)
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.ChatbookExportManagementWindow.build_server_chatbook_service_from_config",
-        lambda config, policy_enforcer=None: (FakeServerChatbookService(FakeClient()), FakeClient()),
-    )
 
     class ManagementApp(App):
         def __init__(self):
             super().__init__()
-            self.config_data = {"tldw_api": {"base_url": "http://server.test", "api_key": "token"}}
+            self.server_chatbook_service = FakeServerChatbookService(FakeClient())
             self._chatbook_server_jobs = []
             self.notifications = []
 

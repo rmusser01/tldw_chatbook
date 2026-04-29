@@ -14,7 +14,6 @@ Provides interface for:
 
 import os
 import shutil
-import inspect
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
@@ -34,8 +33,11 @@ from loguru import logger
 from ..Chatbooks.chatbook_importer import ChatbookImporter
 from ..Chatbooks.chatbook_models import ChatbookManifest
 from ..Chatbooks.server_chatbook_service import (
-    build_server_chatbook_service_from_config,
     get_server_job_records,
+)
+from .server_chatbook_service_lease import (
+    close_server_chatbook_service_lease,
+    server_chatbook_service_lease,
 )
 
 if TYPE_CHECKING:
@@ -483,8 +485,9 @@ class ChatbookExportManagementWindow(ModalScreen):
     async def _fetch_live_server_job_records(self) -> List[Dict[str, Any]]:
         config = getattr(self.app_instance, "config_data", {}) or {}
         try:
-            service, client = build_server_chatbook_service_from_config(
-                config,
+            lease = server_chatbook_service_lease(
+                self.app_instance,
+                config=config,
                 policy_enforcer=getattr(self.app_instance, "service_policy_enforcer", None),
             )
         except Exception as exc:
@@ -492,6 +495,7 @@ class ChatbookExportManagementWindow(ModalScreen):
             return []
 
         try:
+            service = lease.service
             export_payload = await service.list_export_jobs(limit=50, offset=0)
             import_payload = await service.list_import_jobs(limit=50, offset=0)
             return [
@@ -502,11 +506,7 @@ class ChatbookExportManagementWindow(ModalScreen):
             logger.warning(f"Failed to refresh live server chatbook jobs: {exc}")
             return []
         finally:
-            close = getattr(client, "close", None)
-            if callable(close):
-                close_result = close()
-                if inspect.isawaitable(close_result):
-                    await close_result
+            await close_server_chatbook_service_lease(lease)
 
     def _normalize_live_server_jobs(
         self,
@@ -585,18 +585,15 @@ class ChatbookExportManagementWindow(ModalScreen):
 
     async def _with_server_chatbook_service(self, operation):
         config = getattr(self.app_instance, "config_data", {}) or {}
-        service, client = build_server_chatbook_service_from_config(
-            config,
+        lease = server_chatbook_service_lease(
+            self.app_instance,
+            config=config,
             policy_enforcer=getattr(self.app_instance, "service_policy_enforcer", None),
         )
         try:
-            return await operation(service)
+            return await operation(lease.service)
         finally:
-            close = getattr(client, "close", None)
-            if callable(close):
-                close_result = close()
-                if inspect.isawaitable(close_result):
-                    await close_result
+            await close_server_chatbook_service_lease(lease)
 
     async def _cancel_selected_server_job(self) -> None:
         record = self.selected_server_job_record

@@ -6,18 +6,66 @@ from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from tldw_chatbook.app import TldwCli
-from tldw_chatbook.UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt
+from tldw_chatbook.UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt, RemoteIngestionPanel
 from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 
 
 @pytest.mark.asyncio
 async def test_ingest_window_does_not_construct_api_client_for_server_mode(monkeypatch):
-    ctor = Mock()
-    monkeypatch.setattr("tldw_chatbook.UI.MediaIngestWindowRebuilt.build_runtime_api_client", ctor)
+    ctor = Mock(side_effect=AssertionError("direct API client builder should not be used"))
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.MediaIngestWindowRebuilt.build_runtime_api_client",
+        ctor,
+        raising=False,
+    )
 
-    def compose(self):
-        yield RemoteIngestionPanel(self, id="remote-panel")
+    submit_calls = []
+
+    class FakeScopeService:
+        async def submit_media_ingest_jobs(self, **kwargs):
+            submit_calls.append(kwargs)
+            return {"batch_id": "batch-1", "jobs": []}
+
+    app = SimpleNamespace(
+        app_config={"tldw_api": {"base_url": "https://server.test", "api_key": "secret"}},
+        media_runtime_state=MediaRuntimeState(runtime_backend="server"),
+        media_reading_scope_service=FakeScopeService(),
+    )
+    panel = RemoteIngestionPanel(app)
+    panel.media_type = "pdf"
+    panel._set_process_controls_disabled = Mock()
+    panel._set_recent_watch_controls_disabled = Mock()
+    panel._set_batch_controls_disabled = Mock()
+    panel._set_batch_lookup_controls_disabled = Mock()
+    panel._set_job_controls_disabled = Mock()
+    panel._render_submission_response = Mock()
+    panel.notify = Mock()
+
+    widgets = {
+        "#enable-chunking": SimpleNamespace(value=True),
+        "#chunk-method": SimpleNamespace(value="sentences"),
+        "#chunk-size": SimpleNamespace(value="500"),
+        "#pdf-engine": SimpleNamespace(value="pymupdf4llm"),
+        "#remote-job-status": SimpleNamespace(update=Mock()),
+    }
+    monkeypatch.setattr(panel, "query_one", lambda selector, *args, **kwargs: widgets[selector])
+
+    await panel.process_remote_content("https://example.test/doc.pdf")
+
+    ctor.assert_not_called()
+    assert submit_calls == [
+        {
+            "mode": "server",
+            "media_type": "pdf",
+            "urls": ["https://example.test/doc.pdf"],
+            "perform_chunking": True,
+            "chunk_method": "sentences",
+            "chunk_size": 500,
+            "pdf_parsing_engine": "pymupdf4llm",
+        }
+    ]
+    panel._render_submission_response.assert_called_once_with({"batch_id": "batch-1", "jobs": []})
 
 
 class WebClipperPanelTestApp(App):
@@ -57,7 +105,11 @@ async def test_ingest_window_refreshes_server_mode_panels_without_constructing_a
 @pytest.mark.asyncio
 async def test_ingest_window_refresh_backend_view_preserves_local_refresh_behavior(monkeypatch):
     ctor = Mock()
-    monkeypatch.setattr("tldw_chatbook.UI.MediaIngestWindowRebuilt.build_runtime_api_client", ctor)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.MediaIngestWindowRebuilt.build_runtime_api_client",
+        ctor,
+        raising=False,
+    )
 
     app = SimpleNamespace(media_runtime_state=MediaRuntimeState(runtime_backend="local"))
     ingest_window = MediaIngestWindowRebuilt(app)

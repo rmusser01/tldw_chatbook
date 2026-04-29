@@ -44,7 +44,6 @@ from ..Local_Ingestion import (
     get_supported_extensions,
     FileIngestionError,
 )
-from ..runtime_policy.bootstrap import build_runtime_api_client
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Widgets.Media import MediaIngestionSourcePanel
 
@@ -770,19 +769,6 @@ class RemoteIngestionPanel(ScrollableContainer):
 
             # Parse URLs
             urls = [url.strip() for url in urls_text.strip().split("\n") if url.strip()]
-            
-            # Initialize API client if needed
-            if not self.api_client:
-                api_config = getattr(self.app_instance, "app_config", {}).get("tldw_api", {})
-                self.api_client = build_runtime_api_client(
-                    app_config=getattr(self.app_instance, "app_config", {}),
-                    endpoint_url=(
-                        api_config.get("base_url")
-                        or api_config.get("api_url")
-                        or api_config.get("url")
-                        or "http://localhost:8000"
-                    ),
-                )
             
             # Prepare request based on media type
             request_data = {

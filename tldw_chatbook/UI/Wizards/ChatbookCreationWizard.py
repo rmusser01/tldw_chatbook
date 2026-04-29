@@ -38,7 +38,10 @@ from ...Chatbooks.server_chatbook_service import (
     build_server_job_record,
     record_server_job,
 )
-from ...runtime_policy.bootstrap import build_server_chatbook_service
+from ..server_chatbook_service_lease import (
+    close_server_chatbook_service_lease,
+    server_chatbook_service_lease,
+)
 
 if TYPE_CHECKING:
     from ...app import TldwCli
@@ -651,7 +654,12 @@ class ProgressStep(WizardStep):
                 config = load_settings()
 
             if execution_mode == "server":
-                service = build_server_chatbook_service(app_config=config)
+                lease = server_chatbook_service_lease(
+                    self.wizard.app_instance,
+                    config=config,
+                    policy_enforcer=getattr(self.wizard.app_instance, "service_policy_enforcer", None),
+                )
+                service = lease.service
                 try:
                     self._update_status("status-validate", "completed", "✓ Prepared server export")
                     self._update_status("status-conversations", "active", "⟳ Sending export request...")
@@ -707,8 +715,7 @@ class ProgressStep(WizardStep):
                     await self._show_server_completion(job_result)
                     return
                 finally:
-                    if service.client is not None:
-                        await service.client.close()
+                    await close_server_chatbook_service_lease(lease)
             
             db_config = config.get("database", {})
             db_paths = {
