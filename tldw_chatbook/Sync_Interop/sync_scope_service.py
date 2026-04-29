@@ -6,6 +6,12 @@ import inspect
 from enum import Enum
 from typing import Any
 
+from .sync_readiness import (
+    DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
+    SyncEligibilityRegistry,
+    build_sync_readiness_report,
+)
+
 
 class SyncBackend(str, Enum):
     LOCAL = "local"
@@ -129,6 +135,47 @@ class SyncScopeService:
         if normalized_mode == SyncBackend.LOCAL:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+
+    def list_unsupported_sync_domains(
+        self,
+        *,
+        domains: list[str],
+        server_profile_id: str | None = None,
+        workspace_id: str | None = None,
+        registry: SyncEligibilityRegistry | None = None,
+    ) -> list[dict[str, Any]]:
+        eligibility_registry = registry or DEFAULT_SYNC_ELIGIBILITY_REGISTRY
+        reports = [
+            build_sync_readiness_report(
+                domain=domain,
+                server_profile_id=server_profile_id,
+                workspace_id=workspace_id,
+                registry=eligibility_registry,
+            )
+            for domain in domains
+        ]
+        unsupported: list[dict[str, Any]] = []
+        for report in reports:
+            if report.sync_eligible:
+                continue
+            reason_code = report.reason_codes[0] if report.reason_codes else "not_eligible"
+            unsupported.append(
+                {
+                    "operation_id": f"sync.domain.unsupported.{report.domain}",
+                    "source": "server",
+                    "supported": False,
+                    "reason_code": reason_code,
+                    "user_message": (
+                        f"Domain '{report.domain}' is not registered for sync dry-run readiness."
+                    ),
+                    "affected_action_ids": [],
+                    "domain": report.domain,
+                    "server_profile_id": report.server_profile_id,
+                    "workspace_id": report.workspace_id,
+                    "write_enabled": report.write_enabled,
+                }
+            )
+        return unsupported
 
     async def send_changes(
         self,

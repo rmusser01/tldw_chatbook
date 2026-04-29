@@ -115,3 +115,28 @@ def test_sync_scope_service_reports_known_unsupported_capabilities():
             "affected_action_ids": ["sync.changes.launch.server", "sync.changes.observe.server"],
         }
     ]
+
+
+def test_sync_scope_service_reports_unsupported_unsyncable_domain():
+    scope = SyncScopeService(server_service=FakeSyncService())
+
+    report = scope.list_unsupported_sync_domains(
+        domains=["notes", "unknown"],
+        server_profile_id="server-a",
+        workspace_id="workspace-1",
+    )
+
+    assert report == [
+        {
+            "operation_id": "sync.domain.unsupported.unknown",
+            "source": "server",
+            "supported": False,
+            "reason_code": "not_registered",
+            "user_message": "Domain 'unknown' is not registered for sync dry-run readiness.",
+            "affected_action_ids": [],
+            "domain": "unknown",
+            "server_profile_id": "server-a",
+            "workspace_id": "workspace-1",
+            "write_enabled": False,
+        }
+    ]
