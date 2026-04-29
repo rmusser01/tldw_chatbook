@@ -113,6 +113,37 @@ async def test_observer_dedupes_duplicate_reconnect_event():
 
 
 @pytest.mark.asyncio
+async def test_unacknowledged_duplicate_after_reconnect_is_retried_and_can_advance_cursor():
+    store = EventCursorStore()
+    duplicate = _event("cursor-1")
+    transport = FakeTransport([
+        [duplicate, RuntimeError("disconnect")],
+        [duplicate],
+    ])
+    observed = []
+    acknowledgements = iter([False, True])
+
+    await EventObserver(store=store, transport=transport, backoff=lambda attempt: None).run(
+        source_authority="server",
+        server_profile_id="server-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+        handler=lambda event: observed.append(event) or next(acknowledgements),
+        max_events=2,
+        max_reconnects=1,
+    )
+
+    cursor = store.get_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+    )
+    assert [event.server_cursor for event in observed] == ["cursor-1", "cursor-1"]
+    assert cursor.cursor == "cursor-1"
+
+
+@pytest.mark.asyncio
 async def test_observer_does_not_advance_cursor_for_unacknowledged_events():
     store = EventCursorStore()
     transport = FakeTransport([[_event("cursor-1")]])

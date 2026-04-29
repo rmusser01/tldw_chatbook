@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal
+
 from tldw_chatbook.runtime_policy.server_parity_models import (
     NotificationDeliveryState,
     NotificationPresentationRecord,
@@ -9,15 +12,48 @@ from tldw_chatbook.runtime_policy.server_parity_models import (
     ServerNotificationReadState,
 )
 
+ServerNotificationReminderState = Literal[
+    "unknown",
+    "none",
+    "scheduled",
+    "snoozed",
+    "due",
+    "completed",
+    "cancelled",
+    "failed",
+]
+
+_SERVER_REMINDER_STATES = {
+    "unknown",
+    "none",
+    "scheduled",
+    "snoozed",
+    "due",
+    "completed",
+    "cancelled",
+    "failed",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class NotificationPresentationState(NotificationPresentationRecord):
+    server_reminder_state: ServerNotificationReminderState = "unknown"
+
+    def __post_init__(self) -> None:
+        NotificationPresentationRecord.__post_init__(self)
+        if self.server_reminder_state not in _SERVER_REMINDER_STATES:
+            allowed = ", ".join(sorted(_SERVER_REMINDER_STATES))
+            raise ValueError(f"server_reminder_state must be one of: {allowed}")
+
 
 class NotificationPresentationStore:
     """Process-local presentation state with local/server ownership separated."""
 
     def __init__(self) -> None:
-        self._records: dict[str, NotificationPresentationRecord] = {}
+        self._records: dict[str, NotificationPresentationState] = {}
 
-    def get(self, event_key: str) -> NotificationPresentationRecord:
-        return self._records.get(event_key) or NotificationPresentationRecord(event_key=event_key)
+    def get(self, event_key: str) -> NotificationPresentationState:
+        return self._records.get(event_key) or NotificationPresentationState(event_key=event_key)
 
     def _save(
         self,
@@ -26,16 +62,18 @@ class NotificationPresentationStore:
         local_delivery_state: NotificationDeliveryState | None = None,
         server_read_state: ServerNotificationReadState | None = None,
         server_dismiss_state: ServerNotificationDismissState | None = None,
+        server_reminder_state: ServerNotificationReminderState | None = None,
         presented_at: str | None = None,
         delivery_error: str | None = None,
         clear_delivery_error: bool = False,
-    ) -> NotificationPresentationRecord:
+    ) -> NotificationPresentationState:
         current = self.get(event_key)
-        record = NotificationPresentationRecord(
+        record = NotificationPresentationState(
             event_key=event_key,
             local_delivery_state=local_delivery_state or current.local_delivery_state,
             server_read_state=server_read_state or current.server_read_state,
             server_dismiss_state=server_dismiss_state or current.server_dismiss_state,
+            server_reminder_state=server_reminder_state or current.server_reminder_state,
             presented_at=presented_at if presented_at is not None else current.presented_at,
             delivery_error=None
             if clear_delivery_error
@@ -51,7 +89,7 @@ class NotificationPresentationStore:
         event_key: str,
         *,
         presented_at: str | None = None,
-    ) -> NotificationPresentationRecord:
+    ) -> NotificationPresentationState:
         return self._save(
             event_key,
             local_delivery_state="delivered",
@@ -64,14 +102,14 @@ class NotificationPresentationStore:
         event_key: str,
         *,
         delivery_error: str,
-    ) -> NotificationPresentationRecord:
+    ) -> NotificationPresentationState:
         return self._save(
             event_key,
             local_delivery_state="failed",
             delivery_error=delivery_error,
         )
 
-    def mark_suppressed(self, event_key: str) -> NotificationPresentationRecord:
+    def mark_suppressed(self, event_key: str) -> NotificationPresentationState:
         return self._save(event_key, local_delivery_state="suppressed")
 
     def upsert_server_state(
@@ -80,9 +118,11 @@ class NotificationPresentationStore:
         *,
         read_state: ServerNotificationReadState | None = None,
         dismiss_state: ServerNotificationDismissState | None = None,
-    ) -> NotificationPresentationRecord:
+        reminder_state: ServerNotificationReminderState | None = None,
+    ) -> NotificationPresentationState:
         return self._save(
             event_key,
             server_read_state=read_state,
             server_dismiss_state=dismiss_state,
+            server_reminder_state=reminder_state,
         )

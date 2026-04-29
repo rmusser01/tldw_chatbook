@@ -52,6 +52,9 @@ class EventCursorStore:
     def dedupe_size(self) -> int:
         return len(self._dedupe)
 
+    def is_duplicate_event(self, event: NormalizedEventRecord) -> bool:
+        return EventDedupeKey.from_event(event) in self._dedupe
+
     def get_cursor(
         self,
         *,

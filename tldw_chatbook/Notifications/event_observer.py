@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from tldw_chatbook.Notifications.event_cursor_store import (
     CursorAdvanceResult,
+    CursorAdvanceStatus,
     EventCursorStore,
 )
 from tldw_chatbook.runtime_policy.server_parity_models import (
@@ -105,13 +106,15 @@ class EventObserver:
                             reset=last_reset,
                             cancelled=True,
                         )
-                    if self.store.remember_event(event).is_duplicate:
+                    if self.store.is_duplicate_event(event):
                         continue
 
                     should_ack = bool(await _maybe_await(handler(event)))
                     handled_events += 1
                     if should_ack:
-                        self.store.acknowledge_event(event)
+                        advance = self.store.acknowledge_event(event)
+                        if advance.status is not CursorAdvanceStatus.STALE_RESET:
+                            self.store.remember_event(event)
 
                     if max_events is not None and handled_events >= max_events:
                         return EventObserverResult(handled_events=handled_events, reset=last_reset)
