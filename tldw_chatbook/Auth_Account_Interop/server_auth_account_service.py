@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_from_config
@@ -27,6 +28,17 @@ from ..tldw_api import (
 )
 
 
+@dataclass(slots=True)
+class _ConfigBackedClientProvider:
+    app_config: Mapping[str, Any]
+    _client: TLDWAPIClient | None = None
+
+    def build_client(self) -> TLDWAPIClient:
+        if self._client is None:
+            self._client = build_runtime_api_client_from_config(self.app_config)
+        return self._client
+
+
 class ServerAuthAccountService:
     """Execute explicit active-server account operations without local identity mirroring."""
 
@@ -49,7 +61,7 @@ class ServerAuthAccountService:
         policy_enforcer: Any | None = None,
     ) -> "ServerAuthAccountService":
         return cls(
-            client=build_runtime_api_client_from_config(app_config),
+            client_provider=_ConfigBackedClientProvider(app_config),
             policy_enforcer=policy_enforcer,
         )
 

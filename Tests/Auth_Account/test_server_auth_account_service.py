@@ -141,6 +141,20 @@ async def test_server_auth_account_service_direct_client_takes_precedence_over_p
     ]
 
 
+def test_server_auth_account_service_from_config_delegates_through_provider_seam():
+    service = ServerAuthAccountService.from_config(
+        {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
+    )
+
+    assert service.client is None
+    assert service.client_provider is not None
+
+    client = service.client_provider.build_client()
+
+    assert client.base_url == "https://example.com"
+    assert service.client_provider.build_client() is client
+
+
 @pytest.mark.asyncio
 async def test_server_auth_account_service_routes_representative_account_operations_with_policy():
     client = FakeAuthAccountClient()
