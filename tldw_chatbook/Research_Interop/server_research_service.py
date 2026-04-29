@@ -17,6 +17,8 @@ from .research_normalizers import ResearchRecord, ResearchRecordList
 class ServerResearchService:
     """Policy-gated access to server deep research runs."""
 
+    supports_run_delete = False
+
     def __init__(
         self,
         client: Optional[TLDWAPIClient],

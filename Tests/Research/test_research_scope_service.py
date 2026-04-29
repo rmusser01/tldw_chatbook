@@ -18,6 +18,10 @@ class FakeResearchService:
         self.calls.append(("list_sessions", limit, offset, status))
         return [{"id": f"{self.source}-session-1", "title": "Research", "query": "MCP", "version": 1}]
 
+    async def get_session(self, session_id):
+        self.calls.append(("get_session", session_id))
+        return {"id": session_id, "title": "Research", "query": "MCP", "version": 1}
+
     async def update_session(self, session_id, *, expected_version=None, **kwargs):
         self.calls.append(("update_session", session_id, expected_version, kwargs))
         return {"id": session_id, "title": kwargs["title"], "query": "MCP", "version": 2}
@@ -60,6 +64,15 @@ class FakeResearchService:
     async def get_artifact(self, run_id, artifact_name):
         self.calls.append(("get_artifact", run_id, artifact_name))
         return {"run_id": run_id, "artifact_name": artifact_name, "content_type": "text/markdown"}
+
+
+class LimitOnlyServerResearchService:
+    def __init__(self):
+        self.calls = []
+
+    async def list_runs(self, *, limit=100):
+        self.calls.append(("list_runs", limit))
+        return [{"id": "server-run-1", "query": "MCP", "status": "running", "version": 1}]
 
 
 class FakePolicyEnforcer:
@@ -111,7 +124,7 @@ async def test_research_scope_service_blocks_server_session_crud_as_unsupported(
 
 @pytest.mark.asyncio
 async def test_research_scope_service_rejects_unsupported_server_run_list_filters_before_dispatch():
-    server = FakeResearchService("server")
+    server = LimitOnlyServerResearchService()
     policy = FakePolicyEnforcer()
     scope = ResearchScopeService(
         local_service=FakeResearchService("local"),
@@ -124,6 +137,73 @@ async def test_research_scope_service_rejects_unsupported_server_run_list_filter
 
     assert server.calls == []
     assert policy.calls == ["research.runs.list.server"]
+
+
+@pytest.mark.asyncio
+async def test_research_scope_service_routes_server_session_crud_when_adapter_provides_it():
+    server = FakeResearchService("server")
+    policy = FakePolicyEnforcer()
+    scope = ResearchScopeService(
+        local_service=FakeResearchService("local"),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    created = await scope.create_session(mode="server", title="Research", query="MCP")
+    listed = await scope.list_sessions(mode="server", status="active")
+    detail = await scope.get_session(mode="server", session_id="server-session-1")
+    updated = await scope.update_session(
+        mode="server",
+        session_id="server-session-1",
+        title="Updated",
+        expected_version=1,
+    )
+    deleted = await scope.delete_session(
+        mode="server",
+        session_id="server-session-1",
+        expected_version=2,
+    )
+
+    assert created["record_id"] == "server:research_session:server-session-1"
+    assert listed[0]["record_id"] == "server:research_session:server-session-1"
+    assert detail["record_id"] == "server:research_session:server-session-1"
+    assert updated["record_id"] == "server:research_session:server-session-1"
+    assert deleted is True
+    assert policy.calls == [
+        "research.sessions.create.server",
+        "research.sessions.list.server",
+        "research.sessions.detail.server",
+        "research.sessions.update.server",
+        "research.sessions.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_research_scope_service_routes_server_filtered_runs_and_delete_when_adapter_supports_it():
+    server = FakeResearchService("server")
+    policy = FakePolicyEnforcer()
+    scope = ResearchScopeService(
+        local_service=FakeResearchService("local"),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+
+    runs = await scope.list_runs(
+        mode="server",
+        session_id="server-session-1",
+        status="running",
+        offset=5,
+    )
+    deleted = await scope.delete_run(mode="server", run_id="server-run-1", expected_version=1)
+
+    assert runs[0]["record_id"] == "server:research_run:server-run-1"
+    assert deleted is True
+    assert ("list_runs", 100, 5, "server-session-1", "running") in server.calls
+    assert ("delete_run", "server-run-1", 1) in server.calls
+    assert policy.calls == [
+        "research.runs.list.server",
+        "research.runs.delete.server",
+    ]
 
 
 @pytest.mark.asyncio
@@ -233,7 +313,7 @@ async def test_research_scope_service_normalizes_bundle_artifact_and_event_recor
 def test_research_scope_service_reports_known_unsupported_server_capabilities():
     scope = ResearchScopeService(
         local_service=FakeResearchService("local"),
-        server_service=FakeResearchService("server"),
+        server_service=object(),
     )
 
     assert scope.list_unsupported_capabilities(mode="local") == []
@@ -277,3 +357,10 @@ def test_research_scope_service_reports_known_unsupported_server_capabilities():
             "affected_action_ids": ["research.runs.delete.server"],
         }
     ]
+
+    capable_scope = ResearchScopeService(
+        local_service=FakeResearchService("local"),
+        server_service=FakeResearchService("server"),
+    )
+
+    assert capable_scope.list_unsupported_capabilities(mode="server") == []
