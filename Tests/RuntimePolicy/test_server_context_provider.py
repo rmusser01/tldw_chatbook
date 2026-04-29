@@ -748,10 +748,8 @@ async def test_clear_all_credentials_invalidates_cached_client_and_removes_impor
         SERVER_CREDENTIAL_ACCESS_TOKEN,
     ) is None
 
-    context = provider.get_active_context()
-
-    assert context.auth_token is None
-    assert context.credential_source == "none"
+    with pytest.raises(ServerCredentialsUnavailable):
+        provider.get_active_context()
     assert credentials.get_secret(
         "https://server.example.com/api",
         SERVER_CREDENTIAL_BEARER_TOKEN,
