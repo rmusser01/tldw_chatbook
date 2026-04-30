@@ -7,6 +7,13 @@ from typing import Any, Iterable, Literal, Mapping
 from tldw_chatbook.runtime_policy.registry import get_capability_entry
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.runtime_policy.unsupported_capabilities import validate_unsupported_capability_report
+from tldw_chatbook.UX_Interop.server_connection_contracts import (
+    build_active_server_status_contract,
+    build_auth_failure_contract,
+    build_capability_status_contract,
+    build_credential_store_unavailable_contract,
+    build_server_switch_invalidation_contract,
+)
 
 CONTRACT_ID = "server-parity-ux-handoff"
 CONTRACT_VERSION = "1.0"
