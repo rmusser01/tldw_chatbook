@@ -8,6 +8,7 @@ from tldw_chatbook.runtime_policy.server_credentials import (
     KeyringServerCredentialStore,
     SERVER_CREDENTIAL_ACCESS_TOKEN,
     SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ServerCredentialScope,
 )
 
 
@@ -75,6 +76,65 @@ def test_keyring_clear_all_removes_legacy_list_index_entries():
     store.clear_all()
 
     assert fake.values == {}
+
+
+def test_keyring_scoped_principal_none_and_dash_do_not_collide():
+    fake = FakeKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    null_principal_scope = ServerCredentialScope(
+        server_profile_id="server-a",
+        normalized_origin="https://server.example.com",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+        principal_id=None,
+    )
+    dash_principal_scope = ServerCredentialScope(
+        server_profile_id="server-a",
+        normalized_origin="https://server.example.com",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+        principal_id="-",
+    )
+
+    store.set_scoped_secret(null_principal_scope, "null-principal-secret")
+    store.set_scoped_secret(dash_principal_scope, "dash-principal-secret")
+
+    assert store.get_scoped_secret(null_principal_scope) == "null-principal-secret"
+    assert store.get_scoped_secret(dash_principal_scope) == "dash-principal-secret"
+
+    store.delete_scoped_secret(null_principal_scope)
+
+    assert store.get_scoped_secret(null_principal_scope) is None
+    assert store.get_scoped_secret(dash_principal_scope) == "dash-principal-secret"
+
+
+def test_keyring_non_legacy_scoped_lookup_does_not_read_legacy_secret():
+    fake = FakeKeyring()
+    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")] = "legacy-secret"
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    non_legacy_scope = ServerCredentialScope(
+        server_profile_id="server-a",
+        normalized_origin="https://server.example.com",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+        principal_id="user-a",
+    )
+
+    assert store.get_scoped_secret(non_legacy_scope) is None
+
+
+def test_keyring_non_legacy_scoped_delete_does_not_delete_legacy_secret():
+    fake = FakeKeyring()
+    legacy_key = (DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")
+    fake.values[legacy_key] = "legacy-secret"
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    non_legacy_scope = ServerCredentialScope(
+        server_profile_id="server-a",
+        normalized_origin="https://server.example.com",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+        principal_id="user-a",
+    )
+
+    store.delete_scoped_secret(non_legacy_scope)
+
+    assert fake.values[legacy_key] == "legacy-secret"
 
 
 def test_keyring_clear_server_removes_all_indexed_entries_for_profile():

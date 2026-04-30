@@ -94,17 +94,27 @@ def _credential_ref(server_id: str, purpose: str) -> ServerCredentialRef:
 
 
 def _username_for_scope(scope: ServerCredentialScope) -> str:
+    principal_kind = "none" if scope.principal_id is None else "value"
+    principal_value = "" if scope.principal_id is None else scope.principal_id
     return (
         f"{DEFAULT_KEYRING_SERVICE_NAME}:v1|"
         f"profile={quote(scope.server_profile_id, safe='')}|"
         f"origin={quote(scope.normalized_origin, safe='')}|"
-        f"principal={quote(scope.principal_id or '-', safe='')}|"
+        f"principal_kind={principal_kind}|"
+        f"principal={quote(principal_value, safe='')}|"
         f"type={quote(scope.credential_type, safe='')}"
     )
 
 
 def _legacy_username_for_scope(scope: ServerCredentialScope) -> str:
     return f"{scope.server_profile_id}:{scope.credential_type}"
+
+
+def _is_legacy_scope(scope: ServerCredentialScope) -> bool:
+    return (
+        scope.normalized_origin == scope.server_profile_id
+        and scope.principal_id is None
+    )
 
 
 def _scope_from_index_entry(entry: Any) -> ServerCredentialScope | None:
@@ -298,6 +308,8 @@ class KeyringServerCredentialStore:
         secret = self._keyring.get_password(self.service_name, _username_for_scope(scope))
         if secret is not None:
             return secret
+        if not _is_legacy_scope(scope):
+            return None
         return self._keyring.get_password(self.service_name, _legacy_username_for_scope(scope))
 
     def delete_scoped_secret(self, scope: ServerCredentialScope) -> None:
@@ -305,6 +317,9 @@ class KeyringServerCredentialStore:
         legacy_username = _legacy_username_for_scope(scope)
 
         if self._keyring.get_password(self.service_name, username) is None:
+            if not _is_legacy_scope(scope):
+                self._remove_scope_from_index(scope)
+                return
             if self._keyring.get_password(self.service_name, legacy_username) is None:
                 self._remove_scope_from_index(scope)
                 return
@@ -314,7 +329,7 @@ class KeyringServerCredentialStore:
 
         self._keyring.delete_password(self.service_name, username)
         legacy_secret_exists = self._keyring.get_password(self.service_name, legacy_username) is not None
-        if legacy_username != username and legacy_secret_exists:
+        if _is_legacy_scope(scope) and legacy_secret_exists:
             self._keyring.delete_password(self.service_name, legacy_username)
         self._remove_scope_from_index(scope)
 
