@@ -315,3 +315,53 @@ def test_chat_handoff_payload_from_source_content_preserves_upstream_truncation_
 
     assert payload.body == "short summary"
     assert payload.body_truncated is True
+
+
+def test_handoff_card_uses_status_source_title_and_metadata():
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
+
+    payload = ChatHandoffPayload(
+        source="search-web",
+        item_type="web-result",
+        title="Article",
+        body="Article snippet",
+        display_summary="Search result summary",
+        runtime_backend="server",
+        source_owner="server",
+        source_selector_state="server",
+        active_server_profile_id="srv-primary",
+        sync_dry_run_report={"dry_run": True, "write_enabled": False},
+        metadata={"url": "https://example.com", "score": 0.5},
+    )
+
+    card = ChatHandoffCard(payload)
+    text = card.render_text()
+
+    assert "Context staged" in text
+    assert "Web Search" in text
+    assert "Article" in text
+    assert "Source: Server source" in text
+    assert "Server: srv-primary" in text
+    assert "Sync: dry-run only" in text
+    assert "https://example.com" in text
+
+
+@pytest.mark.asyncio
+async def test_apply_handoff_mounts_card_and_prefills_tab_input():
+    payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Plan",
+        body="Body",
+        suggested_prompt="Use this note.",
+    )
+    session = Mock()
+    session.mount_handoff_card = AsyncMock()
+    session.set_draft_text = Mock()
+
+    screen = ChatScreen(Mock())
+
+    await screen._apply_handoff_to_chat_session(session, payload)
+
+    session.mount_handoff_card.assert_awaited_once_with(payload)
+    session.set_draft_text.assert_called_once_with("Use this note.")

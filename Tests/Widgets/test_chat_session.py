@@ -11,6 +11,7 @@ from textual.widgets import TextArea
 from textual.containers import VerticalScroll
 #
 # Local Imports
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Widgets.Chat_Widgets.chat_session import ChatSession
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 #
@@ -213,6 +214,37 @@ class TestChatSession:
         chat_session.clear_chat()
         
         mock_chat_log.remove_children.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_mount_handoff_card_mounts_card_to_session_log(self, chat_session):
+        from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
+
+        payload = ChatHandoffPayload(
+            source="notes",
+            item_type="note",
+            title="Plan",
+            body="Body",
+        )
+        chat_log = Mock()
+        chat_log.mount = AsyncMock()
+        chat_session.query_one = Mock(return_value=chat_log)
+
+        await chat_session.mount_handoff_card(payload)
+
+        chat_session.query_one.assert_called_once_with("#chat-log-test-session-123")
+        mounted_card = chat_log.mount.await_args.args[0]
+        assert isinstance(mounted_card, ChatHandoffCard)
+        assert mounted_card.payload.title == "Plan"
+
+    def test_set_draft_text_loads_tab_input_text(self, chat_session):
+        input_widget = Mock(spec=TextArea)
+        input_widget.load_text = Mock()
+        chat_session.query_one = Mock(return_value=input_widget)
+
+        chat_session.set_draft_text("Use this note.")
+
+        chat_session.query_one.assert_called_once_with("#chat-input-test-session-123", TextArea)
+        input_widget.load_text.assert_called_once_with("Use this note.")
 
 ########################################################################################################################
 #

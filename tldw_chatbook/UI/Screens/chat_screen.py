@@ -1,5 +1,6 @@
 """Chat screen implementation with comprehensive state management."""
 
+import inspect
 from typing import TYPE_CHECKING, Dict, Any, Optional
 from datetime import datetime
 from loguru import logger
@@ -384,8 +385,15 @@ class ChatScreen(BaseAppScreen):
             self._handoff_consumption_in_progress = False
 
     async def _apply_handoff_to_chat_session(self, session: Any, payload: ChatHandoffPayload) -> None:
-        """Hook for mounting visible staged context; filled in by the next UI slice."""
-        return None
+        mount_handoff_card = getattr(session, "mount_handoff_card", None)
+        if callable(mount_handoff_card):
+            result = mount_handoff_card(payload)
+            if inspect.isawaitable(result):
+                await result
+
+        set_draft_text = getattr(session, "set_draft_text", None)
+        if callable(set_draft_text):
+            set_draft_text(payload.default_prompt())
 
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar."""
