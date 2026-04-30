@@ -1,0 +1,1499 @@
+# Use In Chat Handoffs Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Implement current-dev `Use in Chat` handoffs so Notes, Workspaces, Media, RAG Search, and Web Search can stage one selected item into a fresh Chat session with visible context and no auto-send.
+
+**Architecture:** Use one app-owned pending handoff seam, one serializable `ChatHandoffPayload`, and session-scoped Chat persistence. Source screens build payloads; `TldwCli` owns navigation; `ChatScreen` consumes the pending payload after restore, creates a new tab, renders a handoff card, prefills the draft, and ensures the first user send includes staged context.
+
+**Tech Stack:** Python 3.11+, Textual, dataclasses, existing `ChatSessionData` / `TabState` / `ChatTabContainer`, pytest
+
+---
+
+## Scope Check
+
+This plan intentionally implements the single-item handoff slice from the rebaselined spec:
+
+- Shared handoff payload and Chat persistence.
+- App-owned pending handoff navigation.
+- Chat destination UI and send-time context injection.
+- Notes and Workspace source adapters.
+- Media source adapter.
+- RAG Search and Web Search source adapters.
+- Focused tests for the contracts and adapters.
+
+This plan does not implement multi-select packaging, Chatbooks, Study/Flashcards/Quizzes handoffs, CCP/persona launch rewrites, or broader UI layout redesigns.
+
+## Source Spec
+
+- `Docs/superpowers/specs/2026-04-21-use-in-chat-handoffs-design.md`
+
+## File Map
+
+- Create: `tldw_chatbook/Chat/chat_handoff_models.py`
+  Responsibility: Own `ChatHandoffPayload`, serialization, prompt formatting, source labels, and sent/staged state.
+- Modify: `tldw_chatbook/Chat/chat_models.py`
+  Responsibility: Persist handoff state in live `ChatSessionData`.
+- Modify: `tldw_chatbook/UI/Screens/chat_screen_state.py`
+  Responsibility: Persist handoff state in saved `TabState`.
+- Modify: `tldw_chatbook/Chat/tabs/tab_state_manager.py`
+  Responsibility: Keep tab runtime state aware of handoff payloads for send-time operations.
+- Create: `Tests/UI/test_chat_first_handoffs.py`
+  Responsibility: Contract, app seam, Chat destination, card, and adapter-focused handoff tests.
+- Modify: `Tests/UI/test_chat_screen_state.py`
+  Responsibility: Extend existing serialization tests for handoff payload preservation.
+- Modify: `Tests/UI/test_chat_tab_container.py`
+  Responsibility: Prove handoff sessions do not trigger persisted-conversation tab reuse.
+
+- Modify: `tldw_chatbook/app.py`
+  Responsibility: Add `pending_chat_handoff`, tab-availability guard, and `open_chat_with_handoff()`.
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+  Responsibility: Consume pending handoffs after normal restore, create fresh sessions, sync state, and mount handoff UI.
+- Create: `tldw_chatbook/Widgets/Chat_Widgets/chat_handoff_card.py`
+  Responsibility: Render staged/sent source context as a distinct non-message card.
+- Modify: `tldw_chatbook/Widgets/Chat_Widgets/chat_session.py`
+  Responsibility: Provide per-tab seams for mounting the handoff card and preloading draft text.
+- Modify: `tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py`
+  Responsibility: Apply staged handoff context to the outgoing model prompt.
+- Modify: `tldw_chatbook/Event_Handlers/Chat_Events/chat_events_tabs.py`
+  Responsibility: Bind the active session handoff to the send handler and mark it sent after successful first send.
+- Modify: `Tests/Event_Handlers/Chat_Events/test_chat_events_tabs.py`
+  Responsibility: Verify send-time staged context behavior.
+
+- Modify: `tldw_chatbook/UI/Screens/notes_screen.py`
+  Responsibility: Build Notes/Workspace payloads and handle `Use in Chat`.
+- Modify: `tldw_chatbook/Widgets/Note_Widgets/notes_sidebar_right.py`
+  Responsibility: Add note-context `Use in Chat` placement.
+- Modify: `tldw_chatbook/Widgets/Note_Widgets/workspace_context_panel.py`
+  Responsibility: Add workspace/source/artifact `Use in Chat` placements.
+- Modify: `Tests/UI/test_notes_screen.py`
+  Responsibility: Cover local, server, workspace note, workspace details, source, artifact, and dirty-state payloads.
+
+- Modify: `tldw_chatbook/UI/MediaWindow_v2.py`
+  Responsibility: Build Media payloads from hydrated detail and handle viewer action.
+- Modify: `tldw_chatbook/Widgets/Media/media_viewer_panel.py`
+  Responsibility: Add viewer-level `Use in Chat` action event.
+- Modify: Media UI tests near existing coverage or create `Tests/UI/test_media_handoffs.py`
+  Responsibility: Cover hydrated detail, sparse body, runtime backend, and disabled no-selection behavior.
+
+- Modify: `tldw_chatbook/UI/Views/RAGSearch/search_result.py`
+  Responsibility: Add per-result `Use in Chat` event.
+- Modify: `tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py`
+  Responsibility: Normalize RAG and include-web card payloads.
+- Modify: `tldw_chatbook/UI/SearchWindow.py`
+  Responsibility: Cardify dedicated Web Search results and forward them through the same `Use in Chat` path.
+- Create: `Tests/UI/test_search_handoffs.py`
+  Responsibility: Cover RAG card events, Web result payloads, and dedicated Web Search behavior.
+
+## Task 1: Add The Shared Handoff Contract And Persisted Session Fields
+
+**Files:**
+- Create: `tldw_chatbook/Chat/chat_handoff_models.py`
+- Modify: `tldw_chatbook/Chat/chat_models.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen_state.py`
+- Modify: `tldw_chatbook/Chat/tabs/tab_state_manager.py`
+- Create: `Tests/UI/test_chat_first_handoffs.py`
+- Modify: `Tests/UI/test_chat_screen_state.py`
+
+- [ ] **Step 1: Write failing payload serialization tests**
+
+Add to `Tests/UI/test_chat_first_handoffs.py`:
+
+```python
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+
+
+def test_chat_handoff_payload_round_trip_preserves_runtime_scope_and_metadata():
+    payload = ChatHandoffPayload(
+        source="workspace",
+        item_type="workspace-source",
+        title="Transcript",
+        body="source body",
+        source_id="source-1",
+        display_summary="A workspace source",
+        suggested_prompt="Use this source.",
+        runtime_backend="server",
+        discovery_owner="workspace",
+        discovery_entity_id="source-1",
+        scope_type="workspace",
+        workspace_id="workspace-1",
+        metadata={"score": 0.87, "url": "https://example.com"},
+    )
+
+    restored = ChatHandoffPayload.from_dict(payload.to_dict())
+
+    assert restored.source == "workspace"
+    assert restored.item_type == "workspace-source"
+    assert restored.runtime_backend == "server"
+    assert restored.scope_type == "workspace"
+    assert restored.workspace_id == "workspace-1"
+    assert restored.metadata["score"] == 0.87
+```
+
+- [ ] **Step 2: Write failing session-state preservation tests**
+
+Extend `Tests/UI/test_chat_screen_state.py`:
+
+```python
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+
+
+def test_chat_session_data_round_trip_preserves_handoff_payload():
+    payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Planning note",
+        body="Plan content",
+        source_id="note-1",
+    )
+    session = ChatSessionData(tab_id="tab-1", handoff_payload=payload)
+
+    restored = ChatSessionData.from_dict(session.to_dict())
+
+    assert restored.handoff_payload is not None
+    assert restored.handoff_payload.title == "Planning note"
+
+
+def test_tab_state_round_trip_preserves_handoff_payload():
+    payload = ChatHandoffPayload(
+        source="media",
+        item_type="media",
+        title="Video",
+        body="Transcript",
+        source_id="media-1",
+    )
+    tab_state = TabState(tab_id="tab-1", title="Media: Video", handoff_payload=payload)
+
+    restored = TabState.from_dict(tab_state.to_dict())
+
+    assert restored.handoff_payload is not None
+    assert restored.handoff_payload.source == "media"
+```
+
+- [ ] **Step 3: Run focused tests to verify they fail**
+
+Run: `pytest Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_screen_state.py -q`
+
+Expected: FAIL because `chat_handoff_models.py` and `handoff_payload` fields do not exist.
+
+- [ ] **Step 4: Implement `ChatHandoffPayload`**
+
+Create `tldw_chatbook/Chat/chat_handoff_models.py`:
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
+
+
+@dataclass
+class ChatHandoffPayload:
+    source: str
+    item_type: str
+    title: str
+    body: str
+    source_id: Optional[str] = None
+    display_summary: str = ""
+    suggested_prompt: str = ""
+    runtime_backend: str = "local"
+    discovery_owner: str = "general_chat"
+    discovery_entity_id: Optional[str] = None
+    scope_type: Optional[str] = None
+    workspace_id: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    status: str = "staged"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "source": self.source,
+            "item_type": self.item_type,
+            "title": self.title,
+            "body": self.body,
+            "source_id": self.source_id,
+            "display_summary": self.display_summary,
+            "suggested_prompt": self.suggested_prompt,
+            "runtime_backend": self.runtime_backend,
+            "discovery_owner": self.discovery_owner,
+            "discovery_entity_id": self.discovery_entity_id,
+            "scope_type": self.scope_type,
+            "workspace_id": self.workspace_id,
+            "metadata": dict(self.metadata or {}),
+            "status": self.status,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any] | "ChatHandoffPayload" | None) -> Optional["ChatHandoffPayload"]:
+        if data is None:
+            return None
+        if isinstance(data, cls):
+            return cls(**data.to_dict())
+        return cls(
+            source=str(data.get("source") or "unknown"),
+            item_type=str(data.get("item_type") or "item"),
+            title=str(data.get("title") or "Untitled"),
+            body=str(data.get("body") or ""),
+            source_id=data.get("source_id"),
+            display_summary=str(data.get("display_summary") or ""),
+            suggested_prompt=str(data.get("suggested_prompt") or ""),
+            runtime_backend=str(data.get("runtime_backend") or "local"),
+            discovery_owner=str(data.get("discovery_owner") or "general_chat"),
+            discovery_entity_id=data.get("discovery_entity_id"),
+            scope_type=data.get("scope_type"),
+            workspace_id=data.get("workspace_id"),
+            metadata=dict(data.get("metadata") or {}),
+            status=str(data.get("status") or "staged"),
+        )
+
+    def default_prompt(self) -> str:
+        return self.suggested_prompt.strip() or "Help me use this context."
+
+    def model_context_block(self) -> str:
+        metadata_lines = []
+        for key, value in sorted((self.metadata or {}).items()):
+            if value not in (None, ""):
+                metadata_lines.append(f"- {key}: {value}")
+        metadata = "\n".join(metadata_lines)
+        return (
+            "[Staged context]\n"
+            f"Source: {self.source}\n"
+            f"Item type: {self.item_type}\n"
+            f"Title: {self.title}\n"
+            f"Source ID: {self.source_id or 'unknown'}\n"
+            f"Summary: {self.display_summary or 'none'}\n"
+            f"Metadata:\n{metadata or '- none'}\n\n"
+            f"Content:\n{self.body}"
+        )
+
+    def format_for_model(self, user_prompt: str) -> str:
+        return f"{self.model_context_block()}\n\n[User prompt]\n{user_prompt.strip()}"
+```
+
+- [ ] **Step 5: Add `handoff_payload` to session models**
+
+In `tldw_chatbook/Chat/chat_models.py`, import `ChatHandoffPayload`, add `handoff_payload: Optional[ChatHandoffPayload] = None`, serialize via `handoff_payload.to_dict()`, and restore via `ChatHandoffPayload.from_dict(...)`.
+
+In `tldw_chatbook/UI/Screens/chat_screen_state.py`, do the same for `TabState`.
+
+In `tldw_chatbook/Chat/tabs/tab_state_manager.py`, add `handoff_payload: Optional[dict[str, Any]] = None` or `Optional[ChatHandoffPayload] = None`. Prefer `dict` if avoiding runtime import cycles.
+
+- [ ] **Step 6: Run focused tests**
+
+Run: `pytest Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_screen_state.py -q`
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add tldw_chatbook/Chat/chat_handoff_models.py tldw_chatbook/Chat/chat_models.py tldw_chatbook/UI/Screens/chat_screen_state.py tldw_chatbook/Chat/tabs/tab_state_manager.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_screen_state.py
+git commit -m "feat: add chat handoff payload contract"
+```
+
+## Task 2: Add App-Owned Handoff Navigation And Chat Destination Consumption
+
+**Files:**
+- Modify: `tldw_chatbook/app.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen_state.py`
+- Modify: `Tests/UI/test_chat_first_handoffs.py`
+- Modify: `Tests/UI/test_chat_tab_container.py`
+
+- [ ] **Step 1: Write failing app helper tests**
+
+Add to `Tests/UI/test_chat_first_handoffs.py`:
+
+```python
+from unittest.mock import Mock, patch
+
+from tldw_chatbook.Constants import TAB_CHAT
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+
+def test_open_chat_with_handoff_stores_payload_and_navigates():
+    app = Mock()
+    app.pending_chat_handoff = None
+    app.post_message = Mock()
+    app.notify = Mock()
+    payload = ChatHandoffPayload(source="notes", item_type="note", title="Note", body="Body")
+
+    from tldw_chatbook.app import TldwCli
+
+    with patch("tldw_chatbook.app.get_cli_setting", return_value=True):
+        TldwCli.open_chat_with_handoff(app, payload)
+
+    assert app.pending_chat_handoff is payload
+    message = app.post_message.call_args.args[0]
+    assert isinstance(message, NavigateToScreen)
+    assert message.screen_name == TAB_CHAT
+
+
+def test_open_chat_with_handoff_refuses_when_tabs_disabled():
+    app = Mock()
+    app.pending_chat_handoff = None
+    app.post_message = Mock()
+    app.notify = Mock()
+    payload = ChatHandoffPayload(source="notes", item_type="note", title="Note", body="Body")
+
+    from tldw_chatbook.app import TldwCli
+
+    with patch("tldw_chatbook.app.get_cli_setting", return_value=False):
+        TldwCli.open_chat_with_handoff(app, payload)
+
+    assert app.pending_chat_handoff is None
+    app.post_message.assert_not_called()
+    app.notify.assert_called_once()
+```
+
+- [ ] **Step 2: Write failing ChatScreen consumption tests**
+
+Add to `Tests/UI/test_chat_first_handoffs.py`:
+
+```python
+import pytest
+from unittest.mock import AsyncMock, Mock
+
+from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+
+@pytest.mark.asyncio
+async def test_chat_screen_consumes_pending_handoff_into_fresh_ephemeral_tab():
+    payload = ChatHandoffPayload(
+        source="workspace",
+        item_type="workspace-source",
+        title="Transcript",
+        body="Body",
+        source_id="source-1",
+        runtime_backend="server",
+        discovery_owner="workspace",
+        discovery_entity_id="source-1",
+        scope_type="workspace",
+        workspace_id="workspace-1",
+    )
+    app = Mock()
+    app.pending_chat_handoff = payload
+    app.notify = Mock()
+    app.get_current_screen_state = Mock(return_value={})
+
+    tab_container = Mock()
+    tab_container.create_new_tab = AsyncMock(return_value="tab-1")
+    tab_container.sessions = {"tab-1": Mock()}
+    tab_container.sessions["tab-1"].session_data = ChatSessionData(tab_id="tab-1")
+    tab_container.switch_to_tab_async = AsyncMock()
+
+    screen = ChatScreen(app)
+    screen.chat_window = Mock()
+    screen._get_tab_container = Mock(return_value=tab_container)
+    screen._apply_handoff_to_chat_session = AsyncMock()
+
+    await screen._consume_pending_chat_handoff()
+
+    session_data = tab_container.create_new_tab.await_args.kwargs["session_data"]
+    assert session_data.conversation_id is None
+    assert session_data.is_ephemeral is True
+    assert session_data.runtime_backend == "server"
+    assert session_data.scope_type == "workspace"
+    assert session_data.workspace_id == "workspace-1"
+    assert session_data.handoff_payload.title == "Transcript"
+    assert app.pending_chat_handoff is None
+```
+
+- [ ] **Step 3: Write failing tab reuse guard test**
+
+Extend `Tests/UI/test_chat_tab_container.py`:
+
+```python
+@pytest.mark.asyncio
+async def test_handoff_session_with_no_conversation_id_does_not_reuse_existing_tab():
+    app = Mock()
+    app.notify = Mock()
+    app.call_later = Mock()
+    existing = _make_session(
+        ChatSessionData(
+            tab_id="aaaaaaaa",
+            title="Existing",
+            conversation_id="conv-1",
+            runtime_backend="server",
+        )
+    )
+    container = ChatTabContainer(app)
+    container.sessions = {"aaaaaaaa": existing}
+    container.max_tabs = 10
+    mount_target = Mock()
+    mount_target.mount = AsyncMock()
+    container.query_one = Mock(return_value=mount_target)
+    container.post_message = Mock()
+
+    session_data = ChatSessionData(
+        tab_id="handoff",
+        title="Note: Plan",
+        conversation_id=None,
+        runtime_backend="server",
+        handoff_payload=ChatHandoffPayload(
+            source="notes",
+            item_type="note",
+            title="Plan",
+            body="Body",
+        ),
+    )
+
+    with patch("tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.ChatSession", return_value=_make_session(session_data)):
+        tab_id = await container.create_new_tab(session_data=session_data)
+
+    assert tab_id != "aaaaaaaa"
+```
+
+- [ ] **Step 4: Run focused tests to verify they fail**
+
+Run: `pytest Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_tab_container.py -q`
+
+Expected: FAIL because `open_chat_with_handoff()` and `_consume_pending_chat_handoff()` do not exist.
+
+- [ ] **Step 5: Implement app helper**
+
+In `tldw_chatbook/app.py`, add:
+
+```python
+def open_chat_with_handoff(self, payload: ChatHandoffPayload) -> None:
+    if not get_cli_setting("chat_defaults", "enable_tabs", False):
+        self.notify(
+            "Use in Chat requires chat tabs to be enabled.",
+            severity="warning",
+        )
+        return
+    self.pending_chat_handoff = payload
+    self.post_message(NavigateToScreen(TAB_CHAT))
+```
+
+Import `ChatHandoffPayload` under normal imports. If import cycles appear, guard with `TYPE_CHECKING` for annotations and keep runtime import local inside the method.
+
+- [ ] **Step 6: Implement ChatScreen handoff consumption**
+
+In `tldw_chatbook/UI/Screens/chat_screen.py`, add a post-restore call at the end of `_perform_state_restoration()`:
+
+```python
+await self._consume_pending_chat_handoff()
+```
+
+Also schedule the same method after `on_mount()` for first-entry cases where no saved state restoration was scheduled:
+
+```python
+self.set_timer(0.15, self._consume_pending_chat_handoff)
+```
+
+Add helper methods:
+
+```python
+def _session_data_for_handoff(self, payload: ChatHandoffPayload) -> ChatSessionData:
+    return ChatSessionData(
+        tab_id="handoff",
+        title=f"{payload.item_type.replace('-', ' ').title()}: {payload.title}",
+        conversation_id=None,
+        is_ephemeral=True,
+        runtime_backend=payload.runtime_backend,
+        discovery_owner=payload.discovery_owner,
+        discovery_entity_id=payload.discovery_entity_id or payload.source_id,
+        scope_type=payload.scope_type or "global",
+        workspace_id=payload.workspace_id if payload.scope_type == "workspace" else None,
+        handoff_payload=payload,
+    )
+
+
+async def _consume_pending_chat_handoff(self) -> None:
+    payload = getattr(self.app_instance, "pending_chat_handoff", None)
+    if payload is None:
+        return
+    payload = ChatHandoffPayload.from_dict(payload)
+    tab_container = self._get_tab_container()
+    if tab_container is None:
+        self.app_instance.notify("Chat tabs are not available for Use in Chat.", severity="warning")
+        return
+    session_data = self._session_data_for_handoff(payload)
+    tab_id = await tab_container.create_new_tab(session_data=session_data)
+    if not tab_id:
+        self.app_instance.notify("Could not create a chat session for this context.", severity="error")
+        return
+    await tab_container.switch_to_tab_async(tab_id)
+    session = tab_container.sessions.get(tab_id)
+    if session is not None:
+        await self._apply_handoff_to_chat_session(session, payload)
+    self.app_instance.pending_chat_handoff = None
+```
+
+- [ ] **Step 7: Run focused tests**
+
+Run: `pytest Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_tab_container.py -q`
+
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add tldw_chatbook/app.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_tab_container.py
+git commit -m "feat: route handoffs into fresh chat tabs"
+```
+
+## Task 3: Render The Handoff Card And Prefill The Per-Tab Draft
+
+**Files:**
+- Create: `tldw_chatbook/Widgets/Chat_Widgets/chat_handoff_card.py`
+- Modify: `tldw_chatbook/Widgets/Chat_Widgets/chat_session.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `Tests/UI/test_chat_first_handoffs.py`
+- Modify: `Tests/UI/test_chat_window_enhanced.py`
+
+- [ ] **Step 1: Write failing card widget tests**
+
+Add to `Tests/UI/test_chat_first_handoffs.py`:
+
+```python
+from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
+
+
+def test_handoff_card_uses_status_source_title_and_metadata():
+    payload = ChatHandoffPayload(
+        source="search-web",
+        item_type="web-result",
+        title="Article",
+        body="Article snippet",
+        display_summary="Search result summary",
+        metadata={"url": "https://example.com", "score": 0.5},
+    )
+
+    card = ChatHandoffCard(payload)
+    text = card.render_text()
+
+    assert "Context staged" in text
+    assert "Web Search" in text
+    assert "Article" in text
+    assert "https://example.com" in text
+```
+
+- [ ] **Step 2: Write failing draft-prefill test**
+
+Add to `Tests/UI/test_chat_first_handoffs.py`:
+
+```python
+@pytest.mark.asyncio
+async def test_apply_handoff_mounts_card_and_prefills_tab_input():
+    payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Plan",
+        body="Body",
+        suggested_prompt="Use this note.",
+    )
+    session = Mock()
+    session.mount_handoff_card = AsyncMock()
+    session.set_draft_text = Mock()
+
+    screen = ChatScreen(Mock())
+
+    await screen._apply_handoff_to_chat_session(session, payload)
+
+    session.mount_handoff_card.assert_awaited_once_with(payload)
+    session.set_draft_text.assert_called_once_with("Use this note.")
+```
+
+- [ ] **Step 3: Run focused tests to verify they fail**
+
+Run: `pytest Tests/UI/test_chat_first_handoffs.py -q`
+
+Expected: FAIL because card and session seams do not exist.
+
+- [ ] **Step 4: Implement `ChatHandoffCard`**
+
+Create `tldw_chatbook/Widgets/Chat_Widgets/chat_handoff_card.py`:
+
+```python
+from __future__ import annotations
+
+from textual.app import ComposeResult
+from textual.containers import Container
+from textual.widgets import Static
+
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+
+
+SOURCE_LABELS = {
+    "notes": "Notes",
+    "workspace": "Workspace",
+    "media": "Media",
+    "search-rag": "RAG Search",
+    "search-web": "Web Search",
+}
+
+
+class ChatHandoffCard(Container):
+    DEFAULT_CSS = """
+    ChatHandoffCard {
+        width: 100%;
+        padding: 1;
+        margin-bottom: 1;
+        border: round $primary;
+        background: $boost;
+    }
+    """
+
+    def __init__(self, payload: ChatHandoffPayload, **kwargs):
+        super().__init__(**kwargs)
+        self.payload = ChatHandoffPayload.from_dict(payload)
+
+    def render_text(self) -> str:
+        status = "Context sent" if self.payload.status == "sent" else "Context staged"
+        source_label = SOURCE_LABELS.get(self.payload.source, self.payload.source.replace("-", " ").title())
+        summary = self.payload.display_summary or self.payload.body[:240]
+        metadata = " | ".join(
+            f"{key}: {value}"
+            for key, value in sorted((self.payload.metadata or {}).items())
+            if value not in (None, "")
+        )
+        parts = [
+            f"{status} from {source_label}",
+            f"Title: {self.payload.title}",
+            f"Type: {self.payload.item_type}",
+            f"Summary: {summary or 'No preview available.'}",
+        ]
+        if self.payload.runtime_backend:
+            parts.append(f"Backend: {self.payload.runtime_backend}")
+        if self.payload.workspace_id:
+            parts.append(f"Workspace: {self.payload.workspace_id}")
+        if metadata:
+            parts.append(metadata)
+        parts.append("Review the draft below and send when ready.")
+        return "\n".join(parts)
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.render_text(), classes="chat-handoff-card-body")
+```
+
+- [ ] **Step 5: Add `ChatSession` seams**
+
+In `tldw_chatbook/Widgets/Chat_Widgets/chat_session.py`, add:
+
+```python
+async def mount_handoff_card(self, payload: ChatHandoffPayload) -> None:
+    chat_log = self.query_one(f"#chat-log-{self.session_data.tab_id}")
+    await chat_log.mount(ChatHandoffCard(payload))
+
+
+def set_draft_text(self, text: str) -> None:
+    input_widget = self.query_one(f"#chat-input-{self.session_data.tab_id}", TextArea)
+    input_widget.load_text(text)
+```
+
+Import `ChatHandoffPayload` and `ChatHandoffCard`.
+
+- [ ] **Step 6: Implement ChatScreen application helper**
+
+In `tldw_chatbook/UI/Screens/chat_screen.py`:
+
+```python
+async def _apply_handoff_to_chat_session(self, session, payload: ChatHandoffPayload) -> None:
+    if hasattr(session, "mount_handoff_card"):
+        await session.mount_handoff_card(payload)
+    if hasattr(session, "set_draft_text"):
+        session.set_draft_text(payload.default_prompt())
+```
+
+- [ ] **Step 7: Run focused tests**
+
+Run: `pytest Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_window_enhanced.py -q`
+
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add tldw_chatbook/Widgets/Chat_Widgets/chat_handoff_card.py tldw_chatbook/Widgets/Chat_Widgets/chat_session.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_window_enhanced.py
+git commit -m "feat: show staged chat handoff context"
+```
+
+## Task 4: Include Staged Context In The First Send
+
+**Files:**
+- Modify: `tldw_chatbook/Chat/chat_handoff_models.py`
+- Modify: `tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py`
+- Modify: `tldw_chatbook/Event_Handlers/Chat_Events/chat_events_tabs.py`
+- Modify: `tldw_chatbook/Widgets/Chat_Widgets/chat_handoff_card.py`
+- Modify: `Tests/Event_Handlers/Chat_Events/test_chat_events_tabs.py`
+- Modify: `Tests/UI/test_chat_first_handoffs.py`
+
+- [ ] **Step 1: Write failing prompt-format test**
+
+Add to `Tests/UI/test_chat_first_handoffs.py`:
+
+```python
+def test_handoff_payload_formats_model_prompt_with_context_and_user_prompt():
+    payload = ChatHandoffPayload(
+        source="media",
+        item_type="media",
+        title="Lecture",
+        body="Transcript body",
+        metadata={"url": "https://example.com"},
+    )
+
+    prompt = payload.format_for_model("Summarize it.")
+
+    assert "[Staged context]" in prompt
+    assert "Transcript body" in prompt
+    assert "[User prompt]" in prompt
+    assert "Summarize it." in prompt
+```
+
+- [ ] **Step 2: Write failing send-handler context tests**
+
+Add to `Tests/Event_Handlers/Chat_Events/test_chat_events_tabs.py`:
+
+```python
+@pytest.mark.asyncio
+async def test_tab_send_sets_current_handoff_payload_for_original_handler(monkeypatch):
+    app = Mock()
+    app.query_one = Mock()
+    app.query = Mock()
+    app.notify = Mock()
+    app.set_current_chat_is_streaming = Mock()
+    app.get_current_chat_is_streaming = Mock(return_value=False)
+    app.current_chat_worker = None
+    app.current_ai_message_widget = None
+
+    payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Plan",
+        body="Body",
+    )
+    session_data = ChatSessionData(tab_id="tab-1", handoff_payload=payload)
+
+    async def fake_original_handler(app_arg, event_arg):
+        assert app_arg._current_chat_handoff_payload.title == "Plan"
+
+    monkeypatch.setattr(chat_events_tabs.chat_events, "handle_chat_send_button_pressed", fake_original_handler)
+
+    await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(app, Mock(), session_data=session_data)
+
+    assert session_data.handoff_payload.status == "sent"
+    assert getattr(app, "_current_chat_handoff_payload", None) is None
+```
+
+- [ ] **Step 3: Run focused tests to verify they fail**
+
+Run: `pytest Tests/UI/test_chat_first_handoffs.py Tests/Event_Handlers/Chat_Events/test_chat_events_tabs.py -q`
+
+Expected: FAIL because send-time handoff context is not wired.
+
+- [ ] **Step 4: Add prompt application helper**
+
+In `tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py`, add a small helper near send handling:
+
+```python
+def apply_current_handoff_context(app: "TldwCli", message_text: str) -> str:
+    payload = getattr(app, "_current_chat_handoff_payload", None)
+    if payload is None:
+        return message_text
+    payload = ChatHandoffPayload.from_dict(payload)
+    if payload is None or payload.status == "sent":
+        return message_text
+    return payload.format_for_model(message_text)
+```
+
+Use it after RAG context assembly and before world info dispatch:
+
+```python
+message_text_with_handoff = apply_current_handoff_context(app, message_text_with_rag)
+message_text_with_world_info = message_text_with_handoff
+```
+
+Import `ChatHandoffPayload`.
+
+- [ ] **Step 5: Bind active session payload in tab-aware send wrapper**
+
+In `tldw_chatbook/Event_Handlers/Chat_Events/chat_events_tabs.py`, before calling the original handler:
+
+```python
+active_handoff = session_data.handoff_payload if session_data else None
+if active_handoff is not None and getattr(active_handoff, "status", "staged") != "sent":
+    app._current_chat_handoff_payload = active_handoff
+else:
+    app._current_chat_handoff_payload = None
+```
+
+In the `finally` block, clear `app._current_chat_handoff_payload`.
+
+After the original handler completes without raising, mark the payload sent:
+
+```python
+if session_data and session_data.handoff_payload and session_data.handoff_payload.status != "sent":
+    session_data.handoff_payload.status = "sent"
+```
+
+If card status refresh is easy from the active session, update the mounted card. If not, defer visual status refresh to a later small patch but keep the payload status correct.
+
+- [ ] **Step 6: Run focused tests**
+
+Run: `pytest Tests/UI/test_chat_first_handoffs.py Tests/Event_Handlers/Chat_Events/test_chat_events_tabs.py -q`
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add tldw_chatbook/Chat/chat_handoff_models.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events_tabs.py tldw_chatbook/Widgets/Chat_Widgets/chat_handoff_card.py Tests/Event_Handlers/Chat_Events/test_chat_events_tabs.py Tests/UI/test_chat_first_handoffs.py
+git commit -m "feat: send staged handoff context once"
+```
+
+## Task 5: Wire Notes And Workspace Source Adapters
+
+**Files:**
+- Modify: `tldw_chatbook/UI/Screens/notes_screen.py`
+- Modify: `tldw_chatbook/Widgets/Note_Widgets/notes_sidebar_right.py`
+- Modify: `tldw_chatbook/Widgets/Note_Widgets/workspace_context_panel.py`
+- Modify: `Tests/UI/test_notes_screen.py`
+- Modify: `Tests/UI/test_chat_first_handoffs.py`
+
+- [ ] **Step 1: Write failing Notes payload tests**
+
+Add to `Tests/UI/test_notes_screen.py`:
+
+```python
+def test_notes_screen_builds_local_note_handoff_from_visible_editor_text():
+    app = Mock()
+    app.notify = Mock()
+    screen = NotesScreen(app)
+    screen.state = NotesScreenState(
+        scope_type=ScopeType.LOCAL_NOTE,
+        selected_note_id=123,
+        selected_note_version=4,
+        selected_note_title="Draft",
+        selected_note_content="Saved content",
+    )
+    editor = Mock()
+    editor.text = "Visible unsaved content"
+    screen.query_one = Mock(return_value=editor)
+
+    payload = screen._build_current_chat_handoff_payload()
+
+    assert payload.source == "notes"
+    assert payload.item_type == "note"
+    assert payload.runtime_backend == "local"
+    assert payload.source_id == "123"
+    assert payload.body == "Visible unsaved content"
+```
+
+- [ ] **Step 2: Write failing Workspace payload tests**
+
+Add to `Tests/UI/test_notes_screen.py`:
+
+```python
+def test_notes_screen_builds_workspace_source_handoff_from_cached_payload():
+    app = Mock()
+    app.notify = Mock()
+    screen = NotesScreen(app)
+    screen.state = NotesScreenState(
+        scope_type=ScopeType.WORKSPACE,
+        workspace_subview=WorkspaceSubview.SOURCES,
+        selected_workspace_id="workspace-1",
+        selected_workspace_source_id="source-1",
+    )
+    screen._workspace_context_payload = {
+        "workspace": {"id": "workspace-1", "name": "Research"},
+        "notes": [],
+        "sources": [{"id": "source-1", "title": "Transcript", "url": "https://example.com"}],
+        "artifacts": [],
+    }
+
+    payload = screen._build_current_chat_handoff_payload()
+
+    assert payload.source == "workspace"
+    assert payload.item_type == "workspace-source"
+    assert payload.runtime_backend == "server"
+    assert payload.scope_type == "workspace"
+    assert payload.workspace_id == "workspace-1"
+    assert payload.title == "Transcript"
+```
+
+- [ ] **Step 3: Write failing button placement tests**
+
+Add focused widget tests:
+
+```python
+def test_notes_sidebar_contains_use_in_chat_button():
+    sidebar = NotesSidebarRight()
+    ids = [child.id for child in sidebar.compose()]
+    assert "notes-use-in-chat-button" in ids
+
+
+def test_workspace_panel_contains_use_in_chat_buttons():
+    panel = WorkspaceContextPanel()
+    composed_ids = [getattr(child, "id", None) for child in panel.compose()]
+    assert "workspace-use-in-chat-button" in composed_ids
+    assert "workspace-source-use-in-chat-button" in composed_ids
+    assert "workspace-artifact-use-in-chat-button" in composed_ids
+```
+
+If direct `compose()` inspection is awkward with nested containers, use a minimal Textual test app and query IDs after mount.
+
+- [ ] **Step 4: Run focused tests to verify they fail**
+
+Run: `pytest Tests/UI/test_notes_screen.py Tests/UI/test_chat_first_handoffs.py -q`
+
+Expected: FAIL because builder methods, buttons, and handlers do not exist.
+
+- [ ] **Step 5: Add Notes/Workspace `Use in Chat` buttons**
+
+In `tldw_chatbook/Widgets/Note_Widgets/notes_sidebar_right.py`, add near `Save All Changes`:
+
+```python
+yield Button("Use in Chat", id="notes-use-in-chat-button", variant="primary")
+```
+
+In `tldw_chatbook/Widgets/Note_Widgets/workspace_context_panel.py`, add:
+
+```python
+yield Button("Use in Chat", id="workspace-use-in-chat-button", variant="primary")
+yield Button("Use in Chat", id="workspace-source-use-in-chat-button", variant="primary")
+yield Button("Use in Chat", id="workspace-artifact-use-in-chat-button", variant="primary")
+```
+
+- [ ] **Step 6: Implement NotesScreen payload builders**
+
+In `tldw_chatbook/UI/Screens/notes_screen.py`, add `_build_current_chat_handoff_payload()` and small helpers for editor text and workspace records.
+
+Key behavior:
+
+```python
+def _build_current_chat_handoff_payload(self) -> ChatHandoffPayload | None:
+    if self.state.scope_type in (ScopeType.LOCAL_NOTE, ScopeType.SERVER_NOTE):
+        return self._build_note_chat_handoff_payload()
+    if self.state.scope_type == ScopeType.WORKSPACE:
+        return self._build_workspace_chat_handoff_payload()
+    return None
+```
+
+For local/server notes:
+
+```python
+runtime_backend = "server" if self.state.scope_type == ScopeType.SERVER_NOTE else "local"
+return ChatHandoffPayload(
+    source="notes",
+    item_type="note",
+    title=self.state.selected_note_title or "Untitled Note",
+    body=self._read_editor_text() or self.state.selected_note_content,
+    source_id=str(self.state.selected_note_id) if self.state.selected_note_id is not None else None,
+    suggested_prompt="Use this note as context and help me work with it.",
+    runtime_backend=runtime_backend,
+    discovery_owner="notes",
+    discovery_entity_id=str(self.state.selected_note_id) if self.state.selected_note_id is not None else None,
+    scope_type="global",
+    metadata={
+        "note_version": self.state.selected_note_version,
+        "keywords": list(self._selected_note_keywords),
+        "unsaved_changes": self.state.has_unsaved_changes,
+    },
+)
+```
+
+For workspace records, map subview to item type and body source:
+
+```python
+metadata = {
+    "workspace_subview": self.state.workspace_subview.value,
+    "workspace_version": self.state.selected_workspace_version,
+}
+```
+
+- [ ] **Step 7: Add NotesScreen button handlers**
+
+In `notes_screen.py`:
+
+```python
+@on(Button.Pressed, "#notes-use-in-chat-button")
+@on(Button.Pressed, "#workspace-use-in-chat-button")
+@on(Button.Pressed, "#workspace-source-use-in-chat-button")
+@on(Button.Pressed, "#workspace-artifact-use-in-chat-button")
+def handle_use_in_chat_button(self, event: Button.Pressed) -> None:
+    event.stop()
+    payload = self._build_current_chat_handoff_payload()
+    if payload is None:
+        self._notify("Select an item before using it in Chat.", severity="warning")
+        return
+    open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
+    if not callable(open_chat):
+        self._notify("Use in Chat is not available.", severity="warning")
+        return
+    open_chat(payload)
+```
+
+- [ ] **Step 8: Run focused tests**
+
+Run: `pytest Tests/UI/test_notes_screen.py Tests/UI/test_chat_first_handoffs.py -q`
+
+Expected: PASS.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add tldw_chatbook/UI/Screens/notes_screen.py tldw_chatbook/Widgets/Note_Widgets/notes_sidebar_right.py tldw_chatbook/Widgets/Note_Widgets/workspace_context_panel.py Tests/UI/test_notes_screen.py Tests/UI/test_chat_first_handoffs.py
+git commit -m "feat: add notes workspace chat handoffs"
+```
+
+## Task 6: Wire Media Source Adapter
+
+**Files:**
+- Modify: `tldw_chatbook/UI/MediaWindow_v2.py`
+- Modify: `tldw_chatbook/Widgets/Media/media_viewer_panel.py`
+- Create or modify: `Tests/UI/test_media_handoffs.py`
+
+- [ ] **Step 1: Write failing Media viewer event test**
+
+Create `Tests/UI/test_media_handoffs.py`:
+
+```python
+from unittest.mock import Mock
+
+from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
+
+
+def test_media_viewer_emits_use_in_chat_event_for_loaded_media():
+    panel = MediaViewerPanel(Mock())
+    panel.media_data = {"id": "media-1", "title": "Lecture", "content": "Transcript"}
+
+    event = panel._build_use_in_chat_event()
+
+    assert event.media_data["title"] == "Lecture"
+```
+
+- [ ] **Step 2: Write failing MediaWindow payload test**
+
+Add:
+
+```python
+def test_media_window_builds_handoff_from_hydrated_detail():
+    app = Mock()
+    app.media_runtime_state = MediaRuntimeState(runtime_backend="server")
+    app.media_runtime_state.selected_record_id = "record-1"
+    app.media_runtime_state.detail_by_record_id["record-1"] = {
+        "id": "record-1",
+        "title": "Lecture",
+        "content": "Transcript",
+        "url": "https://example.com",
+        "media_type": "video",
+    }
+    window = MediaWindow(app)
+    window.runtime_state = app.media_runtime_state
+    window.viewer_panel = Mock()
+    window.viewer_panel.media_data = {"id": "record-1", "title": "Fallback"}
+
+    payload = window._build_current_media_chat_handoff_payload()
+
+    assert payload.source == "media"
+    assert payload.item_type == "media"
+    assert payload.runtime_backend == "server"
+    assert payload.discovery_entity_id == "record-1"
+    assert payload.body == "Transcript"
+```
+
+- [ ] **Step 3: Run focused tests to verify they fail**
+
+Run: `pytest Tests/UI/test_media_handoffs.py -q`
+
+Expected: FAIL because event and builder do not exist.
+
+- [ ] **Step 4: Add Media viewer button and event**
+
+In `tldw_chatbook/Widgets/Media/media_viewer_panel.py`, add a message:
+
+```python
+class UseInChatRequested(Message):
+    def __init__(self, media_data: dict[str, Any]) -> None:
+        super().__init__()
+        self.media_data = dict(media_data)
+```
+
+Add the button inside metadata `Actions`:
+
+```python
+yield Button("Use in Chat", id="media-use-in-chat-button", variant="primary", disabled=True)
+```
+
+Enable/disable it in `watch_media_data()`.
+
+Handle press:
+
+```python
+@on(Button.Pressed, "#media-use-in-chat-button")
+def handle_use_in_chat(self, event: Button.Pressed) -> None:
+    event.stop()
+    if self.media_data:
+        self.post_message(self.UseInChatRequested(dict(self.media_data)))
+```
+
+- [ ] **Step 5: Add MediaWindow payload builder and handler**
+
+In `tldw_chatbook/UI/MediaWindow_v2.py`:
+
+```python
+def _build_current_media_chat_handoff_payload(self) -> ChatHandoffPayload | None:
+    record_id = getattr(self.runtime_state, "selected_record_id", None) if self.runtime_state else None
+    detail = {}
+    if record_id and self.runtime_state:
+        detail.update(self.runtime_state.detail_by_record_id.get(record_id) or {})
+    if not detail and isinstance(getattr(self.viewer_panel, "media_data", None), dict):
+        detail.update(self.viewer_panel.media_data)
+    if not detail:
+        return None
+    resolved_id = str(detail.get("id") or record_id or detail.get("source_id") or "")
+    return ChatHandoffPayload(
+        source="media",
+        item_type="media",
+        title=str(detail.get("title") or "Untitled Media"),
+        body=str(detail.get("content") or detail.get("summary") or detail.get("analysis") or ""),
+        source_id=resolved_id or None,
+        display_summary=str(detail.get("summary") or ""),
+        suggested_prompt="Use this media item as context and help me analyze or summarize it.",
+        runtime_backend=self._runtime_backend(),
+        discovery_owner="media",
+        discovery_entity_id=resolved_id or None,
+        scope_type="global",
+        metadata={
+            "url": detail.get("url"),
+            "author": detail.get("author"),
+            "media_type": detail.get("media_type"),
+            "reading_progress": detail.get("reading_progress"),
+            "content_available": bool(detail.get("content")),
+        },
+    )
+```
+
+Add handler:
+
+```python
+@on(MediaViewerPanel.UseInChatRequested)
+def handle_media_use_in_chat(self, event: MediaViewerPanel.UseInChatRequested) -> None:
+    payload = self._build_current_media_chat_handoff_payload()
+    if payload is None:
+        self.app_instance.notify("Select a media item before using it in Chat.", severity="warning")
+        return
+    self.app_instance.open_chat_with_handoff(payload)
+```
+
+- [ ] **Step 6: Run focused tests**
+
+Run: `pytest Tests/UI/test_media_handoffs.py -q`
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/Widgets/Media/media_viewer_panel.py Tests/UI/test_media_handoffs.py
+git commit -m "feat: add media chat handoffs"
+```
+
+## Task 7: Wire RAG Search And Web Search Source Adapters
+
+**Files:**
+- Modify: `tldw_chatbook/UI/Views/RAGSearch/search_result.py`
+- Modify: `tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py`
+- Modify: `tldw_chatbook/UI/SearchWindow.py`
+- Create: `Tests/UI/test_search_handoffs.py`
+
+- [ ] **Step 1: Write failing SearchResult event test**
+
+Create `Tests/UI/test_search_handoffs.py`:
+
+```python
+from tldw_chatbook.UI.Views.RAGSearch.search_result import SearchResult
+
+
+def test_search_result_builds_use_in_chat_event_with_result_data():
+    result = {"title": "Doc", "content": "Snippet", "source": "notes", "score": 0.8}
+    card = SearchResult(result, 0)
+
+    event = card._build_use_in_chat_event()
+
+    assert event.index == 0
+    assert event.result["title"] == "Doc"
+```
+
+- [ ] **Step 2: Write failing RAG payload normalization test**
+
+Add:
+
+```python
+def test_search_window_normalizes_rag_result_payload():
+    app = Mock()
+    window = SearchRAGWindow(app_instance=app)
+    result = {
+        "title": "Chunk",
+        "content": "Retrieved text",
+        "source": "notes",
+        "score": 0.91,
+        "metadata": {"document_id": "doc-1"},
+    }
+
+    payload = window._build_search_chat_handoff_payload(result)
+
+    assert payload.source == "search-rag"
+    assert payload.item_type == "rag-result"
+    assert payload.discovery_owner == "rag_search"
+    assert payload.body == "Retrieved text"
+    assert payload.metadata["score"] == 0.91
+```
+
+- [ ] **Step 3: Write failing Web payload normalization test**
+
+Add:
+
+```python
+def test_search_window_normalizes_web_result_payload():
+    app = Mock()
+    window = SearchRAGWindow(app_instance=app)
+    result = {
+        "title": "Article",
+        "content": "Snippet",
+        "source": "web",
+        "metadata": {"url": "https://example.com", "displayUrl": "example.com"},
+    }
+
+    payload = window._build_search_chat_handoff_payload(result)
+
+    assert payload.source == "search-web"
+    assert payload.item_type == "web-result"
+    assert payload.discovery_owner == "web_search"
+    assert payload.metadata["url"] == "https://example.com"
+```
+
+- [ ] **Step 4: Run focused tests to verify they fail**
+
+Run: `pytest Tests/UI/test_search_handoffs.py -q`
+
+Expected: FAIL because SearchResult events and normalization helpers do not exist.
+
+- [ ] **Step 5: Add SearchResult button and event**
+
+In `tldw_chatbook/UI/Views/RAGSearch/search_result.py`:
+
+```python
+class UseInChatRequested(Message):
+    def __init__(self, index: int, result: dict[str, Any]) -> None:
+        super().__init__()
+        self.index = index
+        self.result = dict(result)
+```
+
+Add the button to the action row:
+
+```python
+yield Button("Use in Chat", id=f"use-in-chat-{self.index}", classes="result-button")
+```
+
+Handle press:
+
+```python
+@on(Button.Pressed)
+def handle_button_pressed(self, event: Button.Pressed) -> None:
+    if event.button.id == f"use-in-chat-{self.index}":
+        event.stop()
+        self.post_message(self.UseInChatRequested(self.index, self.result))
+```
+
+- [ ] **Step 6: Add SearchRAGWindow payload builder and handler**
+
+In `tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py`:
+
+```python
+def _build_search_chat_handoff_payload(self, result: dict[str, Any]) -> ChatHandoffPayload:
+    source_kind = str(result.get("source") or "unknown").lower()
+    is_web = source_kind == "web"
+    metadata = dict(result.get("metadata") or {})
+    if "score" in result:
+        metadata["score"] = result.get("score")
+    if result.get("citations"):
+        metadata["citations"] = result.get("citations")
+    return ChatHandoffPayload(
+        source="search-web" if is_web else "search-rag",
+        item_type="web-result" if is_web else "rag-result",
+        title=str(result.get("title") or "Search Result"),
+        body=str(result.get("content") or result.get("snippet") or ""),
+        source_id=str(metadata.get("document_id") or metadata.get("url") or ""),
+        display_summary=str(result.get("content") or "")[:240],
+        suggested_prompt=(
+            "Use this web result as source context and preserve attribution in your answer."
+            if is_web else
+            "Use this retrieved result as context and answer or reason from it carefully."
+        ),
+        runtime_backend=str(getattr(self.app_instance, "current_runtime_backend", "local") or "local"),
+        discovery_owner="web_search" if is_web else "rag_search",
+        discovery_entity_id=str(metadata.get("document_id") or metadata.get("url") or "") or None,
+        scope_type="global",
+        metadata=metadata,
+    )
+```
+
+Add handler:
+
+```python
+@on(SearchResult.UseInChatRequested)
+def handle_search_result_use_in_chat(self, event: SearchResult.UseInChatRequested) -> None:
+    payload = self._build_search_chat_handoff_payload(event.result)
+    self.app_instance.open_chat_with_handoff(payload)
+```
+
+- [ ] **Step 7: Cardify dedicated Web Search results**
+
+In `tldw_chatbook/UI/SearchWindow.py`, replace the dedicated Web Search Markdown-only output with reusable result cards.
+
+Add a `VerticalScroll` result container:
+
+```python
+yield VerticalScroll(id="web-search-results-list")
+```
+
+Add a `web_search_results: list[dict[str, Any]]` field on `SearchWindow`.
+
+Implement a button handler:
+
+```python
+@on(Button.Pressed, "#web-search-button")
+async def handle_web_search_button_pressed(self, event: Button.Pressed) -> None:
+    event.stop()
+    query = self.query_one("#web-search-input", Input).value.strip()
+    if not query:
+        self.app_instance.notify("Enter a web search query.", severity="warning")
+        return
+    raw_results = await search_web_bing(query)
+    parsed_results = parse_bing_results(raw_results)
+    self.web_search_results = [
+        {
+            "title": result.get("name", "Web Result"),
+            "content": result.get("snippet", ""),
+            "source": "web",
+            "score": 0.5,
+            "metadata": {
+                "url": result.get("url", ""),
+                "displayUrl": result.get("displayUrl", ""),
+                "query": query,
+            },
+        }
+        for result in parsed_results
+    ]
+    await self._render_web_search_result_cards()
+```
+
+Render cards using `SearchResult`:
+
+```python
+async def _render_web_search_result_cards(self) -> None:
+    results_list = self.query_one("#web-search-results-list")
+    await results_list.remove_children()
+    for index, result in enumerate(self.web_search_results):
+        await results_list.mount(SearchResult(result, index))
+```
+
+Handle `SearchResult.UseInChatRequested` at the `SearchWindow` level for dedicated Web Search cards and call the same payload builder used by `SearchRAGWindow`, or factor a tiny shared helper if importing from `SearchRAGWindow` would create coupling.
+
+- [ ] **Step 8: Run focused tests**
+
+Run: `pytest Tests/UI/test_search_handoffs.py -q`
+
+Expected: PASS.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add tldw_chatbook/UI/Views/RAGSearch/search_result.py tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py tldw_chatbook/UI/SearchWindow.py Tests/UI/test_search_handoffs.py
+git commit -m "feat: add search chat handoffs"
+```
+
+## Task 8: End-To-End Regression Sweep And Documentation Notes
+
+**Files:**
+- Modify as needed from previous tasks.
+- Optional Modify: `Docs/Development/chat-first-shell-migration.md`
+- Optional Modify: `Docs/Development/navigation-architecture-analysis.md`
+- Modify: `Docs/superpowers/specs/2026-04-21-use-in-chat-handoffs-design.md` only if implementation deliberately deviates from spec.
+
+- [ ] **Step 1: Run focused handoff and adjacent suites**
+
+Run:
+
+```bash
+pytest Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_screen_state.py Tests/UI/test_chat_tab_container.py Tests/UI/test_notes_screen.py Tests/UI/test_media_handoffs.py Tests/UI/test_search_handoffs.py Tests/Event_Handlers/Chat_Events/test_chat_events_tabs.py -q
+```
+
+Expected: PASS.
+
+- [ ] **Step 2: Run broader Chat/UI smoke tests**
+
+Run:
+
+```bash
+pytest Tests/UI/test_chat_window_enhanced.py Tests/UI/test_chat_shell_bar.py Tests/Event_Handlers/Chat_Events/test_chat_events_tabs.py -q
+```
+
+Expected: PASS.
+
+- [ ] **Step 3: Run formatting/static checks available in this repo**
+
+Run:
+
+```bash
+pytest -q
+```
+
+Expected: PASS or document any unrelated existing failures with exact test names and failure summaries.
+
+- [ ] **Step 4: Manual Textual smoke path**
+
+Run:
+
+```bash
+python3 -m tldw_chatbook.app
+```
+
+Expected:
+
+- Chat tabs enabled path can create a new tab from `Use in Chat`.
+- Notes local note opens a fresh Chat tab with a staged context card and draft.
+- Workspace source opens a fresh Chat tab with workspace scope visible in the shell bar.
+- Media selected item opens a fresh Chat tab with media metadata visible.
+- RAG result opens a fresh Chat tab with search result card metadata.
+- Dedicated Web Search result opens a fresh Chat tab with URL attribution metadata.
+- Nothing is auto-sent before pressing Send.
+
+- [ ] **Step 5: Update docs only if behavior changed**
+
+If implementation deliberately deviates from the spec, update the spec with the exact shipped behavior before marking work complete.
+
+- [ ] **Step 6: Commit final docs/test adjustments**
+
+```bash
+git add Docs/Development/chat-first-shell-migration.md Docs/Development/navigation-architecture-analysis.md Docs/superpowers/specs/2026-04-21-use-in-chat-handoffs-design.md
+git commit -m "docs: record chat handoff implementation notes"
+```
+
+Skip this commit if no docs changed.
+
+## Implementation Notes For Workers
+
+- Do not inject handoff context into legacy single-session Chat. The feature is intentionally tab-only for this slice.
+- Do not query or mutate Chat directly from Notes, Media, or Search. Source screens must call `app_instance.open_chat_with_handoff(payload)`.
+- Keep the handoff card visually distinct from user, assistant, and system messages.
+- Keep the staged payload session-scoped. App-level `pending_chat_handoff` is only the navigation transfer slot.
+- Do not make source content disappear after first send. Mark it as sent, but keep the card visible.
+- Preserve `runtime_backend`, `scope_type`, and `workspace_id`; do not silently overwrite them with the current global backend.
+- If max tabs are reached, leave `pending_chat_handoff` uncleared and notify the user.
+- Treat unsaved Notes and Workspace editor text as the visible source of truth where it can be read safely.
+
+## Completion Criteria
+
+- All new and modified focused tests pass.
+- `Use in Chat` is visible or explicitly unavailable in each target surface.
+- Every handoff opens a fresh Chat tab with `conversation_id=None`.
+- The destination Chat tab shows a staged handoff card and draft prompt.
+- The first Send includes the staged context in the model prompt.
+- The pending app handoff clears after successful consumption and does not replay.
+- Handoff state survives tab switch and screen restore.
+- Any deviation from the spec is reflected in the spec before completion.
