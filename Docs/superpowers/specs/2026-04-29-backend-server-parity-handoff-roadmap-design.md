@@ -94,8 +94,9 @@ Required backend behavior:
 
 Credential storage contract:
 
-- Durable credential storage is cross-platform and explicit: macOS Keychain, Windows Credential Manager, Linux Secret Service/libsecret where available, and fake/in-memory backends only in tests.
+- Durable credential storage is cross-platform and explicit: macOS Keychain, Windows Credential Manager, Linux Secret Service/libsecret or KWallet where available, and fake/in-memory backends only in tests.
 - If no secure OS-backed store is available, persistent server credentials are disabled and the auth seam returns typed `credential_store_unavailable`; Chatbook must not fall back to plaintext JSON, TOML, SQLite, environment-file, or config-file secrets.
+- Headless Linux, locked keychains, missing Secret Service/KWallet sessions, denied OS-store permissions, and unsupported keyring backends are treated as secure-store unavailable. They may use process-local/in-memory credentials only in explicit test fixtures, never as durable production fallback.
 - Stored credential records use a stable Chatbook-owned, listable namespace prefix such as `tldw_chatbook.server_credentials` plus server profile ID, normalized server origin, authenticated principal where known, and credential record type.
 - Credential cleanup APIs enumerate the Chatbook-owned namespace prefix. Global sign-out must delete every matching record, including entries whose server profile is no longer present in the profile store.
 - Stored credentials must not be keyed only by hostname, username, current active profile, or unscoped server origin.
@@ -103,6 +104,15 @@ Credential storage contract:
 - Legacy config tokens are imported only for the active profile. Successful import removes or redacts the legacy secret; failed import leaves the original config unchanged and logs no secret material.
 - Global sign-out deletes every stored credential record across known profiles and orphaned namespaces, clears credential-bound client caches, and invalidates active auth/capability/event/sync handles.
 - Tests must use fake or in-memory stores and assert that serialized profiles, logs, exceptions, unsupported reports, cache keys, and exported diagnostics contain no secret material.
+
+Credential storage implementation checklist:
+
+- A durable credential backend is acceptable only if the backend is OS-protected and scoped to the current user session: Keychain on macOS, Credential Manager on Windows, Secret Service/libsecret or KWallet on Linux.
+- Plaintext keyring backends, file keyrings, null/fail keyrings, environment-variable stores, JSON/TOML/YAML/config files, and SQLite secrets are forbidden for durable server credentials.
+- Every credential username/account key starts with the stable Chatbook-owned prefix and encodes `server_profile_id`, `normalized_origin`, `principal_kind`, `principal_id` when known, and `credential_type`.
+- Global sign-out calls the credential store's namespace enumeration/delete path, not only per-known-profile deletion, so orphaned namespace records are removed.
+- Per-server sign-out removes all indexed records for that server profile, including future/custom credential types under the Chatbook namespace.
+- Legacy config token migration must be active-profile-only, must never import a token into a nonmatching profile, and must record enough cleanup state to prevent cleared legacy tokens from being silently reimported after server switching.
 
 UX handoff output:
 
@@ -151,10 +161,20 @@ Cursor durability and retention contract:
 
 - `EventStateRepository` durably stores server cursors, stream instance IDs, dedupe records, and retention metadata scoped by source, server profile, authenticated principal, stream name, and stream instance.
 - Repository state tracks processed cursor and presented high-water mark separately. Processed cursor advances only after normalized event storage succeeds; presented high-water mark advances only after presentation records are updated.
-- Retention has explicit max-age and max-count bounds per stream. Pruning must preserve the latest durable cursor, the latest presentation high-water mark, and dedupe records inside the reconnect window.
+- Retention has explicit max-age and max-count bounds per stream. The initial default is 30 days or 10,000 normalized records per `(source, server_profile_id, authenticated_principal_id, stream_name, stream_instance_id)`, whichever limit prunes first, unless a domain contract sets a stricter bound.
+- Pruning must preserve the latest durable cursor, the latest presentation high-water mark, and dedupe records inside the reconnect window.
 - On restart, observers resume from the durable processed cursor when the server supports cursors. When the server only provides replayable events without stable cursors, the dedupe window protects presentation from duplicate events.
 - Server switch closes active stream handles immediately but preserves inactive per-server cursor state unless logout, credential removal, profile deletion, or explicit user reset clears it.
 - Cursor reset and replay actions must produce typed status records so UX can distinguish initial load, replay, requery, degraded dedupe-only mode, and unrecoverable cursor loss.
+
+Event repository implementation checklist:
+
+- The repository stores event records, dedupe records, processed cursors, presented high-water marks, retention metadata, and observer status records in separate logical tables or record classes.
+- Processed cursor and presented cursor are never represented by one shared field. A processed event that fails presentation update must not advance the presented high-water mark.
+- Each event has a stable dedupe key. If the server supplies an event ID or cursor, it participates in the dedupe key; otherwise the fallback key uses source, server profile, principal, stream, event kind, entity ID, timestamp bucket, and payload hash.
+- Reconnect starts from the durable processed cursor. If no stable cursor exists, reconnect starts in dedupe-only replay mode and emits a typed degraded-mode status.
+- Retention pruning is bounded, deterministic, and test-covered. It must not delete the latest processed cursor, latest presented high-water mark, or dedupe records still inside the reconnect window.
+- Server switch, logout, credential clearing, and profile deletion have separate effects: switch stops active observers; logout/credential clearing/profile deletion may clear scoped durable cursor and dedupe state according to the source scope.
 
 UX handoff output:
 
@@ -185,8 +205,9 @@ Initial dry-run components:
 
 Identity map contract:
 
-- The identity scope key includes source, server profile ID, authenticated principal ID, workspace or resource scope where relevant, domain name, and entity type.
-- The local-side uniqueness key is identity scope key plus local entity ID. The remote-side uniqueness key is identity scope key plus remote entity ID.
+- The identity scope key is always non-null and includes source, server profile ID, authenticated principal ID, workspace or resource scope where relevant, domain name, and entity type.
+- The local-side uniqueness key is identity scope key plus local entity ID and exists only when local entity ID is present. The remote-side uniqueness key is identity scope key plus remote entity ID and exists only when remote entity ID is present.
+- The full mapping record may include both local and remote IDs, but no primary uniqueness rule may require both sides to exist because orphan/candidate states intentionally have one side missing.
 - Mapping records may have a nullable local entity ID only in `candidate`, `orphaned_remote`, or `unsupported` states.
 - Mapping records may have a nullable remote entity ID only in `candidate`, `orphaned_local`, or `unsupported` states.
 - A `confirmed`, `stale`, or `conflict` mapping must carry both local and remote entity IDs.
@@ -195,6 +216,16 @@ Identity map contract:
 - Mapping status is explicit: `candidate`, `confirmed`, `stale`, `conflict`, `orphaned_local`, `orphaned_remote`, or `unsupported`.
 - Mirror reports must surface duplicate, stale, cross-profile, cross-principal, and cross-workspace mapping conflicts before UX treats an entity as safely mirrored.
 - Mapping records are never reused across server profiles, authenticated principals, or workspace/resource scopes without a domain-specific migration rule and audit record.
+
+Identity map implementation checklist:
+
+- `source_scope_key`, `local_side_key`, and `remote_side_key` are separate fields or generated columns in the repository contract.
+- `source_scope_key` includes at minimum `source`, `server_profile_id`, `authenticated_principal_id`, `workspace_or_resource_scope`, `domain`, and `entity_type`.
+- `local_side_key` is nullable only when `local_entity_id` is nullable; `remote_side_key` is nullable only when `remote_entity_id` is nullable.
+- Uniqueness is enforced independently on non-null local-side keys and non-null remote-side keys inside the same source scope.
+- Duplicate local-side or remote-side mappings create conflict report entries; they are not silently collapsed, overwritten, or hidden from dry-run mirror reports.
+- Orphan records state which side is missing and why: `local_deleted`, `remote_deleted`, `permission_lost`, `scope_changed`, `unsupported_domain`, or `identity_unresolved`.
+- UX-facing dry-run reports consume conflict records and orphan/candidate statuses directly; they must not infer safe sync readiness from a mapping that lacks one side.
 
 Future write-sync components, explicitly out of scope for the initial tranche:
 
