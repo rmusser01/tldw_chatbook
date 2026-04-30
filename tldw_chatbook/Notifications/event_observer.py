@@ -12,7 +12,6 @@ from typing import Any, Protocol
 from tldw_chatbook.Notifications.event_cursor_store import (
     CursorAdvanceResult,
     CursorAdvanceStatus,
-    EventCursorStore,
 )
 from tldw_chatbook.runtime_policy.server_parity_models import (
     EventCursor,
@@ -23,6 +22,36 @@ from tldw_chatbook.runtime_policy.server_parity_models import (
 
 class EventStreamTransport(Protocol):
     def stream(self, cursor: EventCursor) -> Any:
+        ...
+
+
+class EventCursorStateStore(Protocol):
+    def get_cursor(
+        self,
+        *,
+        source_authority: SourceAuthority,
+        server_profile_id: str | None,
+        stream_name: str,
+        stream_instance_id: str,
+        authenticated_principal_id: str | None = None,
+    ) -> EventCursor:
+        ...
+
+    def is_duplicate_event(self, event: NormalizedEventRecord) -> bool:
+        ...
+
+    def acknowledge_event(
+        self,
+        event: NormalizedEventRecord,
+        *,
+        expected_cursor: str | None,
+    ) -> CursorAdvanceResult:
+        ...
+
+    def remember_event(self, event: NormalizedEventRecord) -> Any:
+        ...
+
+    def reset_cursor(self, cursor: EventCursor, *, reason: str = "stale_cursor") -> CursorAdvanceResult:
         ...
 
 
@@ -103,7 +132,7 @@ class EventObserver:
     def __init__(
         self,
         *,
-        store: EventCursorStore,
+        store: EventCursorStateStore,
         transport: EventStreamTransport,
         backoff: Backoff | None = None,
     ) -> None:
@@ -119,6 +148,7 @@ class EventObserver:
         stream_name: str,
         stream_instance_id: str,
         handler: Handler,
+        authenticated_principal_id: str | None = None,
         cancel_event: asyncio.Event | None = None,
         max_events: int | None = None,
         max_reconnects: int = 0,
@@ -134,6 +164,7 @@ class EventObserver:
             cursor = self.store.get_cursor(
                 source_authority=source_authority,
                 server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
                 stream_name=stream_name,
                 stream_instance_id=stream_instance_id,
             )

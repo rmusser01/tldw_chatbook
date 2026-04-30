@@ -137,22 +137,23 @@ Single event authority:
 - `EventStateRepository` is the single owner for normalized event records, server stream cursors, dedupe keys, and event retention.
 - `ServerEventObserver` writes through `EventStateRepository`; it is transport logic, not event authority.
 - `ServerNotificationPresentation` records are derived, invalidatable presentation cache state and never become authoritative server resources.
-- `LocalNotificationStore` remains authoritative only for Chatbook-owned local notifications, not for server event state.
+- Existing `ClientNotificationsDB` remains authoritative only for Chatbook-owned local notifications. Tranche 2 may add a thin `LocalNotificationStore` adapter name for UX/service vocabulary, but it must wrap `ClientNotificationsDB` rather than create a second local notification database.
+- The existing in-memory `EventCursorStore` becomes either a test-only implementation of the event-state protocol or a repository-backed compatibility adapter. It must not remain an independent active cursor/dedupe authority after `EventStateRepository` lands.
 
 Core components:
 
 - `ServerEventObserver`: observes server SSE streams now and reserves a transport interface for WebSocket later.
-- `NormalizedEventRecord`: source authority, server profile ID, stream name, stream instance ID, event ID or cursor, dedupe key, timestamps, payload hash, payload kind, entity reference, and delivery state.
-- `LocalNotificationStore`: Chatbook-owned local notification inbox for local/offline events.
+- `NormalizedEventRecord`: source authority, server profile ID, authenticated principal where known, stream name, stream instance ID, event ID or cursor, dedupe key, timestamps, payload hash, payload kind, entity reference, and delivery state.
+- `ClientNotificationsDB`/`LocalNotificationStore` adapter: Chatbook-owned local notification inbox for local/offline events.
 - `ServerNotificationPresentation`: local presentation of server-owned feed/reminder/event state without making local notification state authoritative.
-- Cursor and dedupe store scoped by source, server profile, stream, and retention policy.
+- Cursor and dedupe store scoped by source, server profile, authenticated principal where known, stream, and retention policy.
 
 Rules:
 
 - Server streams stop immediately on server switch, logout, or credential clearing.
 - Cursor advancement happens only after event processing succeeds.
 - Reconnect uses server cursor where available.
-- If the server lacks a stable cursor, dedupe uses source, server profile, stream, event kind, entity ID, timestamp, and payload hash.
+- If the server lacks a stable cursor, dedupe uses source, server profile, authenticated principal where known, stream, event kind, entity ID, timestamp, and payload hash.
 - Server reminders and feed read/dismiss state remain server-owned.
 - Local notification settings and category/global delivery settings apply to local producers.
 - Server events may become local presentation records, but not local authoritative resources.
@@ -161,6 +162,8 @@ Cursor durability and retention contract:
 
 - `EventStateRepository` durably stores server cursors, stream instance IDs, dedupe records, and retention metadata scoped by source, server profile, authenticated principal, stream name, and stream instance.
 - Repository state tracks processed cursor and presented high-water mark separately. Processed cursor advances only after normalized event storage succeeds; presented high-water mark advances only after presentation records are updated.
+- The event insert, dedupe registration, and processed-cursor advancement for a handled event happen in one durable transaction. If the transaction rolls back, none of those three records may be partially visible; if it commits, reconnect must observe all three consistently.
+- Presentation updates and presented high-water advancement happen in a separate durable transaction from processed-cursor advancement. A presentation failure may leave the event processed but unpresented, but it must not advance the presented high-water mark.
 - Retention has explicit max-age and max-count bounds per stream. The initial default is 30 days or 10,000 normalized records per `(source, server_profile_id, authenticated_principal_id, stream_name, stream_instance_id)`, whichever limit prunes first, unless a domain contract sets a stricter bound.
 - Pruning must preserve the latest durable cursor, the latest presentation high-water mark, and dedupe records inside the reconnect window.
 - On restart, observers resume from the durable processed cursor when the server supports cursors. When the server only provides replayable events without stable cursors, the dedupe window protects presentation from duplicate events.
@@ -171,10 +174,17 @@ Event repository implementation checklist:
 
 - The repository stores event records, dedupe records, processed cursors, presented high-water marks, retention metadata, and observer status records in separate logical tables or record classes.
 - Processed cursor and presented cursor are never represented by one shared field. A processed event that fails presentation update must not advance the presented high-water mark.
+- Repository APIs expose atomic operations for `record_event_and_advance_processed_cursor`, `mark_event_presented_and_advance_high_water`, `reset_stream_cursor`, and `prune_stream_state`; callers must not compose these by writing raw tables directly.
 - Each event has a stable dedupe key. If the server supplies an event ID or cursor, it participates in the dedupe key; otherwise the fallback key uses source, server profile, principal, stream, event kind, entity ID, timestamp bucket, and payload hash.
 - Reconnect starts from the durable processed cursor. If no stable cursor exists, reconnect starts in dedupe-only replay mode and emits a typed degraded-mode status.
 - Retention pruning is bounded, deterministic, and test-covered. It must not delete the latest processed cursor, latest presented high-water mark, or dedupe records still inside the reconnect window.
 - Server switch, logout, credential clearing, and profile deletion have separate effects: switch stops active observers; logout/credential clearing/profile deletion may clear scoped durable cursor and dedupe state according to the source scope.
+
+Current implementation anchors:
+
+- `tldw_chatbook.Notifications.event_state_repository.EventStateRepository` owns durable event records, dedupe, processed cursors, presented high-water, retention policies, observer status, stream resets, and scoped profile cleanup.
+- `EventObserver` consumes an event-state protocol so the old in-memory cursor store is a test/compatibility implementation, not a second durable authority.
+- Event identity models in `runtime_policy.server_parity_models` include authenticated principal in cursor, event, and dedupe scope.
 
 UX handoff output:
 
@@ -226,6 +236,12 @@ Identity map implementation checklist:
 - Duplicate local-side or remote-side mappings create conflict report entries; they are not silently collapsed, overwritten, or hidden from dry-run mirror reports.
 - Orphan records state which side is missing and why: `local_deleted`, `remote_deleted`, `permission_lost`, `scope_changed`, `unsupported_domain`, or `identity_unresolved`.
 - UX-facing dry-run reports consume conflict records and orphan/candidate statuses directly; they must not infer safe sync readiness from a mapping that lacks one side.
+
+Current implementation anchors:
+
+- `tldw_chatbook.Sync_Interop.sync_state_repository.SyncStateRepository` is the durable dry-run state store for identity mappings, conflict reports, remote pull cursors, mirror reports, and domain eligibility.
+- `SyncStateRepository` intentionally has no local outbox table, replay loop, or remote mutation dispatch API.
+- Identity records persist source scope keys, nullable local-side keys, nullable remote-side keys, principal scope, workspace/resource scope, mapping status, and conflict records separately.
 
 Future write-sync components, explicitly out of scope for the initial tranche:
 
@@ -297,6 +313,12 @@ Rules:
 - Each unsupported edge is reported through the scope-service unsupported-capability seam.
 - Domain services consume connection/auth, event, and sync seams rather than inventing their own.
 - Tests are service, scope, policy, and API-client tests. UI tests are not required while the UI layer is being rewritten.
+
+Current implementation anchors:
+
+- `tldw_chatbook.runtime_policy.domain_edge_contracts` exposes the backend-owned per-domain capability matrix, source selector states, workspace isolation hints, view-model contract IDs, and unsupported-action report builder.
+- Remote-only domains use the shared unsupported-capability report shape and required reason codes before UX calls a domain adapter.
+- Domain edge contracts are additive backend contracts for UX handoff; they do not depend on the current UI implementation.
 
 UX handoff output:
 

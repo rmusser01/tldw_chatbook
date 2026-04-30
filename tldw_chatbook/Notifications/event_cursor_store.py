@@ -70,6 +70,7 @@ class EventCursorStore:
         scope = (
             event.source_authority,
             event.server_profile_id,
+            event.authenticated_principal_id,
             event.stream_name,
             event.stream_instance_id,
         )
@@ -86,12 +87,14 @@ class EventCursorStore:
         server_profile_id: str | None,
         stream_name: str,
         stream_instance_id: str,
+        authenticated_principal_id: str | None = None,
     ) -> EventCursor:
         cursor = EventCursor(
             source_authority=source_authority,
             server_profile_id=server_profile_id,
             stream_name=stream_name,
             stream_instance_id=stream_instance_id,
+            authenticated_principal_id=authenticated_principal_id,
         )
         return self._cursors.get(cursor.storage_key(), cursor)
 
@@ -115,6 +118,7 @@ class EventCursorStore:
         current = self.get_cursor(
             source_authority=event.source_authority,
             server_profile_id=event.server_profile_id,
+            authenticated_principal_id=event.authenticated_principal_id,
             stream_name=event.stream_name,
             stream_instance_id=event.stream_instance_id,
         )
@@ -125,6 +129,7 @@ class EventCursorStore:
                 stream_name=current.stream_name,
                 stream_instance_id=current.stream_instance_id,
                 cursor=None,
+                authenticated_principal_id=current.authenticated_principal_id,
             )
             self._cursors[reset.storage_key()] = reset
             return CursorAdvanceResult(
@@ -146,6 +151,7 @@ class EventCursorStore:
             stream_name=event.stream_name,
             stream_instance_id=event.stream_instance_id,
             cursor=event.server_cursor,
+            authenticated_principal_id=event.authenticated_principal_id,
         )
         self._cursors[advanced.storage_key()] = advanced
         return CursorAdvanceResult(status=CursorAdvanceStatus.ADVANCED, cursor=advanced)
@@ -157,6 +163,7 @@ class EventCursorStore:
             stream_name=cursor.stream_name,
             stream_instance_id=cursor.stream_instance_id,
             cursor=None,
+            authenticated_principal_id=cursor.authenticated_principal_id,
         )
         self._cursors[reset.storage_key()] = reset
         return CursorAdvanceResult(

@@ -18,10 +18,19 @@ from tldw_chatbook.runtime_policy.server_parity_models import (
 )
 
 
-def test_event_cursor_key_is_scoped_by_source_server_stream_and_instance() -> None:
+def test_event_cursor_key_is_scoped_by_source_server_principal_stream_and_instance() -> None:
     server_cursor = EventCursor(
         source_authority="server",
         server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_name="notifications",
+        stream_instance_id="default",
+        cursor="abc",
+    )
+    other_principal_cursor = EventCursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-b",
         stream_name="notifications",
         stream_instance_id="default",
         cursor="abc",
@@ -34,8 +43,10 @@ def test_event_cursor_key_is_scoped_by_source_server_stream_and_instance() -> No
         cursor="abc",
     )
 
-    assert server_cursor.storage_key() == "server:server-a:notifications:default"
-    assert local_cursor.storage_key() == "local:none:notifications:default"
+    assert server_cursor.storage_key() == "server:server-a:user-a:notifications:default"
+    assert other_principal_cursor.storage_key() == "server:server-a:user-b:notifications:default"
+    assert local_cursor.storage_key() == "local:none:none:notifications:default"
+    assert server_cursor.storage_key() != other_principal_cursor.storage_key()
     assert server_cursor.storage_key() != local_cursor.storage_key()
 
 
@@ -71,6 +82,7 @@ def test_event_dedupe_key_falls_back_to_normalized_event_identity() -> None:
     record = NormalizedEventRecord(
         source_authority="server",
         server_profile_id="server-a",
+        authenticated_principal_id="user-a",
         stream_name="notifications",
         stream_instance_id="default",
         event_kind="notification.created",
@@ -82,6 +94,7 @@ def test_event_dedupe_key_falls_back_to_normalized_event_identity() -> None:
     assert EventDedupeKey.from_event(record) == EventDedupeKey(
         source_authority="server",
         server_profile_id="server-a",
+        authenticated_principal_id="user-a",
         stream_name="notifications",
         stream_instance_id="default",
         event_kind="notification.created",

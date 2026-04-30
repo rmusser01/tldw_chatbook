@@ -102,6 +102,7 @@ class EventCursor:
     stream_name: str
     stream_instance_id: str
     cursor: str | None = None
+    authenticated_principal_id: str | None = None
 
     def __post_init__(self) -> None:
         _validate_source_authority(self.source_authority)
@@ -110,7 +111,8 @@ class EventCursor:
 
     def storage_key(self) -> str:
         server_key = self.server_profile_id if self.server_profile_id is not None else "none"
-        return f"{self.source_authority}:{server_key}:{self.stream_name}:{self.stream_instance_id}"
+        principal_key = self.authenticated_principal_id if self.authenticated_principal_id is not None else "none"
+        return f"{self.source_authority}:{server_key}:{principal_key}:{self.stream_name}:{self.stream_instance_id}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +124,7 @@ class NormalizedEventRecord:
     event_kind: str
     entity_ref: Mapping[str, FrozenJsonValue]
     payload_hash: str
+    authenticated_principal_id: str | None = None
     event_id: str | None = None
     server_cursor: str | None = None
     emitted_at: str | None = None
@@ -156,6 +159,7 @@ class EventDedupeKey:
     entity_id: str
     timestamp: str | None
     payload_hash: str
+    authenticated_principal_id: str | None = None
 
     def __post_init__(self) -> None:
         _validate_source_authority(self.source_authority)
@@ -171,6 +175,7 @@ class EventDedupeKey:
             entity_id=_entity_id(event.entity_ref),
             timestamp=event.emitted_at or event.received_at,
             payload_hash=event.payload_hash,
+            authenticated_principal_id=event.authenticated_principal_id,
         )
 
 

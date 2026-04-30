@@ -8,6 +8,7 @@ from tldw_chatbook.runtime_policy.server_parity_models import NormalizedEventRec
 def _event(
     *,
     server_profile_id: str = "server-a",
+    authenticated_principal_id: str | None = None,
     stream_name: str = "notifications",
     stream_instance_id: str = "workspace-1",
     event_kind: str = "notification.created",
@@ -21,6 +22,7 @@ def _event(
     return NormalizedEventRecord(
         source_authority="server",
         server_profile_id=server_profile_id,
+        authenticated_principal_id=authenticated_principal_id,
         stream_name=stream_name,
         stream_instance_id=stream_instance_id,
         event_kind=event_kind,
@@ -49,6 +51,33 @@ def test_cursor_store_isolates_cursors_per_server_profile():
     cursor_b = store.get_cursor(
         source_authority="server",
         server_profile_id="server-b",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+    )
+
+    assert cursor_a.cursor == "cursor-a"
+    assert cursor_b.cursor == "cursor-b"
+
+
+def test_cursor_store_isolates_cursors_per_authenticated_principal():
+    store = EventCursorStore()
+    event_a = _event(authenticated_principal_id="user-a", server_cursor="cursor-a")
+    event_b = _event(authenticated_principal_id="user-b", server_cursor="cursor-b")
+
+    store.acknowledge_event(event_a)
+    store.acknowledge_event(event_b)
+
+    cursor_a = store.get_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+    )
+    cursor_b = store.get_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-b",
         stream_name="notifications",
         stream_instance_id="workspace-1",
     )
@@ -104,6 +133,16 @@ def test_dedupe_prefers_stable_event_id_over_fallback_fields():
     store = EventCursorStore()
     first = _event(entity_id="same", payload_hash="same", event_id="event-a")
     second = _event(entity_id="same", payload_hash="same", event_id="event-b")
+
+    assert store.remember_event(first).is_duplicate is False
+    assert store.remember_event(second).is_duplicate is False
+    assert store.dedupe_size == 2
+
+
+def test_dedupe_isolates_same_event_id_per_authenticated_principal():
+    store = EventCursorStore()
+    first = _event(authenticated_principal_id="user-a", event_id="event-1")
+    second = _event(authenticated_principal_id="user-b", event_id="event-1")
 
     assert store.remember_event(first).is_duplicate is False
     assert store.remember_event(second).is_duplicate is False
