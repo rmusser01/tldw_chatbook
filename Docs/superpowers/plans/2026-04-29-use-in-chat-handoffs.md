@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement current-dev `Use in Chat` handoffs so Notes, Workspaces, Media, RAG Search, and Web Search can stage one selected item into a fresh Chat session with visible context and no auto-send.
+**Goal:** Implement current-dev `Use in Chat` handoffs so Notes, Workspaces, Media, RAG Search, and Web Search can stage one selected item into a fresh Chat session with visible context, source-honest backend parity state, and no auto-send.
 
-**Architecture:** Use one app-owned pending handoff seam, one serializable `ChatHandoffPayload`, and session-scoped Chat persistence. Source screens build payloads; `TldwCli` owns navigation; `ChatScreen` consumes the pending payload after restore, creates a new tab, renders a handoff card, prefills the draft, and ensures the first user send includes staged context.
+**Architecture:** Use one app-owned pending handoff seam, one serializable `ChatHandoffPayload`, backend-owned `UX_Interop`/`runtime_policy` contract snapshots, and session-scoped Chat persistence. Source screens identify the selected item and visible content; backend parity contracts own active server status, source authority, unsupported actions, workspace isolation, and sync dry-run state. `TldwCli` owns navigation; `ChatScreen` consumes the pending payload after restore, creates a new tab, renders a handoff card, prefills the draft, and ensures the first user send includes staged context.
 
 **Tech Stack:** Python 3.11+, Textual, dataclasses, existing `ChatSessionData` / `TabState` / `ChatTabContainer`, pytest
 
@@ -20,13 +20,15 @@ This plan intentionally implements the single-item handoff slice from the rebase
 - Notes and Workspace source adapters.
 - Media source adapter.
 - RAG Search and Web Search source adapters.
+- Backend-parity contract consumption for active server/source selectors, unsupported-action reports, workspace isolation, and sync dry-run diagnostics.
 - Focused tests for the contracts and adapters.
 
-This plan does not implement multi-select packaging, Chatbooks, Study/Flashcards/Quizzes handoffs, CCP/persona launch rewrites, or broader UI layout redesigns.
+This plan does not implement multi-select packaging, Chatbooks, Study/Flashcards/Quizzes handoffs, CCP/persona launch rewrites, automatic write sync, queued mutation replay, local CRUD for remote-only domains, or broader UI layout redesigns.
 
 ## Source Spec
 
 - `Docs/superpowers/specs/2026-04-21-use-in-chat-handoffs-design.md`
+- `Docs/superpowers/handoffs/2026-04-30-backend-parity-ux-handoff.md`
 
 ## File Map
 
@@ -38,8 +40,12 @@ This plan does not implement multi-select packaging, Chatbooks, Study/Flashcards
   Responsibility: Persist handoff state in saved `TabState`.
 - Modify: `tldw_chatbook/Chat/tabs/tab_state_manager.py`
   Responsibility: Keep tab runtime state aware of handoff payloads for send-time operations.
+- Modify: `config.toml` and generated defaults in `tldw_chatbook/config.py`
+  Responsibility: Enable chat tabs by default for new/generated config while preserving explicit user opt-out.
 - Create: `Tests/UI/test_chat_first_handoffs.py`
   Responsibility: Contract, app seam, Chat destination, card, and adapter-focused handoff tests.
+- Modify: `Tests/UX_Interop/test_server_parity_contracts.py`
+  Responsibility: Only change when the backend-owned contract shape changes; UI work should consume existing fixture payloads.
 - Modify: `Tests/UI/test_chat_screen_state.py`
   Responsibility: Extend existing serialization tests for handoff payload preservation.
 - Modify: `Tests/UI/test_chat_tab_container.py`
@@ -85,6 +91,86 @@ This plan does not implement multi-select packaging, Chatbooks, Study/Flashcards
 - Create: `Tests/UI/test_search_handoffs.py`
   Responsibility: Cover RAG card events, Web result payloads, and dedicated Web Search behavior.
 
+- Consume: `tldw_chatbook/UX_Interop/server_parity_contracts.py`
+  Responsibility: Use `build_server_parity_handoff_packet()` and `build_server_parity_fixture_payloads()` as backend-owned source-authority smoke inputs.
+- Consume: `tldw_chatbook/runtime_policy/domain_edge_contracts.py`
+  Responsibility: Use domain authority, source selector states, workspace isolation requirements, and required unsupported reason codes.
+- Consume: `tldw_chatbook/runtime_policy/unsupported_capabilities.py`
+  Responsibility: Validate unsupported-action reports before using them for disabled states or inline explanations.
+- Consume: `tldw_chatbook/Sync_Interop/*`
+  Responsibility: Render sync reports as dry-run diagnostics only; do not imply write sync or local mirror completion.
+
+## Task 0: Baseline Backend-Parity Handoff Contracts
+
+**Files:**
+- Create: `Tests/UI/test_chat_first_handoffs.py`
+- Consume: `tldw_chatbook/UX_Interop/server_parity_contracts.py`
+- Consume: `tldw_chatbook/runtime_policy/domain_edge_contracts.py`
+- Consume: `tldw_chatbook/runtime_policy/unsupported_capabilities.py`
+
+- [ ] **Step 1: Write UI smoke tests that consume backend-owned fixtures**
+
+Add to `Tests/UI/test_chat_first_handoffs.py`:
+
+```python
+from tldw_chatbook.UX_Interop import (
+    build_server_parity_fixture_payloads,
+    build_server_parity_handoff_packet,
+)
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+
+
+def test_chat_handoff_ui_smoke_consumes_server_parity_fixture_payloads():
+    fixtures = build_server_parity_fixture_payloads()
+
+    assert fixtures["local"]["active_source"] == "local"
+    assert fixtures["server"]["active_server_profile_id"] == "srv-primary"
+    assert fixtures["unavailable_server"]["server_reachability"] == "unreachable"
+    assert fixtures["auth_failure"]["reason_code"] == "auth_required"
+    assert fixtures["unsupported_action"]["unsupported_reason_code"] == "server_contract_missing"
+    assert fixtures["workspace_isolation"]["workspace_scope_id"] == "workspace-a"
+    assert fixtures["sync_dry_run_report"]["write_enabled"] is False
+
+
+def test_chat_handoff_packet_exposes_sections_ui_needs_without_screen_inference():
+    packet = build_server_parity_handoff_packet(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="srv-primary",
+            server_configured=True,
+            server_reachability="reachable",
+            server_auth_state="authenticated",
+            last_known_server_label="Primary Server",
+        ),
+        workspace_scope_ids=("workspace-a",),
+    )
+
+    sections = packet["sections"]
+    assert sections["active_server"]["active_server_profile_id"] == "srv-primary"
+    assert sections["source_selector"]["source_options"]
+    assert sections["sync"]["dry_run_only"] is True
+    assert sections["workspace_isolation"][0]["workspace_scope_id"] == "workspace-a"
+    assert "server_unavailable" in sections["error_contracts"]
+```
+
+- [ ] **Step 2: Run the backend-parity fixture smoke tests**
+
+Run: `pytest Tests/UX_Interop/test_server_parity_contracts.py Tests/UI/test_chat_first_handoffs.py -q`
+
+Expected: PASS once the smoke tests are added. If `Tests/UX_Interop/test_server_parity_contracts.py` fails, fix or coordinate that backend-owned contract before adding UI-specific handoff wiring.
+
+- [ ] **Step 3: Record the contract rules in UI implementation notes**
+
+Before coding UI adapters, document these invariants in the test file or helper comments:
+
+- UI consumes `UX_Interop` and `runtime_policy` contracts; it does not rebuild active server/auth/source state from raw config.
+- Local, server, workspace, and remote-only states remain visually distinct.
+- Unsupported reports drive disabled/hide/explanation states.
+- Sync reports are dry-run diagnostics only; no write sync or mirror completion is implied.
+- Workspace records require `workspace_id` and workspace isolation metadata when available.
+- `source_selector_state="workspace"` comes from domain/workspace contracts; do not attempt to create `RuntimeSourceState(active_source="workspace")`.
+- Persisted payload snapshots must be secret-redacted, JSON/TOML-safe, and size-bounded.
+
 ## Task 1: Add The Shared Handoff Contract And Persisted Session Fields
 
 **Files:**
@@ -100,7 +186,7 @@ This plan does not implement multi-select packaging, Chatbooks, Study/Flashcards
 Add to `Tests/UI/test_chat_first_handoffs.py`:
 
 ```python
-from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload, HANDOFF_BODY_CHAR_LIMIT
 
 
 def test_chat_handoff_payload_round_trip_preserves_runtime_scope_and_metadata():
@@ -109,14 +195,37 @@ def test_chat_handoff_payload_round_trip_preserves_runtime_scope_and_metadata():
         item_type="workspace-source",
         title="Transcript",
         body="source body",
+        body_truncated=False,
+        content_ref="workspace:workspace-1:source:source-1",
         source_id="source-1",
         display_summary="A workspace source",
         suggested_prompt="Use this source.",
         runtime_backend="server",
+        source_owner="workspace",
+        source_selector_state="workspace",
+        active_server_profile_id="srv-primary",
         discovery_owner="workspace",
         discovery_entity_id="source-1",
         scope_type="workspace",
         workspace_id="workspace-1",
+        backend_contracts={
+            "workspace_isolation": {"workspace_scope_id": "workspace-1"},
+            "active_server": {
+                "active_server_profile_id": "srv-primary",
+                "credential_source": "keyring:chatbook:server:srv-primary:access",
+            },
+        },
+        unsupported_reports=[
+            {
+                "operation_id": "notes.graph.unsupported.workspace",
+                "source": "workspace",
+                "supported": False,
+                "reason_code": "scope_not_supported",
+                "user_message": "Workspace graph is not available.",
+                "affected_action_ids": ["notes.graph.list.server"],
+            }
+        ],
+        sync_dry_run_report={"dry_run": True, "write_enabled": False},
         metadata={"score": 0.87, "url": "https://example.com"},
     )
 
@@ -124,10 +233,59 @@ def test_chat_handoff_payload_round_trip_preserves_runtime_scope_and_metadata():
 
     assert restored.source == "workspace"
     assert restored.item_type == "workspace-source"
+    assert restored.body_truncated is False
+    assert restored.content_ref == "workspace:workspace-1:source:source-1"
     assert restored.runtime_backend == "server"
+    assert restored.source_owner == "workspace"
+    assert restored.source_selector_state == "workspace"
+    assert restored.active_server_profile_id == "srv-primary"
     assert restored.scope_type == "workspace"
     assert restored.workspace_id == "workspace-1"
+    assert restored.backend_contracts["workspace_isolation"]["workspace_scope_id"] == "workspace-1"
+    assert "credential_source" not in restored.backend_contracts["active_server"]
+    assert restored.unsupported_reports[0]["reason_code"] == "scope_not_supported"
+    assert restored.sync_dry_run_report["write_enabled"] is False
     assert restored.metadata["score"] == 0.87
+
+
+def test_chat_handoff_payload_persistence_redacts_secrets_and_normalizes_tuples():
+    payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Secret-adjacent",
+        body="Body",
+        backend_contracts={
+            "active_server": {
+                "active_server_profile_id": "srv-primary",
+                "credential_source": "keyring:chatbook:server:srv-primary:access",
+            },
+            "source_selector": {"source_options": ({"source": "local"}, {"source": "server"})},
+        },
+        sync_dry_run_report={"conflict_ids": ("conflict-1",)},
+    )
+
+    data = payload.to_dict()
+
+    assert "credential_source" not in data["backend_contracts"]["active_server"]
+    assert data["backend_contracts"]["source_selector"]["source_options"] == [
+        {"source": "local"},
+        {"source": "server"},
+    ]
+    assert data["sync_dry_run_report"]["conflict_ids"] == ["conflict-1"]
+
+
+def test_chat_handoff_payload_from_source_content_caps_persisted_body():
+    payload = ChatHandoffPayload.from_source_content(
+        source="media",
+        item_type="media",
+        title="Long transcript",
+        body="x" * (HANDOFF_BODY_CHAR_LIMIT + 1),
+        content_ref="media:record-1",
+    )
+
+    assert len(payload.body) == HANDOFF_BODY_CHAR_LIMIT
+    assert payload.body_truncated is True
+    assert payload.content_ref == "media:record-1"
 ```
 
 - [ ] **Step 2: Write failing session-state preservation tests**
@@ -193,14 +351,22 @@ class ChatHandoffPayload:
     item_type: str
     title: str
     body: str
+    body_truncated: bool = False
+    content_ref: Optional[str] = None
     source_id: Optional[str] = None
     display_summary: str = ""
     suggested_prompt: str = ""
     runtime_backend: str = "local"
+    source_owner: str = "local"
+    source_selector_state: str = "local"
+    active_server_profile_id: Optional[str] = None
     discovery_owner: str = "general_chat"
     discovery_entity_id: Optional[str] = None
     scope_type: Optional[str] = None
     workspace_id: Optional[str] = None
+    backend_contracts: Dict[str, Any] = field(default_factory=dict)
+    unsupported_reports: list[Dict[str, Any]] = field(default_factory=list)
+    sync_dry_run_report: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     status: str = "staged"
 
@@ -210,17 +376,38 @@ class ChatHandoffPayload:
             "item_type": self.item_type,
             "title": self.title,
             "body": self.body,
+            "body_truncated": self.body_truncated,
+            "content_ref": self.content_ref,
             "source_id": self.source_id,
             "display_summary": self.display_summary,
             "suggested_prompt": self.suggested_prompt,
             "runtime_backend": self.runtime_backend,
+            "source_owner": self.source_owner,
+            "source_selector_state": self.source_selector_state,
+            "active_server_profile_id": self.active_server_profile_id,
             "discovery_owner": self.discovery_owner,
             "discovery_entity_id": self.discovery_entity_id,
             "scope_type": self.scope_type,
             "workspace_id": self.workspace_id,
-            "metadata": dict(self.metadata or {}),
+            "backend_contracts": _json_safe_contract_snapshot(self.backend_contracts or {}),
+            "unsupported_reports": _json_safe_contract_snapshot(self.unsupported_reports or []),
+            "sync_dry_run_report": _json_safe_contract_snapshot(self.sync_dry_run_report) if self.sync_dry_run_report else None,
+            "metadata": _json_safe_contract_snapshot(self.metadata or {}),
             "status": self.status,
         }
+
+    @classmethod
+    def from_source_content(cls, *, body: str, content_ref: Optional[str] = None, **kwargs: Any) -> "ChatHandoffPayload":
+        body_text = str(body or "")
+        body_truncated = len(body_text) > HANDOFF_BODY_CHAR_LIMIT
+        if body_truncated:
+            body_text = body_text[:HANDOFF_BODY_CHAR_LIMIT]
+        return cls(
+            body=body_text,
+            body_truncated=body_truncated,
+            content_ref=content_ref,
+            **kwargs,
+        )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any] | "ChatHandoffPayload" | None) -> Optional["ChatHandoffPayload"]:
@@ -233,15 +420,23 @@ class ChatHandoffPayload:
             item_type=str(data.get("item_type") or "item"),
             title=str(data.get("title") or "Untitled"),
             body=str(data.get("body") or ""),
+            body_truncated=bool(data.get("body_truncated", False)),
+            content_ref=data.get("content_ref"),
             source_id=data.get("source_id"),
             display_summary=str(data.get("display_summary") or ""),
             suggested_prompt=str(data.get("suggested_prompt") or ""),
             runtime_backend=str(data.get("runtime_backend") or "local"),
+            source_owner=str(data.get("source_owner") or "local"),
+            source_selector_state=str(data.get("source_selector_state") or data.get("runtime_backend") or "local"),
+            active_server_profile_id=data.get("active_server_profile_id"),
             discovery_owner=str(data.get("discovery_owner") or "general_chat"),
             discovery_entity_id=data.get("discovery_entity_id"),
             scope_type=data.get("scope_type"),
             workspace_id=data.get("workspace_id"),
-            metadata=dict(data.get("metadata") or {}),
+            backend_contracts=_json_safe_contract_snapshot(data.get("backend_contracts") or {}),
+            unsupported_reports=_json_safe_contract_snapshot(data.get("unsupported_reports") or []),
+            sync_dry_run_report=_json_safe_contract_snapshot(data["sync_dry_run_report"]) if data.get("sync_dry_run_report") else None,
+            metadata=_json_safe_contract_snapshot(data.get("metadata") or {}),
             status=str(data.get("status") or "staged"),
         )
 
@@ -260,6 +455,13 @@ class ChatHandoffPayload:
             f"Item type: {self.item_type}\n"
             f"Title: {self.title}\n"
             f"Source ID: {self.source_id or 'unknown'}\n"
+            f"Content ref: {self.content_ref or 'none'}\n"
+            f"Body truncated: {self.body_truncated}\n"
+            f"Source owner: {self.source_owner}\n"
+            f"Source selector: {self.source_selector_state}\n"
+            f"Active server: {self.active_server_profile_id or 'none'}\n"
+            f"Workspace: {self.workspace_id or 'none'}\n"
+            f"Sync dry-run only: {bool(self.sync_dry_run_report)}\n"
             f"Summary: {self.display_summary or 'none'}\n"
             f"Metadata:\n{metadata or '- none'}\n\n"
             f"Content:\n{self.body}"
@@ -267,7 +469,34 @@ class ChatHandoffPayload:
 
     def format_for_model(self, user_prompt: str) -> str:
         return f"{self.model_context_block()}\n\n[User prompt]\n{user_prompt.strip()}"
+
+
+SECRET_CONTRACT_KEYS = frozenset({"credential_source", "token", "secret", "api_key", "password"})
+HANDOFF_BODY_CHAR_LIMIT = 80_000
+
+
+def _json_safe_contract_snapshot(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _json_safe_contract_snapshot(item)
+            for key, item in value.items()
+            if item is not None and not _is_secret_contract_key(str(key))
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe_contract_snapshot(item) for item in value if item is not None]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "to_payload"):
+        return _json_safe_contract_snapshot(value.to_payload())
+    return str(value)
+
+
+def _is_secret_contract_key(key: str) -> bool:
+    normalized = key.lower()
+    return any(secret_key in normalized for secret_key in SECRET_CONTRACT_KEYS)
 ```
+
+Add a `ChatHandoffPayload.from_source_content(...)` helper or equivalent builder guard that caps body text to `HANDOFF_BODY_CHAR_LIMIT`, sets `body_truncated=True`, and records `content_ref` when the source can be rehydrated. Do not persist unbounded media transcripts or full backend packets into `ui_state.toml`.
 
 - [ ] **Step 5: Add `handoff_payload` to session models**
 
@@ -296,8 +525,23 @@ git commit -m "feat: add chat handoff payload contract"
 - Modify: `tldw_chatbook/app.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen_state.py`
+- Modify: `config.toml`
+- Modify: `tldw_chatbook/config.py`
 - Modify: `Tests/UI/test_chat_first_handoffs.py`
 - Modify: `Tests/UI/test_chat_tab_container.py`
+
+- [ ] **Step 0: Enable chat tabs by default for new/generated config**
+
+Add or update a config/defaults test near existing config coverage:
+
+```python
+def test_chat_tabs_are_enabled_by_default_for_handoff_capable_chat():
+    config = load_default_config_for_test()
+
+    assert config["chat_defaults"]["enable_tabs"] is True
+```
+
+Then set bundled/generated `[chat_defaults].enable_tabs = true`. `open_chat_with_handoff()` must still refuse when the resolved user config explicitly sets `enable_tabs = false`.
 
 - [ ] **Step 1: Write failing app helper tests**
 
@@ -366,10 +610,14 @@ async def test_chat_screen_consumes_pending_handoff_into_fresh_ephemeral_tab():
         body="Body",
         source_id="source-1",
         runtime_backend="server",
+        source_owner="workspace",
+        source_selector_state="workspace",
+        active_server_profile_id="srv-primary",
         discovery_owner="workspace",
         discovery_entity_id="source-1",
         scope_type="workspace",
         workspace_id="workspace-1",
+        backend_contracts={"workspace_isolation": {"workspace_scope_id": "workspace-1"}},
     )
     app = Mock()
     app.pending_chat_handoff = payload
@@ -393,6 +641,8 @@ async def test_chat_screen_consumes_pending_handoff_into_fresh_ephemeral_tab():
     assert session_data.conversation_id is None
     assert session_data.is_ephemeral is True
     assert session_data.runtime_backend == "server"
+    assert session_data.handoff_payload.source_selector_state == "workspace"
+    assert session_data.handoff_payload.active_server_profile_id == "srv-primary"
     assert session_data.scope_type == "workspace"
     assert session_data.workspace_id == "workspace-1"
     assert session_data.handoff_payload.title == "Transcript"
@@ -456,7 +706,7 @@ In `tldw_chatbook/app.py`, add:
 
 ```python
 def open_chat_with_handoff(self, payload: ChatHandoffPayload) -> None:
-    if not get_cli_setting("chat_defaults", "enable_tabs", False):
+    if not get_cli_setting("chat_defaults", "enable_tabs", True):
         self.notify(
             "Use in Chat requires chat tabs to be enabled.",
             severity="warning",
@@ -530,7 +780,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add tldw_chatbook/app.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_tab_container.py
+git add config.toml tldw_chatbook/config.py tldw_chatbook/app.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_tab_container.py
 git commit -m "feat: route handoffs into fresh chat tabs"
 ```
 
@@ -558,6 +808,11 @@ def test_handoff_card_uses_status_source_title_and_metadata():
         title="Article",
         body="Article snippet",
         display_summary="Search result summary",
+        runtime_backend="server",
+        source_owner="server",
+        source_selector_state="server",
+        active_server_profile_id="srv-primary",
+        sync_dry_run_report={"dry_run": True, "write_enabled": False},
         metadata={"url": "https://example.com", "score": 0.5},
     )
 
@@ -567,6 +822,9 @@ def test_handoff_card_uses_status_source_title_and_metadata():
     assert "Context staged" in text
     assert "Web Search" in text
     assert "Article" in text
+    assert "Source: Server source" in text
+    assert "Server: srv-primary" in text
+    assert "Sync: dry-run only" in text
     assert "https://example.com" in text
 ```
 
@@ -657,8 +915,18 @@ class ChatHandoffCard(Container):
         ]
         if self.payload.runtime_backend:
             parts.append(f"Backend: {self.payload.runtime_backend}")
+        if self.payload.source_owner or self.payload.source_selector_state:
+            parts.append(f"Source: {self._source_chip_label()}")
+        if self.payload.active_server_profile_id:
+            parts.append(f"Server: {self.payload.active_server_profile_id}")
         if self.payload.workspace_id:
             parts.append(f"Workspace: {self.payload.workspace_id}")
+        if self.payload.sync_dry_run_report:
+            parts.append("Sync: dry-run only")
+        if self.payload.body_truncated:
+            parts.append("Content: preview truncated")
+        if self.payload.unsupported_reports:
+            parts.append(f"Unsupported actions: {len(self.payload.unsupported_reports)}")
         if metadata:
             parts.append(metadata)
         parts.append("Review the draft below and send when ready.")
@@ -666,6 +934,16 @@ class ChatHandoffCard(Container):
 
     def compose(self) -> ComposeResult:
         yield Static(self.render_text(), classes="chat-handoff-card-body")
+
+    def _source_chip_label(self) -> str:
+        state = self.payload.source_selector_state or self.payload.source_owner
+        labels = {
+            "local": "Local source",
+            "server": "Server source",
+            "workspace": "Workspace source",
+            "shared": "Shared source",
+        }
+        return labels.get(str(state), str(state).replace("_", " ").title())
 ```
 
 - [ ] **Step 5: Add `ChatSession` seams**
@@ -877,6 +1155,8 @@ def test_notes_screen_builds_local_note_handoff_from_visible_editor_text():
     assert payload.source == "notes"
     assert payload.item_type == "note"
     assert payload.runtime_backend == "local"
+    assert payload.source_owner == "local"
+    assert payload.source_selector_state == "local"
     assert payload.source_id == "123"
     assert payload.body == "Visible unsaved content"
 ```
@@ -908,6 +1188,8 @@ def test_notes_screen_builds_workspace_source_handoff_from_cached_payload():
     assert payload.source == "workspace"
     assert payload.item_type == "workspace-source"
     assert payload.runtime_backend == "server"
+    assert payload.source_owner == "workspace"
+    assert payload.source_selector_state == "workspace"
     assert payload.scope_type == "workspace"
     assert payload.workspace_id == "workspace-1"
     assert payload.title == "Transcript"
@@ -983,6 +1265,8 @@ return ChatHandoffPayload(
     source_id=str(self.state.selected_note_id) if self.state.selected_note_id is not None else None,
     suggested_prompt="Use this note as context and help me work with it.",
     runtime_backend=runtime_backend,
+    source_owner=runtime_backend,
+    source_selector_state=runtime_backend,
     discovery_owner="notes",
     discovery_entity_id=str(self.state.selected_note_id) if self.state.selected_note_id is not None else None,
     scope_type="global",
@@ -1002,6 +1286,8 @@ metadata = {
     "workspace_version": self.state.selected_workspace_version,
 }
 ```
+
+Workspace handoff payloads must set `source_owner="workspace"`, `source_selector_state="workspace"`, `scope_type="workspace"`, `workspace_id=<selected workspace>`, and include available workspace isolation metadata from backend-owned contracts. Do not treat workspace records as generic server-global notes just because their runtime backend is server-backed.
 
 - [ ] **Step 7: Add NotesScreen button handlers**
 
@@ -1144,15 +1430,18 @@ def _build_current_media_chat_handoff_payload(self) -> ChatHandoffPayload | None
     if not detail:
         return None
     resolved_id = str(detail.get("id") or record_id or detail.get("source_id") or "")
-    return ChatHandoffPayload(
+    return ChatHandoffPayload.from_source_content(
         source="media",
         item_type="media",
         title=str(detail.get("title") or "Untitled Media"),
         body=str(detail.get("content") or detail.get("summary") or detail.get("analysis") or ""),
+        content_ref=f"media:{resolved_id}" if resolved_id else None,
         source_id=resolved_id or None,
         display_summary=str(detail.get("summary") or ""),
         suggested_prompt="Use this media item as context and help me analyze or summarize it.",
         runtime_backend=self._runtime_backend(),
+        source_owner=self._runtime_backend(),
+        source_selector_state=self._runtime_backend(),
         discovery_owner="media",
         discovery_entity_id=resolved_id or None,
         scope_type="global",
@@ -1238,6 +1527,7 @@ def test_search_window_normalizes_rag_result_payload():
     assert payload.source == "search-rag"
     assert payload.item_type == "rag-result"
     assert payload.discovery_owner == "rag_search"
+    assert payload.source_selector_state in {"local", "server"}
     assert payload.body == "Retrieved text"
     assert payload.metadata["score"] == 0.91
 ```
@@ -1262,6 +1552,7 @@ def test_search_window_normalizes_web_result_payload():
     assert payload.source == "search-web"
     assert payload.item_type == "web-result"
     assert payload.discovery_owner == "web_search"
+    assert payload.source_owner == "server"
     assert payload.metadata["url"] == "https://example.com"
 ```
 
@@ -1312,6 +1603,12 @@ def _build_search_chat_handoff_payload(self, result: dict[str, Any]) -> ChatHand
         metadata["score"] = result.get("score")
     if result.get("citations"):
         metadata["citations"] = result.get("citations")
+    get_source = getattr(self.app_instance, "get_authoritative_runtime_source", None)
+    runtime_backend = str(get_source() if callable(get_source) else "local")
+    if runtime_backend not in {"local", "server"}:
+        runtime_backend = "local"
+    source_owner = "server" if is_web else runtime_backend
+    source_selector_state = "server" if is_web else runtime_backend
     return ChatHandoffPayload(
         source="search-web" if is_web else "search-rag",
         item_type="web-result" if is_web else "rag-result",
@@ -1324,7 +1621,9 @@ def _build_search_chat_handoff_payload(self, result: dict[str, Any]) -> ChatHand
             if is_web else
             "Use this retrieved result as context and answer or reason from it carefully."
         ),
-        runtime_backend=str(getattr(self.app_instance, "current_runtime_backend", "local") or "local"),
+        runtime_backend=runtime_backend,
+        source_owner=source_owner,
+        source_selector_state=source_selector_state,
         discovery_owner="web_search" if is_web else "rag_search",
         discovery_entity_id=str(metadata.get("document_id") or metadata.get("url") or "") or None,
         scope_type="global",
@@ -1340,6 +1639,8 @@ def handle_search_result_use_in_chat(self, event: SearchResult.UseInChatRequeste
     payload = self._build_search_chat_handoff_payload(event.result)
     self.app_instance.open_chat_with_handoff(payload)
 ```
+
+Before forwarding server-backed or remote-only results, check the relevant runtime policy/source contract or unsupported report. If the result source is unavailable, auth-blocked, or capability-missing, disable the action or show the report message rather than building a handoff from stale screen data.
 
 - [ ] **Step 7: Cardify dedicated Web Search results**
 
@@ -1420,7 +1721,7 @@ git commit -m "feat: add search chat handoffs"
 Run:
 
 ```bash
-pytest Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_screen_state.py Tests/UI/test_chat_tab_container.py Tests/UI/test_notes_screen.py Tests/UI/test_media_handoffs.py Tests/UI/test_search_handoffs.py Tests/Event_Handlers/Chat_Events/test_chat_events_tabs.py -q
+pytest Tests/UX_Interop/test_server_parity_contracts.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_screen_state.py Tests/UI/test_chat_tab_container.py Tests/UI/test_notes_screen.py Tests/UI/test_media_handoffs.py Tests/UI/test_search_handoffs.py Tests/Event_Handlers/Chat_Events/test_chat_events_tabs.py -q
 ```
 
 Expected: PASS.
@@ -1461,6 +1762,9 @@ Expected:
 - Media selected item opens a fresh Chat tab with media metadata visible.
 - RAG result opens a fresh Chat tab with search result card metadata.
 - Dedicated Web Search result opens a fresh Chat tab with URL attribution metadata.
+- Server-unavailable/auth-required/capability-missing fixture states disable or explain server-backed handoff controls without breaking local handoffs.
+- Sync dry-run fixture states render as diagnostics only and never say sync is enabled or complete.
+- Workspace fixture states keep workspace IDs visible and do not render workspace notes as global notes.
 - Nothing is auto-sent before pressing Send.
 
 - [ ] **Step 5: Update docs only if behavior changed**
@@ -1484,13 +1788,26 @@ Skip this commit if no docs changed.
 - Keep the staged payload session-scoped. App-level `pending_chat_handoff` is only the navigation transfer slot.
 - Do not make source content disappear after first send. Mark it as sent, but keep the card visible.
 - Preserve `runtime_backend`, `scope_type`, and `workspace_id`; do not silently overwrite them with the current global backend.
+- Preserve `source_owner`, `source_selector_state`, `active_server_profile_id`, unsupported reports, and sync dry-run reports; do not flatten them into generic metadata-only labels.
+- Do not infer source authority from screen layout, raw config, or direct server clients. Consume `UX_Interop` and `runtime_policy` contracts.
+- Do not persist raw backend packets or credential-bearing contract fields in chat/session state. Store only the sanitized subset needed for UI state, routing, and auditability.
+- Do not persist unbounded source bodies into saved screen state. Cap body text, set `body_truncated=True`, and keep/refetch full content through explicit source references when available.
+- Treat `server_unavailable`, `auth_required`, `permission_denied`, `capability_missing`, and `not_implemented_locally` as first-class disabled/explained states.
+- Keep sync dry-run reports diagnostic-only. Do not show write sync, queued replay, or mirror completion.
+- Keep workspace-scoped records isolated; workspace handoffs require `workspace_id` and must not render as global notes.
 - If max tabs are reached, leave `pending_chat_handoff` uncleared and notify the user.
 - Treat unsaved Notes and Workspace editor text as the visible source of truth where it can be read safely.
 
 ## Completion Criteria
 
+- UI handoff tests consume backend-owned server parity fixtures and handoff packet sections without importing current UI screens from the contract layer.
+- New/generated config enables chat tabs by default; explicit user opt-out still makes `Use in Chat` unavailable with a clear message.
+- Handoff payload persistence is JSON/TOML-safe, secret-redacted, and body-size bounded.
 - All new and modified focused tests pass.
 - `Use in Chat` is visible or explicitly unavailable in each target surface.
+- Server-backed handoffs handle unavailable server, auth required, permission denied, capability missing, and local-not-implemented states.
+- Local, server, workspace, and remote-only records remain visually distinct in the handoff card and destination session metadata.
+- Sync/report UI never implies automatic write sync or completed local mirroring from dry-run reports.
 - Every handoff opens a fresh Chat tab with `conversation_id=None`.
 - The destination Chat tab shows a staged handoff card and draft prompt.
 - The first Send includes the staged context in the model prompt.

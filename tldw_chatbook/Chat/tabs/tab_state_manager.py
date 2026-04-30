@@ -31,6 +31,7 @@ class TabState:
     persona_memory_mode: Optional[str] = None
     scope_type: Optional[str] = None
     workspace_id: Optional[str] = None
+    handoff_payload: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 

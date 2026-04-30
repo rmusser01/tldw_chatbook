@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from loguru import logger
 
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+
 logger = logger.bind(module="ChatScreenState")
 
 
@@ -88,6 +90,7 @@ class TabState:
     persona_memory_mode: Optional[str] = None
     scope_type: Optional[str] = None
     workspace_id: Optional[str] = None
+    handoff_payload: Optional[ChatHandoffPayload] = None
     
     # Input state
     input_text: str = ""
@@ -130,6 +133,7 @@ class TabState:
             'persona_memory_mode': self.persona_memory_mode,
             'scope_type': self.scope_type,
             'workspace_id': self.workspace_id,
+            'handoff_payload': self.handoff_payload.to_dict() if self.handoff_payload else None,
             'input_text': self.input_text,
             'cursor_position': self.cursor_position,
             'scroll_position': self.scroll_position,
@@ -174,6 +178,7 @@ class TabState:
             persona_memory_mode=data.get('persona_memory_mode'),
             scope_type=scope_type,
             workspace_id=workspace_id,
+            handoff_payload=ChatHandoffPayload.from_dict(data.get('handoff_payload')),
             input_text=data.get('input_text', ''),
             cursor_position=data.get('cursor_position', 0),
             scroll_position=data.get('scroll_position', 0),
