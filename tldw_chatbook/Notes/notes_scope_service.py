@@ -43,10 +43,17 @@ _WORKSPACE_GRAPH_UNSUPPORTED_CAPABILITY = {
 class NotesScopeService:
     """Route screen-facing note actions to the correct backing service."""
 
-    def __init__(self, local_notes_service: Any, server_service: Any, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        local_notes_service: Any,
+        server_service: Any,
+        policy_enforcer: Any = None,
+        sync_scope_service: Any = None,
+    ):
         self.local_notes_service = local_notes_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
+        self.sync_scope_service = sync_scope_service
 
     def _normalize_scope(self, scope: ScopeType | str) -> ScopeType:
         if isinstance(scope, ScopeType):
@@ -62,6 +69,11 @@ class NotesScopeService:
         if not workspace_id:
             raise ValueError("workspace_id is required for workspace note operations.")
         return workspace_id
+
+    def _require_sync_scope_service(self) -> Any:
+        if self.sync_scope_service is None:
+            raise ValueError("Sync scope service is unavailable.")
+        return self.sync_scope_service
 
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -95,6 +107,39 @@ class NotesScopeService:
         if normalized_scope == ScopeType.WORKSPACE:
             return [dict(_WORKSPACE_GRAPH_UNSUPPORTED_CAPABILITY)]
         return []
+
+    def record_sync_mirror_report(
+        self,
+        *,
+        scope: ScopeType | str,
+        server_profile_id: str,
+        authenticated_principal_id: str | None = None,
+        workspace_id: str | None = None,
+        local_records: list[dict[str, Any]] | None = None,
+        remote_records: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope == ScopeType.LOCAL_NOTE:
+            raise ValueError("Local note mirror reports require a server or workspace scope.")
+        if normalized_scope == ScopeType.WORKSPACE:
+            workspace_id = self._require_workspace_id(workspace_id)
+            domain = "workspace_notes"
+            entity_type = "workspace_note"
+        else:
+            domain = "notes"
+            entity_type = "note"
+            workspace_id = None
+
+        return self._require_sync_scope_service().record_dry_run_mirror_report(
+            mode="server",
+            domain=domain,
+            entity_type=entity_type,
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_id,
+            local_records=local_records or [],
+            remote_records=remote_records or [],
+        )
 
     @staticmethod
     def _normalize_keywords(keywords: Optional[Sequence[str]]) -> list[str]:

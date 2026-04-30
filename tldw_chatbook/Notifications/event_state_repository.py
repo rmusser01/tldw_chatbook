@@ -32,6 +32,13 @@ class _NoExpectedCursor:
 _NO_EXPECTED_CURSOR = _NoExpectedCursor()
 
 
+class _FilterUnset:
+    pass
+
+
+_FILTER_UNSET = _FilterUnset()
+
+
 @dataclass(frozen=True, slots=True)
 class EventStateRecordResult:
     event_key: str
@@ -539,16 +546,45 @@ class EventStateRepository(BaseDB):
             presented_at=presented_at,
         )
 
-    def list_events(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_events(
+        self,
+        *,
+        source_authority: SourceAuthority | None | _FilterUnset = _FILTER_UNSET,
+        server_profile_id: str | None | _FilterUnset = _FILTER_UNSET,
+        authenticated_principal_id: str | None | _FilterUnset = _FILTER_UNSET,
+        stream_name: str | None | _FilterUnset = _FILTER_UNSET,
+        stream_instance_id: str | None | _FilterUnset = _FILTER_UNSET,
+        payload_kind: str | None | _FilterUnset = _FILTER_UNSET,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        for field_name, value in (
+            ("source_authority", source_authority),
+            ("server_profile_id", server_profile_id),
+            ("authenticated_principal_id", authenticated_principal_id),
+            ("stream_name", stream_name),
+            ("stream_instance_id", stream_instance_id),
+            ("payload_kind", payload_kind),
+        ):
+            if isinstance(value, _FilterUnset):
+                continue
+            if value is None:
+                where_clauses.append(f"{field_name} IS NULL")
+                continue
+            where_clauses.append(f"{field_name} = ?")
+            params.append(value)
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
         with self._get_connection() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT *
                 FROM event_records
+                {where_sql}
                 ORDER BY id ASC
                 LIMIT ?
                 """,
-                (max(int(limit), 1),),
+                (*params, max(int(limit), 1)),
             ).fetchall()
         return [self._event_row_to_dict(row) for row in rows]
 

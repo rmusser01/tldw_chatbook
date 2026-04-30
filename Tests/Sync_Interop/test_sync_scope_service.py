@@ -1,5 +1,6 @@
 import pytest
 
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.Sync_Interop.sync_scope_service import SyncScopeService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
@@ -140,3 +141,60 @@ def test_sync_scope_service_reports_unsupported_unsyncable_domain():
             "write_enabled": False,
         }
     ]
+
+
+def test_sync_scope_service_records_dry_run_mirror_report_from_repository_identity_map(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    repo.record_identity_mapping(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="notes",
+        entity_type="note",
+        local_entity_id="local-note-1",
+        remote_entity_id="remote-note-1",
+        mapping_status="confirmed",
+    )
+    scope = SyncScopeService(server_service=FakeSyncService(), state_repository=repo)
+
+    report = scope.record_dry_run_mirror_report(
+        mode="server",
+        domain="notes",
+        entity_type="note",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        local_records=[{"id": "local-note-1", "version": "local-v2"}],
+        remote_records=[{"id": "remote-note-1", "version": "remote-v1"}],
+    )
+
+    stored = repo.list_mirror_reports(domain="notes")
+    profile_state = repo.get_sync_profile_state(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert report["backend"] == "server"
+    assert report["record_id"] == f"server:sync_mirror_report:{report['report_id']}"
+    assert report["report"]["dry_run"] is True
+    assert report["report"]["write_enabled"] is False
+    assert report["report"]["mapped_count"] == 1
+    assert report["report"]["actions"][0]["identity"]["local_entity_id"] == "local-note-1"
+    assert stored[0]["report_id"] == report["report_id"]
+    assert profile_state["last_mirror_report_id"] == report["report_id"]
+
+
+def test_sync_scope_service_requires_repository_for_dry_run_mirror_reports():
+    scope = SyncScopeService(server_service=FakeSyncService())
+
+    with pytest.raises(ValueError, match="Sync state repository is unavailable"):
+        scope.record_dry_run_mirror_report(
+            mode="server",
+            domain="notes",
+            entity_type="note",
+            server_profile_id="server-a",
+            workspace_scope="workspace-1",
+        )

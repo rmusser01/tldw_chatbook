@@ -5,6 +5,11 @@ from .client_notifications_service import ClientNotificationsService
 from .event_state_repository import EventRetentionPolicy, EventStateRepository
 from .notifications_scope_service import NotificationsScopeService
 from .notification_dispatch_service import NotificationDispatchService
+from .server_notification_events import (
+    ServerNotificationEventObserver,
+    build_server_notification_feed,
+    normalize_server_notification_event,
+)
 from .server_notifications_service import ServerNotificationsService
 
 __all__ = [
@@ -14,5 +19,8 @@ __all__ = [
     "EventStateRepository",
     "NotificationsScopeService",
     "NotificationDispatchService",
+    "ServerNotificationEventObserver",
     "ServerNotificationsService",
+    "build_server_notification_feed",
+    "normalize_server_notification_event",
 ]

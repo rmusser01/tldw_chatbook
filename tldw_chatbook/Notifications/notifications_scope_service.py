@@ -6,6 +6,12 @@ import inspect
 from enum import Enum
 from typing import Any, AsyncGenerator
 
+from .server_notification_events import (
+    DEFAULT_SERVER_NOTIFICATION_STREAM_INSTANCE,
+    ServerNotificationEventObserver,
+    build_server_notification_feed,
+)
+
 
 class NotificationsBackend(str, Enum):
     LOCAL = "local"
@@ -27,10 +33,20 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
 class NotificationsScopeService:
     """Route local queue notifications or server reminders/feed through one seam."""
 
-    def __init__(self, *, local_service: Any = None, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any = None,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+        event_state_repository: Any = None,
+        server_event_scope_provider: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
+        self.event_state_repository = event_state_repository
+        self.server_event_scope_provider = server_event_scope_provider
 
     def _normalize_mode(self, mode: NotificationsBackend | str | None) -> NotificationsBackend:
         if mode is None:
@@ -145,6 +161,45 @@ class NotificationsScopeService:
         if isinstance(data, dict) and data.get("id") is not None:
             payload["data"] = self._with_record_id(mode, "notification", data)
         return payload
+
+    def _require_event_state_repository(self) -> Any:
+        if self.event_state_repository is None:
+            raise ValueError("Event state repository is unavailable.")
+        return self.event_state_repository
+
+    def _resolve_server_event_scope(
+        self,
+        *,
+        server_profile_id: str | None = None,
+        authenticated_principal_id: str | None = None,
+        stream_instance_id: str | None = None,
+    ) -> dict[str, str | None]:
+        provided: dict[str, Any] = {}
+        if callable(self.server_event_scope_provider):
+            provided_value = self.server_event_scope_provider()
+            if isinstance(provided_value, dict):
+                provided = provided_value
+
+        resolved_server_profile_id = (
+            server_profile_id
+            or provided.get("server_profile_id")
+            or provided.get("active_server_id")
+        )
+        if not resolved_server_profile_id:
+            raise ValueError("server_profile_id is required for server notification event state.")
+        return {
+            "server_profile_id": str(resolved_server_profile_id),
+            "authenticated_principal_id": (
+                authenticated_principal_id
+                if authenticated_principal_id is not None
+                else provided.get("authenticated_principal_id")
+            ),
+            "stream_instance_id": str(
+                stream_instance_id
+                or provided.get("stream_instance_id")
+                or DEFAULT_SERVER_NOTIFICATION_STREAM_INSTANCE
+            ),
+        }
 
     @staticmethod
     def _with_local_settings_record_id(payload: dict[str, Any]) -> dict[str, Any]:
@@ -355,6 +410,63 @@ class NotificationsScopeService:
         self._enforce_policy(self._action_id("feed", "observe"))
         async for event in service.observe_feed(**kwargs):
             yield self._normalize_event(normalized_mode, event)
+
+    async def observe_server_feed_events(
+        self,
+        *,
+        mode: NotificationsBackend | str | None = None,
+        server_profile_id: str | None = None,
+        authenticated_principal_id: str | None = None,
+        stream_instance_id: str | None = None,
+        max_events: int | None = None,
+        max_reconnects: int = 0,
+        cancel_event: Any = None,
+        handler: Any = None,
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        service = self._require_server_service(normalized_mode)
+        self._enforce_policy(self._action_id("feed", "observe"))
+        scope = self._resolve_server_event_scope(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            stream_instance_id=stream_instance_id,
+        )
+        observer = ServerNotificationEventObserver(
+            service=service,
+            event_state_repository=self._require_event_state_repository(),
+            server_profile_id=str(scope["server_profile_id"]),
+            authenticated_principal_id=scope["authenticated_principal_id"],
+            stream_instance_id=str(scope["stream_instance_id"]),
+        )
+        return await observer.observe(
+            handler=handler,
+            cancel_event=cancel_event,
+            max_events=max_events,
+            max_reconnects=max_reconnects,
+        )
+
+    def list_observed_server_feed(
+        self,
+        *,
+        server_profile_id: str | None = None,
+        authenticated_principal_id: str | None = None,
+        stream_instance_id: str | None = None,
+        limit: int = 100,
+        mark_presented: bool = False,
+    ) -> dict[str, Any]:
+        scope = self._resolve_server_event_scope(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            stream_instance_id=stream_instance_id,
+        )
+        return build_server_notification_feed(
+            self._require_event_state_repository(),
+            server_profile_id=str(scope["server_profile_id"]),
+            authenticated_principal_id=scope["authenticated_principal_id"],
+            stream_instance_id=str(scope["stream_instance_id"]),
+            limit=limit,
+            mark_presented=mark_presented,
+        )
 
     async def create_reminder(self, *, mode: NotificationsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
         return await self._call(

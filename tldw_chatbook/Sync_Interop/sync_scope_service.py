@@ -6,6 +6,9 @@ import inspect
 from enum import Enum
 from typing import Any
 
+from tldw_chatbook.runtime_policy.server_parity_models import SyncIdentityMapEntry
+
+from .sync_mirror_report import build_sync_mirror_report
 from .sync_readiness import (
     DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
     SyncEligibilityRegistry,
@@ -53,9 +56,10 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
 class SyncScopeService:
     """Expose the active-server sync transport without implying local mirroring support."""
 
-    def __init__(self, *, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(self, *, server_service: Any = None, policy_enforcer: Any = None, state_repository: Any = None):
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
+        self.state_repository = state_repository
 
     def _normalize_mode(self, mode: SyncBackend | str | None) -> SyncBackend:
         if mode is None:
@@ -75,6 +79,11 @@ class SyncScopeService:
         if self.server_service is None:
             raise ValueError("Server sync transport backend is unavailable.")
         return self.server_service
+
+    def _require_state_repository(self) -> Any:
+        if self.state_repository is None:
+            raise ValueError("Sync state repository is unavailable.")
+        return self.state_repository
 
     @staticmethod
     async def _maybe_await(value: Any) -> Any:
@@ -203,3 +212,81 @@ class SyncScopeService:
             service.get_changes(client_id=client_id, since_change_id=since_change_id)
         )
         return self._normalize_get_result(normalized_mode, client_id, result)
+
+    def record_dry_run_mirror_report(
+        self,
+        *,
+        mode: SyncBackend | str | None = None,
+        domain: str,
+        entity_type: str,
+        server_profile_id: str,
+        authenticated_principal_id: str | None = None,
+        workspace_scope: str | None = None,
+        source_scope: str = "workspace",
+        local_records: list[dict[str, Any]] | None = None,
+        remote_records: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == SyncBackend.LOCAL:
+            raise ValueError(
+                "Server sync dry-run mirror reports are unavailable in local mode; local file-note sync remains separate."
+            )
+        repository = self._require_state_repository()
+        mappings = repository.list_identity_mappings(
+            source_authority="server",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            domain=domain,
+            entity_type=entity_type,
+        )
+        identity_map = [
+            SyncIdentityMapEntry(
+                domain=mapping.domain,
+                source_authority=mapping.source_authority,
+                source_scope=source_scope,
+                local_entity_id=mapping.local_entity_id or "",
+                remote_entity_id=mapping.remote_entity_id,
+                server_profile_id=mapping.server_profile_id,
+                workspace_id=mapping.workspace_scope,
+                remote_version=str(mapping.details.get("remote_version"))
+                if mapping.details.get("remote_version") is not None
+                else None,
+                last_observed_remote_at=str(mapping.details.get("last_observed_remote_at"))
+                if mapping.details.get("last_observed_remote_at") is not None
+                else None,
+                last_local_dirty_at=str(mapping.details.get("last_local_dirty_at"))
+                if mapping.details.get("last_local_dirty_at") is not None
+                else None,
+            )
+            for mapping in mappings
+        ]
+        report = build_sync_mirror_report(
+            domain=domain,
+            server_profile_id=server_profile_id,
+            workspace_id=workspace_scope,
+            source_authority="server",
+            source_scope=source_scope,
+            identity_map=identity_map,
+            local_records=local_records or [],
+            remote_records=remote_records or [],
+        )
+        stored = repository.record_mirror_report(
+            source_authority="server",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            domain=domain,
+            report=report,
+        )
+        repository.set_sync_profile_state(
+            source_authority="server",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            last_mirror_report_id=stored["report_id"],
+            last_error=None,
+        )
+        stored["backend"] = normalized_mode.value
+        stored["record_id"] = f"{normalized_mode.value}:sync_mirror_report:{stored['report_id']}"
+        return stored

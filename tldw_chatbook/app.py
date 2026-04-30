@@ -1795,8 +1795,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 policy_enforcer=self.service_policy_enforcer,
             )
         try:
-            self.server_notifications_service = ServerNotificationsService.from_config(
-                self.app_config,
+            self.server_notifications_service = ServerNotificationsService.from_server_context_provider(
+                self.server_context_provider,
                 policy_enforcer=self.service_policy_enforcer,
             )
         except ValueError:
@@ -1832,6 +1832,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             local_service=self.client_notifications_service,
             server_service=self.server_notifications_service,
             policy_enforcer=self.service_policy_enforcer,
+            event_state_repository=self.event_state_repository,
+            server_event_scope_provider=self._server_notification_event_scope,
         )
         try:
             self.server_claims_service = ServerClaimsService.from_config(
@@ -2170,7 +2172,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.sync_scope_service = SyncScopeService(
             server_service=self.server_sync_service,
             policy_enforcer=self.service_policy_enforcer,
+            state_repository=self.sync_state_repository,
         )
+        for domain_scope_service in (
+            getattr(self, "media_reading_scope_service", None),
+            getattr(self, "notes_scope_service", None),
+        ):
+            if domain_scope_service is not None:
+                domain_scope_service.sync_scope_service = self.sync_scope_service
         self.server_runtime_service = ServerRuntimeService.from_server_context_provider(
             self.server_context_provider,
             policy_enforcer=self.service_policy_enforcer,
@@ -2341,6 +2350,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             if normalized in {"local", "server"}:
                 return normalized
         return self._resolve_initial_media_runtime_backend()
+
+    def _server_notification_event_scope(self) -> dict[str, str | None]:
+        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        active_server_id = getattr(runtime_state, "active_server_id", None)
+        return {
+            "server_profile_id": str(active_server_id) if active_server_id else None,
+            "authenticated_principal_id": None,
+            "stream_instance_id": "global",
+        }
 
     def require_ui_action_allowed(
         self,

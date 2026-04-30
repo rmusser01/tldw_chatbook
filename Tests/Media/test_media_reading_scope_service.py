@@ -2037,6 +2037,15 @@ class FakePolicyEnforcer:
         )
 
 
+class FakeSyncScopeService:
+    def __init__(self):
+        self.calls = []
+
+    def record_dry_run_mirror_report(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"backend": kwargs["mode"], "domain": kwargs["domain"]}
+
+
 @pytest.mark.asyncio
 async def test_scope_service_normalizes_local_media_search_results():
     scope_service = MediaReadingScopeService(
@@ -5107,3 +5116,35 @@ def test_scope_service_streams_server_ingest_job_events_with_observe_policy():
     assert events == [{"event": "status", "data": {"id": 11, "status": "completed"}}]
     assert policy.calls[-1:] == ["media.ingestion_jobs.observe.server"]
     assert server.calls[-1:] == [("stream_ingest_job_events", "batch-1", 4)]
+
+
+def test_media_scope_service_routes_sync_mirror_report_to_sync_scope():
+    sync_scope = FakeSyncScopeService()
+    scope_service = MediaReadingScopeService(
+        local_service=FakeLocalMediaService(),
+        server_service=FakeServerMediaService(),
+        sync_scope_service=sync_scope,
+    )
+
+    result = scope_service.record_sync_mirror_report(
+        mode="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        local_records=[{"id": "local-media-1"}],
+        remote_records=[{"id": "remote-media-1"}],
+    )
+
+    assert result == {"backend": "server", "domain": "media"}
+    assert sync_scope.calls == [
+        {
+            "mode": "server",
+            "domain": "media",
+            "entity_type": "media_item",
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": "workspace-1",
+            "local_records": [{"id": "local-media-1"}],
+            "remote_records": [{"id": "remote-media-1"}],
+        }
+    ]

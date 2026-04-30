@@ -268,6 +268,15 @@ class FakePolicyEnforcer:
         )
 
 
+class FakeSyncScopeService:
+    def __init__(self):
+        self.calls = []
+
+    def record_dry_run_mirror_report(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"backend": kwargs["mode"], "domain": kwargs["domain"]}
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_server_note_save_to_server_service():
     scope_service = NotesScopeService(
@@ -740,3 +749,54 @@ def test_scope_service_reports_known_notes_graph_capability_gaps():
         }
     ]
     assert server_report == []
+
+
+def test_notes_scope_service_routes_server_note_sync_mirror_report_to_sync_scope():
+    sync_scope = FakeSyncScopeService()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+        sync_scope_service=sync_scope,
+    )
+
+    result = scope_service.record_sync_mirror_report(
+        scope=ScopeType.SERVER_NOTE,
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        local_records=[{"id": "local-note-1"}],
+        remote_records=[{"id": "remote-note-1"}],
+    )
+
+    assert result == {"backend": "server", "domain": "notes"}
+    assert sync_scope.calls == [
+        {
+            "mode": "server",
+            "domain": "notes",
+            "entity_type": "note",
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": None,
+            "local_records": [{"id": "local-note-1"}],
+            "remote_records": [{"id": "remote-note-1"}],
+        }
+    ]
+
+
+def test_notes_scope_service_routes_workspace_note_sync_mirror_report_to_sync_scope():
+    sync_scope = FakeSyncScopeService()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+        sync_scope_service=sync_scope,
+    )
+
+    result = scope_service.record_sync_mirror_report(
+        scope=ScopeType.WORKSPACE,
+        server_profile_id="server-a",
+        workspace_id="workspace-1",
+    )
+
+    assert result == {"backend": "server", "domain": "workspace_notes"}
+    assert sync_scope.calls[0]["domain"] == "workspace_notes"
+    assert sync_scope.calls[0]["entity_type"] == "workspace_note"
+    assert sync_scope.calls[0]["workspace_scope"] == "workspace-1"

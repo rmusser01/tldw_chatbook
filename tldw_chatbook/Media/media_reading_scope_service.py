@@ -88,10 +88,17 @@ class ReadItLaterContextCapability:
 class MediaReadingScopeService:
     """Route media actions to the active local/server backend and normalize outputs."""
 
-    def __init__(self, local_service: Any, server_service: Any, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        local_service: Any,
+        server_service: Any,
+        policy_enforcer: Any = None,
+        sync_scope_service: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
+        self.sync_scope_service = sync_scope_service
 
     def _normalize_mode(self, mode: MediaReadingBackend | str | None) -> MediaReadingBackend:
         if mode is None:
@@ -134,6 +141,11 @@ class MediaReadingScopeService:
             return
         self.policy_enforcer.require_allowed(action_id=action_id)
 
+    def _require_sync_scope_service(self) -> Any:
+        if self.sync_scope_service is None:
+            raise ValueError("Sync scope service is unavailable.")
+        return self.sync_scope_service
+
     @staticmethod
     def _as_mapping_payload(value: Any) -> dict[str, Any]:
         if isinstance(value, Mapping):
@@ -159,6 +171,30 @@ class MediaReadingScopeService:
                 if item["operation_id"] != "media.ingestion_sources.delete.server"
             ]
         return reports
+
+    def record_sync_mirror_report(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        server_profile_id: str,
+        authenticated_principal_id: str | None = None,
+        workspace_scope: str | None = None,
+        local_records: list[dict[str, Any]] | None = None,
+        remote_records: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == MediaReadingBackend.LOCAL:
+            raise ValueError("Media mirror reports require server mode.")
+        return self._require_sync_scope_service().record_dry_run_mirror_report(
+            mode="server",
+            domain="media",
+            entity_type="media_item",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            local_records=local_records or [],
+            remote_records=remote_records or [],
+        )
 
     def _server_supports_ingestion_source_delete(self) -> bool:
         delete_method = getattr(self.server_service, "delete_ingestion_source", None)

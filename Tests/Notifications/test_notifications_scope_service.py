@@ -1,5 +1,6 @@
 import pytest
 
+from tldw_chatbook.Notifications import EventStateRepository
 from tldw_chatbook.Notifications.notifications_scope_service import NotificationsScopeService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
@@ -152,6 +153,38 @@ async def test_notifications_scope_service_routes_server_feed_reminders_and_obse
         "notifications.reminders.list.server",
         "notifications.feed.observe.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_notifications_scope_service_can_observe_server_feed_into_event_state(tmp_path):
+    server = FakeServerNotificationsService()
+    policy = FakePolicyEnforcer()
+    repo = EventStateRepository(tmp_path / "events.db")
+    scope = NotificationsScopeService(
+        server_service=server,
+        policy_enforcer=policy,
+        event_state_repository=repo,
+        server_event_scope_provider=lambda: {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "stream_instance_id": "workspace-1",
+        },
+    )
+
+    result = await scope.observe_server_feed_events(mode="server", max_events=1)
+    feed = scope.list_observed_server_feed(mark_presented=True)
+
+    assert result.handled_events == 1
+    assert feed["items"][0]["record_id"] == "server:notification:8"
+    assert repo.get_processed_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+    ).cursor == "evt-8"
+    assert server.calls == [("observe_feed", {"after": 0, "last_event_id": None})]
+    assert policy.calls == ["notifications.feed.observe.server"]
 
 
 @pytest.mark.asyncio
