@@ -92,6 +92,18 @@ Required backend behavior:
 - Stale authorization, lost workspace access, and profile-no-longer-authorized states return typed failures instead of silently hiding or reclassifying resources.
 - Secrets never appear in JSON profiles, logs, exports, exception strings, unsupported reports, or cache keys.
 
+Credential storage contract:
+
+- Durable credential storage is cross-platform and explicit: macOS Keychain, Windows Credential Manager, Linux Secret Service/libsecret where available, and fake/in-memory backends only in tests.
+- If no secure OS-backed store is available, persistent server credentials are disabled and the auth seam returns typed `credential_store_unavailable`; Chatbook must not fall back to plaintext JSON, TOML, SQLite, environment-file, or config-file secrets.
+- Stored credential records use a stable Chatbook-owned, listable namespace prefix such as `tldw_chatbook.server_credentials` plus server profile ID, normalized server origin, authenticated principal where known, and credential record type.
+- Credential cleanup APIs enumerate the Chatbook-owned namespace prefix. Global sign-out must delete every matching record, including entries whose server profile is no longer present in the profile store.
+- Stored credentials must not be keyed only by hostname, username, current active profile, or unscoped server origin.
+- Access tokens, refresh tokens, API keys, and future auth artifacts use separate record types with lifecycle metadata so refresh, revocation, and deletion cannot accidentally preserve stale credentials.
+- Legacy config tokens are imported only for the active profile. Successful import removes or redacts the legacy secret; failed import leaves the original config unchanged and logs no secret material.
+- Global sign-out deletes every stored credential record across known profiles and orphaned namespaces, clears credential-bound client caches, and invalidates active auth/capability/event/sync handles.
+- Tests must use fake or in-memory stores and assert that serialized profiles, logs, exceptions, unsupported reports, cache keys, and exported diagnostics contain no secret material.
+
 UX handoff output:
 
 - Active server status contract.
@@ -135,6 +147,15 @@ Rules:
 - Local notification settings and category/global delivery settings apply to local producers.
 - Server events may become local presentation records, but not local authoritative resources.
 
+Cursor durability and retention contract:
+
+- `EventStateRepository` durably stores server cursors, stream instance IDs, dedupe records, and retention metadata scoped by source, server profile, authenticated principal, stream name, and stream instance.
+- Repository state tracks processed cursor and presented high-water mark separately. Processed cursor advances only after normalized event storage succeeds; presented high-water mark advances only after presentation records are updated.
+- Retention has explicit max-age and max-count bounds per stream. Pruning must preserve the latest durable cursor, the latest presentation high-water mark, and dedupe records inside the reconnect window.
+- On restart, observers resume from the durable processed cursor when the server supports cursors. When the server only provides replayable events without stable cursors, the dedupe window protects presentation from duplicate events.
+- Server switch closes active stream handles immediately but preserves inactive per-server cursor state unless logout, credential removal, profile deletion, or explicit user reset clears it.
+- Cursor reset and replay actions must produce typed status records so UX can distinguish initial load, replay, requery, degraded dedupe-only mode, and unrecoverable cursor loss.
+
 UX handoff output:
 
 - Notification feed item contract.
@@ -155,12 +176,25 @@ This tranche builds sync infrastructure without enabling write sync by default. 
 
 Initial dry-run components:
 
-- `EntityIdentityMap`: local entity ID, remote entity ID, source scope, active server profile ID, and workspace ID where relevant.
+- `EntityIdentityMap`: source/scope key, nullable local entity reference, nullable remote entity reference, mapping status, active server profile ID, authenticated principal ID, and workspace/resource scope where relevant.
 - `SyncProfileState`: per-server state for cursors, last mirror report, last error, and eligibility.
 - `RemotePullCursorStore`: per-server and per-domain pull cursors.
 - `MirrorReportStore`: read-only comparison reports with local/remote identity, observed versions, status, and reason codes.
 - `ConflictReportPolicy`: report-only enum such as `remote_changed`, `local_dirty`, `both_changed`, `unmapped`, and `unsupported`.
 - `DomainSyncEligibilityRegistry`: every domain defaults to `not_eligible`.
+
+Identity map contract:
+
+- The identity scope key includes source, server profile ID, authenticated principal ID, workspace or resource scope where relevant, domain name, and entity type.
+- The local-side uniqueness key is identity scope key plus local entity ID. The remote-side uniqueness key is identity scope key plus remote entity ID.
+- Mapping records may have a nullable local entity ID only in `candidate`, `orphaned_remote`, or `unsupported` states.
+- Mapping records may have a nullable remote entity ID only in `candidate`, `orphaned_local`, or `unsupported` states.
+- A `confirmed`, `stale`, or `conflict` mapping must carry both local and remote entity IDs.
+- The same local-side uniqueness key cannot map to multiple remote entities unless the domain explicitly supports aliases and reports them as aliases.
+- The same remote-side uniqueness key cannot map to multiple local entities unless the domain explicitly supports duplicates and reports them as duplicates.
+- Mapping status is explicit: `candidate`, `confirmed`, `stale`, `conflict`, `orphaned_local`, `orphaned_remote`, or `unsupported`.
+- Mirror reports must surface duplicate, stale, cross-profile, cross-principal, and cross-workspace mapping conflicts before UX treats an entity as safely mirrored.
+- Mapping records are never reused across server profiles, authenticated principals, or workspace/resource scopes without a domain-specific migration rule and audit record.
 
 Future write-sync components, explicitly out of scope for the initial tranche:
 
@@ -278,10 +312,18 @@ The UX developer should consume this packet and service-level contracts, not cur
 Execution order:
 
 1. Land Connection/Auth.
-2. Start Realtime/Notifications after connection/auth invalidation rules stabilize.
-3. Start Sync/Mirror after connection/auth and event identity rules stabilize.
+2. Start Realtime/Notifications only after the Tranche 1 readiness gate passes.
+3. Start Sync/Mirror only after the Tranche 1 gate and the event identity subset of the Tranche 2 gate pass.
 4. Run domain edge closures in parallel once shared seams are stable.
 5. Update the UX handoff packet after each tranche.
+
+Readiness gates:
+
+- A tranche is ready for dependents only when its typed contracts are committed, service-level contract tests are green, and shared schema owners have signed off.
+- Tranche 1 additionally requires no new raw `tldw_api` client builders outside audited compatibility adapters, server-switch invalidation tests passing, credential redaction tests passing, and the app-wiring owner approving startup/logout/server-switch integration points.
+- The event identity subset of Tranche 2 requires normalized event schema, stream identity schema, cursor/dedupe repository contract, and cancellation/reconnect tests before Sync/Mirror consumes event state.
+- Domain edge work may begin before full tranche completion only as spec, adapter-interface, or additive-test scaffolding. It must not introduce production code that consumes unstable shared seams.
+- Shared-file edits route through the assigned integration owner for that tranche; parallel contributors hand off deltas instead of editing shared audit, schema, or app-wiring files directly.
 
 Parallelism rules:
 
