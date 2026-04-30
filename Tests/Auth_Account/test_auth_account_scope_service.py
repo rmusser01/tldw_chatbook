@@ -525,8 +525,8 @@ def test_auth_account_scope_service_reports_known_unsupported_capabilities():
             "operation_id": "auth_account.durable_credential_storage.server",
             "source": "server",
             "supported": False,
-            "reason_code": "deferred_local_storage_policy",
-            "user_message": "Durable local credential storage, auto-refresh policy, and server-switch cache invalidation remain deferred; this seam only executes explicit active-server account operations.",
+            "reason_code": "runtime_credential_context_unavailable",
+            "user_message": "Durable credential storage requires an active runtime server context provider with credential-store hooks; this scope cannot store or clear credentials until that provider is wired.",
             "affected_action_ids": [],
         },
         {
