@@ -18,6 +18,7 @@ from .server_credentials import (
     SERVER_CREDENTIAL_REFRESH_TOKEN,
     ServerCredentialStore,
 )
+from .types import ServerContextFailure, ServerContextFailureReason
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,17 +43,37 @@ class _CachedClientKey:
     token_fingerprint: str | None
 
 
-class ServerContextUnavailable(RuntimeError):
+class ServerContextError(RuntimeError):
     reason_code = "server_context_unavailable"
 
-
-class ServerCredentialsUnavailable(RuntimeError):
-    reason_code = "server_credentials_unavailable"
-
-    def __init__(self, message: str, *, reason_code: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: ServerContextFailureReason | str | None = None,
+        recoverable: bool = True,
+        active_server_id: str | None = None,
+    ) -> None:
         super().__init__(message)
-        if reason_code is not None:
-            self.reason_code = reason_code
+        self.reason_code = reason_code or self.reason_code
+        self.recoverable = recoverable
+        self.active_server_id = active_server_id
+
+    def to_contract(self) -> dict[str, object]:
+        return ServerContextFailure(
+            reason_code=self.reason_code,
+            message=str(self),
+            recoverable=self.recoverable,
+            active_server_id=self.active_server_id,
+        ).to_contract()
+
+
+class ServerContextUnavailable(ServerContextError):
+    reason_code = "server_not_configured"
+
+
+class ServerCredentialsUnavailable(ServerContextError):
+    reason_code = "server_credentials_unavailable"
 
 
 class RuntimeServerContextProvider:
@@ -81,7 +102,11 @@ class RuntimeServerContextProvider:
             target = self._legacy_target_for_active_server(active_server_id)
             using_legacy_fallback_target = target is not None
         if target is None:
-            raise ServerContextUnavailable(f"Active server is not configured: {active_server_id}")
+            raise ServerContextUnavailable(
+                "Active server profile is unavailable.",
+                reason_code="server_profile_missing",
+                active_server_id=active_server_id,
+            )
 
         auth_token, credential_source = self._resolve_auth_token(
             active_server_id,
@@ -189,7 +214,10 @@ class RuntimeServerContextProvider:
         state = self.runtime_context.state
         active_server_id = str(state.active_server_id or "").strip()
         if state.active_source != "server" or not state.server_configured or not active_server_id:
-            raise ServerContextUnavailable("Runtime policy does not have an active configured server")
+            raise ServerContextUnavailable(
+                "Runtime policy does not have an active configured server.",
+                reason_code="server_not_configured",
+            )
         return active_server_id
 
     def _legacy_target_for_active_server(self, active_server_id: str) -> ConfiguredServerTarget | None:
@@ -227,7 +255,9 @@ class RuntimeServerContextProvider:
                 if credential_error is not None:
                     raise credential_error
                 raise ServerCredentialsUnavailable(
-                    "Legacy credentials are unavailable for the active server profile"
+                    "The active server profile is no longer authorized.",
+                    reason_code="profile_no_longer_authorized",
+                    active_server_id=server_id,
                 )
             legacy_token = self._legacy_config_token()
             if legacy_token is not None:
@@ -244,12 +274,15 @@ class RuntimeServerContextProvider:
             return self.credential_store.get_secret(server_id, purpose)
         except CredentialStoreUnavailable as exc:
             raise ServerCredentialsUnavailable(
-                f"Credential store is unavailable for active server credential purpose: {purpose}",
+                "Credential store is unavailable for the active server.",
                 reason_code=exc.reason_code,
+                active_server_id=server_id,
             ) from exc
         except Exception as exc:
             raise ServerCredentialsUnavailable(
-                f"Credential store is unavailable for active server credential purpose: {purpose}"
+                "Server credentials are unavailable for the active server.",
+                reason_code="server_credentials_unavailable",
+                active_server_id=server_id,
             ) from exc
 
     def _legacy_config_token(self) -> str | None:
@@ -392,6 +425,7 @@ class RuntimeServerContextProvider:
 __all__ = [
     "ActiveServerContext",
     "RuntimeServerContextProvider",
+    "ServerContextError",
     "ServerContextUnavailable",
     "ServerCredentialsUnavailable",
 ]

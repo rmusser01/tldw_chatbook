@@ -7,10 +7,49 @@ from typing import Literal
 ActiveSource = Literal["local", "server"]
 ServerReachability = Literal["unknown", "reachable", "unreachable"]
 ServerAuthState = Literal["unknown", "authenticated", "auth_required", "session_invalid"]
+ServerContextFailureReason = Literal[
+    "server_not_configured",
+    "server_profile_missing",
+    "server_unavailable",
+    "auth_required",
+    "credential_store_unavailable",
+    "server_credentials_unavailable",
+    "stale_authorization",
+    "profile_no_longer_authorized",
+]
 ActionKind = Literal["browse", "detail", "create", "update", "delete", "launch", "observe"]
 RequiredSource = ActiveSource
 AuthorityOwner = Literal["local", "server", "shared"]
 OfflinePolicy = Literal["available", "unavailable", "explicit_fallback"]
+
+SERVER_CONTEXT_FAILURE_REASON_CODES: frozenset[ServerContextFailureReason] = frozenset(
+    {
+        "server_not_configured",
+        "server_profile_missing",
+        "server_unavailable",
+        "auth_required",
+        "credential_store_unavailable",
+        "server_credentials_unavailable",
+        "stale_authorization",
+        "profile_no_longer_authorized",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ServerContextFailure:
+    reason_code: ServerContextFailureReason | str
+    message: str
+    recoverable: bool = True
+    active_server_id: str | None = None
+
+    def to_contract(self) -> dict[str, object]:
+        return {
+            "reason_code": self.reason_code,
+            "message": self.message,
+            "recoverable": self.recoverable,
+            "active_server_id": self.active_server_id,
+        }
 
 
 @dataclass(frozen=True, slots=True)

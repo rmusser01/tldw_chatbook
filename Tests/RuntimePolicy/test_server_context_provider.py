@@ -23,7 +23,7 @@ from tldw_chatbook.runtime_policy.server_context import (
     ServerCredentialsUnavailable,
     ServerContextUnavailable,
 )
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState, SERVER_CONTEXT_FAILURE_REASON_CODES
 
 
 class SavingRuntimeStore:
@@ -155,6 +155,46 @@ def test_rejects_server_mode_without_active_server(tmp_path):
 
     with pytest.raises(ServerContextUnavailable):
         provider.get_active_context()
+
+
+def test_server_context_failure_reason_codes_include_stable_contract_values():
+    assert {
+        "server_not_configured",
+        "server_profile_missing",
+        "server_unavailable",
+        "auth_required",
+        "credential_store_unavailable",
+        "server_credentials_unavailable",
+        "stale_authorization",
+        "profile_no_longer_authorized",
+    } <= SERVER_CONTEXT_FAILURE_REASON_CODES
+
+
+def test_context_unavailable_error_exposes_reason_code_and_safe_payload(tmp_path):
+    provider = _provider(tmp_path, runtime_context=_runtime_context(active_server_id=None))
+
+    with pytest.raises(ServerContextUnavailable) as exc:
+        provider.get_active_context()
+
+    contract = exc.value.to_contract()
+    assert exc.value.reason_code == "server_not_configured"
+    assert contract["reason_code"] == "server_not_configured"
+    assert contract["recoverable"] is True
+    assert contract["active_server_id"] is None
+    assert "token" not in repr(contract).lower()
+    assert "authorization" not in repr(contract).lower()
+
+
+def test_missing_active_server_profile_uses_profile_missing_contract(tmp_path):
+    provider = _provider(tmp_path)
+
+    with pytest.raises(ServerContextUnavailable) as exc:
+        provider.get_active_context()
+
+    contract = exc.value.to_contract()
+    assert exc.value.reason_code == "server_profile_missing"
+    assert contract["reason_code"] == "server_profile_missing"
+    assert contract["active_server_id"] == "https://server.example.com/api"
 
 
 def test_legacy_fallback_works_when_no_target_exists_and_app_config_matches_active_server(tmp_path):
@@ -388,6 +428,57 @@ def test_explicit_keyring_reference_preserves_credential_store_unavailable_reaso
         provider.get_active_context()
 
     assert exc.value.reason_code == CredentialStoreUnavailable.reason_code
+
+
+def test_credential_store_unavailable_reason_is_preserved(tmp_path):
+    provider = _provider(
+        tmp_path,
+        credential_store=UnavailableServerCredentialStore("secure store unavailable"),
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+    )
+
+    with pytest.raises(ServerCredentialsUnavailable) as exc:
+        provider.get_active_context()
+
+    contract = exc.value.to_contract()
+    assert exc.value.reason_code == "credential_store_unavailable"
+    assert contract["reason_code"] == "credential_store_unavailable"
+    assert contract["recoverable"] is True
+    assert contract["active_server_id"] == "https://server.example.com/api"
+    assert "secure store unavailable" not in contract["message"]
+
+
+def test_generic_credential_failure_contract_is_sanitized(tmp_path):
+    provider = _provider(
+        tmp_path,
+        credential_store=LookupFailingCredentialStore(),
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+    )
+
+    with pytest.raises(ServerCredentialsUnavailable) as exc:
+        provider.get_active_context()
+
+    contract_repr = repr(exc.value.to_contract()).lower()
+    assert exc.value.reason_code == "server_credentials_unavailable"
+    assert "lookup unavailable" not in contract_repr
+    assert "token" not in contract_repr
+    assert "authorization" not in contract_repr
 
 
 def test_bearer_auth_prefers_bearer_token_then_access_token_before_legacy_config(tmp_path):
@@ -970,6 +1061,43 @@ def test_clear_active_server_credentials_blocks_legacy_profile_reimport(tmp_path
         "https://server.example.com/api",
         SERVER_CREDENTIAL_BEARER_TOKEN,
     ) is None
+
+
+def test_cleared_legacy_profile_uses_no_longer_authorized_contract(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api/",
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+    )
+
+    provider.get_active_context()
+    provider.clear_active_server_credentials()
+
+    with pytest.raises(ServerCredentialsUnavailable) as exc:
+        provider.get_active_context()
+
+    contract = exc.value.to_contract()
+    assert exc.value.reason_code == "profile_no_longer_authorized"
+    assert contract["reason_code"] == "profile_no_longer_authorized"
+    assert contract["active_server_id"] == "https://server.example.com/api"
+    assert "legacy-bearer" not in repr(contract)
 
 
 def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activation(tmp_path):
