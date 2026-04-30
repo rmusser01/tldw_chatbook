@@ -6,6 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
+from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.tldw_api.exceptions import APIConnectionError, APIResponseError
 
@@ -180,6 +182,77 @@ async def test_active_server_capabilities_uses_ungated_probes_to_recover_stale_a
         ("probe_health",),
         ("probe_readiness",),
         ("probe_docs_info",),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_active_server_capabilities_updates_target_store_status(tmp_path):
+    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    target_store.save_targets(
+        [
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                is_default=True,
+            )
+        ]
+    )
+    context = _context(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="https://server.example.com/api",
+            server_configured=True,
+            last_known_server_label="server.example.com",
+        )
+    )
+    service = ActiveServerCapabilityService(
+        runtime_context=context,
+        server_runtime_scope_service=FakeServerRuntimeScope(),
+        target_store=target_store,
+    )
+
+    snapshot = await service.refresh()
+
+    target = target_store.get_target("https://server.example.com/api")
+    assert target is not None
+    assert target.last_known_server_label == "server.example.com"
+    assert target.last_known_reachability == "reachable"
+    assert target.last_known_auth_state == "authenticated"
+    assert target.updated_at is not None
+    assert snapshot["errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_active_server_capabilities_ignores_missing_target_profile(tmp_path):
+    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    context = _context(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="https://missing.example.com/api",
+            server_configured=True,
+        )
+    )
+    service = ActiveServerCapabilityService(
+        runtime_context=context,
+        server_runtime_scope_service=FakeServerRuntimeScope(),
+        target_store=target_store,
+    )
+
+    snapshot = await service.refresh()
+
+    assert snapshot["reachability"] == "reachable"
+    assert snapshot["auth_state"] == "authenticated"
+    assert snapshot["errors"] == [
+        {
+            "reason_code": "target_profile_missing",
+            "message": "Active server target profile was not found.",
+        }
     ]
 
 

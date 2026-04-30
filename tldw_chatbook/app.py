@@ -2175,6 +2175,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.active_server_capability_service = ActiveServerCapabilityService(
             runtime_context=self.runtime_policy,
             server_runtime_scope_service=self.server_runtime_scope_service,
+            target_store=self.unified_mcp_target_store,
         )
         self.local_llm_provider_catalog_service = LocalLLMProviderCatalogService(
             provider_catalog_loader=lambda: dict(getattr(self, "providers_models", {}) or {}),

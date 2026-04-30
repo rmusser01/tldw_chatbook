@@ -16,9 +16,11 @@ class ActiveServerCapabilityService:
         *,
         runtime_context: Any,
         server_runtime_scope_service: Any,
+        target_store: Any | None = None,
     ) -> None:
         self.runtime_context = runtime_context
         self.server_runtime_scope_service = server_runtime_scope_service
+        self.target_store = target_store
 
     async def refresh(self) -> dict[str, Any]:
         state = self._current_state()
@@ -84,6 +86,13 @@ class ActiveServerCapabilityService:
         persist = getattr(self.runtime_context, "persist", None)
         if callable(persist):
             persist()
+        self._persist_target_status(
+            state=updated_state,
+            checked_at=now,
+            reachability=reachability,
+            auth_state=auth_state,
+            errors=errors,
+        )
 
         return self._snapshot(
             state=updated_state,
@@ -142,3 +151,35 @@ class ActiveServerCapabilityService:
         scope_method = getattr(self.server_runtime_scope_service, scope_method_name)
         result = await scope_method(mode="server")
         return dict(result or {})
+
+    def _persist_target_status(
+        self,
+        *,
+        state: RuntimeSourceState,
+        checked_at: datetime,
+        reachability: str,
+        auth_state: str,
+        errors: list[dict[str, Any]],
+    ) -> None:
+        if not state.active_server_id or self.target_store is None:
+            return
+
+        update_target_status = getattr(self.target_store, "update_target_status", None)
+        if not callable(update_target_status):
+            return
+
+        try:
+            update_target_status(
+                state.active_server_id,
+                last_known_server_label=state.last_known_server_label,
+                last_known_reachability=reachability,
+                last_known_auth_state=auth_state,
+                updated_at=checked_at,
+            )
+        except KeyError:
+            errors.append(
+                {
+                    "reason_code": "target_profile_missing",
+                    "message": "Active server target profile was not found.",
+                }
+            )
