@@ -2179,6 +2179,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             state_repository=self.sync_state_repository,
         )
         for domain_scope_service in (
+            getattr(self, "chat_conversation_scope_service", None),
             getattr(self, "media_reading_scope_service", None),
             getattr(self, "notes_scope_service", None),
             getattr(self, "research_scope_service", None),

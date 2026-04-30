@@ -146,6 +146,15 @@ class RecordingPolicy:
         self.calls.append(action_id)
 
 
+class FakeSyncScopeService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def record_dry_run_mirror_report(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        return {"backend": "server", "domain": kwargs["domain"]}
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_local_and_server_conversation_reads_with_policy():
     local = FakeConversationService()
@@ -246,6 +255,53 @@ async def test_scope_service_maps_server_style_tree_pagination_to_local_tree_arg
     assert local.calls == [
         ("get_conversation_tree", ("conv-1",), {"root_limit": 25, "root_offset": 10, "depth_cap": 6}),
     ]
+
+
+def test_scope_service_routes_chat_metadata_sync_mirror_report_to_sync_scope():
+    sync_scope = FakeSyncScopeService()
+    service = ChatConversationScopeService(
+        local_service=FakeConversationService(),
+        server_service=FakeServerConversationService(),
+        sync_scope_service=sync_scope,
+    )
+
+    result = service.record_sync_mirror_report(
+        mode="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        local_records=[{"id": "local-conv-1"}],
+        remote_records=[{"id": "remote-conv-1"}],
+    )
+
+    assert result == {"backend": "server", "domain": "chat_metadata"}
+    assert sync_scope.calls == [
+        {
+            "mode": "server",
+            "domain": "chat_metadata",
+            "entity_type": "conversation",
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": "workspace-1",
+            "source_scope": "workspace",
+            "local_records": [{"id": "local-conv-1"}],
+            "remote_records": [{"id": "remote-conv-1"}],
+        }
+    ]
+
+
+def test_scope_service_rejects_local_chat_metadata_sync_mirror_report():
+    service = ChatConversationScopeService(
+        local_service=FakeConversationService(),
+        server_service=FakeServerConversationService(),
+        sync_scope_service=FakeSyncScopeService(),
+    )
+
+    with pytest.raises(ValueError, match="Chat metadata mirror reports require server mode"):
+        service.record_sync_mirror_report(
+            mode="local",
+            server_profile_id="server-a",
+        )
 
 
 @pytest.mark.asyncio

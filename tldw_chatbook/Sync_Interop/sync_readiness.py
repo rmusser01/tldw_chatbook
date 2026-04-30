@@ -78,6 +78,40 @@ DEFAULT_SYNC_ELIGIBILITY_REGISTRY = SyncEligibilityRegistry(
             write_enabled=False,
             reason_codes=("dry_run_only",),
             details={"mode": "read_only_mirror_report"},
+        ),
+        SyncDomainEligibility(
+            domain="workspace_notes",
+            sync_eligible=True,
+            write_enabled=False,
+            reason_codes=("dry_run_only",),
+            details={
+                "mode": "read_only_mirror_report",
+                "workspace_required": True,
+            },
+        ),
+        SyncDomainEligibility(
+            domain="media",
+            sync_eligible=True,
+            write_enabled=False,
+            reason_codes=("dry_run_only",),
+            details={"mode": "read_only_mirror_report"},
+        ),
+        SyncDomainEligibility(
+            domain="research",
+            sync_eligible=True,
+            write_enabled=False,
+            reason_codes=("dry_run_only",),
+            details={"mode": "read_only_mirror_report"},
+        ),
+        SyncDomainEligibility(
+            domain="chat_metadata",
+            sync_eligible=True,
+            write_enabled=False,
+            reason_codes=("dry_run_only", "server_owned"),
+            details={
+                "mode": "read_only_mirror_report",
+                "write_gate": "chat_server_identity_not_ready",
+            },
         )
     ]
 )

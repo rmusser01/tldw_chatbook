@@ -122,7 +122,7 @@ def test_sync_scope_service_reports_unsupported_unsyncable_domain():
     scope = SyncScopeService(server_service=FakeSyncService())
 
     report = scope.list_unsupported_sync_domains(
-        domains=["notes", "unknown"],
+        domains=["notes", "workspace_notes", "media", "research", "chat_metadata", "unknown"],
         server_profile_id="server-a",
         workspace_id="workspace-1",
     )

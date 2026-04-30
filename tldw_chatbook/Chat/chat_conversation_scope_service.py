@@ -44,10 +44,18 @@ _SERVER_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 class ChatConversationScopeService:
     """Route chat conversation operations to local or server backends with policy gates."""
 
-    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any,
+        server_service: Any,
+        policy_enforcer: Any = None,
+        sync_scope_service: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
+        self.sync_scope_service = sync_scope_service
 
     @staticmethod
     def _normalize_mode(mode: str | None) -> str:
@@ -91,11 +99,41 @@ class ChatConversationScopeService:
             raise ValueError(f"Chat conversation {mode} service is unavailable.")
         return service
 
+    def _require_sync_scope_service(self) -> Any:
+        if self.sync_scope_service is None:
+            raise ValueError("Sync scope service is unavailable.")
+        return self.sync_scope_service
+
     def list_unsupported_capabilities(self, *, mode: str | None = None) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == "local":
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
+
+    def record_sync_mirror_report(
+        self,
+        *,
+        mode: str | None = None,
+        server_profile_id: str,
+        authenticated_principal_id: str | None = None,
+        workspace_scope: str | None = None,
+        local_records: list[dict[str, Any]] | None = None,
+        remote_records: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == "local":
+            raise ValueError("Chat metadata mirror reports require server mode.")
+        return self._require_sync_scope_service().record_dry_run_mirror_report(
+            mode="server",
+            domain="chat_metadata",
+            entity_type="conversation",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            source_scope="workspace",
+            local_records=local_records or [],
+            remote_records=remote_records or [],
+        )
 
     @staticmethod
     async def _maybe_await(value: Any) -> Any:
