@@ -11,6 +11,7 @@ This packet is the UX-facing contract summary for source-honest backend parity. 
 ## Contract Rules
 
 - UX should consume backend-owned services and contract builders, not raw config or direct server clients.
+- UX can smoke-test contract consumption with `tldw_chatbook.UX_Interop.build_server_parity_fixture_payloads()` and `build_server_parity_handoff_packet()`.
 - Every server-backed action must handle `server_unavailable`, `auth_required`, `permission_denied`, and `capability_missing` reports.
 - Local, server, workspace, and remote-only data must remain visually distinct; do not blend records without an explicit sync/mirror report.
 - Sync is read-only dry-run only in this phase. No UX should imply automatic write sync, queued mutation replay, or a completed local mirror.
@@ -295,12 +296,43 @@ Server controls should map backend state to UX as follows:
 | `capability_missing` | Hide or disable the action based on density; show the unsupported report message on demand. |
 | `not_implemented_locally` | Disable local action or route user to server source if available. |
 
+## Backend-Owned Smoke Fixtures
+
+Contract path:
+
+- `tldw_chatbook/UX_Interop/server_parity_contracts.py`
+
+Fixture builder:
+
+```python
+from tldw_chatbook.UX_Interop import build_server_parity_fixture_payloads
+
+fixtures = build_server_parity_fixture_payloads()
+```
+
+Fixture keys:
+
+- `local`
+- `server`
+- `source_selector`
+- `unavailable_server`
+- `auth_failure`
+- `unsupported_action`
+- `workspace_isolation`
+- `notification_presentation`
+- `event_replay_gap`
+- `sync_dry_run_report`
+- `translation_local_parity`
+
+UX should use these fixtures for smoke tests and story states. They cover the cases the backend considers ready for handoff without requiring the UX layer to construct service internals.
+
 ## Verification Snapshot
 
 - Credential/auth focused regression: `107 passed`.
 - Provider migration audit guard: `10 passed`.
 - Remote-only utility focused regression: `142 passed`; includes Translation local parity pilot coverage.
 - Notifications focused regression: `65 passed`; includes replay-window retention-gap metadata.
+- UX interop fixture regression: `11 passed`.
 - Primary-domain focused regression: `442 passed, 1 warning`.
 - Sync/domain mirror regression: `35 passed`.
 - Domain-edge plus sync/domain mirror regression: `39 passed`.

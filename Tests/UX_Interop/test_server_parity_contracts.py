@@ -177,8 +177,13 @@ def test_fixture_payload_helpers_cover_required_ux_handoff_cases():
     fixtures = build_server_parity_fixture_payloads()
 
     assert set(fixtures) == {
+        "auth_failure",
+        "event_replay_gap",
         "local",
+        "source_selector",
         "server",
+        "sync_dry_run_report",
+        "translation_local_parity",
         "unavailable_server",
         "unsupported_action",
         "workspace_isolation",
@@ -192,10 +197,17 @@ def test_fixture_payload_helpers_cover_required_ux_handoff_cases():
 
     assert fixtures["local"]["active_source"] == "local"
     assert fixtures["server"]["active_server_profile_id"] == "srv-primary"
+    assert fixtures["source_selector"]["source_options"][1]["source"] == "server"
     assert fixtures["unavailable_server"]["server_reachability"] == "unreachable"
+    assert fixtures["auth_failure"]["kind"] == "auth_failure"
     assert fixtures["unsupported_action"]["unsupported_reason_code"] == "server_contract_missing"
     assert fixtures["workspace_isolation"]["workspace_scope_id"] == "workspace-a"
     assert fixtures["notification_presentation"]["notification_id"] == "notif-1"
+    assert fixtures["event_replay_gap"]["replay"]["state"] == "retention_gap"
+    assert fixtures["event_replay_gap"]["replay"]["server_refetch_required"] is True
+    assert fixtures["sync_dry_run_report"]["write_enabled"] is False
+    assert fixtures["translation_local_parity"]["authority"] == "local_parity"
+    assert fixtures["translation_local_parity"]["local_parity"]["state"] == "pilot"
 
 
 def test_server_parity_handoff_packet_aggregates_backend_contract_sections():
@@ -248,6 +260,7 @@ def test_server_parity_handoff_packet_aggregates_backend_contract_sections():
         "notification_feed",
         "sync",
         "domain_capability_matrix",
+        "remote_utility_local_parity_matrix",
         "workspace_isolation",
         "mcp_control_plane",
         "error_contracts",
@@ -258,6 +271,7 @@ def test_server_parity_handoff_packet_aggregates_backend_contract_sections():
     assert packet["sections"]["unsupported_actions"][0]["reason_code"] == "server_required"
     assert packet["sections"]["notification_feed"][0]["notification_id"] == "notif-1"
     assert packet["sections"]["sync"]["reports"][0]["write_enabled"] is False
+    assert packet["sections"]["remote_utility_local_parity_matrix"]["translation"]["state"] == "pilot"
     assert packet["sections"]["domain_capability_matrix"]["sharing"]["authority"] == "remote_only"
     assert packet["sections"]["workspace_isolation"][0]["workspace_scope_id"] == "workspace-a"
     assert packet["sections"]["mcp_control_plane"]["source_panes"] == ("local", "server")

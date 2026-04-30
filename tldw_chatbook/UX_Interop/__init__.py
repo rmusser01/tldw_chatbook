@@ -19,6 +19,10 @@ _EXPORTS = {
         ".server_parity_contracts",
         "build_server_parity_fixture_payloads",
     ),
+    "build_server_parity_handoff_packet": (
+        ".server_parity_contracts",
+        "build_server_parity_handoff_packet",
+    ),
     "notification_feed_item_from_payload": (
         ".server_parity_contracts",
         "notification_feed_item_from_payload",

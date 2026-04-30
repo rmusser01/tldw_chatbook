@@ -8,6 +8,9 @@ from tldw_chatbook.runtime_policy.registry import get_capability_entry
 from tldw_chatbook.runtime_policy.domain_edge_contracts import (
     REQUIRED_UNSUPPORTED_REASON_CODES,
     build_domain_capability_matrix,
+    build_remote_utility_local_parity_matrix,
+    get_domain_edge_contract,
+    get_remote_utility_local_parity,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.runtime_policy.unsupported_capabilities import validate_unsupported_capability_report
@@ -328,8 +331,47 @@ def build_server_parity_fixture_payloads() -> dict[str, dict[str, Any]]:
     ]
 
     return {
+        "auth_failure": {
+            **_fixture_base_payload(server_state, source_owner="server"),
+            **build_auth_failure_contract(
+                reason_code="auth_required",
+                message="Sign in to the active server to continue.",
+                recoverable=True,
+                active_server_id="srv-primary",
+            ),
+        },
+        "event_replay_gap": {
+            **_fixture_base_payload(server_state, source_owner="server"),
+            "replay": {
+                "state": "retention_gap",
+                "requested_cursor": "1",
+                "earliest_retained_cursor": "2",
+                "latest_retained_cursor": "3",
+                "last_pruned_cursor": "1",
+                "pruned_event_count": 1,
+                "server_refetch_required": True,
+            },
+        },
         "local": ActiveServerStatusContract.from_runtime_state(local_state).to_payload(),
+        "source_selector": SourceSelectorStateContract.from_runtime_state(server_state).to_payload(),
         "server": ActiveServerStatusContract.from_runtime_state(server_state).to_payload(),
+        "sync_dry_run_report": {
+            **sync_status_contract(
+                server_state,
+                workspace_scope_id="workspace-a",
+                sync_status="blocked",
+                reason_code="conflict_detected",
+                user_message="Resolve workspace conflicts before syncing.",
+                conflict_ids=("conflict-1",),
+            ).to_payload(),
+            "dry_run": True,
+            "write_enabled": False,
+        },
+        "translation_local_parity": {
+            **_fixture_base_payload(server_state, source_owner="shared"),
+            **get_domain_edge_contract("translation").as_matrix_entry(),
+            "local_parity": get_remote_utility_local_parity("translation").as_matrix_entry(),
+        },
         "unavailable_server": SourceSelectorStateContract.from_runtime_state(unavailable_state).to_payload(),
         "unsupported_action": UnsupportedActionPresentationContract.from_runtime_state_and_reports(
             server_state,
@@ -408,6 +450,7 @@ def build_server_parity_handoff_packet(
                 "reports": tuple(dict(report) for report in sync_reports),
             },
             "domain_capability_matrix": build_domain_capability_matrix(),
+            "remote_utility_local_parity_matrix": build_remote_utility_local_parity_matrix(),
             "workspace_isolation": workspace_contracts,
             "mcp_control_plane": {
                 "contract_id": "unified-mcp-control-plane",
@@ -441,6 +484,16 @@ def build_server_parity_handoff_packet(
 
 def _payload(contract: Any) -> dict[str, Any]:
     return asdict(contract)
+
+
+def _fixture_base_payload(state: RuntimeSourceState, *, source_owner: SourceOwner) -> dict[str, Any]:
+    return {
+        "contract_id": CONTRACT_ID,
+        "contract_version": CONTRACT_VERSION,
+        "source_owner": source_owner,
+        "active_source": state.active_source,
+        "active_server_profile_id": _server_profile_id(state),
+    }
 
 
 def _capability_id(action_id: str) -> str:
