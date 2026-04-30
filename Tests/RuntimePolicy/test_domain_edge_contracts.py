@@ -38,6 +38,7 @@ def test_domain_edge_matrix_covers_priority_server_parity_domains():
 
     assert expected_domains.issubset(matrix)
     assert matrix["chat"]["source_selector_states"] == ("local", "server", "workspace")
+    assert matrix["chat"]["uses_sync_contract"] is True
     assert matrix["sharing"]["authority"] == "remote_only"
     assert matrix["media_reading"]["uses_event_contract"] is True
     assert matrix["notes_workspaces"]["uses_sync_contract"] is True

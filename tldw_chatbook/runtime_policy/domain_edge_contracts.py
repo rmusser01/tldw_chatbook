@@ -68,6 +68,7 @@ _DOMAIN_EDGE_CONTRACTS: tuple[DomainEdgeContract, ...] = (
         view_model_contract="chat_source_honest_view_v1",
         workspace_isolation="required",
         uses_event_contract=True,
+        uses_sync_contract=True,
     ),
     DomainEdgeContract(
         domain_id="media_reading",
