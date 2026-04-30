@@ -1,6 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tomllib
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
+
+from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload, HANDOFF_BODY_CHAR_LIMIT
+from tldw_chatbook.config import CONFIG_TOML_CONTENT
+from tldw_chatbook.Constants import TAB_CHAT
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UX_Interop import (
     build_server_parity_fixture_payloads,
     build_server_parity_handoff_packet,
@@ -39,6 +50,138 @@ def test_chat_handoff_packet_exposes_sections_ui_needs_without_screen_inference(
     assert sections["sync"]["dry_run_only"] is True
     assert sections["workspace_isolation"][0]["workspace_scope_id"] == "workspace-a"
     assert "server_unavailable" in sections["error_contracts"]
+
+
+def test_chat_tabs_are_enabled_by_default_for_handoff_capable_chat():
+    generated_config = tomllib.loads(CONFIG_TOML_CONTENT)
+    repo_config_path = Path(__file__).resolve().parents[2] / "config.toml"
+    repo_config = tomllib.loads(repo_config_path.read_text(encoding="utf-8"))
+
+    assert generated_config["chat_defaults"]["enable_tabs"] is True
+    assert repo_config["chat_defaults"]["enable_tabs"] is True
+
+
+def test_open_chat_with_handoff_stores_payload_and_navigates():
+    app = Mock()
+    app.pending_chat_handoff = None
+    app.post_message = Mock()
+    app.notify = Mock()
+    payload = ChatHandoffPayload(source="notes", item_type="note", title="Note", body="Body")
+
+    from tldw_chatbook.app import TldwCli
+
+    with patch("tldw_chatbook.app.get_cli_setting", return_value=True):
+        TldwCli.open_chat_with_handoff(app, payload)
+
+    assert app.pending_chat_handoff is payload
+    message = app.post_message.call_args.args[0]
+    assert isinstance(message, NavigateToScreen)
+    assert message.screen_name == TAB_CHAT
+
+
+def test_open_chat_with_handoff_refuses_when_tabs_disabled():
+    app = Mock()
+    app.pending_chat_handoff = None
+    app.post_message = Mock()
+    app.notify = Mock()
+    payload = ChatHandoffPayload(source="notes", item_type="note", title="Note", body="Body")
+
+    from tldw_chatbook.app import TldwCli
+
+    with patch("tldw_chatbook.app.get_cli_setting", return_value=False):
+        TldwCli.open_chat_with_handoff(app, payload)
+
+    assert app.pending_chat_handoff is None
+    app.post_message.assert_not_called()
+    app.notify.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_screen_consumes_pending_handoff_into_fresh_ephemeral_tab():
+    payload = ChatHandoffPayload(
+        source="workspace",
+        item_type="workspace-source",
+        title="Transcript",
+        body="Body",
+        source_id="source-1",
+        runtime_backend="server",
+        source_owner="workspace",
+        source_selector_state="workspace",
+        active_server_profile_id="srv-primary",
+        discovery_owner="workspace",
+        discovery_entity_id="source-1",
+        scope_type="workspace",
+        workspace_id="workspace-1",
+        backend_contracts={"workspace_isolation": {"workspace_scope_id": "workspace-1"}},
+    )
+    app = Mock()
+    app.pending_chat_handoff = payload
+    app.notify = Mock()
+
+    session = Mock()
+    session.session_data = ChatSessionData(tab_id="tab-1")
+    tab_container = Mock()
+    tab_container.create_new_tab = AsyncMock(return_value="tab-1")
+    tab_container.sessions = {"tab-1": session}
+    tab_container.switch_to_tab_async = AsyncMock()
+
+    screen = ChatScreen(app)
+    screen.chat_window = Mock()
+    screen._get_tab_container = Mock(return_value=tab_container)
+    screen._apply_handoff_to_chat_session = AsyncMock()
+
+    await screen._consume_pending_chat_handoff()
+
+    session_data = tab_container.create_new_tab.await_args.kwargs["session_data"]
+    assert session_data.conversation_id is None
+    assert session_data.is_ephemeral is True
+    assert session_data.runtime_backend == "server"
+    assert session_data.handoff_payload.source_selector_state == "workspace"
+    assert session_data.handoff_payload.active_server_profile_id == "srv-primary"
+    assert session_data.scope_type == "workspace"
+    assert session_data.workspace_id == "workspace-1"
+    assert session_data.handoff_payload.title == "Transcript"
+    assert app.pending_chat_handoff is None
+
+
+@pytest.mark.asyncio
+async def test_chat_screen_pending_handoff_consumer_is_reentrant_safe():
+    payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Plan",
+        body="Body",
+    )
+    app = Mock()
+    app.pending_chat_handoff = payload
+    app.notify = Mock()
+
+    session = Mock()
+    session.session_data = ChatSessionData(tab_id="tab-1")
+    tab_container = Mock()
+    tab_container.sessions = {"tab-1": session}
+    tab_container.switch_to_tab_async = AsyncMock()
+
+    screen = ChatScreen(app)
+    screen.chat_window = Mock()
+    screen._get_tab_container = Mock(return_value=tab_container)
+    screen._apply_handoff_to_chat_session = AsyncMock()
+
+    nested_called = False
+
+    async def create_new_tab(*, session_data):
+        nonlocal nested_called
+        if not nested_called:
+            nested_called = True
+            await screen._consume_pending_chat_handoff()
+        return "tab-1"
+
+    tab_container.create_new_tab = AsyncMock(side_effect=create_new_tab)
+
+    await screen._consume_pending_chat_handoff()
+
+    assert tab_container.create_new_tab.await_count == 1
+    assert app.pending_chat_handoff is None
 
 
 def test_chat_handoff_payload_round_trip_preserves_runtime_scope_and_metadata():

@@ -101,6 +101,8 @@ model = ""  # Leave empty to use provider's default
 temperature = 0.7
 max_tokens = 4096
 api_endpoint = ""
+enable_tabs = true  # Enable tabbed chat interface for chat-first handoffs
+max_tabs = 10  # Maximum number of chat tabs allowed
 
 [character_defaults]
 # Default settings for new character cards
