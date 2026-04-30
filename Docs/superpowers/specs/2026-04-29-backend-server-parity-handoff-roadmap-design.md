@@ -325,6 +325,16 @@ Readiness gates:
 - Domain edge work may begin before full tranche completion only as spec, adapter-interface, or additive-test scaffolding. It must not introduce production code that consumes unstable shared seams.
 - Shared-file edits route through the assigned integration owner for that tranche; parallel contributors hand off deltas instead of editing shared audit, schema, or app-wiring files directly.
 
+Objective gate checklist:
+
+- Tranche 1 dependent work may consume connection/auth seams only after the credential lifecycle tests, server-context provider tests, runtime-policy bootstrap tests, capability status tests, UX connection-contract tests, and provider migration audit tests pass in the committed branch.
+- The Tranche 1 app-wiring owner must approve the exact startup, logout, credential-clear, and server-switch invalidation blocks before dependent production code can use those hooks.
+- The provider migration audit must report zero unaudited raw client builders and must use semantic audit keys, not line-number-only allowlists.
+- The shared contract/schema owner must confirm the exported connection/auth contract module names, reason-code enums, and version numbers are final for the tranche.
+- Tranche 2 dependent work may consume event seams only after `NormalizedEventRecord`, stream identity, cursor, dedupe, processed-cursor, presented-cursor, retention, and reconnect semantics have contract tests in the committed branch.
+- Tranche 3 dependent work may consume sync seams only after identity-map uniqueness, orphan/candidate/null-side mapping states, dry-run mirror reports, and write-outbox-disabled behavior have contract tests in the committed branch.
+- A gate is not satisfied by prose alone. Each gate requires committed contracts, committed tests, passing focused verification, and no unresolved ownership conflicts in shared files.
+
 Parallelism rules:
 
 - No tranche creates a second active-server, credential, event, capability, or sync authority.
