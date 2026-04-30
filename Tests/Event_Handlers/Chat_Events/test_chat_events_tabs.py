@@ -12,6 +12,7 @@ from textual.containers import VerticalScroll
 #
 # Local Imports
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_tabs
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 #
 ########################################################################################################################
@@ -211,6 +212,45 @@ class TestChatEventsTabsHandlers:
         assert session_data.current_ai_message_widget == mock_app.current_ai_message_widget
         assert "#chat-log" in query_one_calls
         assert query_calls == []
+
+    @pytest.mark.asyncio
+    async def test_tab_send_sets_current_handoff_payload_for_original_handler(
+        self, mock_app, session_data, mock_config
+    ):
+        payload = ChatHandoffPayload(
+            source="notes",
+            item_type="note",
+            title="Plan",
+            body="Body",
+        )
+        session_data.handoff_payload = payload
+
+        class FakeStateManager:
+            @asynccontextmanager
+            async def tab_context(self, tab_id):
+                yield self
+
+            update_tab_state = AsyncMock()
+
+        fake_state_manager = FakeStateManager()
+
+        async def fake_original_handler(app_arg, event_arg):
+            assert app_arg._current_chat_handoff_payload.title == "Plan"
+
+        with patch.object(chat_events_tabs, "get_tab_state_manager", return_value=fake_state_manager):
+            with patch(
+                "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed",
+                side_effect=fake_original_handler,
+            ):
+                event = Mock()
+                event.button = Mock(spec=Button)
+
+                await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(
+                    mock_app, event, session_data=session_data
+                )
+
+        assert session_data.handoff_payload.status == "sent"
+        assert getattr(mock_app, "_current_chat_handoff_payload", None) is None
     
     @pytest.mark.skip(reason="Complex mocking of TabContext and state_manager required")
     @pytest.mark.asyncio

@@ -115,7 +115,13 @@ async def handle_chat_send_button_pressed_with_tabs(app: 'TldwCli', event: Butto
                     is_ephemeral=session_data.is_ephemeral,
                     is_streaming=session_data.is_streaming
                 )
-            
+
+            active_handoff = session_data.handoff_payload if session_data else None
+            if active_handoff is not None and getattr(active_handoff, "status", "staged") != "sent":
+                app._current_chat_handoff_payload = active_handoff
+            else:
+                app._current_chat_handoff_payload = None
+
             # Call the original handler
             await chat_events.handle_chat_send_button_pressed(app, event)
             
@@ -127,8 +133,12 @@ async def handle_chat_send_button_pressed_with_tabs(app: 'TldwCli', event: Butto
                 
                 # Mark unsaved changes if message was sent
                 session_data.has_unsaved_changes = True
+
+                if session_data.handoff_payload and session_data.handoff_payload.status != "sent":
+                    session_data.handoff_payload.status = "sent"
             
     finally:
+        app._current_chat_handoff_payload = None
         # Restore original query methods
         app.query_one = original_query_one
         app.query = original_query

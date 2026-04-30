@@ -365,3 +365,42 @@ async def test_apply_handoff_mounts_card_and_prefills_tab_input():
 
     session.mount_handoff_card.assert_awaited_once_with(payload)
     session.set_draft_text.assert_called_once_with("Use this note.")
+
+
+def test_handoff_payload_formats_model_prompt_with_context_and_user_prompt():
+    payload = ChatHandoffPayload(
+        source="media",
+        item_type="media",
+        title="Lecture",
+        body="Transcript body",
+        metadata={"url": "https://example.com"},
+    )
+
+    prompt = payload.format_for_model("Summarize it.")
+
+    assert "[Staged context]" in prompt
+    assert "Transcript body" in prompt
+    assert "[User prompt]" in prompt
+    assert "Summarize it." in prompt
+
+
+def test_apply_current_handoff_context_wraps_unsent_payload_only():
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import apply_current_handoff_context
+
+    payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Plan",
+        body="Body",
+    )
+    app = Mock()
+    app._current_chat_handoff_payload = payload
+
+    wrapped = apply_current_handoff_context(app, "Use this.")
+
+    assert "[Staged context]" in wrapped
+    assert "Body" in wrapped
+    assert "[User prompt]\nUse this." in wrapped
+
+    payload.status = "sent"
+    assert apply_current_handoff_context(app, "Use this again.") == "Use this again."
