@@ -28,6 +28,7 @@ AUDIT_ROW_RE = re.compile(
     re.MULTILINE,
 )
 LINE_TOKEN_RE = re.compile(r"\b(?P<start>\d+)(?:\s*-\s*(?P<end>\d+))?\b")
+HEADING_RE = re.compile(r"^(?P<marks>#{2,4})\s+(?P<title>.+?)\s*$")
 
 
 def _normalize_builder_line(line: str) -> str:
@@ -47,24 +48,91 @@ def _extract_semantic_matches(notes: str) -> Counter[str]:
     return snippets
 
 
-def _audited_match_metadata(audit_path: Path = AUDIT_PATH) -> dict[str, dict[str, object]]:
+def _normalize_reason_category(title: str) -> str:
+    return " ".join(title.strip().split()).lower()
+
+
+def _semantic_entry_key(snippet: str) -> str:
+    if snippet.startswith("def "):
+        return "signature"
+    return "call_pattern"
+
+
+def _audit_rows(audit_path: Path = AUDIT_PATH) -> list[tuple[str, str, str, str]]:
     audit_text = audit_path.read_text(encoding="utf-8")
+    rows: list[tuple[str, str, str, str]] = []
+    reason_category = ""
+
+    for line in audit_text.splitlines():
+        heading = HEADING_RE.match(line)
+        if heading:
+            reason_category = _normalize_reason_category(heading.group("title"))
+            continue
+
+        row = AUDIT_ROW_RE.match(line)
+        if not row:
+            continue
+
+        rows.append((row.group("path"), row.group("lines"), row.group("notes"), reason_category))
+
+    return rows
+
+
+def load_provider_migration_audit_entries(audit_path: Path = AUDIT_PATH) -> list[dict[str, object]]:
+    raw_entries: list[dict[str, object]] = []
+    counts_by_path: Counter[str] = Counter()
+    for path, _lines, notes, category in _audit_rows(audit_path=audit_path):
+        semantic_matches = _extract_semantic_matches(notes)
+        for snippet, snippet_count in semantic_matches.items():
+            counts_by_path[path] += snippet_count
+            for _ in range(snippet_count):
+                raw_entries.append(
+                    {
+                        "path": path,
+                        "reason_category": category,
+                        _semantic_entry_key(snippet): snippet,
+                    }
+                )
+
+    return [
+        {
+            **entry,
+            "per_file_match_count": counts_by_path[str(entry["path"])],
+        }
+        for entry in raw_entries
+    ]
+
+
+def _audited_match_metadata(audit_path: Path = AUDIT_PATH) -> dict[str, dict[str, object]]:
     allowed: dict[str, dict[str, object]] = {}
-    for row in AUDIT_ROW_RE.finditer(audit_text):
-        path = row.group("path")
-        count = 0
-        for token in LINE_TOKEN_RE.finditer(row.group("lines")):
-            start = int(token.group("start"))
-            end = int(token.group("end") or start)
-            count += end - start + 1
-        semantic_matches = _extract_semantic_matches(row.group("notes"))
+
+    for entry in load_provider_migration_audit_entries(audit_path=audit_path):
+        path = str(entry["path"])
+        semantic_match = entry.get("signature") or entry.get("call_pattern")
         metadata = allowed.setdefault(
             path,
-            {"count": 0, "semantic_matches": Counter(), "line_only_rows": 0},
+            {
+                "count": 0,
+                "semantic_matches": Counter(),
+                "line_only_rows": 0,
+                "reason_categories": Counter(),
+            },
         )
-        metadata["count"] = int(metadata["count"]) + count
-        metadata["semantic_matches"].update(semantic_matches)
-        if count and not semantic_matches:
+        metadata["count"] = int(metadata["count"]) + 1
+        metadata["semantic_matches"].update([semantic_match])
+        metadata["reason_categories"].update([entry["reason_category"]])
+
+    for path, lines, notes, _category in _audit_rows(audit_path=audit_path):
+        if LINE_TOKEN_RE.search(lines) and not _extract_semantic_matches(notes):
+            metadata = allowed.setdefault(
+                path,
+                {
+                    "count": 0,
+                    "semantic_matches": Counter(),
+                    "line_only_rows": 0,
+                    "reason_categories": Counter(),
+                },
+            )
             metadata["line_only_rows"] = int(metadata["line_only_rows"]) + 1
     return allowed
 
@@ -276,6 +344,79 @@ def test_audit_guard_rejects_stale_audited_row_with_no_live_match(tmp_path: Path
 
     assert drift == [
         "tldw_chatbook/example.py: semantic match drift; missing=[] extra=['build_runtime_api_client_from_config(app_config)']"
+    ]
+
+
+def test_audit_guard_accepts_line_number_drift_when_semantic_key_matches(tmp_path: Path):
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "tldw_chatbook"
+    source_root.mkdir(parents=True)
+    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path.parent.mkdir(parents=True)
+    audit_path.write_text(
+        "\n".join(
+            [
+                "| Module | Audit lines | Notes |",
+                "| --- | ---: | --- |",
+                "| `tldw_chatbook/example.py` | 999 | Informational line hint only. Semantic match: `build_runtime_api_client_from_config(app_config)`. |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (source_root / "example.py").write_text(
+        "\n\nbuild_runtime_api_client_from_config(app_config)\n",
+        encoding="utf-8",
+    )
+
+    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+
+    assert drift == []
+
+
+def test_raw_client_builder_audit_uses_semantic_keys_not_line_numbers():
+    entries = load_provider_migration_audit_entries()
+
+    assert entries
+    for entry in entries:
+        assert entry["path"].startswith("tldw_chatbook/")
+        assert entry["reason_category"]
+        assert entry["per_file_match_count"] >= 1
+        assert "signature" in entry or "call_pattern" in entry
+        assert "line" not in entry
+
+
+def test_raw_client_builder_audit_tracks_reason_category_and_per_file_count(tmp_path: Path):
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "tldw_chatbook"
+    source_root.mkdir(parents=True)
+    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path.parent.mkdir(parents=True)
+    audit_path.write_text(
+        "\n".join(
+            [
+                "# Audit",
+                "",
+                "### Provider-Backed Compatibility Adapter Uses",
+                "",
+                "| Module | Audit lines | Notes |",
+                "| --- | ---: | --- |",
+                "| `tldw_chatbook/example.py` | 200 | Informational line hint. Semantic match: `build_runtime_api_client(app_config)`. |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    entries = load_provider_migration_audit_entries(audit_path=audit_path)
+
+    assert entries == [
+        {
+            "path": "tldw_chatbook/example.py",
+            "reason_category": "provider-backed compatibility adapter uses",
+            "per_file_match_count": 1,
+            "call_pattern": "build_runtime_api_client(app_config)",
+        }
     ]
 
 

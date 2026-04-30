@@ -57,6 +57,10 @@ Generated with:
 rg -n "build_runtime_api_client_from_config|build_runtime_api_client\(|build_tldw_api_client_from_config|build_server_chatbook_service|build_server_chatbook_service_from_config|Server[A-Za-z]+Service\.from_config" tldw_chatbook
 ```
 
+## Audit Key Contract
+
+Allowed raw builder entries are keyed by path plus semantic match signature or call pattern, per-file match count, and reason category. Line numbers are informational operator hints only and must not be the sole allowlist key.
+
 ## Remaining Semantic Matches
 
 There are no ordinary domain service holdouts for this tranche. Remaining scan matches are classified below as intentional runtime-policy/provider seams, provider-backed compatibility adapter uses, or the explicit event/UI helper holdout.
