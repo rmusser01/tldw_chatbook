@@ -13,10 +13,13 @@ from textual.widgets import Static, Button, Input, Markdown, Select, Checkbox, L
 # Third-Party Libraries
 from typing import TYPE_CHECKING, Optional, Tuple, List, Union, Dict, Any
 import asyncio
+import inspect
 from loguru import logger
 from pathlib import Path
 
 from ..Notes.Notes_Library import NotesInteropService
+from .Views.RAGSearch.search_handoff import build_search_chat_handoff_payload
+from .Views.RAGSearch.search_result import SearchResult
 
 # Configure logger with context
 logger = logger.bind(module="SearchWindow")
@@ -93,6 +96,7 @@ class SearchWindow(Container):
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.web_search_results: List[Dict[str, Any]] = []
 
     async def on_mount(self) -> None:
         """Called when the window is first mounted."""
@@ -233,7 +237,7 @@ class SearchWindow(Container):
                     with VerticalScroll():
                         yield Input(placeholder="Enter search query...", id="web-search-input")
                         yield Button("Search", id="web-search-button", classes="search-action-button")
-                        yield VerticalScroll(Markdown("", id="web-search-results"))
+                        yield VerticalScroll(id="web-search-results-list")
             else:
                 with Container(id=SEARCH_VIEW_WEB_SEARCH, classes="search-view-area"):
                     with VerticalScroll():
@@ -313,7 +317,95 @@ class SearchWindow(Container):
             return str(base_path)  # Main ChaChaNotes DB
         return "Unknown DB Type"
 
+    def _authoritative_runtime_backend(self) -> str:
+        get_source = getattr(self.app_instance, "get_authoritative_runtime_source", None)
+        backend = get_source() if callable(get_source) else "local"
+        backend = str(backend or "local").strip().lower()
+        return backend if backend in {"local", "server"} else "local"
+
+    def _build_search_chat_handoff_payload(self, result: Dict[str, Any]):
+        return build_search_chat_handoff_payload(
+            dict(result),
+            runtime_backend=self._authoritative_runtime_backend(),
+        )
+
+    def _normalize_web_search_results(self, raw_results: Any, query: str) -> List[Dict[str, Any]]:
+        if isinstance(raw_results, dict) and "web_search_results_dict" in raw_results:
+            raw_results = raw_results.get("web_search_results_dict", {}).get("results", [])
+        elif isinstance(raw_results, dict):
+            raw_results = raw_results.get("results", [])
+
+        normalized: List[Dict[str, Any]] = []
+        for result in raw_results or []:
+            if not isinstance(result, dict):
+                continue
+            url = result.get("url") or result.get("link") or result.get("href") or ""
+            normalized.append(
+                {
+                    "title": result.get("title") or result.get("name") or url or "Web Result",
+                    "content": result.get("snippet") or result.get("content") or result.get("description") or "",
+                    "source": "web",
+                    "score": result.get("score", 0.5),
+                    "metadata": {
+                        "url": url,
+                        "displayUrl": result.get("displayUrl") or result.get("display_url") or url,
+                        "query": query,
+                    },
+                }
+            )
+        return normalized
+
+    async def _render_web_search_result_cards(self) -> None:
+        results_list = self.query_one("#web-search-results-list")
+        await results_list.remove_children()
+        for index, result in enumerate(self.web_search_results):
+            await results_list.mount(SearchResult(result, index))
+
     # --- EVENT HANDLERS (New and Refactored) ---
+
+
+    @on(Button.Pressed, "#web-search-button")
+    async def handle_web_search_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        query = self.query_one("#web-search-input", Input).value.strip()
+        if not query:
+            self.app_instance.notify("Enter a web search query.", severity="warning")
+            return
+        if generate_and_search is None:
+            self.app_instance.notify("Web Search is not available.", severity="warning")
+            return
+
+        search_params = {
+            "engine": get_cli_setting("search", "web_search_engine", "google"),
+            "content_country": "US",
+            "search_lang": "en",
+            "output_lang": "en",
+            "result_count": 10,
+            "subquery_generation": False,
+        }
+        try:
+            raw_results = generate_and_search(query, search_params)
+            if inspect.isawaitable(raw_results):
+                raw_results = await raw_results
+            self.web_search_results = self._normalize_web_search_results(raw_results, query)
+            await self._render_web_search_result_cards()
+            self.app_instance.notify(
+                f"Web Search completed: {len(self.web_search_results)} results found",
+                severity="information",
+            )
+        except Exception as exc:
+            logger.error(f"Web Search failed: {exc}", exc_info=True)
+            self.app_instance.notify(f"Web Search failed: {exc}", severity="error")
+
+    @on(SearchResult.UseInChatRequested)
+    def handle_search_result_use_in_chat(self, event: SearchResult.UseInChatRequested) -> None:
+        event.stop()
+        payload = self._build_search_chat_handoff_payload(event.result)
+        open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_chat):
+            self.app_instance.notify("Use in Chat is not available.", severity="warning")
+            return
+        open_chat(payload)
 
 
     @on(Button.Pressed, ".search-nav-button")

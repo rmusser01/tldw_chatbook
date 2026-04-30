@@ -5,19 +5,29 @@ Enhanced container for displaying individual search results
 """
 
 from typing import Dict, Any
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.widgets import Static, Button
+from textual.message import Message
 
 from .constants import SOURCE_ICONS, SOURCE_COLORS
 
 
 class SearchResult(Container):
     """Enhanced container for displaying a single search result with better visual design"""
+
+    class UseInChatRequested(Message):
+        """Request staging a search result into Chat."""
+
+        def __init__(self, index: int, result: Dict[str, Any]) -> None:
+            super().__init__()
+            self.index = index
+            self.result = dict(result)
     
     def __init__(self, result: Dict[str, Any], index: int):
         super().__init__(id=f"result-{index}", classes="search-result-card-enhanced")
-        self.result = result
+        self.result = dict(result)
         self.index = index
         self.expanded = False
         
@@ -113,4 +123,15 @@ class SearchResult(Container):
                     )
                     yield Button("📋 Copy", id=f"copy-{self.index}", classes="result-button")
                     yield Button("📝 Note", id=f"add-note-{self.index}", classes="result-button")
+                    yield Button("Use in Chat", id=f"use-in-chat-{self.index}", classes="result-button")
                     yield Button("📤 Export", id=f"export-{self.index}", classes="result-button")
+
+    def _build_use_in_chat_event(self) -> UseInChatRequested:
+        return self.UseInChatRequested(self.index, self.result)
+
+    @on(Button.Pressed)
+    def handle_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id != f"use-in-chat-{self.index}":
+            return
+        event.stop()
+        self.post_message(self._build_use_in_chat_event())
