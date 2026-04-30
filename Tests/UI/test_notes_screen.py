@@ -155,6 +155,215 @@ class TestNotesScreenMethods:
         assert validated.word_count == 0
         assert validated.auto_save_status == ""
 
+    def test_notes_screen_builds_local_note_handoff_from_visible_editor_text(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.LOCAL_NOTE,
+            selected_note_id=123,
+            selected_note_version=4,
+            selected_note_title="Draft",
+            selected_note_content="Saved content",
+        )
+        screen._read_editor_text = Mock(return_value="Visible unsaved content")
+
+        payload = screen._build_current_chat_handoff_payload()
+
+        assert payload.source == "notes"
+        assert payload.item_type == "note"
+        assert payload.runtime_backend == "local"
+        assert payload.source_owner == "local"
+        assert payload.source_selector_state == "local"
+        assert payload.source_id == "123"
+        assert payload.body == "Visible unsaved content"
+        assert payload.metadata["note_version"] == 4
+        assert payload.metadata["unsaved_changes"] is False
+
+    def test_notes_screen_builds_server_note_handoff_with_server_state(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.SERVER_NOTE,
+            selected_note_id="server-7",
+            selected_note_version=8,
+            selected_note_title="Server Draft",
+            selected_note_content="Saved server content",
+            selected_server_note_id="server-7",
+            selected_server_note_version=8,
+            has_unsaved_changes=True,
+        )
+        screen._read_editor_text = Mock(return_value="Visible server content")
+
+        payload = screen._build_current_chat_handoff_payload()
+
+        assert payload.source == "notes"
+        assert payload.item_type == "note"
+        assert payload.runtime_backend == "server"
+        assert payload.source_owner == "server"
+        assert payload.source_selector_state == "server"
+        assert payload.source_id == "server-7"
+        assert payload.body == "Visible server content"
+        assert payload.metadata["note_version"] == 8
+        assert payload.metadata["unsaved_changes"] is True
+
+    def test_notes_screen_returns_no_handoff_without_selected_note(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(scope_type=ScopeType.LOCAL_NOTE)
+        screen._read_editor_text = Mock(return_value="")
+
+        assert screen._build_current_chat_handoff_payload() is None
+
+    def test_notes_screen_builds_workspace_source_handoff_from_cached_payload(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.SOURCES,
+            selected_workspace_id="workspace-1",
+            selected_workspace_source_id="source-1",
+        )
+        screen._workspace_context_payload = {
+            "workspace": {"id": "workspace-1", "name": "Research"},
+            "notes": [],
+            "sources": [{"id": "source-1", "title": "Transcript", "url": "https://example.com"}],
+            "artifacts": [],
+        }
+
+        payload = screen._build_current_chat_handoff_payload()
+
+        assert payload.source == "workspace"
+        assert payload.item_type == "workspace-source"
+        assert payload.runtime_backend == "server"
+        assert payload.source_owner == "workspace"
+        assert payload.source_selector_state == "workspace"
+        assert payload.scope_type == "workspace"
+        assert payload.workspace_id == "workspace-1"
+        assert payload.title == "Transcript"
+        assert payload.body == "Transcript\nhttps://example.com"
+        assert payload.backend_contracts["workspace_isolation"]["workspace_scope_id"] == "workspace-1"
+
+    def test_notes_screen_builds_workspace_details_handoff(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.DETAILS,
+            selected_workspace_id="workspace-1",
+            selected_workspace_version=3,
+        )
+        screen._workspace_context_payload = {
+            "workspace": {
+                "id": "workspace-1",
+                "name": "Research",
+                "study_materials_policy": "curated",
+                "archived": False,
+            },
+            "notes": [],
+            "sources": [],
+            "artifacts": [],
+        }
+
+        payload = screen._build_current_chat_handoff_payload()
+
+        assert payload.source == "workspace"
+        assert payload.item_type == "workspace"
+        assert payload.source_id == "workspace-1"
+        assert payload.title == "Research"
+        assert payload.body == "Name: Research\nPolicy: curated\nArchived: False"
+        assert payload.metadata["workspace_version"] == 3
+
+    def test_notes_screen_builds_workspace_note_handoff_from_editor_surface(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.NOTES,
+            selected_workspace_id="workspace-1",
+            selected_workspace_note_id="note-1",
+            selected_workspace_note_version=5,
+            selected_note_title="Workspace Draft",
+            selected_note_content="Saved workspace content",
+        )
+        screen._read_editor_text = Mock(return_value="Visible workspace note")
+        screen._workspace_context_payload = {
+            "workspace": {"id": "workspace-1", "name": "Research"},
+            "notes": [{"id": "note-1", "title": "Workspace Note", "content": "Cached content", "version": 5}],
+            "sources": [],
+            "artifacts": [],
+        }
+
+        payload = screen._build_current_chat_handoff_payload()
+
+        assert payload.source == "workspace"
+        assert payload.item_type == "workspace-note"
+        assert payload.source_id == "note-1"
+        assert payload.title == "Workspace Note"
+        assert payload.body == "Visible workspace note"
+        assert payload.metadata["record_version"] == 5
+
+    def test_notes_screen_builds_workspace_artifact_handoff_from_cached_payload(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.ARTIFACTS,
+            selected_workspace_id="workspace-1",
+            selected_workspace_artifact_id="artifact-1",
+            selected_workspace_artifact_version=9,
+        )
+        screen._workspace_context_payload = {
+            "workspace": {"id": "workspace-1", "name": "Research"},
+            "notes": [],
+            "sources": [],
+            "artifacts": [
+                {
+                    "id": "artifact-1",
+                    "title": "Quiz Outline",
+                    "content": "Artifact body",
+                    "version": 9,
+                }
+            ],
+        }
+
+        payload = screen._build_current_chat_handoff_payload()
+
+        assert payload.source == "workspace"
+        assert payload.item_type == "workspace-artifact"
+        assert payload.source_id == "artifact-1"
+        assert payload.title == "Quiz Outline"
+        assert payload.body == "Artifact body"
+        assert payload.metadata["record_version"] == 9
+
+    def test_notes_use_in_chat_button_calls_app_handoff(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        payload = Mock()
+        screen._build_current_chat_handoff_payload = Mock(return_value=payload)
+        mock_app_instance.open_chat_with_handoff = Mock()
+        event = Mock()
+
+        screen.handle_use_in_chat_button(event)
+
+        event.stop.assert_called_once()
+        mock_app_instance.open_chat_with_handoff.assert_called_once_with(payload)
+
+    def test_workspace_use_in_chat_button_uses_button_section_not_current_subview(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.SOURCES,
+            selected_workspace_id="workspace-1",
+            selected_workspace_source_id="source-1",
+        )
+        screen._workspace_context_payload = {
+            "workspace": {"id": "workspace-1", "name": "Research"},
+            "notes": [],
+            "sources": [{"id": "source-1", "title": "Transcript"}],
+            "artifacts": [],
+        }
+        mock_app_instance.open_chat_with_handoff = Mock()
+        event = Mock()
+        event.button.id = "workspace-use-in-chat-button"
+
+        screen.handle_use_in_chat_button(event)
+
+        payload = mock_app_instance.open_chat_with_handoff.call_args.args[0]
+        assert payload.item_type == "workspace"
+        assert payload.source_id == "workspace-1"
+
     def test_save_state_round_trips_scope_fields(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
         screen.state = NotesScreenState(

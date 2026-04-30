@@ -80,6 +80,26 @@ async def test_workspace_context_panel_exposes_open_study_action_only_in_details
 
 
 @pytest.mark.asyncio
+async def test_workspace_context_panel_exposes_use_in_chat_actions():
+    panel = WorkspaceContextPanel()
+    app = PanelTestApp(panel)
+
+    async with app.run_test() as pilot:
+        assert panel.query_one("#workspace-use-in-chat-button", Button)
+        assert panel.query_one("#workspace-source-use-in-chat-button", Button)
+        assert panel.query_one("#workspace-artifact-use-in-chat-button", Button)
+
+
+@pytest.mark.asyncio
+async def test_notes_sidebar_right_exposes_use_in_chat_action():
+    sidebar = NotesSidebarRight()
+    app = PanelTestApp(sidebar)
+
+    async with app.run_test() as pilot:
+        assert sidebar.query_one("#notes-use-in-chat-button", Button)
+
+
+@pytest.mark.asyncio
 async def test_workspace_context_panel_populates_workspace_lists():
     panel = WorkspaceContextPanel()
     app = PanelTestApp(panel)
