@@ -17,6 +17,7 @@ from tldw_chatbook.runtime_policy.server_credentials import (
     CredentialStoreUnavailable,
     UnavailableServerCredentialStore,
     build_default_server_credential_store,
+    is_secure_keyring_backend,
 )
 
 
@@ -72,6 +73,29 @@ class FakeChainerKeyring:
 
     def __init__(self, *backends):
         self.backends = list(backends)
+
+
+def _fake_keyring_backend(module_name: str, *, priority: int = 1):
+    return type("FakeBackend", (), {"__module__": module_name, "priority": priority})()
+
+
+@pytest.mark.parametrize(
+    ("module_name", "expected_secure"),
+    [
+        ("keyring.backends.SecretService", True),
+        ("keyring.backends.libsecret", True),
+        ("keyring.backends.kwallet", True),
+        ("keyring.backends.null", False),
+        ("keyring.backends.fail", False),
+        ("keyring.backends.file", False),
+        ("keyring.backends.unknown", False),
+    ],
+)
+def test_secure_keyring_classifier_recognizes_only_secure_backend_modules(
+    module_name: str,
+    expected_secure: bool,
+):
+    assert is_secure_keyring_backend(_fake_keyring_backend(module_name)) is expected_secure
 
 
 def test_default_credential_store_rejects_plaintext_or_fail_backends():

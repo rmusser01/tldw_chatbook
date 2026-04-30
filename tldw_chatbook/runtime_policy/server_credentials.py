@@ -19,7 +19,7 @@ _KNOWN_SERVER_CREDENTIAL_PURPOSES = (
     SERVER_CREDENTIAL_API_KEY,
     SERVER_CREDENTIAL_BEARER_TOKEN,
 )
-_SECURE_KEYRING_MODULE_PARTS = ("macos", "windows", "secretservice")
+_SECURE_KEYRING_MODULE_PARTS = ("macos", "windows", "secretservice", "libsecret", "kwallet")
 _INSECURE_KEYRING_MODULE_PARTS = ("fail", "null", "plaintext", "file")
 
 
