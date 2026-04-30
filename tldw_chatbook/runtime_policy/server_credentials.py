@@ -244,26 +244,30 @@ def _keyring_backend_children(keyring_backend: Any) -> list[Any]:
 
 
 def is_secure_keyring_backend(keyring_backend: Any) -> bool:
-    return _is_secure_keyring_backend(keyring_backend, seen=set())
+    return _resolve_secure_keyring_backend(keyring_backend, seen=set()) is not None
 
 
-def _is_secure_keyring_backend(keyring_backend: Any, *, seen: set[int]) -> bool:
+def _resolve_secure_keyring_backend(keyring_backend: Any, *, seen: set[int]) -> Any | None:
     backend_id = id(keyring_backend)
     if backend_id in seen:
-        return False
+        return None
     seen.add(backend_id)
 
     children = _keyring_backend_children(keyring_backend)
     if children:
-        return any(_is_secure_keyring_backend(child, seen=seen) for child in children)
+        if len(children) != 1:
+            return None
+        return _resolve_secure_keyring_backend(children[0], seen=seen)
 
     module_name = str(getattr(keyring_backend.__class__, "__module__", "")).lower()
     priority = getattr(keyring_backend, "priority", None)
     if isinstance(priority, (int, float)) and priority <= 0:
-        return False
+        return None
     if any(part in module_name for part in _INSECURE_KEYRING_MODULE_PARTS):
-        return False
-    return any(part in module_name for part in _SECURE_KEYRING_MODULE_PARTS)
+        return None
+    if not any(part in module_name for part in _SECURE_KEYRING_MODULE_PARTS):
+        return None
+    return keyring_backend
 
 
 def build_default_server_credential_store(keyring_backend: Any | None = None) -> ServerCredentialStore:
@@ -274,9 +278,10 @@ def build_default_server_credential_store(keyring_backend: Any | None = None) ->
     get_keyring = getattr(keyring_backend, "get_keyring", None)
     if callable(get_keyring):
         keyring_backend = get_keyring()
-    if not is_secure_keyring_backend(keyring_backend):
+    secure_backend = _resolve_secure_keyring_backend(keyring_backend, seen=set())
+    if secure_backend is None:
         raise CredentialStoreUnavailable("No secure OS-backed credential store is available.")
-    return KeyringServerCredentialStore(keyring_backend=keyring_backend)
+    return KeyringServerCredentialStore(keyring_backend=secure_backend)
 
 
 class KeyringServerCredentialStore:

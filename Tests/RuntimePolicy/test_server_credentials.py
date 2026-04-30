@@ -95,10 +95,16 @@ def test_default_credential_store_inspects_wrapped_backends():
     with pytest.raises(CredentialStoreUnavailable):
         build_default_server_credential_store(keyring_backend=FakeChainerKeyring(FakePlaintextKeyring()))
 
+    with pytest.raises(CredentialStoreUnavailable):
+        build_default_server_credential_store(
+            keyring_backend=FakeChainerKeyring(FakePlaintextKeyring(), FakeMacOSKeyring())
+        )
+
     secure_child = FakeMacOSKeyring()
     store = build_default_server_credential_store(keyring_backend=FakeChainerKeyring(secure_child))
 
     assert isinstance(store, KeyringServerCredentialStore)
+    assert store._keyring is secure_child
 
 
 def test_in_memory_credentials_are_scoped_by_server_and_purpose():
