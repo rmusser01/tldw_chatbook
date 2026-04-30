@@ -92,6 +92,15 @@ class FakePolicyEnforcer:
             )
 
 
+class FakeSyncScopeService:
+    def __init__(self):
+        self.calls = []
+
+    def record_dry_run_mirror_report(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"backend": "server", "domain": kwargs["domain"]}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("method_name", "kwargs", "action_id"),
@@ -364,3 +373,49 @@ def test_research_scope_service_reports_known_unsupported_server_capabilities():
     )
 
     assert capable_scope.list_unsupported_capabilities(mode="server") == []
+
+
+def test_research_scope_service_routes_run_sync_mirror_report_to_sync_scope():
+    sync_scope = FakeSyncScopeService()
+    scope = ResearchScopeService(
+        local_service=FakeResearchService("local"),
+        server_service=FakeResearchService("server"),
+        sync_scope_service=sync_scope,
+    )
+
+    result = scope.record_sync_mirror_report(
+        mode="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        local_records=[{"id": "local-run-1"}],
+        remote_records=[{"id": "remote-run-1"}],
+    )
+
+    assert result == {"backend": "server", "domain": "research"}
+    assert sync_scope.calls == [
+        {
+            "mode": "server",
+            "domain": "research",
+            "entity_type": "research_run",
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": "workspace-1",
+            "local_records": [{"id": "local-run-1"}],
+            "remote_records": [{"id": "remote-run-1"}],
+        }
+    ]
+
+
+def test_research_scope_service_rejects_local_sync_mirror_report():
+    scope = ResearchScopeService(
+        local_service=FakeResearchService("local"),
+        server_service=FakeResearchService("server"),
+        sync_scope_service=FakeSyncScopeService(),
+    )
+
+    with pytest.raises(ValueError, match="Research mirror reports require server mode"):
+        scope.record_sync_mirror_report(
+            mode="local",
+            server_profile_id="server-a",
+        )

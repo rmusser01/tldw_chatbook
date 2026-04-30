@@ -138,7 +138,12 @@ async def test_server_research_service_delegates_to_tldw_client():
     assert created.id == "rs-server"
     assert listed[0].source == "server"
     client.create_research_run.assert_awaited_once()
-    client.list_research_runs.assert_awaited_once_with(limit=5)
+    client.list_research_runs.assert_awaited_once_with(
+        limit=5,
+        offset=0,
+        session_id=None,
+        status=None,
+    )
 
 
 @pytest.mark.asyncio

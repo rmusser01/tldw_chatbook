@@ -265,6 +265,9 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.text2sql_scope_service, Text2SQLScopeService)
     assert isinstance(app.server_sync_service, ServerSyncService)
     assert isinstance(app.sync_scope_service, SyncScopeService)
+    assert app.media_reading_scope_service.sync_scope_service is app.sync_scope_service
+    assert app.notes_scope_service.sync_scope_service is app.sync_scope_service
+    assert app.research_scope_service.sync_scope_service is app.sync_scope_service
     assert isinstance(app.server_runtime_service, ServerRuntimeService)
     assert isinstance(app.server_runtime_scope_service, ServerRuntimeScopeService)
     assert isinstance(app.active_server_capability_service, ActiveServerCapabilityService)

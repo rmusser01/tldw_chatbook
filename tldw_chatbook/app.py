@@ -1465,6 +1465,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             local_notes_service=self.notes_service,
             server_service=self.server_notes_workspace_service,
             policy_enforcer=self.service_policy_enforcer,
+            sync_scope_service=getattr(self, "sync_scope_service", None),
         )
         try:
             self.server_rag_admin_service = ServerRAGAdminService.from_config(
@@ -1760,6 +1761,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             local_service=self.local_research_service,
             server_service=self.server_research_service,
             policy_enforcer=self.service_policy_enforcer,
+            sync_scope_service=getattr(self, "sync_scope_service", None),
         )
         self.local_research_search_service = LocalResearchSearchService(
             policy_enforcer=self.service_policy_enforcer,
@@ -1981,6 +1983,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             local_service=self.local_research_service,
             server_service=self.server_research_service,
             policy_enforcer=self.service_policy_enforcer,
+            sync_scope_service=getattr(self, "sync_scope_service", None),
         )
         self.local_research_search_service = LocalResearchSearchService(
             policy_enforcer=self.service_policy_enforcer,
@@ -2178,6 +2181,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         for domain_scope_service in (
             getattr(self, "media_reading_scope_service", None),
             getattr(self, "notes_scope_service", None),
+            getattr(self, "research_scope_service", None),
         ):
             if domain_scope_service is not None:
                 domain_scope_service.sync_scope_service = self.sync_scope_service

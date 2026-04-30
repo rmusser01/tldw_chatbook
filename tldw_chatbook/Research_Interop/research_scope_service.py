@@ -57,10 +57,18 @@ class ResearchBackend(str, Enum):
 class ResearchScopeService:
     """Route research operations to local or server backends with policy enforcement."""
 
-    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any,
+        server_service: Any,
+        policy_enforcer: Any = None,
+        sync_scope_service: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
+        self.sync_scope_service = sync_scope_service
 
     def _normalize_mode(self, mode: ResearchBackend | str | None) -> ResearchBackend:
         if mode is None:
@@ -90,6 +98,11 @@ class ResearchScopeService:
         if self.policy_enforcer is None:
             return
         self.policy_enforcer.require_allowed(action_id=action_id)
+
+    def _require_sync_scope_service(self) -> Any:
+        if self.sync_scope_service is None:
+            raise ValueError("Sync scope service is unavailable.")
+        return self.sync_scope_service
 
     @staticmethod
     def _raise_server_sessions_unsupported() -> None:
@@ -171,6 +184,30 @@ class ResearchScopeService:
                 if item.get("operation_id") != "research.runs.delete.server"
             ]
         return reports
+
+    def record_sync_mirror_report(
+        self,
+        *,
+        mode: ResearchBackend | str | None = None,
+        server_profile_id: str,
+        authenticated_principal_id: str | None = None,
+        workspace_scope: str | None = None,
+        local_records: list[dict[str, Any]] | None = None,
+        remote_records: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == ResearchBackend.LOCAL:
+            raise ValueError("Research mirror reports require server mode.")
+        return self._require_sync_scope_service().record_dry_run_mirror_report(
+            mode="server",
+            domain="research",
+            entity_type="research_run",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            local_records=local_records or [],
+            remote_records=remote_records or [],
+        )
 
     async def _call_service(self, service: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
         method = getattr(service, method_name)
