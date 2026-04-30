@@ -39,6 +39,13 @@ class MediaViewerPanel(Container):
     
     Provides comprehensive viewing and editing capabilities for media items.
     """
+
+    class UseInChatRequested(Message):
+        """Request staging the loaded media item into Chat."""
+
+        def __init__(self, media_data: Dict[str, Any]) -> None:
+            super().__init__()
+            self.media_data = dict(media_data)
     
     DEFAULT_CSS = """
     MediaViewerPanel {
@@ -480,6 +487,12 @@ class MediaViewerPanel(Container):
                             with Horizontal(classes="metadata-buttons"):
                                 yield Button("Edit", id="edit-button", variant="primary")
                                 yield Button(
+                                    "Use in Chat",
+                                    id="media-use-in-chat-button",
+                                    variant="primary",
+                                    disabled=True,
+                                )
+                                yield Button(
                                     "Save for Later",
                                     id="read-it-later-button",
                                     variant="default",
@@ -671,6 +684,7 @@ class MediaViewerPanel(Container):
     
     def watch_media_data(self, media_data: Optional[Dict[str, Any]]) -> None:
         """Update display when media data changes."""
+        self._update_use_in_chat_button()
         if media_data:
             self._update_read_it_later_button()
             self.update_metadata_display()
@@ -853,8 +867,22 @@ class MediaViewerPanel(Container):
             search_input = self.query_one("#content-search-input", Input)
             search_input.value = ""
             self._update_read_it_later_button()
+            self._update_use_in_chat_button()
         except:
             pass
+
+    def _update_use_in_chat_button(self) -> None:
+        """Enable the Chat handoff action when a media item is loaded."""
+        try:
+            button = self.query_one("#media-use-in-chat-button", Button)
+        except Exception:
+            return
+        button.disabled = not bool(self.media_data)
+
+    def _build_use_in_chat_event(self) -> Optional[UseInChatRequested]:
+        if not self.media_data:
+            return None
+        return self.UseInChatRequested(dict(self.media_data))
 
     def _update_read_it_later_button(self) -> None:
         """Sync the save/remove affordance with the currently loaded record."""
@@ -917,6 +945,14 @@ class MediaViewerPanel(Container):
         
         return ''.join(result)
     
+    @on(Button.Pressed, "#media-use-in-chat-button")
+    def handle_use_in_chat_button(self, event: Button.Pressed) -> None:
+        """Handle Use in Chat button press."""
+        event.stop()
+        handoff_event = self._build_use_in_chat_event()
+        if handoff_event is not None:
+            self.post_message(handoff_event)
+
     @on(Button.Pressed, "#edit-button")
     def handle_edit_button(self) -> None:
         """Handle edit button press."""
