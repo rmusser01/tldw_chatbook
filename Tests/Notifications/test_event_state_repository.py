@@ -139,6 +139,29 @@ def test_duplicate_event_does_not_insert_second_record_or_advance_cursor(tmp_pat
     assert [row["server_cursor"] for row in repo.list_events(limit=10)] == ["cursor-1"]
 
 
+def test_event_record_and_cursor_advance_roll_back_atomically_on_cursor_failure(tmp_path, monkeypatch):
+    repo = EventStateRepository(tmp_path / "events.db")
+    event = _event(event_id="event-1", server_cursor="cursor-1")
+
+    def fail_cursor_write(*args, **kwargs):
+        raise RuntimeError("cursor write failed")
+
+    monkeypatch.setattr(repo, "_upsert_cursor", fail_cursor_write)
+
+    with pytest.raises(RuntimeError, match="cursor write failed"):
+        repo.record_event_and_advance_processed_cursor(event)
+
+    assert repo.list_events(limit=10) == []
+    assert repo.is_duplicate_event(event) is False
+    assert repo.get_processed_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+    ).cursor is None
+
+
 def test_presented_high_water_is_separate_from_processed_cursor(tmp_path):
     repo = EventStateRepository(tmp_path / "events.db")
     event = _event()
