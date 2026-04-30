@@ -46,11 +46,13 @@ Use a small fixed status vocabulary:
 - `done`: code, contract, and tests are committed.
 - `ready-for-ux`: backend contract is stable enough for UX work; implementation may still have non-blocking hardening.
 - `in-progress`: active backend work exists but the contract is not ready.
+- `security-blocked`: non-security foundation code exists, but a security-affecting credential, auth, redaction, logout, or server-switch row is not complete; dependent production work must not consume the seam as complete.
 - `blocked`: cannot progress without another tranche, server API, or ownership decision.
 - `deferred`: explicitly out of scope for this phase.
 - `not-started`: no committed implementation or contract yet.
 
 Each row must include enough evidence to justify its status. A row cannot be `done` or `ready-for-ux` without a committed test or contract reference.
+Security-affecting auth or credential rows are gate blockers: if any such row is not `done`, the Connection/Auth gate is `security-blocked`, not `done`.
 
 ## Tracker Schema
 
@@ -62,13 +64,17 @@ The live tracker should use Markdown tables with these columns:
 | `Item` | Specific deliverable. |
 | `Status` | One of the fixed status values. |
 | `UX readiness` | `safe`, `partial`, `blocked`, or `not-applicable`. |
+| `Source authority` | `local`, `server`, `workspace`, `mixed`, `remote-only`, or `not-applicable`. |
 | `Backend owner` | Person, lane, or `unassigned`. |
 | `Contract path` | Spec, schema, or service contract file. |
+| `Contract version` | Version string from the contract, or `none` if the row is not contract-bearing. |
+| `Stability` | `stable`, `provisional`, `experimental`, `blocked`, or `not-applicable`. |
 | `Implementation evidence` | Commit hash, module, or test proving the row. |
 | `Remaining work` | Concrete next action, not a vague theme. |
 | `Blocker` | Missing API, dependency, owner conflict, or `none`. |
 
 Rows should be small enough that a contributor can claim or finish one row without editing unrelated code.
+Rows marked `ready-for-ux` must have `Source authority`, `Contract version`, and `Stability` populated with non-placeholder values.
 
 ## Required Sections
 
@@ -109,7 +115,18 @@ Track each domain from the roadmap:
 - Study/Evaluations.
 - RAG/Embeddings.
 - Audio/Voice.
-- Remote-only utilities: sharing, web clipper, translation, server tools, Text2SQL, server skills, claims, meetings, outputs, Kanban, Prompt Studio.
+- Remote-only utility rollup.
+- Sharing.
+- Web clipper.
+- Translation.
+- Server tools.
+- Text2SQL.
+- Server skills.
+- Claims.
+- Meetings.
+- Outputs.
+- Kanban.
+- Prompt Studio.
 
 Each domain row must answer:
 
@@ -118,6 +135,8 @@ Each domain row must answer:
 - Which operations are unsupported and through which reason-code report.
 - Whether dry-run mirror reporting exists.
 - Whether UX can render a source selector without reading service internals.
+
+The remote-only utility rollup is only a summary row. Handoff readiness must be tracked on the individual remote-only utility rows because each utility can have different server APIs, auth requirements, capability reason codes, and blockers.
 
 ### UX Handoff Readiness
 
@@ -163,16 +182,17 @@ Keep deferred work explicit so it does not re-enter the phase accidentally:
 - Do not mark a row `ready-for-ux` if the UX developer would need to inspect implementation internals to know source authority, capability status, or unsupported behavior.
 - If a row depends on a server API that is not present, mark it `blocked` and name the API.
 - If a row depends on a design decision, mark it `blocked` and name the owner needed for the decision.
+- If a row depends on unresolved security-affecting credential/auth/logout/redaction work, mark the row `security-blocked` and make the Connection/Auth gate `security-blocked`.
 - Keep blocker text concrete and actionable.
 
 ## Initial Seed Status
 
 The first live tracker should seed these statuses from current `dev`:
 
-- Connection/auth: `done` for committed foundation, with any credential hardening rows split out if still open.
+- Connection/auth: `done` only if secure credential storage, credential redaction, logout/global sign-out cleanup, and server-switch invalidation rows are also `done`. If any of those security-affecting rows remain open, seed the gate as `security-blocked` and list the exact open row as the blocker.
 - Event/notifications: `ready-for-ux` for event identity, durable repository, server notification observer, and feed projection; durable replay beyond the repository retention policy remains hardening.
 - Sync/mirror foundation: `in-progress`; repository is present, dry-run mirror reports are wired for notes, media, and research, but remaining domains need explicit coverage.
-- Domain edge closure: `in-progress`; remote-only unsupported reports exist broadly, but per-domain UX readiness must be confirmed row by row.
+- Domain edge closure: `in-progress`; remote-only unsupported reports exist broadly, but each remote-only utility must be seeded as its own row and UX readiness must be confirmed row by row.
 - UX handoff packet: `not-started` or `in-progress` depending on whether the tracker implementation creates the first packet section.
 
 ## Acceptance Criteria
