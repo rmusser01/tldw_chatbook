@@ -2363,7 +2363,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         normalized_backend = str(runtime_backend or "").strip().lower()
         if normalized_backend in {"local", "server"}:
             if getattr(self, "runtime_policy", None) is not None:
-                set_authoritative_runtime_source(self, normalized_backend)
+                previous_server_id = getattr(self.runtime_policy.state, "active_server_id", None)
+                updated_state = set_authoritative_runtime_source(self, normalized_backend)
+                server_context_provider = getattr(self, "server_context_provider", None)
+                invalidate_for_server_switch = getattr(
+                    server_context_provider,
+                    "invalidate_for_server_switch",
+                    None,
+                )
+                if callable(invalidate_for_server_switch):
+                    invalidate_for_server_switch(previous_server_id, updated_state.active_server_id)
             else:
                 self.current_runtime_backend = normalized_backend
                 self.runtime_backend = normalized_backend

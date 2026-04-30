@@ -1277,6 +1277,68 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
 
 
 @pytest.mark.asyncio
+async def test_invalidate_for_server_switch_closes_cached_client_without_clearing_credentials(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server-a.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "server-a-access")
+    credentials.set_secret("https://server-b.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "server-b-access")
+    runtime_context = _runtime_context(active_server_id="https://server-a.example.com/api")
+    provider = RuntimeServerContextProvider(
+        runtime_context=runtime_context,
+        target_store=_target_store(
+            tmp_path,
+            [
+                ConfiguredServerTarget(
+                    server_id="https://server-a.example.com/api",
+                    label="Server A",
+                    base_url="https://server-a.example.com/api/",
+                    auth_mode="bearer",
+                    is_default=True,
+                ),
+                ConfiguredServerTarget(
+                    server_id="https://server-b.example.com/api",
+                    label="Server B",
+                    base_url="https://server-b.example.com/api/",
+                    auth_mode="bearer",
+                ),
+            ],
+        ),
+        credential_store=credentials,
+        app_config={},
+    )
+
+    first_client = provider.build_client()
+    opened_http_client = await first_client._get_client()
+
+    provider.invalidate_for_server_switch(
+        "https://server-a.example.com/api",
+        "https://server-a.example.com/api",
+    )
+
+    assert provider._cached_client is first_client
+    assert not opened_http_client.is_closed
+
+    provider._legacy_cleared_server_ids.add("https://server-a.example.com/api")
+    provider.invalidate_for_server_switch(
+        "https://server-a.example.com/api",
+        "https://server-b.example.com/api",
+    )
+    if provider._pending_client_close_tasks:
+        await asyncio.gather(*provider._pending_client_close_tasks)
+
+    assert provider._cached_client is None
+    assert opened_http_client.is_closed
+    assert credentials.get_secret(
+        "https://server-a.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) == "server-a-access"
+    assert credentials.get_secret(
+        "https://server-b.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+    ) == "server-b-access"
+    assert "https://server-a.example.com/api" in provider._legacy_cleared_server_ids
+
+
+@pytest.mark.asyncio
 async def test_switching_active_server_rebuilds_client_with_new_profile_and_closes_old_client(tmp_path):
     credentials = InMemoryServerCredentialStore()
     credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "shared-access")

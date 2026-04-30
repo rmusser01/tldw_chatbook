@@ -564,6 +564,48 @@ def test_reconcile_saved_screen_state_drops_wrong_server_snapshot_against_bootst
 
 
 @pytest.mark.asyncio
+async def test_handle_runtime_backend_changed_routes_server_identity_change_through_provider_hook(
+    tmp_path,
+):
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
+    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+
+    forwarded = []
+
+    async def screen_callback(runtime_backend: str) -> None:
+        forwarded.append(runtime_backend)
+
+    class RecordingServerContextProvider:
+        def __init__(self) -> None:
+            self.invalidations: list[tuple[str | None, str | None]] = []
+
+        def invalidate_for_server_switch(
+            self,
+            previous_server_id: str | None,
+            next_server_id: str | None,
+        ) -> None:
+            self.invalidations.append((previous_server_id, next_server_id))
+
+    store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
+    app_like = _make_app_like(base_url="https://server-a.example.com/api/")
+    app_like.screen = SimpleNamespace(handle_runtime_backend_changed=screen_callback)
+    provider = RecordingServerContextProvider()
+    app_like.server_context_provider = provider
+    load_runtime_policy_for_app(app_like, store=store)
+    app_like.app_config["tldw_api"]["base_url"] = "https://server-b.example.com/api/"
+
+    await TldwCli.handle_runtime_backend_changed(app_like, "server")
+
+    assert provider.invalidations == [
+        ("https://server-a.example.com/api", "https://server-b.example.com/api")
+    ]
+    assert app_like.runtime_policy.state.active_source == "server"
+    assert app_like.runtime_policy.state.active_server_id == "https://server-b.example.com/api"
+    assert forwarded == ["server"]
+
+
+@pytest.mark.asyncio
 async def test_handle_runtime_backend_changed_updates_authoritative_runtime_policy_and_persists(
     tmp_path,
 ):

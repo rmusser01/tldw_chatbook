@@ -171,6 +171,20 @@ class RuntimeServerContextProvider:
         self._legacy_cleared_server_ids.update(self._legacy_server_ids_for_signout())
         self._invalidate_cached_client()
 
+    def invalidate_for_server_switch(
+        self,
+        previous_server_id: str | None,
+        next_server_id: str | None,
+    ) -> None:
+        previous_normalized = self._normalize_optional_server_id(previous_server_id)
+        next_normalized = self._normalize_optional_server_id(next_server_id)
+        if previous_normalized == next_normalized:
+            return
+
+        self._invalidate_cached_client()
+        self._invalidate_event_handles_for_server_switch(previous_normalized, next_normalized)
+        self._invalidate_sync_handles_for_server_switch(previous_normalized, next_normalized)
+
     def clear_active_server_auth_tokens(self) -> None:
         active_server_id = self._require_active_server_id()
         self.credential_store.delete_secret(active_server_id, SERVER_CREDENTIAL_ACCESS_TOKEN)
@@ -391,6 +405,20 @@ class RuntimeServerContextProvider:
         self._pending_client_close_tasks.add(task)
         task.add_done_callback(self._pending_client_close_tasks.discard)
 
+    def _invalidate_event_handles_for_server_switch(
+        self,
+        previous_server_id: str | None,
+        next_server_id: str | None,
+    ) -> None:
+        return None
+
+    def _invalidate_sync_handles_for_server_switch(
+        self,
+        previous_server_id: str | None,
+        next_server_id: str | None,
+    ) -> None:
+        return None
+
     @classmethod
     def _client_cache_key(cls, context: ActiveServerContext) -> _CachedClientKey:
         return _CachedClientKey(
@@ -406,6 +434,11 @@ class RuntimeServerContextProvider:
         if not auth_token:
             return None
         return hashlib.sha256(auth_token.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _normalize_optional_server_id(server_id: str | None) -> str | None:
+        normalized = str(server_id or "").strip()
+        return normalized or None
 
     def _build_capabilities(self, target: ConfiguredServerTarget) -> dict[str, Any]:
         state = self.runtime_context.state
