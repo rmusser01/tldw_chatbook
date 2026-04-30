@@ -19,6 +19,8 @@ _KNOWN_SERVER_CREDENTIAL_PURPOSES = (
     SERVER_CREDENTIAL_API_KEY,
     SERVER_CREDENTIAL_BEARER_TOKEN,
 )
+_SECURE_KEYRING_MODULE_PARTS = ("macos", "windows", "secretservice")
+_INSECURE_KEYRING_MODULE_PARTS = ("fail", "null", "plaintext", "file")
 
 
 class ServerCredentialStore(Protocol):
@@ -31,6 +33,10 @@ class ServerCredentialStore(Protocol):
     def clear_server(self, server_id: str) -> None: ...
 
     def clear_all(self) -> None: ...
+
+
+class CredentialStoreUnavailable(RuntimeError):
+    reason_code = "credential_store_unavailable"
 
 
 @dataclass(frozen=True)
@@ -201,6 +207,78 @@ class InMemoryServerCredentialStore:
         self._secrets.clear()
 
 
+class UnavailableServerCredentialStore:
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    def _raise_unavailable(self) -> None:
+        raise CredentialStoreUnavailable(self.message)
+
+    def set_secret(self, server_id: str, purpose: str, secret: str) -> None:
+        self._raise_unavailable()
+
+    def get_secret(self, server_id: str, purpose: str) -> str | None:
+        self._raise_unavailable()
+
+    def delete_secret(self, server_id: str, purpose: str) -> None:
+        self._raise_unavailable()
+
+    def clear_server(self, server_id: str) -> None:
+        self._raise_unavailable()
+
+    def clear_all(self) -> None:
+        self._raise_unavailable()
+
+
+def _keyring_backend_children(keyring_backend: Any) -> list[Any]:
+    children: list[Any] = []
+    for attr_name in ("backends", "_backends", "keyrings", "backend"):
+        child = getattr(keyring_backend, attr_name, None)
+        if child is None:
+            continue
+        if isinstance(child, (list, tuple, set)):
+            children.extend(child)
+        else:
+            children.append(child)
+    return children
+
+
+def is_secure_keyring_backend(keyring_backend: Any) -> bool:
+    return _is_secure_keyring_backend(keyring_backend, seen=set())
+
+
+def _is_secure_keyring_backend(keyring_backend: Any, *, seen: set[int]) -> bool:
+    backend_id = id(keyring_backend)
+    if backend_id in seen:
+        return False
+    seen.add(backend_id)
+
+    children = _keyring_backend_children(keyring_backend)
+    if children:
+        return any(_is_secure_keyring_backend(child, seen=seen) for child in children)
+
+    module_name = str(getattr(keyring_backend.__class__, "__module__", "")).lower()
+    priority = getattr(keyring_backend, "priority", None)
+    if isinstance(priority, (int, float)) and priority <= 0:
+        return False
+    if any(part in module_name for part in _INSECURE_KEYRING_MODULE_PARTS):
+        return False
+    return any(part in module_name for part in _SECURE_KEYRING_MODULE_PARTS)
+
+
+def build_default_server_credential_store(keyring_backend: Any | None = None) -> ServerCredentialStore:
+    if keyring_backend is None:
+        import keyring
+
+        keyring_backend = keyring.get_keyring()
+    get_keyring = getattr(keyring_backend, "get_keyring", None)
+    if callable(get_keyring):
+        keyring_backend = get_keyring()
+    if not is_secure_keyring_backend(keyring_backend):
+        raise CredentialStoreUnavailable("No secure OS-backed credential store is available.")
+    return KeyringServerCredentialStore(keyring_backend=keyring_backend)
+
+
 class KeyringServerCredentialStore:
     def __init__(
         self,
@@ -363,6 +441,7 @@ class KeyringServerCredentialStore:
 
 
 __all__ = [
+    "CredentialStoreUnavailable",
     "DEFAULT_KEYRING_SERVICE_NAME",
     "SERVER_CREDENTIAL_ACCESS_TOKEN",
     "SERVER_CREDENTIAL_API_KEY",
@@ -373,5 +452,8 @@ __all__ = [
     "ServerCredentialRef",
     "ServerCredentialScope",
     "ServerCredentialStore",
+    "UnavailableServerCredentialStore",
+    "build_default_server_credential_store",
+    "is_secure_keyring_backend",
     "redact_secret",
 ]

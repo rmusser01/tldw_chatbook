@@ -296,13 +296,14 @@ def test_load_runtime_policy_for_app_supports_legacy_url_alias_and_provider_reso
 def test_wire_server_context_provider_exposes_provider_and_credential_store(tmp_path, monkeypatch):
     from tldw_chatbook.app import TldwCli
 
-    class FakeKeyringServerCredentialStore:
+    class FakeServerCredentialStore:
         pass
 
+    fake_store = FakeServerCredentialStore()
     monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
-        "tldw_chatbook.app.KeyringServerCredentialStore",
-        FakeKeyringServerCredentialStore,
+        "tldw_chatbook.app.build_default_server_credential_store",
+        lambda: fake_store,
     )
     app_like = SimpleNamespace(
         app_config={"tldw_api": {"base_url": "https://example.com/api/"}},
@@ -311,10 +312,34 @@ def test_wire_server_context_provider_exposes_provider_and_credential_store(tmp_
 
     TldwCli._wire_server_context_provider(app_like)
 
-    assert isinstance(app_like.server_credential_store, FakeKeyringServerCredentialStore)
+    assert app_like.server_credential_store is fake_store
     assert app_like.server_context_provider is not None
     assert app_like.server_context_provider.runtime_context is app_like.runtime_policy
     assert app_like.server_context_provider.target_store is app_like.unified_mcp_target_store
+    assert app_like.server_context_provider.credential_store is app_like.server_credential_store
+
+
+def test_wire_server_context_provider_uses_unavailable_store_when_secure_store_missing(tmp_path, monkeypatch):
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.runtime_policy.server_credentials import (
+        CredentialStoreUnavailable,
+        UnavailableServerCredentialStore,
+    )
+
+    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+
+    def raise_unavailable():
+        raise CredentialStoreUnavailable("No secure OS-backed credential store is available.")
+
+    monkeypatch.setattr("tldw_chatbook.app.build_default_server_credential_store", raise_unavailable)
+    app_like = SimpleNamespace(
+        app_config={"tldw_api": {"base_url": "https://example.com/api/"}},
+        runtime_policy=SimpleNamespace(state=RuntimeSourceState()),
+    )
+
+    TldwCli._wire_server_context_provider(app_like)
+
+    assert isinstance(app_like.server_credential_store, UnavailableServerCredentialStore)
     assert app_like.server_context_provider.credential_store is app_like.server_credential_store
 
 

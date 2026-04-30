@@ -11,6 +11,7 @@ from tldw_chatbook.tldw_api import TLDWAPIClient
 
 from .bootstrap import RuntimePolicyContext, build_runtime_api_client, derive_configured_server_binding
 from .server_credentials import (
+    CredentialStoreUnavailable,
     SERVER_CREDENTIAL_ACCESS_TOKEN,
     SERVER_CREDENTIAL_API_KEY,
     SERVER_CREDENTIAL_BEARER_TOKEN,
@@ -47,6 +48,11 @@ class ServerContextUnavailable(RuntimeError):
 
 class ServerCredentialsUnavailable(RuntimeError):
     reason_code = "server_credentials_unavailable"
+
+    def __init__(self, message: str, *, reason_code: str | None = None) -> None:
+        super().__init__(message)
+        if reason_code is not None:
+            self.reason_code = reason_code
 
 
 class RuntimeServerContextProvider:
@@ -236,6 +242,11 @@ class RuntimeServerContextProvider:
     def _get_credential_secret(self, server_id: str, purpose: str) -> str | None:
         try:
             return self.credential_store.get_secret(server_id, purpose)
+        except CredentialStoreUnavailable as exc:
+            raise ServerCredentialsUnavailable(
+                f"Credential store is unavailable for active server credential purpose: {purpose}",
+                reason_code=exc.reason_code,
+            ) from exc
         except Exception as exc:
             raise ServerCredentialsUnavailable(
                 f"Credential store is unavailable for active server credential purpose: {purpose}"

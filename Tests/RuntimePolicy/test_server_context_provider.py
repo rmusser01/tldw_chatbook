@@ -10,11 +10,13 @@ from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 from tldw_chatbook.runtime_policy.bootstrap import RuntimePolicyContext
 from tldw_chatbook.runtime_policy.server_credentials import (
+    CredentialStoreUnavailable,
     SERVER_CREDENTIAL_ACCESS_TOKEN,
     SERVER_CREDENTIAL_API_KEY,
     SERVER_CREDENTIAL_BEARER_TOKEN,
     SERVER_CREDENTIAL_REFRESH_TOKEN,
     InMemoryServerCredentialStore,
+    UnavailableServerCredentialStore,
 )
 from tldw_chatbook.runtime_policy.server_context import (
     RuntimeServerContextProvider,
@@ -364,6 +366,28 @@ def test_explicit_keyring_reference_raises_typed_error_when_credential_store_is_
         provider.get_active_context()
 
     assert isinstance(exc.value.__cause__, RuntimeError)
+
+
+def test_explicit_keyring_reference_preserves_credential_store_unavailable_reason_code(tmp_path):
+    provider = _provider(
+        tmp_path,
+        credential_store=UnavailableServerCredentialStore("no secure store"),
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="bearer",
+                auth_reference=f"keyring:{SERVER_CREDENTIAL_ACCESS_TOKEN}",
+                is_default=True,
+            )
+        ],
+    )
+
+    with pytest.raises(ServerCredentialsUnavailable) as exc:
+        provider.get_active_context()
+
+    assert exc.value.reason_code == CredentialStoreUnavailable.reason_code
 
 
 def test_bearer_auth_prefers_bearer_token_then_access_token_before_legacy_config(tmp_path):

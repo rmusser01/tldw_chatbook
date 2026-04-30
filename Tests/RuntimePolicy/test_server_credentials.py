@@ -13,6 +13,11 @@ from tldw_chatbook.runtime_policy import (
     ServerCredentialRef,
     redact_secret,
 )
+from tldw_chatbook.runtime_policy.server_credentials import (
+    CredentialStoreUnavailable,
+    UnavailableServerCredentialStore,
+    build_default_server_credential_store,
+)
 
 
 class FakeKeyring:
@@ -45,6 +50,55 @@ class PasswordDeleteErrorKeyring(FakeKeyring):
     def delete_password(self, service_name: str, username: str) -> None:
         self.deleted.append((service_name, username))
         raise self.errors.PasswordDeleteError("delete failed")
+
+
+class FakePlaintextKeyring:
+    __module__ = "keyring.backends.file"
+    priority = 1
+
+
+class FakeFailKeyring:
+    __module__ = "keyring.backends.fail"
+    priority = 0
+
+
+class FakeMacOSKeyring(FakeKeyring):
+    __module__ = "keyring.backends.macOS"
+    priority = 5
+
+
+class FakeChainerKeyring:
+    __module__ = "keyring.backends.chainer"
+
+    def __init__(self, *backends):
+        self.backends = list(backends)
+
+
+def test_default_credential_store_rejects_plaintext_or_fail_backends():
+    for backend in [FakePlaintextKeyring(), FakeFailKeyring()]:
+        with pytest.raises(CredentialStoreUnavailable) as exc:
+            build_default_server_credential_store(keyring_backend=backend)
+
+        assert exc.value.reason_code == "credential_store_unavailable"
+
+
+def test_unavailable_credential_store_disables_persistent_secret_operations():
+    store = UnavailableServerCredentialStore("no secure store")
+
+    with pytest.raises(CredentialStoreUnavailable) as exc:
+        store.get_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN)
+
+    assert exc.value.reason_code == "credential_store_unavailable"
+
+
+def test_default_credential_store_inspects_wrapped_backends():
+    with pytest.raises(CredentialStoreUnavailable):
+        build_default_server_credential_store(keyring_backend=FakeChainerKeyring(FakePlaintextKeyring()))
+
+    secure_child = FakeMacOSKeyring()
+    store = build_default_server_credential_store(keyring_backend=FakeChainerKeyring(secure_child))
+
+    assert isinstance(store, KeyringServerCredentialStore)
 
 
 def test_in_memory_credentials_are_scoped_by_server_and_purpose():

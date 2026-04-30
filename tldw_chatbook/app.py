@@ -308,7 +308,11 @@ from tldw_chatbook.runtime_policy.bootstrap import (
 )
 from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
 from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
-from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
+from tldw_chatbook.runtime_policy.server_credentials import (
+    CredentialStoreUnavailable,
+    UnavailableServerCredentialStore,
+    build_default_server_credential_store,
+)
 from tldw_chatbook.runtime_policy.engine import PolicyEngine
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
@@ -1514,7 +1518,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             get_user_data_dir() / "mcp_server_targets.json",
         )
         self.unified_mcp_target_store.upsert_legacy_config_target(self.app_config)
-        self.server_credential_store = KeyringServerCredentialStore()
+        try:
+            self.server_credential_store = build_default_server_credential_store()
+        except CredentialStoreUnavailable as exc:
+            self.server_credential_store = UnavailableServerCredentialStore(str(exc))
         self.server_context_provider = RuntimeServerContextProvider(
             runtime_context=self.runtime_policy,
             target_store=self.unified_mcp_target_store,
