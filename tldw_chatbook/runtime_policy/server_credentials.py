@@ -117,6 +117,18 @@ def _is_legacy_scope(scope: ServerCredentialScope) -> bool:
     )
 
 
+def _normalize_scope(scope: ServerCredentialScope) -> ServerCredentialScope:
+    principal_id = scope.principal_id
+    if principal_id is not None:
+        principal_id = _normalize_non_empty(principal_id, "principal_id")
+    return ServerCredentialScope(
+        server_profile_id=_normalize_non_empty(scope.server_profile_id, "server_profile_id"),
+        normalized_origin=_normalize_non_empty(scope.normalized_origin, "normalized_origin"),
+        credential_type=_normalize_purpose(scope.credential_type),
+        principal_id=principal_id,
+    )
+
+
 def _scope_from_index_entry(entry: Any) -> ServerCredentialScope | None:
     if isinstance(entry, (list, tuple)) and len(entry) == 2:
         server_id, purpose = entry
@@ -301,10 +313,12 @@ class KeyringServerCredentialStore:
         self.delete_scoped_secret(ServerCredentialScope.legacy(server_id, purpose))
 
     def set_scoped_secret(self, scope: ServerCredentialScope, secret: str) -> None:
+        scope = _normalize_scope(scope)
         self._keyring.set_password(self.service_name, _username_for_scope(scope), secret)
         self._add_scope_to_index(scope)
 
     def get_scoped_secret(self, scope: ServerCredentialScope) -> str | None:
+        scope = _normalize_scope(scope)
         secret = self._keyring.get_password(self.service_name, _username_for_scope(scope))
         if secret is not None:
             return secret
@@ -313,6 +327,7 @@ class KeyringServerCredentialStore:
         return self._keyring.get_password(self.service_name, _legacy_username_for_scope(scope))
 
     def delete_scoped_secret(self, scope: ServerCredentialScope) -> None:
+        scope = _normalize_scope(scope)
         username = _username_for_scope(scope)
         legacy_username = _legacy_username_for_scope(scope)
 
@@ -338,6 +353,8 @@ class KeyringServerCredentialStore:
         for scope in list(self._load_index()):
             if scope.server_profile_id == normalized_server_id:
                 self.delete_scoped_secret(scope)
+        for purpose in _KNOWN_SERVER_CREDENTIAL_PURPOSES:
+            self.delete_scoped_secret(ServerCredentialScope.legacy(normalized_server_id, purpose))
 
     def clear_all(self) -> None:
         for scope in list(self._load_index()):

@@ -137,6 +137,41 @@ def test_keyring_non_legacy_scoped_delete_does_not_delete_legacy_secret():
     assert fake.values[legacy_key] == "legacy-secret"
 
 
+def test_keyring_scoped_methods_normalize_and_validate_direct_scopes():
+    fake = FakeKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    padded_scope = ServerCredentialScope(
+        server_profile_id=" server-a ",
+        normalized_origin=" https://server.example.com ",
+        credential_type=f" {SERVER_CREDENTIAL_ACCESS_TOKEN} ",
+        principal_id=" user-a ",
+    )
+    normalized_scope = ServerCredentialScope(
+        server_profile_id="server-a",
+        normalized_origin="https://server.example.com",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+        principal_id="user-a",
+    )
+
+    store.set_scoped_secret(padded_scope, "scoped-secret")
+
+    assert store.get_scoped_secret(normalized_scope) == "scoped-secret"
+
+    invalid_scope = ServerCredentialScope(
+        server_profile_id="server-a",
+        normalized_origin="   ",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+    )
+
+    try:
+        store.set_scoped_secret(invalid_scope, "invalid-secret")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid direct scope should raise ValueError")
+    assert "invalid-secret" not in fake.values.values()
+
+
 def test_keyring_clear_server_removes_all_indexed_entries_for_profile():
     fake = FakeKeyring()
     store = KeyringServerCredentialStore(keyring_backend=fake)
@@ -145,3 +180,17 @@ def test_keyring_clear_server_removes_all_indexed_entries_for_profile():
     store.clear_server("server-a")
 
     assert store.get_secret("server-a", "custom_token") is None
+
+
+def test_keyring_clear_server_removes_unindexed_legacy_entries_for_profile():
+    fake = FakeKeyring()
+    legacy_key = (DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")
+    fake.values[legacy_key] = "legacy-secret"
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+
+    assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) == "legacy-secret"
+
+    store.clear_server("server-a")
+
+    assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) is None
+    assert legacy_key not in fake.values
