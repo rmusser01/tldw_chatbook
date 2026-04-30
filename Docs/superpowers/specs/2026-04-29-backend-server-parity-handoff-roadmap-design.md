@@ -74,13 +74,22 @@ Existing authorities to preserve:
 - `RuntimeServerContextProvider` becomes the only supported way for domain services to obtain credential-bound server clients.
 - Legacy config-based `tldw_api` construction remains only as audited compatibility input during migration.
 
+Capability authority rule:
+
+- `ActiveServerCapabilityService` is the aggregator and source for UX-facing capability reports.
+- Domain scope services may contribute unsupported-capability inputs, but they do not become independent capability authorities.
+- Per-domain capability matrices are derived UX contracts generated from the runtime-policy/capability aggregation seam and scope-service unsupported reports.
+
 Required backend behavior:
 
 - Secure per-server credential storage with fake/in-memory test backend.
 - Active-profile-only legacy credential import.
 - Global sign-out clears all stored credentials, including orphaned entries.
-- Server switching invalidates clients, capability snapshots, remote selections, event streams, and sync cursors.
+- Server switching invalidates clients, capability snapshots, remote selections, event streams, and active sync/event handles.
+- Server switching does not delete persisted per-server cursors by default. Persisted cursor state is retained only under its server-profile scope and is cleared only by logout, credential removal, profile deletion, or explicit user action.
+- Active-server/auth context captures authenticated principal ID, permission scope, and workspace/resource scope where exposed by the server.
 - Missing, expired, unreachable, unauthorized, and auth-required states return typed failures.
+- Stale authorization, lost workspace access, and profile-no-longer-authorized states return typed failures instead of silently hiding or reclassifying resources.
 - Secrets never appear in JSON profiles, logs, exports, exception strings, unsupported reports, or cache keys.
 
 UX handoff output:
@@ -100,6 +109,13 @@ Acceptance criteria:
 ## Tranche 2: Realtime And Notifications Foundation
 
 This tranche creates a backend event-observation layer that feeds UX without exposing transport details to screens.
+
+Single event authority:
+
+- `EventStateRepository` is the single owner for normalized event records, server stream cursors, dedupe keys, and event retention.
+- `ServerEventObserver` writes through `EventStateRepository`; it is transport logic, not event authority.
+- `ServerNotificationPresentation` records are derived, invalidatable presentation cache state and never become authoritative server resources.
+- `LocalNotificationStore` remains authoritative only for Chatbook-owned local notifications, not for server event state.
 
 Core components:
 
@@ -135,16 +151,23 @@ Acceptance criteria:
 
 ## Tranche 3: Sync/Mirror Foundation
 
-This tranche builds sync infrastructure without enabling write sync by default. The first implementation is dry-run/read-only mirror reporting.
+This tranche builds sync infrastructure without enabling write sync by default. The first implementation is dry-run/read-only mirror reporting and must not enqueue mutations.
 
-Core components:
+Initial dry-run components:
 
 - `EntityIdentityMap`: local entity ID, remote entity ID, source scope, active server profile ID, and workspace ID where relevant.
 - `SyncProfileState`: per-server state for cursors, last mirror report, last error, and eligibility.
-- `LocalOutbox`: queued local mutations, disabled unless a domain passes eligibility.
 - `RemotePullCursorStore`: per-server and per-domain pull cursors.
-- `ConflictPolicy`: explicit enum such as `remote_wins`, `local_wins`, `manual`, and `unsupported`.
+- `MirrorReportStore`: read-only comparison reports with local/remote identity, observed versions, status, and reason codes.
+- `ConflictReportPolicy`: report-only enum such as `remote_changed`, `local_dirty`, `both_changed`, `unmapped`, and `unsupported`.
 - `DomainSyncEligibilityRegistry`: every domain defaults to `not_eligible`.
+
+Future write-sync components, explicitly out of scope for the initial tranche:
+
+- `LocalOutbox` mutation enqueue and replay.
+- Persisted write queue processing.
+- `local_wins`, `remote_wins`, `merge`, or `manual` write-conflict resolution.
+- Any background mutation dispatch to the server.
 
 Eligibility checklist before write sync:
 
@@ -177,6 +200,7 @@ Acceptance criteria:
 
 - No domain can enter sync accidentally.
 - No domain can use write sync until it passes the checklist.
+- The initial sync tranche has no mutation enqueue path and no persisted outbox writes.
 - Workspace-scoped records preserve workspace boundaries.
 - Server switching cannot replay queued operations against the wrong server.
 
@@ -186,7 +210,7 @@ After the foundations land, domain work should be narrow and source-honest. Each
 
 Priority edges:
 
-- Chat: source-separated history, streaming/persist handoff, server-owned sync semantics, and local chat-loop execution decision.
+- Chat: source-separated history, streaming/persist handoff, server-owned sync semantics, and source-honest chat request execution/persistence semantics. This excludes workflow orchestration, scheduler behavior, and multi-step automation.
 - Media/Reading: ingest-job event/status normalization, chunk-level TTS playback adoption, and saved-view support only where the server contract exists.
 - Notes/Workspaces: graph semantics, local graph unsupported reports, workspace-aware sync rules, and deferred cross-scope moves.
 - Writing: source-honest server-only analysis operations and optional local richer analysis only if a local engine is approved.
@@ -195,6 +219,12 @@ Priority edges:
 - RAG/Embeddings: local per-media embedding admin decision and server collection export contract.
 - Audio/Voice: WebSocket transport slices, speech job/artifact parity, and source-honest history.
 - Remote-only utilities: sharing, web clipper, translation, server tools, Text2SQL, server skills, claims, meetings, outputs, Kanban, and Prompt Studio stay active-server owned unless separately approved for local parity.
+
+Remote-only minimum contract:
+
+- Every remote-only utility must report unsupported local/offline behavior through the same reason-code shape.
+- Required reason codes include `server_required`, `server_unavailable`, `auth_required`, `permission_denied`, `capability_missing`, and `not_implemented_locally`.
+- UX may render disabled or unavailable states from these codes without calling the underlying adapter.
 
 Rules:
 
@@ -232,6 +262,14 @@ Required packet sections:
 - Per-domain view-model contracts.
 - Workspace isolation rules.
 - Server unavailable/auth-expired/error presentation rules.
+
+Contract format rules:
+
+- Each handoff contract is a versioned typed schema.
+- Each schema includes owner, stability level, compatibility rules, and example payloads.
+- Reason-code enums are explicit and shared across domains where possible.
+- Service-level contract tests pin each schema before UX work depends on it.
+- Breaking contract changes require a version bump and migration note in the handoff packet.
 
 The UX developer should consume this packet and service-level contracts, not current UI implementation details.
 
