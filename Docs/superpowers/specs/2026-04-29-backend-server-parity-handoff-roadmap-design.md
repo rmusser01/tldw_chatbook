@@ -185,6 +185,7 @@ Current implementation anchors:
 - `tldw_chatbook.Notifications.event_state_repository.EventStateRepository` owns durable event records, dedupe, processed cursors, presented high-water, retention policies, observer status, stream resets, and scoped profile cleanup.
 - `EventObserver` consumes an event-state protocol so the old in-memory cursor store is a test/compatibility implementation, not a second durable authority.
 - Event identity models in `runtime_policy.server_parity_models` include authenticated principal in cursor, event, and dedupe scope.
+- Production server event scope must derive `authenticated_principal_id` from the active server context before starting observers. JWT credentials use the token subject when present; opaque credentials use a non-secret credential fingerprint fallback so switching credentials on the same server does not share cursor/dedupe state.
 - `tldw_chatbook.runtime_policy.server_parity_state.ServerParityStateRepositories` is the app-wired bundle that exposes `EventStateRepository`, reuses `ClientNotificationsDB` for local notifications, and keeps process-local `EventCursorStore` out of production authority paths.
 
 UX handoff output:

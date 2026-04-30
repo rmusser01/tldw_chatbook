@@ -314,6 +314,7 @@ from tldw_chatbook.runtime_policy.server_credentials import (
     UnavailableServerCredentialStore,
     build_default_server_credential_store,
 )
+from tldw_chatbook.runtime_policy.server_event_scope import event_principal_id_from_active_context
 from tldw_chatbook.runtime_policy.server_parity_state import (
     ServerParityStateRepositories,
     build_server_parity_state_repositories,
@@ -2354,9 +2355,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _server_notification_event_scope(self) -> dict[str, str | None]:
         runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
         active_server_id = getattr(runtime_state, "active_server_id", None)
+        authenticated_principal_id = None
+        server_context_provider = getattr(self, "server_context_provider", None)
+        get_active_context = getattr(server_context_provider, "get_active_context", None)
+        if callable(get_active_context):
+            try:
+                authenticated_principal_id = event_principal_id_from_active_context(get_active_context())
+            except Exception:
+                authenticated_principal_id = None
         return {
             "server_profile_id": str(active_server_id) if active_server_id else None,
-            "authenticated_principal_id": None,
+            "authenticated_principal_id": authenticated_principal_id,
             "stream_instance_id": "global",
         }
 
