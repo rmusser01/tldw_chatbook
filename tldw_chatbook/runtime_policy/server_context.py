@@ -131,6 +131,7 @@ class RuntimeServerContextProvider:
 
     def build_client(self) -> TLDWAPIClient:
         context = self.get_active_context()
+        self._ensure_client_context_usable(context)
         cache_key = self._client_cache_key(context)
         if self._cached_client is not None and self._cached_client_key == cache_key:
             return self._cached_client
@@ -268,6 +269,33 @@ class RuntimeServerContextProvider:
         if credential_error is not None:
             raise credential_error
         return None, "none"
+
+    def _ensure_client_context_usable(self, context: ActiveServerContext) -> None:
+        state = self.runtime_context.state
+        if state.server_reachability == "unreachable":
+            raise ServerContextUnavailable(
+                "Active server is currently unavailable.",
+                reason_code="server_unavailable",
+                active_server_id=context.active_server_id,
+            )
+        if state.server_auth_state == "session_invalid":
+            raise ServerCredentialsUnavailable(
+                "Active server authorization is stale.",
+                reason_code="stale_authorization",
+                active_server_id=context.active_server_id,
+            )
+        if state.server_auth_state == "auth_required":
+            raise ServerCredentialsUnavailable(
+                "Active server authentication is required.",
+                reason_code="auth_required",
+                active_server_id=context.active_server_id,
+            )
+        if context.auth_token is None and self._purposes_for_auth_mode(context.auth_method):
+            raise ServerCredentialsUnavailable(
+                "Active server authentication is required.",
+                reason_code="auth_required",
+                active_server_id=context.active_server_id,
+            )
 
     def _get_credential_secret(self, server_id: str, purpose: str) -> str | None:
         try:

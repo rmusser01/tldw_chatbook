@@ -708,6 +708,112 @@ def test_profile_target_auth_resolution_does_not_re_resolve_active_target(tmp_pa
     assert target_store.get_target_calls == 1
 
 
+def test_build_client_without_required_credentials_raises_auth_required_contract(tmp_path):
+    provider = _provider(
+        tmp_path,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                is_default=True,
+            )
+        ],
+    )
+
+    with pytest.raises(ServerCredentialsUnavailable) as exc:
+        provider.build_client()
+
+    contract = exc.value.to_contract()
+    assert exc.value.reason_code == "auth_required"
+    assert contract["reason_code"] == "auth_required"
+    assert contract["active_server_id"] == "https://server.example.com/api"
+    assert "token" not in repr(contract).lower()
+    assert "authorization" not in repr(contract).lower()
+
+
+def test_build_client_raises_server_unavailable_when_runtime_state_is_unreachable(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key")
+    runtime_context = _runtime_context()
+    runtime_context.state = replace(runtime_context.state, server_reachability="unreachable")
+    provider = _provider(
+        tmp_path,
+        runtime_context=runtime_context,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                is_default=True,
+            )
+        ],
+    )
+
+    with pytest.raises(ServerContextUnavailable) as exc:
+        provider.build_client()
+
+    assert exc.value.reason_code == "server_unavailable"
+    assert exc.value.to_contract()["reason_code"] == "server_unavailable"
+
+
+def test_build_client_raises_auth_required_when_runtime_state_requires_auth(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key")
+    runtime_context = _runtime_context()
+    runtime_context.state = replace(runtime_context.state, server_auth_state="auth_required")
+    provider = _provider(
+        tmp_path,
+        runtime_context=runtime_context,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                is_default=True,
+            )
+        ],
+    )
+
+    with pytest.raises(ServerCredentialsUnavailable) as exc:
+        provider.build_client()
+
+    assert exc.value.reason_code == "auth_required"
+    assert exc.value.to_contract()["reason_code"] == "auth_required"
+
+
+def test_build_client_raises_stale_authorization_when_runtime_session_invalid(tmp_path):
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key")
+    runtime_context = _runtime_context()
+    runtime_context.state = replace(runtime_context.state, server_auth_state="session_invalid")
+    provider = _provider(
+        tmp_path,
+        runtime_context=runtime_context,
+        credential_store=credentials,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                is_default=True,
+            )
+        ],
+    )
+
+    with pytest.raises(ServerCredentialsUnavailable) as exc:
+        provider.build_client()
+
+    assert exc.value.reason_code == "stale_authorization"
+    assert exc.value.to_contract()["reason_code"] == "stale_authorization"
+
+
 def test_build_client_uses_active_context_base_url_and_bearer_token(tmp_path):
     credentials = InMemoryServerCredentialStore()
     credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-secret")
