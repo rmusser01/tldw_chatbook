@@ -257,6 +257,7 @@ from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPla
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     ClientNotificationsService,
+    EventStateRepository,
     NotificationsScopeService,
     NotificationDispatchService,
     ServerNotificationsService,
@@ -279,7 +280,7 @@ from tldw_chatbook.Research_Interop import (
 from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Skills_Interop import ServerSkillsService, SkillsScopeService
-from tldw_chatbook.Sync_Interop import ServerSyncService, SyncScopeService
+from tldw_chatbook.Sync_Interop import ServerSyncService, SyncScopeService, SyncStateRepository
 from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
 from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
 from tldw_chatbook.MCP_Governance_Interop import MCPGovernanceScopeService, ServerMCPGovernanceService
@@ -312,6 +313,10 @@ from tldw_chatbook.runtime_policy.server_credentials import (
     CredentialStoreUnavailable,
     UnavailableServerCredentialStore,
     build_default_server_credential_store,
+)
+from tldw_chatbook.runtime_policy.server_parity_state import (
+    ServerParityStateRepositories,
+    build_server_parity_state_repositories,
 )
 from tldw_chatbook.runtime_policy.engine import PolicyEngine
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
@@ -1814,6 +1819,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 ":memory:",
                 CLI_APP_CLIENT_ID,
             )
+        self._wire_server_parity_state_repositories()
         self.client_notifications_service = ClientNotificationsService(
             store=self.client_notifications_db,
             policy_enforcer=self.service_policy_enforcer,
@@ -1841,6 +1847,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_claims_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+
         try:
             self.server_meetings_service = ServerMeetingsService.from_config(
                 self.app_config,
@@ -2294,6 +2301,27 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.local_media_reading_service.notification_app = self
         self.local_watchlists_service.notification_dispatcher = self.notification_dispatch_service
         self.local_watchlists_service.notification_app = self
+
+    def _wire_server_parity_state_repositories(self) -> None:
+        try:
+            self.server_parity_state = build_server_parity_state_repositories(
+                data_dir=get_user_data_dir(),
+                client_id=CLI_APP_CLIENT_ID,
+                local_notifications_db=self.client_notifications_db,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to initialize server parity state repositories; using in-memory stores: {}",
+                exc,
+                exc_info=True,
+            )
+            self.server_parity_state = ServerParityStateRepositories(
+                local_notifications_db=self.client_notifications_db,
+                event_state_repository=EventStateRepository(":memory:", CLI_APP_CLIENT_ID),
+                sync_state_repository=SyncStateRepository(":memory:", CLI_APP_CLIENT_ID),
+            )
+        self.event_state_repository = self.server_parity_state.event_state_repository
+        self.sync_state_repository = self.server_parity_state.sync_state_repository
 
     def _resolve_initial_media_runtime_backend(self) -> str:
         """Default media backend to local when no valid runtime value is available."""

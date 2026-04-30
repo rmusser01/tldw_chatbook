@@ -550,6 +550,55 @@ class SyncStateRepository(BaseDB):
             report["report"] = json.loads(report["report"])
         return reports
 
+    def clear_server_profile_state(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None = None,
+    ) -> None:
+        if not server_profile_id:
+            raise ValueError("server_profile_id is required")
+        params: list[str] = [server_profile_id]
+        principal_clause = ""
+        if authenticated_principal_id is not None:
+            principal_clause = " AND authenticated_principal_id = ?"
+            params.append(authenticated_principal_id)
+
+        with self._get_connection() as conn:
+            conn.execute(
+                f"""
+                DELETE FROM sync_conflict_reports
+                WHERE source_scope_key IN (
+                    SELECT source_scope_key
+                    FROM sync_identity_mappings
+                    WHERE server_profile_id = ?{principal_clause}
+                    UNION
+                    SELECT source_scope_key
+                    FROM remote_pull_cursors
+                    WHERE server_profile_id = ?{principal_clause}
+                    UNION
+                    SELECT source_scope_key
+                    FROM mirror_reports
+                    WHERE server_profile_id = ?{principal_clause}
+                )
+                """,
+                tuple(params * 3),
+            )
+            for table_name in (
+                "sync_identity_mappings",
+                "remote_pull_cursors",
+                "mirror_reports",
+                "sync_profile_state",
+            ):
+                conn.execute(
+                    f"""
+                    DELETE FROM {table_name}
+                    WHERE server_profile_id = ?{principal_clause}
+                    """,
+                    tuple(params),
+                )
+            conn.commit()
+
     def set_sync_profile_state(
         self,
         *,

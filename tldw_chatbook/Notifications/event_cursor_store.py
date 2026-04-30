@@ -44,11 +44,11 @@ class DedupeResult:
 
 
 class EventCursorStore:
-    """Small process-local cursor store.
+    """Small process-local test/compatibility cursor store.
 
-    This intentionally does not persist or subscribe to server contracts. It
-    gives observers a shared cursor/dedupe primitive that can later be backed by
-    durable storage without changing the event model.
+    Production server event observation should use EventStateRepository. This
+    store intentionally does not persist or subscribe to server contracts and
+    must not be treated as a second active event-state authority.
     """
 
     def __init__(self, *, dedupe_retention: int = 1_000) -> None:

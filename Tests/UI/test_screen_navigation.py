@@ -44,6 +44,7 @@ from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPla
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     ClientNotificationsService,
+    EventStateRepository,
     NotificationDispatchService,
     NotificationsScopeService,
     ServerNotificationsService,
@@ -87,7 +88,7 @@ from tldw_chatbook.LLM_Provider_Catalog import (
 from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Skills_Interop import ServerSkillsService, SkillsScopeService
-from tldw_chatbook.Sync_Interop import ServerSyncService, SyncScopeService
+from tldw_chatbook.Sync_Interop import ServerSyncService, SyncScopeService, SyncStateRepository
 from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
 from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
 from tldw_chatbook.MCP_Governance_Interop import MCPGovernanceScopeService, ServerMCPGovernanceService
@@ -111,6 +112,7 @@ from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
 from tldw_chatbook.runtime_policy import KeyringServerCredentialStore, RuntimeServerContextProvider
+from tldw_chatbook.runtime_policy.server_parity_state import ServerParityStateRepositories
 
 
 def _build_test_app() -> TldwCli:
@@ -189,6 +191,12 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.server_watchlists_service, ServerWatchlistsService)
     assert isinstance(app.watchlist_scope_service, WatchlistScopeService)
     assert isinstance(app.client_notifications_db, ClientNotificationsDB)
+    assert isinstance(app.server_parity_state, ServerParityStateRepositories)
+    assert isinstance(app.event_state_repository, EventStateRepository)
+    assert isinstance(app.sync_state_repository, SyncStateRepository)
+    assert app.server_parity_state.local_notifications_db is app.client_notifications_db
+    assert app.server_parity_state.event_state_repository is app.event_state_repository
+    assert app.server_parity_state.sync_state_repository is app.sync_state_repository
     assert isinstance(app.client_notifications_service, ClientNotificationsService)
     assert isinstance(app.notification_dispatch_service, NotificationDispatchService)
     assert isinstance(app.server_notifications_service, ServerNotificationsService)

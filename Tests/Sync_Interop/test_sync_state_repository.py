@@ -224,3 +224,91 @@ def test_domain_eligibility_defaults_to_not_eligible_and_persists_override(tmp_p
     assert notes["write_enabled"] is False
     assert notes["reason_codes"] == ("dry_run_only", "identity_ready")
     assert notes["details"] == {"mode": "read_only_mirror"}
+
+
+def test_clear_server_profile_state_removes_only_scoped_sync_rows(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    repo.record_identity_mapping(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="notes",
+        entity_type="note",
+        local_entity_id="local-note-1",
+        remote_entity_id="remote-note-1",
+        mapping_status="confirmed",
+    )
+    repo.record_identity_mapping(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-b",
+        workspace_scope="workspace-1",
+        domain="notes",
+        entity_type="note",
+        local_entity_id="local-note-2",
+        remote_entity_id="remote-note-2",
+        mapping_status="confirmed",
+    )
+    report = repo.record_mirror_report(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="notes",
+        report={"dry_run": True, "write_enabled": False},
+    )
+    repo.set_sync_profile_state(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        last_mirror_report_id=report["report_id"],
+    )
+    repo.set_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="notes",
+        remote_collection="notes",
+        cursor="cursor-user-a",
+    )
+    repo.set_domain_eligibility(
+        domain="notes",
+        sync_eligible=True,
+        write_enabled=False,
+        reason_codes=("dry_run_only",),
+    )
+
+    repo.clear_server_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+    )
+
+    assert repo.list_identity_mappings(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+    ) == []
+    assert len(
+        repo.list_identity_mappings(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-b",
+        )
+    ) == 1
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="notes",
+        remote_collection="notes",
+    ).cursor is None
+    assert repo.get_sync_profile_state(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    ) is None
+    assert repo.list_mirror_reports(domain="notes") == []
+    assert repo.get_domain_eligibility("notes")["sync_eligible"] is True
