@@ -5,6 +5,10 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Literal, Mapping
 
 from tldw_chatbook.runtime_policy.registry import get_capability_entry
+from tldw_chatbook.runtime_policy.domain_edge_contracts import (
+    REQUIRED_UNSUPPORTED_REASON_CODES,
+    build_domain_capability_matrix,
+)
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.runtime_policy.unsupported_capabilities import validate_unsupported_capability_report
 from tldw_chatbook.UX_Interop.server_connection_contracts import (
@@ -351,6 +355,90 @@ def build_server_parity_fixture_payloads() -> dict[str, dict[str, Any]]:
     }
 
 
+def build_server_parity_handoff_packet(
+    state: RuntimeSourceState,
+    *,
+    unsupported_reports: Iterable[Mapping[str, Any]] = (),
+    notification_feed_items: Iterable[Mapping[str, Any]] = (),
+    sync_reports: Iterable[Mapping[str, Any]] = (),
+    workspace_scope_ids: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Build the backend-owned UX handoff packet for the UI rewrite.
+
+    This packet intentionally aggregates contracts from runtime policy, event,
+    sync, and domain-edge seams without importing current UI screens.
+    """
+
+    active_profile = _server_profile_id(state)
+    normalized_unsupported_reports = validate_unsupported_capability_report(unsupported_reports)
+    workspace_contracts = tuple(
+        workspace_isolation_contract(
+            state,
+            workspace_scope_id=workspace_scope_id,
+            action_id="notes.list.workspace" if state.active_source != "server" else "notes.list.server",
+        ).to_payload()
+        for workspace_scope_id in workspace_scope_ids
+    )
+    return {
+        "contract_id": CONTRACT_ID,
+        "contract_version": CONTRACT_VERSION,
+        "schema_version": 1,
+        "owner": "UX_Interop",
+        "stability": "handoff_v1",
+        "compatibility": {
+            "breaking_changes_require_version_bump": True,
+            "ui_must_not_read_service_internals": True,
+        },
+        "sections": {
+            "active_server": ActiveServerStatusContract.from_runtime_state(state).to_payload(),
+            "source_selector": SourceSelectorStateContract.from_runtime_state(state).to_payload(),
+            "capability_status": build_capability_status_contract(
+                active_server_id=active_profile,
+                reachability=state.server_reachability,
+                auth_state=state.server_auth_state,
+                checked_at=_datetime_to_iso(state.server_reachability_checked_at),
+                capabilities={},
+                errors=(),
+            ),
+            "unsupported_actions": tuple(normalized_unsupported_reports),
+            "notification_feed": tuple(dict(item) for item in notification_feed_items),
+            "sync": {
+                "dry_run_only": True,
+                "write_replay_enabled": False,
+                "reports": tuple(dict(report) for report in sync_reports),
+            },
+            "domain_capability_matrix": build_domain_capability_matrix(),
+            "workspace_isolation": workspace_contracts,
+            "mcp_control_plane": {
+                "contract_id": "unified-mcp-control-plane",
+                "contract_version": "1.0",
+                "source_panes": ("local", "server"),
+                "explicit_scope_switching": True,
+                "server_profile_id": active_profile,
+                "local_operations_available_offline": True,
+            },
+            "error_contracts": {
+                "auth_required": build_auth_failure_contract(
+                    reason_code="auth_required",
+                    message="Server authentication is required.",
+                    recoverable=True,
+                    active_server_id=active_profile,
+                ),
+                "server_unavailable": build_auth_failure_contract(
+                    reason_code="server_unavailable",
+                    message="The active server is unavailable.",
+                    recoverable=True,
+                    active_server_id=active_profile,
+                ),
+                "credential_store_unavailable": build_credential_store_unavailable_contract(
+                    message="Secure credential storage is unavailable.",
+                ),
+            },
+            "unsupported_reason_codes": REQUIRED_UNSUPPORTED_REASON_CODES,
+        },
+    }
+
+
 def _payload(contract: Any) -> dict[str, Any]:
     return asdict(contract)
 
@@ -391,3 +479,9 @@ def _server_option_state(state: RuntimeSourceState) -> tuple[bool, str | None]:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _datetime_to_iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat().replace("+00:00", "Z")

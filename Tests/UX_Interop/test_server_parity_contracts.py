@@ -9,6 +9,7 @@ from tldw_chatbook.UX_Interop.server_parity_contracts import (
     ActiveServerStatusContract,
     SourceSelectorStateContract,
     UnsupportedActionPresentationContract,
+    build_server_parity_handoff_packet,
     build_server_parity_fixture_payloads,
     notification_feed_item_from_payload,
     sync_status_contract,
@@ -195,6 +196,80 @@ def test_fixture_payload_helpers_cover_required_ux_handoff_cases():
     assert fixtures["unsupported_action"]["unsupported_reason_code"] == "server_contract_missing"
     assert fixtures["workspace_isolation"]["workspace_scope_id"] == "workspace-a"
     assert fixtures["notification_presentation"]["notification_id"] == "notif-1"
+
+
+def test_server_parity_handoff_packet_aggregates_backend_contract_sections():
+    state = _server_state()
+    packet = build_server_parity_handoff_packet(
+        state,
+        unsupported_reports=[
+            {
+                "operation_id": "sharing.unsupported.local",
+                "source": "local",
+                "supported": False,
+                "reason_code": "server_required",
+                "user_message": "Sharing is server-owned.",
+                "affected_action_ids": [],
+                "domain_id": "sharing",
+            }
+        ],
+        notification_feed_items=[
+            notification_feed_item_from_payload(
+                state,
+                notification_id="notif-1",
+                title="Server event",
+                message="A server event arrived.",
+                action_id="notifications.feed.list.server",
+                workspace_scope_id="workspace-a",
+                created_at="2026-04-29T12:00:00Z",
+            ).to_payload()
+        ],
+        sync_reports=[
+            {
+                "domain": "notes",
+                "dry_run": True,
+                "write_enabled": False,
+                "conflict_ids": ("conflict-1",),
+            }
+        ],
+        workspace_scope_ids=("workspace-a",),
+    )
+
+    assert packet["contract_id"] == CONTRACT_ID
+    assert packet["contract_version"] == CONTRACT_VERSION
+    assert packet["schema_version"] == 1
+    assert packet["owner"] == "UX_Interop"
+    assert packet["stability"] == "handoff_v1"
+    assert set(packet["sections"]) == {
+        "active_server",
+        "source_selector",
+        "capability_status",
+        "unsupported_actions",
+        "notification_feed",
+        "sync",
+        "domain_capability_matrix",
+        "workspace_isolation",
+        "mcp_control_plane",
+        "error_contracts",
+        "unsupported_reason_codes",
+    }
+    assert packet["sections"]["active_server"]["active_server_profile_id"] == "srv-primary"
+    assert packet["sections"]["source_selector"]["source_options"][1]["source"] == "server"
+    assert packet["sections"]["unsupported_actions"][0]["reason_code"] == "server_required"
+    assert packet["sections"]["notification_feed"][0]["notification_id"] == "notif-1"
+    assert packet["sections"]["sync"]["reports"][0]["write_enabled"] is False
+    assert packet["sections"]["domain_capability_matrix"]["sharing"]["authority"] == "remote_only"
+    assert packet["sections"]["workspace_isolation"][0]["workspace_scope_id"] == "workspace-a"
+    assert packet["sections"]["mcp_control_plane"]["source_panes"] == ("local", "server")
+    assert packet["sections"]["error_contracts"]["auth_required"]["kind"] == "auth_failure"
+
+
+def test_server_parity_handoff_packet_is_ui_free_and_secret_free():
+    packet = build_server_parity_handoff_packet(_server_state())
+
+    assert "tldw_chatbook.UI" not in repr(packet)
+    assert "token" not in repr(packet).lower()
+    assert "secret" not in repr(packet).lower()
 
 
 def test_module_does_not_import_current_ui_screens():
