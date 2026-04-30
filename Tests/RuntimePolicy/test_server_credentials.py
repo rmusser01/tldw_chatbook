@@ -141,18 +141,44 @@ def test_server_credential_ref_username_uses_server_and_purpose():
     assert ServerCredentialRef("server-a", SERVER_CREDENTIAL_API_KEY).username == "server-a:api_key"
 
 
-def test_keyring_store_uses_server_and_purpose_as_username_and_supports_get_delete():
+def test_keyring_store_uses_namespaced_username_and_supports_get_delete():
     fake = FakeKeyring()
     store = KeyringServerCredentialStore(keyring_backend=fake)
 
     store.set_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN, "secret")
 
-    assert fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")] == "secret"
+    stored_usernames = {username for service, username in fake.values if service == DEFAULT_KEYRING_SERVICE_NAME}
+    assert any("tldw_chatbook.server_credentials" in username for username in stored_usernames)
+    assert any("profile=server-a" in username for username in stored_usernames)
+    assert any("type=access_token" in username for username in stored_usernames)
     assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) == "secret"
 
     store.delete_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN)
 
     assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) is None
+
+
+def test_keyring_records_use_listable_chatbook_namespace():
+    fake = FakeKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+
+    store.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "secret")
+
+    stored_usernames = {username for service, username in fake.values if service == DEFAULT_KEYRING_SERVICE_NAME}
+    assert "__credential_refs__" in stored_usernames
+    assert any("tldw_chatbook.server_credentials" in username for username in stored_usernames)
+    assert any("profile=https%3A%2F%2Fserver.example.com%2Fapi" in username for username in stored_usernames)
+    assert any("type=access_token" in username for username in stored_usernames)
+
+
+def test_keyring_clear_all_enumerates_namespace_index_and_removes_orphans():
+    fake = FakeKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    store.set_secret("orphan-profile", SERVER_CREDENTIAL_REFRESH_TOKEN, "zombie")
+
+    store.clear_all()
+
+    assert fake.values == {}
 
 
 def test_keyring_delete_secret_tolerates_missing_values_without_calling_delete():
@@ -195,10 +221,4 @@ def test_keyring_clear_server_deletes_known_purpose_usernames_for_server():
 
     store.clear_server("server-a")
 
-    assert fake.deleted == [
-        (DEFAULT_KEYRING_SERVICE_NAME, f"server-a:{SERVER_CREDENTIAL_ACCESS_TOKEN}"),
-        (DEFAULT_KEYRING_SERVICE_NAME, f"server-a:{SERVER_CREDENTIAL_REFRESH_TOKEN}"),
-        (DEFAULT_KEYRING_SERVICE_NAME, f"server-a:{SERVER_CREDENTIAL_API_KEY}"),
-        (DEFAULT_KEYRING_SERVICE_NAME, f"server-a:{SERVER_CREDENTIAL_BEARER_TOKEN}"),
-    ]
     assert fake.values == {}
