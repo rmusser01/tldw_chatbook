@@ -14,7 +14,7 @@ This packet is the UX-facing contract summary for source-honest backend parity. 
 - Every server-backed action must handle `server_unavailable`, `auth_required`, `permission_denied`, and `capability_missing` reports.
 - Local, server, workspace, and remote-only data must remain visually distinct; do not blend records without an explicit sync/mirror report.
 - Sync is read-only dry-run only in this phase. No UX should imply automatic write sync, queued mutation replay, or a completed local mirror.
-- Remote-only domains are server-owned. UX may show local/offline explanatory disabled states, but should not build local CRUD for those domains.
+- Remote-only domains are server-owned. UX may show local/offline explanatory disabled states, but should not build local CRUD for those domains unless a row is explicitly promoted to `local_parity`.
 
 ## Active Server And Auth Status
 
@@ -101,8 +101,9 @@ Domain readiness summary:
 | Study/Evaluations | mixed | Ready; unsupported local/server target gaps are explicit reports. |
 | RAG/Embeddings | mixed/server-primary | Ready; local per-media embedding admin and server collection export can be unsupported. |
 | Audio/Voice | mixed | Ready; websocket streaming/session controls can be unsupported unless adapter capability reports clear them. |
+| Translation | mixed/local parity pilot | Ready; server translation remains available, and local translation is available only when `TranslationScopeService.local_service` is configured. |
 
-Remote-only utility rows are individually ready for UX: sharing, web clipper, translation, server tools, Text2SQL, server skills, claims, meetings, outputs, Kanban, and Prompt Studio.
+Remote-only utility rows are individually ready for UX: sharing, web clipper, server tools, Text2SQL, server skills, claims, meetings, outputs, Kanban, and Prompt Studio. Translation is no longer in the remote-only set; it is the first adapter-backed local parity pilot.
 
 ## Unsupported Action Reports
 
@@ -163,6 +164,23 @@ UX implications:
 - Use `event_key` for dedupe/debug display, not as a user-facing label.
 - Presentation and processed cursors are separate. Marking a notification presented should not imply it was processed by every backend workflow.
 - Durable replay is bounded by repository retention. Do not promise infinite event history.
+- Feed responses include `replay.state`; show `retention_gap` as "older events require server refetch" rather than implying local history is complete.
+
+Example replay metadata:
+
+```json
+{
+  "replay": {
+    "state": "retention_gap",
+    "requested_cursor": "1",
+    "earliest_retained_cursor": "2",
+    "latest_retained_cursor": "3",
+    "last_pruned_cursor": "1",
+    "pruned_event_count": 1,
+    "server_refetch_required": true
+  }
+}
+```
 
 ## Sync Dry-Run And Conflict Records
 
@@ -281,7 +299,8 @@ Server controls should map backend state to UX as follows:
 
 - Credential/auth focused regression: `107 passed`.
 - Provider migration audit guard: `10 passed`.
-- Remote-only utility focused regression: `136 passed`.
+- Remote-only utility focused regression: `142 passed`; includes Translation local parity pilot coverage.
+- Notifications focused regression: `65 passed`; includes replay-window retention-gap metadata.
 - Primary-domain focused regression: `442 passed, 1 warning`.
 - Sync/domain mirror regression: `35 passed`.
 - Domain-edge plus sync/domain mirror regression: `39 passed`.

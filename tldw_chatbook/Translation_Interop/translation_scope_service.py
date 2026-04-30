@@ -1,4 +1,4 @@
-"""Source-aware routing for server-owned translation actions."""
+"""Source-aware routing for translation actions."""
 
 from __future__ import annotations
 
@@ -27,10 +27,11 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
 
 
 class TranslationScopeService:
-    """Route text translation through the active server; local translation is intentionally absent."""
+    """Route text translation through local or active-server adapters."""
 
-    def __init__(self, *, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(self, *, server_service: Any = None, local_service: Any = None, policy_enforcer: Any = None):
         self.server_service = server_service
+        self.local_service = local_service
         self.policy_enforcer = policy_enforcer
 
     def _normalize_mode(self, mode: TranslationBackend | str | None) -> TranslationBackend:
@@ -49,6 +50,11 @@ class TranslationScopeService:
         if self.server_service is None:
             raise ValueError("Server translation backend is unavailable.")
         return self.server_service
+
+    def _require_local_service(self) -> Any:
+        if self.local_service is None:
+            raise ValueError("Server translation is server-only without a local adapter; switch to server mode to use it.")
+        return self.local_service
 
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -79,6 +85,8 @@ class TranslationScopeService:
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == TranslationBackend.LOCAL:
+            if self.local_service is not None:
+                return []
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         return []
 
@@ -89,6 +97,11 @@ class TranslationScopeService:
         mode: TranslationBackend | str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        if normalized_mode == TranslationBackend.LOCAL:
+            service = self._require_local_service()
+            result = await self._maybe_await(service.translate_text(request_data))
+            normalized = ServerTranslationService._normalize_response(result)
+            return self._rewrite_backend(normalized, normalized_mode.value)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy("translation.text.launch.server")
         result = await self._maybe_await(service.translate_text(request_data))

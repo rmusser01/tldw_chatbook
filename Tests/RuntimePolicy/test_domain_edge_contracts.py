@@ -4,8 +4,10 @@ from tldw_chatbook.runtime_policy.domain_edge_contracts import (
     REQUIRED_UNSUPPORTED_REASON_CODES,
     REMOTE_ONLY_DOMAIN_IDS,
     build_domain_capability_matrix,
+    build_remote_utility_local_parity_matrix,
     build_unsupported_action_report,
     get_domain_edge_contract,
+    get_remote_utility_local_parity,
     list_domain_edge_contracts,
 )
 from tldw_chatbook.runtime_policy.unsupported_capabilities import validate_unsupported_capability_report
@@ -40,11 +42,15 @@ def test_domain_edge_matrix_covers_priority_server_parity_domains():
     assert matrix["chat"]["source_selector_states"] == ("local", "server", "workspace")
     assert matrix["chat"]["uses_sync_contract"] is True
     assert matrix["sharing"]["authority"] == "remote_only"
+    assert matrix["translation"]["authority"] == "local_parity"
+    assert matrix["translation"]["source_selector_states"] == ("local", "server")
     assert matrix["media_reading"]["uses_event_contract"] is True
     assert matrix["notes_workspaces"]["uses_sync_contract"] is True
 
 
 def test_remote_only_local_reports_use_common_unsupported_shape():
+    assert "translation" not in REMOTE_ONLY_DOMAIN_IDS
+
     for domain_id in REMOTE_ONLY_DOMAIN_IDS:
         report = build_unsupported_action_report(domain_id=domain_id, source="local")
         validated = validate_unsupported_capability_report([report], registry={})
@@ -53,6 +59,17 @@ def test_remote_only_local_reports_use_common_unsupported_shape():
         assert validated[0]["source"] == "local"
         assert validated[0]["supported"] is False
         assert validated[0]["reason_code"] == "server_required"
+
+
+def test_remote_utility_local_parity_registry_tracks_translation_pilot():
+    matrix = build_remote_utility_local_parity_matrix()
+    translation = get_remote_utility_local_parity("translation")
+
+    assert translation.state == "pilot"
+    assert translation.local_adapter == "TranslationScopeService.local_service"
+    assert matrix["translation"]["state"] == "pilot"
+    assert matrix["sharing"]["state"] == "remote_only"
+    assert matrix["outputs"]["state"] == "remote_only"
 
 
 def test_required_reason_codes_are_explicit_and_reportable():

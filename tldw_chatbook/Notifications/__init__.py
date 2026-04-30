@@ -2,7 +2,7 @@
 
 from .client_notifications_db import ClientNotificationsDB
 from .client_notifications_service import ClientNotificationsService
-from .event_state_repository import EventRetentionPolicy, EventStateRepository
+from .event_state_repository import EventReplayWindow, EventRetentionPolicy, EventStateRepository
 from .notifications_scope_service import NotificationsScopeService
 from .notification_dispatch_service import NotificationDispatchService
 from .server_notification_events import (
@@ -16,6 +16,7 @@ __all__ = [
     "ClientNotificationsDB",
     "ClientNotificationsService",
     "EventRetentionPolicy",
+    "EventReplayWindow",
     "EventStateRepository",
     "NotificationsScopeService",
     "NotificationDispatchService",

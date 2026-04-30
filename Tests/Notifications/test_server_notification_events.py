@@ -170,6 +170,44 @@ def test_server_notification_feed_projects_durable_events_without_parallel_local
     ).cursor == "evt-8"
 
 
+def test_server_notification_feed_reports_retention_gap_metadata(tmp_path):
+    repo = EventStateRepository(tmp_path / "events.db")
+    for event_id in ("1", "2", "3"):
+        repo.record_event_and_advance_processed_cursor(
+            normalize_server_notification_event(
+                {
+                    "event": "notification.created",
+                    "event_id": event_id,
+                    "data": {"id": event_id, "title": f"Observed {event_id}"},
+                },
+                server_profile_id="server-a",
+                authenticated_principal_id="user-a",
+                stream_instance_id="workspace-1",
+            )
+        )
+    repo.prune_stream_state(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+        max_count=2,
+    )
+
+    feed = build_server_notification_feed(
+        repo,
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_instance_id="workspace-1",
+        after_cursor="1",
+    )
+
+    assert feed["replay"]["state"] == "retention_gap"
+    assert feed["replay"]["server_refetch_required"] is True
+    assert feed["replay"]["last_pruned_cursor"] == "1"
+    assert [item["source_event_id"] for item in feed["items"]] == ["2", "3"]
+
+
 def test_server_notification_feed_filters_null_principal_scope(tmp_path):
     repo = EventStateRepository(tmp_path / "events.db")
     repo.record_event_and_advance_processed_cursor(

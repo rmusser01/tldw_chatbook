@@ -57,6 +57,21 @@ class EventRetentionPolicy:
     max_count: int = 10_000
 
 
+@dataclass(frozen=True, slots=True)
+class EventReplayWindow:
+    source_authority: SourceAuthority
+    server_profile_id: str | None
+    authenticated_principal_id: str | None
+    stream_name: str
+    stream_instance_id: str
+    state: str
+    earliest_retained_cursor: str | None = None
+    latest_retained_cursor: str | None = None
+    last_pruned_cursor: str | None = None
+    pruned_event_count: int = 0
+    updated_at: str | None = None
+
+
 class EventStateRepository(BaseDB):
     """Durable event rows, dedupe records, cursors, and presentation watermarks."""
 
@@ -211,6 +226,26 @@ class EventStateRepository(BaseDB):
                         stream_instance_id
                     )
                 );
+
+                CREATE TABLE IF NOT EXISTS event_replay_windows (
+                    source_authority TEXT NOT NULL,
+                    server_profile_id TEXT NOT NULL,
+                    authenticated_principal_id TEXT NOT NULL,
+                    stream_name TEXT NOT NULL,
+                    stream_instance_id TEXT NOT NULL,
+                    earliest_retained_cursor TEXT,
+                    latest_retained_cursor TEXT,
+                    last_pruned_cursor TEXT,
+                    pruned_event_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (
+                        source_authority,
+                        server_profile_id,
+                        authenticated_principal_id,
+                        stream_name,
+                        stream_instance_id
+                    )
+                );
                 """
             )
 
@@ -302,6 +337,7 @@ class EventStateRepository(BaseDB):
             )
             if event.server_cursor is not None:
                 self._upsert_cursor(conn, event, table="event_processed_cursors", cursor=event.server_cursor, now=now)
+            self._sync_replay_window_bounds(conn, event, now=now)
             conn.commit()
 
             return EventStateRecordResult(
@@ -690,7 +726,7 @@ class EventStateRepository(BaseDB):
             if max_count is not None:
                 count_rows = conn.execute(
                     """
-                    SELECT id, event_key, dedupe_key
+                    SELECT id, event_key, dedupe_key, event_id, server_cursor
                     FROM event_records
                     WHERE source_authority = ?
                       AND server_profile_id IS ?
@@ -706,7 +742,7 @@ class EventStateRepository(BaseDB):
             if older_than is not None:
                 age_rows = conn.execute(
                     """
-                    SELECT id, event_key, dedupe_key
+                    SELECT id, event_key, dedupe_key, event_id, server_cursor
                     FROM event_records
                     WHERE source_authority = ?
                       AND server_profile_id IS ?
@@ -726,12 +762,91 @@ class EventStateRepository(BaseDB):
             event_ids = [int(row["id"]) for row in rows]
             event_keys = [str(row["event_key"]) for row in rows]
             dedupe_keys = [str(row["dedupe_key"]) for row in rows]
+            last_pruned_row = max(rows, key=lambda row: int(row["id"]))
+            last_pruned_cursor = self._row_cursor_marker(last_pruned_row)
+            scope_cursor = EventCursor(
+                source_authority=source_authority,
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                stream_name=stream_name,
+                stream_instance_id=stream_instance_id,
+            )
 
             conn.executemany("DELETE FROM event_presentations WHERE event_key = ?", [(key,) for key in event_keys])
             conn.executemany("DELETE FROM event_records WHERE id = ?", [(event_id,) for event_id in event_ids])
             conn.executemany("DELETE FROM event_dedupe_records WHERE dedupe_key = ?", [(key,) for key in dedupe_keys])
+            self._record_replay_prune(
+                conn,
+                scope_cursor,
+                last_pruned_cursor=last_pruned_cursor,
+                pruned_event_count=len(rows),
+                now=_utc_now(),
+            )
             conn.commit()
         return len(rows)
+
+    def get_replay_window(
+        self,
+        *,
+        source_authority: SourceAuthority,
+        server_profile_id: str | None,
+        stream_name: str,
+        stream_instance_id: str,
+        authenticated_principal_id: str | None = None,
+    ) -> EventReplayWindow:
+        cursor = EventCursor(
+            source_authority=source_authority,
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            stream_name=stream_name,
+            stream_instance_id=stream_instance_id,
+        )
+        with self._get_connection() as conn:
+            return self._get_replay_window_with_connection(conn, cursor)
+
+    def get_replay_status(
+        self,
+        *,
+        source_authority: SourceAuthority,
+        server_profile_id: str | None,
+        stream_name: str,
+        stream_instance_id: str,
+        authenticated_principal_id: str | None = None,
+        requested_cursor: str | None = None,
+    ) -> dict[str, Any]:
+        cursor = EventCursor(
+            source_authority=source_authority,
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            stream_name=stream_name,
+            stream_instance_id=stream_instance_id,
+        )
+        with self._get_connection() as conn:
+            window = self._get_replay_window_with_connection(conn, cursor)
+            if requested_cursor is None:
+                state = "available" if window.earliest_retained_cursor is not None else "empty"
+            elif self._is_cursor_retained(conn, cursor, requested_cursor):
+                state = "available"
+            elif window.last_pruned_cursor is not None and self._cursor_at_or_before(
+                requested_cursor,
+                window.last_pruned_cursor,
+            ):
+                state = "retention_gap"
+            elif window.earliest_retained_cursor is not None or window.pruned_event_count > 0:
+                state = "retention_gap"
+            else:
+                state = "empty"
+
+        return {
+            "state": state,
+            "requested_cursor": requested_cursor,
+            "earliest_retained_cursor": window.earliest_retained_cursor,
+            "latest_retained_cursor": window.latest_retained_cursor,
+            "last_pruned_cursor": window.last_pruned_cursor,
+            "pruned_event_count": window.pruned_event_count,
+            "server_refetch_required": state == "retention_gap",
+            "updated_at": window.updated_at,
+        }
 
     def get_retention_policy(
         self,
@@ -895,6 +1010,12 @@ class EventStateRepository(BaseDB):
                 server_profile_id=server_profile_id,
                 authenticated_principal_id=authenticated_principal_id,
             )
+            replay_window_count = self._count_scoped_rows(
+                conn,
+                "event_replay_windows",
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+            )
 
             conn.executemany("DELETE FROM event_presentations WHERE event_key = ?", [(key,) for key in event_keys])
             conn.executemany("DELETE FROM event_records WHERE event_key = ?", [(key,) for key in event_keys])
@@ -923,6 +1044,12 @@ class EventStateRepository(BaseDB):
                 server_profile_id=server_profile_id,
                 authenticated_principal_id=authenticated_principal_id,
             )
+            self._delete_scoped_rows(
+                conn,
+                "event_replay_windows",
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+            )
             conn.commit()
 
         return {
@@ -933,6 +1060,7 @@ class EventStateRepository(BaseDB):
             "presented_high_water": presented_high_water_count,
             "observer_status": observer_status_count,
             "retention_policies": retention_policy_count,
+            "replay_windows": replay_window_count,
         }
 
     @staticmethod
@@ -1104,6 +1232,237 @@ class EventStateRepository(BaseDB):
                 now,
             ),
         )
+
+    @classmethod
+    def _sync_replay_window_bounds(
+        cls,
+        conn: sqlite3.Connection,
+        cursor_like: EventCursor | NormalizedEventRecord,
+        *,
+        now: str,
+    ) -> None:
+        earliest, latest = cls._retained_cursor_bounds(conn, cursor_like)
+        row = cls._replay_window_row(conn, cursor_like)
+        cls._upsert_replay_window(
+            conn,
+            cursor_like,
+            earliest_retained_cursor=earliest,
+            latest_retained_cursor=latest,
+            last_pruned_cursor=row["last_pruned_cursor"] if row is not None else None,
+            pruned_event_count=int(row["pruned_event_count"]) if row is not None else 0,
+            now=now,
+        )
+
+    @classmethod
+    def _record_replay_prune(
+        cls,
+        conn: sqlite3.Connection,
+        cursor_like: EventCursor,
+        *,
+        last_pruned_cursor: str | None,
+        pruned_event_count: int,
+        now: str,
+    ) -> None:
+        earliest, latest = cls._retained_cursor_bounds(conn, cursor_like)
+        row = cls._replay_window_row(conn, cursor_like)
+        existing_count = int(row["pruned_event_count"]) if row is not None else 0
+        cls._upsert_replay_window(
+            conn,
+            cursor_like,
+            earliest_retained_cursor=earliest,
+            latest_retained_cursor=latest,
+            last_pruned_cursor=last_pruned_cursor,
+            pruned_event_count=existing_count + int(pruned_event_count),
+            now=now,
+        )
+
+    @classmethod
+    def _get_replay_window_with_connection(
+        cls,
+        conn: sqlite3.Connection,
+        cursor_like: EventCursor,
+    ) -> EventReplayWindow:
+        row = cls._replay_window_row(conn, cursor_like)
+        if row is None:
+            earliest, latest = cls._retained_cursor_bounds(conn, cursor_like)
+            pruned_count = 0
+            last_pruned_cursor = None
+            updated_at = None
+        else:
+            earliest = row["earliest_retained_cursor"]
+            latest = row["latest_retained_cursor"]
+            pruned_count = int(row["pruned_event_count"])
+            last_pruned_cursor = row["last_pruned_cursor"]
+            updated_at = row["updated_at"]
+        if earliest is not None:
+            state = "available"
+        elif pruned_count > 0:
+            state = "retention_gap"
+        else:
+            state = "empty"
+        return EventReplayWindow(
+            source_authority=cursor_like.source_authority,
+            server_profile_id=cursor_like.server_profile_id,
+            authenticated_principal_id=cursor_like.authenticated_principal_id,
+            stream_name=cursor_like.stream_name,
+            stream_instance_id=cursor_like.stream_instance_id,
+            state=state,
+            earliest_retained_cursor=earliest,
+            latest_retained_cursor=latest,
+            last_pruned_cursor=last_pruned_cursor,
+            pruned_event_count=pruned_count,
+            updated_at=updated_at,
+        )
+
+    @staticmethod
+    def _replay_window_row(
+        conn: sqlite3.Connection,
+        cursor_like: EventCursor | NormalizedEventRecord,
+    ) -> sqlite3.Row | None:
+        return conn.execute(
+            """
+            SELECT *
+            FROM event_replay_windows
+            WHERE source_authority = ?
+              AND server_profile_id = ?
+              AND authenticated_principal_id = ?
+              AND stream_name = ?
+              AND stream_instance_id = ?
+            """,
+            (
+                cursor_like.source_authority,
+                _scope_value(cursor_like.server_profile_id),
+                _scope_value(cursor_like.authenticated_principal_id),
+                cursor_like.stream_name,
+                cursor_like.stream_instance_id,
+            ),
+        ).fetchone()
+
+    @staticmethod
+    def _upsert_replay_window(
+        conn: sqlite3.Connection,
+        cursor_like: EventCursor | NormalizedEventRecord,
+        *,
+        earliest_retained_cursor: str | None,
+        latest_retained_cursor: str | None,
+        last_pruned_cursor: str | None,
+        pruned_event_count: int,
+        now: str,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO event_replay_windows (
+                source_authority,
+                server_profile_id,
+                authenticated_principal_id,
+                stream_name,
+                stream_instance_id,
+                earliest_retained_cursor,
+                latest_retained_cursor,
+                last_pruned_cursor,
+                pruned_event_count,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(
+                source_authority,
+                server_profile_id,
+                authenticated_principal_id,
+                stream_name,
+                stream_instance_id
+            )
+            DO UPDATE SET
+                earliest_retained_cursor = excluded.earliest_retained_cursor,
+                latest_retained_cursor = excluded.latest_retained_cursor,
+                last_pruned_cursor = excluded.last_pruned_cursor,
+                pruned_event_count = excluded.pruned_event_count,
+                updated_at = excluded.updated_at
+            """,
+            (
+                cursor_like.source_authority,
+                _scope_value(cursor_like.server_profile_id),
+                _scope_value(cursor_like.authenticated_principal_id),
+                cursor_like.stream_name,
+                cursor_like.stream_instance_id,
+                earliest_retained_cursor,
+                latest_retained_cursor,
+                last_pruned_cursor,
+                int(pruned_event_count),
+                now,
+            ),
+        )
+
+    @staticmethod
+    def _retained_cursor_bounds(
+        conn: sqlite3.Connection,
+        cursor_like: EventCursor | NormalizedEventRecord,
+    ) -> tuple[str | None, str | None]:
+        rows = conn.execute(
+            """
+            SELECT event_id, server_cursor
+            FROM event_records
+            WHERE source_authority = ?
+              AND server_profile_id IS ?
+              AND authenticated_principal_id IS ?
+              AND stream_name = ?
+              AND stream_instance_id = ?
+            ORDER BY id ASC
+            """,
+            (
+                cursor_like.source_authority,
+                cursor_like.server_profile_id,
+                cursor_like.authenticated_principal_id,
+                cursor_like.stream_name,
+                cursor_like.stream_instance_id,
+            ),
+        ).fetchall()
+        if not rows:
+            return None, None
+        return EventStateRepository._row_cursor_marker(rows[0]), EventStateRepository._row_cursor_marker(rows[-1])
+
+    @staticmethod
+    def _is_cursor_retained(
+        conn: sqlite3.Connection,
+        cursor_like: EventCursor,
+        requested_cursor: str,
+    ) -> bool:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM event_records
+            WHERE source_authority = ?
+              AND server_profile_id IS ?
+              AND authenticated_principal_id IS ?
+              AND stream_name = ?
+              AND stream_instance_id = ?
+              AND (server_cursor = ? OR event_id = ?)
+            """,
+            (
+                cursor_like.source_authority,
+                cursor_like.server_profile_id,
+                cursor_like.authenticated_principal_id,
+                cursor_like.stream_name,
+                cursor_like.stream_instance_id,
+                requested_cursor,
+                requested_cursor,
+            ),
+        ).fetchone()
+        return row is not None
+
+    @staticmethod
+    def _cursor_at_or_before(requested_cursor: str, boundary_cursor: str) -> bool:
+        if requested_cursor == boundary_cursor:
+            return True
+        if requested_cursor.isdigit() and boundary_cursor.isdigit():
+            return int(requested_cursor) <= int(boundary_cursor)
+        return False
+
+    @staticmethod
+    def _row_cursor_marker(row: sqlite3.Row) -> str | None:
+        cursor = row["server_cursor"] or row["event_id"]
+        if cursor is None:
+            return None
+        return str(cursor)
 
     @staticmethod
     def _event_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:

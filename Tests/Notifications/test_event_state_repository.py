@@ -300,6 +300,59 @@ def test_prune_stream_state_removes_oldest_events_but_preserves_cursors(tmp_path
     ).cursor == "cursor-3"
 
 
+def test_prune_stream_state_records_replay_window_gap(tmp_path):
+    repo = EventStateRepository(tmp_path / "events.db")
+    first = _event(entity_id="n1", event_id="event-1", server_cursor="1")
+    second = _event(entity_id="n2", event_id="event-2", server_cursor="2")
+    third = _event(entity_id="n3", event_id="event-3", server_cursor="3")
+
+    repo.record_event_and_advance_processed_cursor(first)
+    repo.record_event_and_advance_processed_cursor(second)
+    repo.record_event_and_advance_processed_cursor(third)
+
+    repo.prune_stream_state(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+        max_count=2,
+    )
+
+    window = repo.get_replay_window(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+    )
+    gap_status = repo.get_replay_status(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+        requested_cursor="1",
+    )
+    retained_status = repo.get_replay_status(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+        requested_cursor="3",
+    )
+
+    assert window.earliest_retained_cursor == "2"
+    assert window.latest_retained_cursor == "3"
+    assert window.last_pruned_cursor == "1"
+    assert window.pruned_event_count == 1
+    assert gap_status["state"] == "retention_gap"
+    assert gap_status["server_refetch_required"] is True
+    assert retained_status["state"] == "available"
+    assert retained_status["server_refetch_required"] is False
+
+
 def test_prune_stream_state_supports_age_cutoff_and_preserves_cursors(tmp_path):
     repo = EventStateRepository(tmp_path / "events.db")
     first = _event(entity_id="n1", event_id="event-1", server_cursor="cursor-1")
@@ -482,6 +535,31 @@ def test_clear_server_profile_state_removes_scoped_event_state_only(tmp_path):
         stream_name="notifications",
         stream_instance_id="workspace-1",
     ).cursor == "cursor-b"
+
+
+def test_clear_server_profile_state_removes_replay_window(tmp_path):
+    repo = EventStateRepository(tmp_path / "events.db")
+    repo.record_event_and_advance_processed_cursor(_event(event_id="event-a", server_cursor="1"))
+    repo.record_event_and_advance_processed_cursor(_event(event_id="event-b", server_cursor="2"))
+    repo.prune_stream_state(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+        max_count=1,
+    )
+
+    cleared = repo.clear_server_profile_state(server_profile_id="server-a", authenticated_principal_id="user-a")
+
+    assert cleared["replay_windows"] == 1
+    assert repo.get_replay_window(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        stream_name="notifications",
+        stream_instance_id="workspace-1",
+    ).state == "empty"
 
 
 def test_retention_policy_has_durable_default_and_stream_override(tmp_path):

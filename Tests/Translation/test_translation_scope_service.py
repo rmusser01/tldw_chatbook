@@ -19,6 +19,21 @@ class FakeServerTranslationService:
         }
 
 
+class FakeLocalTranslationService:
+    def __init__(self):
+        self.calls = []
+
+    async def translate_text(self, request_data):
+        self.calls.append(("translate_text", request_data))
+        return {
+            "translated_text": "Bonjour local",
+            "target_language": request_data["target_language"],
+            "model_used": "local-default",
+            "backend": "server",
+            "record_id": "local:translation:text",
+        }
+
+
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
         self.denied_reason = denied_reason
@@ -67,6 +82,31 @@ async def test_translation_scope_service_rejects_local_mode_without_dispatch():
         await scope.translate_text({"text": "Hello", "target_language": "French"}, mode="local")
 
     assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_translation_scope_service_routes_local_translation_when_adapter_configured():
+    server = FakeServerTranslationService()
+    local = FakeLocalTranslationService()
+    policy = FakePolicyEnforcer()
+    scope = TranslationScopeService(server_service=server, local_service=local, policy_enforcer=policy)
+
+    result = await scope.translate_text(
+        {"text": "Hello", "target_language": "French"},
+        mode="local",
+    )
+
+    assert result == {
+        "translated_text": "Bonjour local",
+        "target_language": "French",
+        "model_used": "local-default",
+        "backend": "local",
+        "record_id": "local:translation:text",
+    }
+    assert local.calls == [("translate_text", {"text": "Hello", "target_language": "French"})]
+    assert server.calls == []
+    assert policy.calls == []
+    assert scope.list_unsupported_capabilities(mode="local") == []
 
 
 @pytest.mark.asyncio

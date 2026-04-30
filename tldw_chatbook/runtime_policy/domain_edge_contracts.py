@@ -7,6 +7,7 @@ from typing import Literal
 
 
 DomainAuthority = Literal["local_and_server", "local_parity", "remote_only", "server_primary"]
+LocalParityState = Literal["remote_only", "pilot", "planned", "blocked"]
 SourceSelectorState = Literal["local", "server", "workspace"]
 
 REQUIRED_UNSUPPORTED_REASON_CODES = (
@@ -19,6 +20,19 @@ REQUIRED_UNSUPPORTED_REASON_CODES = (
 )
 
 REMOTE_ONLY_DOMAIN_IDS = (
+    "sharing",
+    "web_clipper",
+    "server_tools",
+    "text2sql",
+    "server_skills",
+    "claims",
+    "meetings",
+    "outputs",
+    "kanban",
+    "prompt_studio",
+)
+
+REMOTE_UTILITY_DOMAIN_IDS = (
     "sharing",
     "web_clipper",
     "translation",
@@ -56,6 +70,22 @@ class DomainEdgeContract:
             "uses_event_contract": self.uses_event_contract,
             "uses_sync_contract": self.uses_sync_contract,
             "unsupported_local_reason_codes": self.unsupported_local_reason_codes,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteUtilityLocalParityContract:
+    domain_id: str
+    state: LocalParityState
+    local_adapter: str | None = None
+    notes: str = ""
+
+    def as_matrix_entry(self) -> dict[str, object]:
+        return {
+            "domain_id": self.domain_id,
+            "state": self.state,
+            "local_adapter": self.local_adapter,
+            "notes": self.notes,
         }
 
 
@@ -134,6 +164,15 @@ _DOMAIN_EDGE_CONTRACTS: tuple[DomainEdgeContract, ...] = (
         view_model_contract="audio_voice_source_honest_view_v1",
         uses_event_contract=True,
     ),
+    DomainEdgeContract(
+        domain_id="translation",
+        label="Translation",
+        authority="local_parity",
+        source_selector_states=("local", "server"),
+        view_model_contract="translation_local_parity_view_v1",
+        uses_event_contract=True,
+        unsupported_local_reason_codes=("not_implemented_locally",),
+    ),
 )
 
 _REMOTE_ONLY_CONTRACTS: tuple[DomainEdgeContract, ...] = tuple(
@@ -149,9 +188,28 @@ _REMOTE_ONLY_CONTRACTS: tuple[DomainEdgeContract, ...] = tuple(
     for domain_id in REMOTE_ONLY_DOMAIN_IDS
 )
 
+_REMOTE_UTILITY_LOCAL_PARITY: tuple[RemoteUtilityLocalParityContract, ...] = tuple(
+    RemoteUtilityLocalParityContract(
+        domain_id=domain_id,
+        state="pilot" if domain_id == "translation" else "remote_only",
+        local_adapter="TranslationScopeService.local_service" if domain_id == "translation" else None,
+        notes=(
+            "Text translation can route to an explicit local adapter; without it, local mode keeps "
+            "the existing unsupported report."
+            if domain_id == "translation"
+            else "Server remains authoritative; local mode must render an unsupported report."
+        ),
+    )
+    for domain_id in REMOTE_UTILITY_DOMAIN_IDS
+)
+
 _CONTRACTS_BY_DOMAIN = {
     contract.domain_id: contract
     for contract in (*_DOMAIN_EDGE_CONTRACTS, *_REMOTE_ONLY_CONTRACTS)
+}
+_REMOTE_UTILITY_PARITY_BY_DOMAIN = {
+    contract.domain_id: contract
+    for contract in _REMOTE_UTILITY_LOCAL_PARITY
 }
 
 
@@ -170,6 +228,20 @@ def build_domain_capability_matrix() -> dict[str, dict[str, object]]:
     return {
         domain_id: contract.as_matrix_entry()
         for domain_id, contract in _CONTRACTS_BY_DOMAIN.items()
+    }
+
+
+def get_remote_utility_local_parity(domain_id: str) -> RemoteUtilityLocalParityContract:
+    try:
+        return _REMOTE_UTILITY_PARITY_BY_DOMAIN[domain_id]
+    except KeyError as exc:
+        raise KeyError(f"Unknown remote utility local parity contract: {domain_id}") from exc
+
+
+def build_remote_utility_local_parity_matrix() -> dict[str, dict[str, object]]:
+    return {
+        domain_id: contract.as_matrix_entry()
+        for domain_id, contract in _REMOTE_UTILITY_PARITY_BY_DOMAIN.items()
     }
 
 

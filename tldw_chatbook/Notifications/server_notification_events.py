@@ -172,6 +172,7 @@ def build_server_notification_feed(
     stream_instance_id: str = DEFAULT_SERVER_NOTIFICATION_STREAM_INSTANCE,
     limit: int = 100,
     mark_presented: bool = False,
+    after_cursor: str | None = None,
 ) -> dict[str, Any]:
     rows = event_state_repository.list_events(
         source_authority="server",
@@ -192,11 +193,20 @@ def build_server_notification_feed(
                 event_key=row["event_key"],
                 cursor=row.get("server_cursor") or row.get("event_id"),
             )
+    replay = event_state_repository.get_replay_status(
+        source_authority="server",
+        server_profile_id=server_profile_id,
+        authenticated_principal_id=authenticated_principal_id,
+        stream_name=SERVER_NOTIFICATION_STREAM_NAME,
+        stream_instance_id=stream_instance_id,
+        requested_cursor=after_cursor,
+    )
     return {
         "items": items,
         "total": len(items),
         "backend": "server",
         "source": "event_state_repository",
+        "replay": replay,
     }
 
 
