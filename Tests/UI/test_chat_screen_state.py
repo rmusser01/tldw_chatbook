@@ -14,6 +14,13 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import ChatShellBar
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 
 
+class EmptyChatLog:
+    children = []
+
+    def query(self, _selector):
+        return []
+
+
 class TestChatSessionDataSerialization:
     def test_chat_session_data_round_trip_preserves_runtime_discovery_fields(self):
         session_data = ChatSessionData(
@@ -376,3 +383,20 @@ class TestChatScreenRestore:
         chat_log.mount.assert_awaited()
         chat_log.scroll_end.assert_called_once_with(animate=False)
         screen.chat_window.hide_empty_state.assert_called_once()
+
+
+def test_extract_messages_clears_messages_when_direct_chat_log_lookup_succeeds():
+    app = Mock()
+    app.query_one = Mock(return_value=EmptyChatLog())
+    screen = ChatScreen(app)
+    screen.chat_window = Mock()
+    tab_state = TabState(
+        tab_id="tab-1",
+        title="Chat",
+        messages=[MessageData(message_id="old", role="user", content="stale", timestamp=None)],
+    )
+
+    screen._extract_and_save_messages(tab_state)
+
+    assert tab_state.messages == []
+    screen.chat_window.query.assert_not_called()
