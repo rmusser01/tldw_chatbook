@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from textual.widgets import Button, Checkbox, DirectoryTree, Input
+from textual.widgets import Button, Checkbox, DirectoryTree, Input, Select
 
 from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.UI.MediaIngestWindowRebuilt import (
@@ -15,6 +16,7 @@ from tldw_chatbook.UI.MediaIngestWindowRebuilt import (
     MediaIngestWindowRebuilt,
 )
 from tldw_chatbook.Widgets.Media.media_ingestion_source_panel import (
+    CREATE_SOURCE_TYPE_OPTIONS,
     MediaIngestionSourcePanel,
 )
 
@@ -96,6 +98,25 @@ class TestMediaIngestWindowRebuilt:
             assert sync_button.disabled is True
             assert save_button.disabled is True
             assert upload_button.disabled is True
+
+    @pytest.mark.asyncio
+    async def test_source_panel_create_type_default_is_allowed_in_server_mode(
+        self,
+        mock_app_instance: MagicMock,
+        widget_pilot,
+    ) -> None:
+        """Server-mode source creation should default to a valid source type."""
+        mock_app_instance.media_runtime_state = SimpleNamespace(runtime_backend="server")
+
+        async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+            await pilot.pause()
+
+            source_type = window.source_panel.query_one("#create-source-type", Select)
+            allowed_values = {value for _label, value in CREATE_SOURCE_TYPE_OPTIONS}
+
+            assert source_type.value in allowed_values
+            assert source_type.value == "local_directory"
 
     @pytest.mark.asyncio
     async def test_processing_selected_files_runs_ingest_and_resets_ui(
