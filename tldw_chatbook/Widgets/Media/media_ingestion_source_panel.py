@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 ALLOWED_CREATE_SOURCE_TYPES = ALLOWED_SERVER_CREATE_SOURCE_TYPES
 CREATE_SOURCE_TYPE_OPTIONS = [
+    ("Local Directory", "local_directory"),
     ("Archive Snapshot", "archive_snapshot"),
     ("Git Repository", "git_repository"),
 ]

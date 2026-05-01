@@ -70,7 +70,7 @@ class ChatSession(Container):
         yield VerticalScroll(id=f"chat-log-{self.session_data.tab_id}", classes="chat-log")
         
         # Image attachment indicator (for enhanced chat)
-        if hasattr(self.app_instance, 'chat_enhanced_mode') and self.app_instance.chat_enhanced_mode:
+        if getattr(self.app_instance, "chat_enhanced_mode", False) is True:
             yield Static(
                 "",
                 id=f"image-attachment-indicator-{self.session_data.tab_id}",
@@ -94,8 +94,8 @@ class ChatSession(Container):
             )
             
             # Attach file button (if enhanced mode)
-            if hasattr(self.app_instance, 'chat_enhanced_mode') and self.app_instance.chat_enhanced_mode:
-                from ..config import get_cli_setting
+            if getattr(self.app_instance, "chat_enhanced_mode", False) is True:
+                from tldw_chatbook.config import get_cli_setting
                 show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
                 if show_attach_button:
                     yield Button(

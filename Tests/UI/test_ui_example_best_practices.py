@@ -6,10 +6,25 @@ This file shows various patterns and techniques for testing Textual UI component
 import pytest
 from textual.widgets import Button, TextArea, Label
 from textual.containers import Container
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
 from tldw_chatbook.UI.Chat_Window import ChatWindow
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+
+
+def _legacy_chat_window_setting(section: str, key: str, default=None):
+    if (section, key) == ("chat_defaults", "enable_tabs"):
+        return False
+    return default
+
+
+@pytest.fixture(autouse=True)
+def legacy_chat_window_mode():
+    with patch(
+        "tldw_chatbook.UI.Chat_Window.get_cli_setting",
+        side_effect=_legacy_chat_window_setting,
+    ):
+        yield
 
 
 @pytest.mark.ui

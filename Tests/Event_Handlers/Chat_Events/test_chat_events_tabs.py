@@ -60,7 +60,7 @@ def session_data():
 @pytest.fixture
 def mock_config():
     """Mock configuration settings."""
-    with patch('tldw_chatbook.config.get_cli_setting') as mock_get_setting:
+    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events_tabs.get_cli_setting') as mock_get_setting:
         # Default: tabs enabled
         mock_get_setting.return_value = True
         yield mock_get_setting
@@ -74,7 +74,7 @@ class TestChatEventsTabsHelpers:
     
     def test_get_active_session_data_tabs_disabled(self, mock_app):
         """Test getting session data when tabs are disabled."""
-        with patch('tldw_chatbook.config.get_cli_setting', return_value=False):
+        with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events_tabs.get_cli_setting', return_value=False):
             result = chat_events_tabs.get_active_session_data(mock_app)
             
             assert result is not None

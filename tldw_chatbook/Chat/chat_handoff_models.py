@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -92,6 +93,8 @@ class ChatHandoffPayload:
             return None
         if isinstance(data, cls):
             return cls(**data.to_dict())
+        if not isinstance(data, Mapping):
+            return None
         return cls(
             source=str(data.get("source") or "unknown"),
             item_type=str(data.get("item_type") or "item"),

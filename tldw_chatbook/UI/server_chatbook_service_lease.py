@@ -39,8 +39,8 @@ def server_chatbook_service_lease(
 
     if client_provider is not None:
         return ServerChatbookServiceLease(
-            service=ServerChatbookService(
-                client_provider=client_provider,
+            service=ServerChatbookService.from_client_provider(
+                client_provider,
                 policy_enforcer=policy_enforcer,
             ),
             close_owner=client_provider,
@@ -50,8 +50,8 @@ def server_chatbook_service_lease(
         raise ValueError("TLDW API base URL is not configured.")
 
     provider = build_runtime_api_client_provider_from_config(config or {})
-    service = ServerChatbookService(
-        client_provider=provider,
+    service = ServerChatbookService.from_client_provider(
+        provider,
         policy_enforcer=policy_enforcer,
     )
     return ServerChatbookServiceLease(service=service, close_owner=provider)

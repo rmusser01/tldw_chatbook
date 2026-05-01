@@ -404,3 +404,11 @@ def test_apply_current_handoff_context_wraps_unsent_payload_only():
 
     payload.status = "sent"
     assert apply_current_handoff_context(app, "Use this again.") == "Use this again."
+
+
+def test_apply_current_handoff_context_ignores_mock_auto_attributes():
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import apply_current_handoff_context
+
+    app = AsyncMock()
+
+    assert apply_current_handoff_context(app, "Use this.") == "Use this."
