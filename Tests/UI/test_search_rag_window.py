@@ -144,6 +144,24 @@ class TestSearchRAGWindow:
             assert window.query_one("#saved-searches-panel", SavedSearchesPanel)
 
     @pytest.mark.asyncio
+    async def test_primary_search_action_is_reachable_in_default_layout(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """The primary Search action should be visible without opening advanced controls."""
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+
+            search_input = window.query_one("#search-query-input", Input)
+            search_button = window.query_one("#search-button", Button)
+
+            assert search_input.display is True
+            assert search_button.display is True
+            assert search_button.disabled is False
+
+    @pytest.mark.asyncio
     async def test_get_search_config_reads_current_controls(
         self,
         mock_app_instance: MagicMock,
