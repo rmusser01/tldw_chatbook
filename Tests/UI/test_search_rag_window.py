@@ -83,6 +83,43 @@ class TestSearchRAGWindow:
         assert window.available_collections == []
         assert window.last_search_config is None
 
+    def test_load_available_collections_does_not_touch_textual_widgets(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+    ) -> None:
+        """Collection loading should be safe to run off the Textual UI thread."""
+        window = SearchRAGWindow(mock_app_instance, id="test-search-window")
+        window.query_one = MagicMock(side_effect=AssertionError("UI touched during load"))
+
+        with patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_available_profiles",
+            return_value=["default", "research"],
+        ):
+            assert window._load_available_collections() == ["default", "research"]
+
+    @pytest.mark.asyncio
+    async def test_apply_available_collections_updates_list_and_select(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Applying loaded collections should mutate Textual widgets on the UI thread."""
+        with patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_available_profiles",
+            return_value=[],
+        ):
+            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                window = pilot.app.test_widget
+
+                await window._apply_available_collections(["default"])
+                await pilot.pause()
+
+                assert window.available_collections == ["default"]
+                assert len(window.query_one("#collections-list", ListView).children) == 1
+                assert window.query_one("#collection-select", Select) is not None
+
     @pytest.mark.asyncio
     async def test_compose_creates_current_ui_elements(
         self,
