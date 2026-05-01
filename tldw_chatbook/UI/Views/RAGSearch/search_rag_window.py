@@ -30,6 +30,7 @@ from loguru import logger
 from .search_history_dropdown import SearchHistoryDropdown
 from .search_result import SearchResult
 from .saved_searches_panel import SavedSearchesPanel
+from .search_handoff import build_search_chat_handoff_payload
 from .constants import (
     DEFAULT_TOP_K, DEFAULT_TEMPERATURE, DEFAULT_PARENT_SIZE,
     MAX_CONCURRENT_SEARCHES, SEARCH_MODES, PARENT_STRATEGIES
@@ -457,6 +458,28 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         self._setup_analytics()
         self._setup_collections_list()
         self._setup_index_stats()
+
+    def _authoritative_runtime_backend(self) -> str:
+        get_source = getattr(self.app_instance, "get_authoritative_runtime_source", None)
+        backend = get_source() if callable(get_source) else "local"
+        backend = str(backend or "local").strip().lower()
+        return backend if backend in {"local", "server"} else "local"
+
+    def _build_search_chat_handoff_payload(self, result: Dict[str, Any]):
+        return build_search_chat_handoff_payload(
+            dict(result),
+            runtime_backend=self._authoritative_runtime_backend(),
+        )
+
+    @on(SearchResult.UseInChatRequested)
+    def handle_search_result_use_in_chat(self, event: SearchResult.UseInChatRequested) -> None:
+        event.stop()
+        payload = self._build_search_chat_handoff_payload(event.result)
+        open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_chat):
+            self.app_instance.notify("Use in Chat is not available.", severity="warning")
+            return
+        open_chat(payload)
     
     # Setup methods implementation
     def _setup_history_table(self) -> None:

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual.widgets import Input, Select
 
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -33,6 +34,21 @@ class TestChatSessionDataSerialization:
         assert restored.discovery_owner == "ccp_persona"
         assert restored.discovery_entity_id == "persona.remote.helper"
         assert restored.assistant_id == "persona.remote.helper"
+
+    def test_chat_session_data_round_trip_preserves_handoff_payload(self):
+        payload = ChatHandoffPayload(
+            source="notes",
+            item_type="note",
+            title="Planning note",
+            body="Plan content",
+            source_id="note-1",
+        )
+        session = ChatSessionData(tab_id="tab-1", handoff_payload=payload)
+
+        restored = ChatSessionData.from_dict(session.to_dict())
+
+        assert restored.handoff_payload is not None
+        assert restored.handoff_payload.title == "Planning note"
 
 
 class TestMessageDataSerialization:
@@ -113,6 +129,21 @@ class TestTabStateSerialization:
         assert restored.messages[0].variant_number == 1
         assert restored.messages[0].is_selected_variant is True
         assert restored.messages[0].total_variants == 2
+
+    def test_tab_state_round_trip_preserves_handoff_payload(self):
+        payload = ChatHandoffPayload(
+            source="media",
+            item_type="media",
+            title="Video",
+            body="Transcript",
+            source_id="media-1",
+        )
+        tab_state = TabState(tab_id="tab-1", title="Media: Video", handoff_payload=payload)
+
+        restored = TabState.from_dict(tab_state.to_dict())
+
+        assert restored.handoff_payload is not None
+        assert restored.handoff_payload.source == "media"
 
 
 class TestChatScreenStateSerialization:

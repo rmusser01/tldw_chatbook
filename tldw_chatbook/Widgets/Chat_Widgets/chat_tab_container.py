@@ -84,7 +84,7 @@ class ChatTabContainer(Container):
         self.app_instance = app_instance
         self.sessions: Dict[str, ChatSession] = {}
         self.tab_bar: Optional[ChatTabBar] = None
-        self.max_tabs = get_cli_setting("chat", "max_tabs", 10)
+        self.max_tabs = get_cli_setting("chat_defaults", "max_tabs", 10)
         # Pattern for valid tab IDs
         self._tab_id_pattern = re.compile(r'^[a-f0-9]{8}$')
         logger.debug(f"ChatTabContainer initialized with max_tabs: {self.max_tabs}")

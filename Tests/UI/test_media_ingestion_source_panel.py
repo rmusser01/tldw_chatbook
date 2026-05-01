@@ -5,6 +5,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Select
 
+from tldw_chatbook.Media.media_reading_scope_service import ALLOWED_SERVER_CREATE_SOURCE_TYPES
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 from tldw_chatbook.Widgets.Media.media_ingestion_source_panel import (
     ALLOWED_CREATE_SOURCE_TYPES,
@@ -119,8 +120,8 @@ async def test_ingestion_source_panel_creates_allowed_server_source_and_refreshe
         await pilot.pause(0.05)
 
         source_type = panel.query_one("#create-source-type", Select)
-        assert ALLOWED_CREATE_SOURCE_TYPES == ("archive_snapshot", "git_repository")
-        assert "local_directory" not in ALLOWED_CREATE_SOURCE_TYPES
+        assert ALLOWED_CREATE_SOURCE_TYPES == ALLOWED_SERVER_CREATE_SOURCE_TYPES
+        assert source_type.value == "local_directory"
         source_type.value = "git_repository"
         panel.query_one("#create-config-input", Input).value = '{"repo_url": "https://example.com/repo.git"}'
 

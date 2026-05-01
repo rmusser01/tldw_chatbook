@@ -1,5 +1,6 @@
 """Chat screen implementation with comprehensive state management."""
 
+import inspect
 from typing import TYPE_CHECKING, Dict, Any, Optional
 from datetime import datetime
 from loguru import logger
@@ -17,6 +18,7 @@ from textual.css.query import QueryError
 from ..Navigation.base_app_screen import BaseAppScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
 from ...Chat.chat_conversation_service import derive_conversation_title
+from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
 from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...state.ui_state import UIState
@@ -136,6 +138,7 @@ class ChatScreen(BaseAppScreen):
         self.chat_state = ChatScreenState()
         self._state_dirty = False
         self._diagnostics_run = False
+        self._handoff_consumption_in_progress = False
         self.ui_state = UIState()
         self._load_sidebar_state()
         
@@ -158,6 +161,7 @@ class ChatScreen(BaseAppScreen):
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
+        self.set_timer(0.15, self._consume_pending_chat_handoff)
     
     def save_state(self) -> Dict[str, Any]:
         """
@@ -309,6 +313,7 @@ class ChatScreen(BaseAppScreen):
             # Restore conversation messages
             await self._restore_messages()
             self.sync_task_resume_state()
+            await self._consume_pending_chat_handoff()
             
             logger.info("Chat state restoration complete")
             
@@ -323,6 +328,72 @@ class ChatScreen(BaseAppScreen):
             return self.chat_window.query_one("ChatTabContainer")
         except:
             return None
+
+    def _session_data_for_handoff(self, payload: ChatHandoffPayload) -> ChatSessionData:
+        title_item_type = payload.item_type.replace("-", " ").title()
+        scope_type = payload.scope_type or "global"
+        return ChatSessionData(
+            tab_id="handoff",
+            title=f"{title_item_type}: {payload.title}",
+            conversation_id=None,
+            is_ephemeral=True,
+            runtime_backend=payload.runtime_backend,
+            discovery_owner=payload.discovery_owner,
+            discovery_entity_id=payload.discovery_entity_id or payload.source_id,
+            scope_type=scope_type,
+            workspace_id=payload.workspace_id if scope_type == "workspace" else None,
+            handoff_payload=payload,
+        )
+
+    async def _consume_pending_chat_handoff(self) -> None:
+        payload = getattr(self.app_instance, "pending_chat_handoff", None)
+        if payload is None:
+            return
+
+        if self._handoff_consumption_in_progress:
+            return
+
+        self._handoff_consumption_in_progress = True
+        try:
+            payload = ChatHandoffPayload.from_dict(payload)
+            if payload is None:
+                return
+
+            tab_container = self._get_tab_container()
+            if tab_container is None:
+                self.app_instance.notify(
+                    "Chat tabs are not available for Use in Chat.",
+                    severity="warning",
+                )
+                return
+
+            session_data = self._session_data_for_handoff(payload)
+            tab_id = await tab_container.create_new_tab(session_data=session_data)
+            if not tab_id:
+                self.app_instance.notify(
+                    "Could not create a chat session for this context.",
+                    severity="error",
+                )
+                return
+
+            await tab_container.switch_to_tab_async(tab_id)
+            session = tab_container.sessions.get(tab_id)
+            if session is not None:
+                await self._apply_handoff_to_chat_session(session, payload)
+            self.app_instance.pending_chat_handoff = None
+        finally:
+            self._handoff_consumption_in_progress = False
+
+    async def _apply_handoff_to_chat_session(self, session: Any, payload: ChatHandoffPayload) -> None:
+        mount_handoff_card = getattr(session, "mount_handoff_card", None)
+        if callable(mount_handoff_card):
+            result = mount_handoff_card(payload)
+            if inspect.isawaitable(result):
+                await result
+
+        set_draft_text = getattr(session, "set_draft_text", None)
+        if callable(set_draft_text):
+            set_draft_text(payload.default_prompt())
 
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar."""

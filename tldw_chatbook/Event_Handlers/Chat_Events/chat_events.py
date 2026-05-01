@@ -24,6 +24,7 @@ from textual.css.query import QueryError
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_worldbooks
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_dictionaries
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Utils.Utils import safe_float, safe_int
 from tldw_chatbook.Utils.input_validation import validate_text_input, validate_number_range, sanitize_string
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
@@ -97,6 +98,18 @@ async def handle_chat_tab_sidebar_toggle(app: 'TldwCli', event: Button.Pressed) 
         loguru_logger.debug("Chat tab character sidebar (right) now %s", "collapsed" if app.chat_right_sidebar_collapsed else "expanded")
     else:
         loguru_logger.warning(f"Unhandled sidebar toggle button ID '{button_id}' in Chat tab handler.")
+
+
+def apply_current_handoff_context(app: "TldwCli", message_text: str) -> str:
+    payload = getattr(app, "_current_chat_handoff_payload", None)
+    if payload is None:
+        return message_text
+
+    payload = ChatHandoffPayload.from_dict(payload)
+    if payload is None or payload.status == "sent":
+        return message_text
+
+    return payload.format_for_model(message_text)
 
 async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles the send button press for the main chat tab."""
@@ -723,15 +736,16 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             loguru_logger.error(f"Error loading chat dictionaries: {e}", exc_info=True)
             # Continue without dictionaries on error
     
-    # --- 10.7. Apply World Info if enabled ---
-    message_text_with_world_info = message_text_with_rag
+    # --- 10.7. Apply staged handoff context and World Info if enabled ---
+    message_text_with_handoff = apply_current_handoff_context(app, message_text_with_rag)
+    message_text_with_world_info = message_text_with_handoff
     world_info_injections = {}
     
     if world_info_processor:
         try:
             # Process messages to find matching world info entries
             world_info_result = world_info_processor.process_messages(
-                message_text_with_rag,
+                message_text_with_handoff,
                 chat_history_for_api
             )
             
@@ -755,7 +769,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                     parts.append(at_start_content)
                 if before_content:
                     parts.append(before_content)
-                parts.append(message_text_with_rag)
+                parts.append(message_text_with_handoff)
                 if after_content:
                     parts.append(after_content)
                 if at_end_content:

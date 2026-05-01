@@ -95,12 +95,13 @@ def test_service_rejects_import_request_with_unsupported_content_types():
         )
 
 
-def test_build_server_chatbook_service_from_config_threads_policy_enforcer(monkeypatch):
+def test_build_server_chatbook_service_from_config_threads_policy_enforcer_to_provider(monkeypatch):
     policy = FakePolicyEnforcer()
-    build_client = Mock(return_value=Mock(base_url="https://example.com/api/"))
+    provider = Mock()
+    build_provider = Mock(return_value=provider)
     monkeypatch.setattr(
-        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
-        build_client,
+        "tldw_chatbook.Chatbooks.server_chatbook_service.build_runtime_api_client_provider_from_config",
+        build_provider,
     )
     app_config = {
         "tldw_api": {
@@ -115,10 +116,11 @@ def test_build_server_chatbook_service_from_config_threads_policy_enforcer(monke
     )
 
     assert isinstance(service, ServerChatbookService)
-    assert service.client is client
-    assert service.client_provider is None
+    assert client is provider
+    assert service.client is None
+    assert service.client_provider is provider
     assert service.policy_enforcer is policy
-    build_client.assert_called_once_with(app_config)
+    build_provider.assert_called_once_with(app_config)
 
 
 @pytest.mark.asyncio

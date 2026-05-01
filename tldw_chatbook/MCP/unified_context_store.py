@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.config import DEFAULT_CONFIG_PATH
 
 from .unified_control_models import UnifiedMCPContext
@@ -23,15 +25,18 @@ class UnifiedMCPContextStore:
         return UnifiedMCPContext.from_dict(payload)
 
     def save(self, context: UnifiedMCPContext) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-        payload = context.to_dict()
-        payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
+            payload = context.to_dict()
+            payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))
 
-        with temp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
+            with temp_path.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
 
-        temp_path.replace(self.path)
+            temp_path.replace(self.path)
+        except OSError as exc:
+            logger.warning(f"Unable to persist Unified MCP context to {self.path}: {exc}")
 
     def _read_payload(self) -> Any:
         try:

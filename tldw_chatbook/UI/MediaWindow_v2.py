@@ -45,6 +45,7 @@ from ..Event_Handlers.media_events import (
     MediaReadingHighlightUpdateEvent,
     MediaReadingHighlightDeleteEvent,
 )
+from ..Chat.chat_handoff_models import ChatHandoffPayload
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -336,6 +337,74 @@ class MediaWindow(Container):
             return dict(viewer_record)
 
         return {}
+
+    def _detail_for_media_handoff(self, event_media_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Resolve the richest loaded media detail for Chat handoff."""
+        detail: Dict[str, Any] = {}
+        if isinstance(event_media_data, dict):
+            detail.update(event_media_data)
+
+        viewer_record = getattr(getattr(self, "viewer_panel", None), "media_data", None)
+        if isinstance(viewer_record, dict):
+            detail.update(viewer_record)
+
+        record_id = getattr(self.runtime_state, "selected_record_id", None) if self.runtime_state else None
+        if record_id and self.runtime_state:
+            cached = self.runtime_state.detail_by_record_id.get(record_id)
+            if isinstance(cached, dict):
+                detail.update(cached)
+            if detail:
+                detail.setdefault("id", record_id)
+
+        return detail
+
+    def _build_current_media_chat_handoff_payload(
+        self,
+        event_media_data: Optional[Dict[str, Any]] = None,
+    ) -> ChatHandoffPayload | None:
+        detail = self._detail_for_media_handoff(event_media_data)
+        if not detail:
+            return None
+
+        record_id = getattr(self.runtime_state, "selected_record_id", None) if self.runtime_state else None
+        resolved_id = self._record_id(
+            detail,
+            record_id or detail.get("source_id") or detail.get("media_id"),
+        )
+        if resolved_id is None:
+            return None
+
+        backend = self._record_backend(detail)
+        body = str(
+            detail.get("content")
+            or detail.get("summary")
+            or detail.get("analysis")
+            or detail.get("analysis_content")
+            or ""
+        )
+        return ChatHandoffPayload.from_source_content(
+            source="media",
+            item_type="media",
+            title=str(detail.get("title") or "Untitled Media"),
+            body=body,
+            content_ref=f"media:{resolved_id}",
+            source_id=resolved_id,
+            display_summary=str(detail.get("summary") or ""),
+            suggested_prompt="Use this media item as context and help me analyze or summarize it.",
+            runtime_backend=backend,
+            source_owner=backend,
+            source_selector_state=backend,
+            discovery_owner="media",
+            discovery_entity_id=resolved_id,
+            scope_type="global",
+            metadata={
+                "url": detail.get("url"),
+                "author": detail.get("author"),
+                "media_type": detail.get("media_type"),
+                "reading_progress": detail.get("reading_progress"),
+                "content_available": bool(detail.get("content")),
+            },
+        )
 
     def _show_viewer(self) -> None:
         """Hide the empty state and display the viewer panel."""
@@ -903,6 +972,20 @@ class MediaWindow(Container):
         self.viewer_panel.load_media(detail)
         await self._load_document_versions(detail)
         self._show_viewer()
+
+    @on(MediaViewerPanel.UseInChatRequested)
+    def handle_media_use_in_chat(self, event: MediaViewerPanel.UseInChatRequested) -> None:
+        """Handle viewer request to stage the selected media item in Chat."""
+        event.stop()
+        payload = self._build_current_media_chat_handoff_payload(event.media_data)
+        if payload is None:
+            self.app_instance.notify("Select a media item before using it in Chat.", severity="warning")
+            return
+        open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_chat):
+            self.app_instance.notify("Use in Chat is not available.", severity="warning")
+            return
+        open_chat(payload)
     
     @on(MediaMetadataUpdateEvent)
     async def handle_metadata_update(self, event: MediaMetadataUpdateEvent) -> None:

@@ -5,6 +5,8 @@
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 from textual.worker import Worker
+
+from .chat_handoff_models import ChatHandoffPayload
 #
 #######################################################################################################################
 #
@@ -46,6 +48,7 @@ class ChatSessionData:
     persona_memory_mode: Optional[str] = None
     scope_type: Optional[str] = None
     workspace_id: Optional[str] = None
+    handoff_payload: Optional[ChatHandoffPayload] = None
     
     # Streaming/worker state
     is_streaming: bool = False
@@ -86,6 +89,7 @@ class ChatSessionData:
             'persona_memory_mode': self.persona_memory_mode,
             'scope_type': self.scope_type,
             'workspace_id': self.workspace_id,
+            'handoff_payload': self.handoff_payload.to_dict() if self.handoff_payload else None,
             'notes_content': self.notes_content,
             'message_count': self.message_count,
             'system_prompt_override': self.system_prompt_override,
@@ -116,6 +120,7 @@ class ChatSessionData:
             persona_memory_mode=data.get('persona_memory_mode'),
             scope_type=scope_type,
             workspace_id=workspace_id,
+            handoff_payload=ChatHandoffPayload.from_dict(data.get('handoff_payload')),
             notes_content=data.get('notes_content', ''),
             message_count=data.get('message_count', 0),
             system_prompt_override=data.get('system_prompt_override'),

@@ -78,7 +78,7 @@ async def test_research_runs_client_routes_lifecycle_and_artifact_calls(monkeypa
         "autonomy_mode": "checkpointed",
     }
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/research/runs")
-    assert mocked.await_args_list[1].kwargs["params"] == {"limit": 10}
+    assert mocked.await_args_list[1].kwargs["params"] == {"limit": 10, "offset": 0}
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/research/runs/run-1")
     assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/research/runs/run-1/pause")
     assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/research/runs/run-1/resume")

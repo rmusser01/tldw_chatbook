@@ -19,6 +19,7 @@ from textual.reactive import reactive
 from textual.timer import Timer
 from textual.widgets import Button, Input, Label, ListView, Select, Switch, TextArea
 
+from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Event_Handlers.Audio_Events.dictation_integration_events import InsertDictationTextEvent
 from ...Third_Party.textual_fspicker import FileSave
 from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
@@ -820,6 +821,157 @@ class NotesScreen(BaseAppScreen):
             if item.get("id") == lookup_id:
                 return dict(item)
         return {}
+
+    def _workspace_note_record(self, note_id: Any | None = None) -> dict[str, Any]:
+        lookup_id = self.state.selected_workspace_note_id if note_id is None else note_id
+        if lookup_id is None:
+            return {}
+        for item in self._workspace_context_payload.get("notes", []) or []:
+            if item.get("id") == lookup_id:
+                return dict(item)
+        return {}
+
+    def _handoff_subview_for_action(self, action_id: str | None) -> WorkspaceSubview | None:
+        return {
+            "notes-use-in-chat-button": WorkspaceSubview.NOTES,
+            "workspace-use-in-chat-button": WorkspaceSubview.DETAILS,
+            "workspace-source-use-in-chat-button": WorkspaceSubview.SOURCES,
+            "workspace-artifact-use-in-chat-button": WorkspaceSubview.ARTIFACTS,
+        }.get(action_id or "")
+
+    def _build_current_chat_handoff_payload(self, *, action_id: str | None = None) -> ChatHandoffPayload | None:
+        if self.state.scope_type in (ScopeType.LOCAL_NOTE, ScopeType.SERVER_NOTE):
+            return self._build_note_chat_handoff_payload()
+        if self.state.scope_type == ScopeType.WORKSPACE:
+            return self._build_workspace_chat_handoff_payload(
+                subview=self._handoff_subview_for_action(action_id),
+            )
+        return None
+
+    def _build_note_chat_handoff_payload(self) -> ChatHandoffPayload | None:
+        is_server_note = self.state.scope_type == ScopeType.SERVER_NOTE
+        runtime_backend = "server" if is_server_note else "local"
+        if is_server_note:
+            source_id = self.state.selected_server_note_id
+            if source_id is None:
+                source_id = self.state.selected_note_id
+            version = self.state.selected_server_note_version
+        else:
+            source_id = self.state.selected_note_id
+            if source_id is None:
+                source_id = self.state.selected_local_note_id
+            version = self.state.selected_note_version
+        if source_id is None:
+            return None
+        body = self._read_editor_text() or self.state.selected_note_content
+        return ChatHandoffPayload.from_source_content(
+            source="notes",
+            item_type="note",
+            title=self.state.selected_note_title or "Untitled Note",
+            body=body,
+            source_id=str(source_id) if source_id is not None else None,
+            suggested_prompt="Use this note as context and help me work with it.",
+            runtime_backend=runtime_backend,
+            source_owner=runtime_backend,
+            source_selector_state=runtime_backend,
+            discovery_owner="notes",
+            discovery_entity_id=str(source_id) if source_id is not None else None,
+            scope_type="global",
+            metadata={
+                "note_version": version,
+                "keywords": list(self._selected_note_keywords),
+                "unsaved_changes": self.state.has_unsaved_changes,
+            },
+        )
+
+    def _build_workspace_chat_handoff_payload(
+        self,
+        *,
+        subview: WorkspaceSubview | None = None,
+    ) -> ChatHandoffPayload | None:
+        workspace_id = self.state.selected_workspace_id
+        if not workspace_id:
+            return None
+
+        workspace = self._workspace_record()
+        subview = subview or self.state.workspace_subview
+        record: dict[str, Any]
+        item_type: str
+        source_id: Any
+        title: str
+        body: str
+
+        if subview == WorkspaceSubview.SOURCES:
+            record = self._workspace_source_record()
+            source_id = record.get("id") or self.state.selected_workspace_source_id
+            if source_id is None:
+                return None
+            item_type = "workspace-source"
+            title = str(record.get("title") or "Workspace Source")
+            body = self._workspace_source_body(record)
+        elif subview == WorkspaceSubview.ARTIFACTS:
+            record = self._workspace_artifact_record()
+            source_id = record.get("id") or self.state.selected_workspace_artifact_id
+            if source_id is None:
+                return None
+            item_type = "workspace-artifact"
+            title = str(record.get("title") or "Workspace Artifact")
+            body = str(record.get("content") or record.get("summary") or "")
+        elif subview == WorkspaceSubview.DETAILS:
+            record = workspace
+            source_id = workspace_id
+            item_type = "workspace"
+            title = str(record.get("name") or self.state.selected_note_title or "Workspace")
+            body = self._workspace_details_body(record)
+        else:
+            record = self._workspace_note_record()
+            source_id = record.get("id") or self.state.selected_workspace_note_id or self.state.selected_note_id
+            if source_id is None:
+                return None
+            item_type = "workspace-note"
+            title = str(record.get("title") or self.state.selected_note_title or "Workspace Note")
+            body = self._read_editor_text() or str(record.get("content") or self.state.selected_note_content)
+
+        return ChatHandoffPayload.from_source_content(
+            source="workspace",
+            item_type=item_type,
+            title=title,
+            body=body,
+            source_id=str(source_id),
+            suggested_prompt="Use this workspace item as context and help me work with it.",
+            runtime_backend="server",
+            source_owner="workspace",
+            source_selector_state="workspace",
+            discovery_owner="workspace",
+            discovery_entity_id=str(source_id),
+            scope_type="workspace",
+            workspace_id=workspace_id,
+            backend_contracts={"workspace_isolation": {"workspace_scope_id": workspace_id}},
+            metadata={
+                "workspace_name": workspace.get("name"),
+                "workspace_subview": subview.value,
+                "workspace_version": self.state.selected_workspace_version,
+                "record_version": record.get("version"),
+                "url": record.get("url"),
+            },
+        )
+
+    def _workspace_source_body(self, record: dict[str, Any]) -> str:
+        body_parts = [
+            str(record.get("title") or ""),
+            str(record.get("source_type") or ""),
+            str(record.get("url") or ""),
+            str(record.get("description") or record.get("summary") or ""),
+        ]
+        return "\n".join(part for part in body_parts if part)
+
+    def _workspace_details_body(self, record: dict[str, Any]) -> str:
+        body_parts = [
+            f"Name: {record.get('name')}" if record.get("name") else "",
+            f"Policy: {record.get('study_materials_policy')}" if record.get("study_materials_policy") else "",
+            f"Archived: {record.get('archived')}" if "archived" in record else "",
+        ]
+        return "\n".join(part for part in body_parts if part)
 
     def _upsert_workspace_payload_item(self, collection_key: str, record: dict[str, Any]) -> None:
         items = list(self._workspace_context_payload.get(collection_key, []) or [])
@@ -2132,6 +2284,25 @@ class NotesScreen(BaseAppScreen):
         open_study = getattr(self.app_instance, "open_study_screen", None)
         if callable(open_study):
             open_study(scope_context)
+
+    @on(Button.Pressed, "#notes-use-in-chat-button")
+    @on(Button.Pressed, "#workspace-use-in-chat-button")
+    @on(Button.Pressed, "#workspace-source-use-in-chat-button")
+    @on(Button.Pressed, "#workspace-artifact-use-in-chat-button")
+    def handle_use_in_chat_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        action_id = getattr(getattr(event, "button", None), "id", None)
+        if not isinstance(action_id, str):
+            action_id = None
+        payload = self._build_current_chat_handoff_payload(action_id=action_id)
+        if payload is None:
+            self._notify("Select an item before using it in Chat.", severity="warning")
+            return
+        open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_chat):
+            self._notify("Use in Chat is not available.", severity="warning")
+            return
+        open_chat(payload)
 
     @on(Button.Pressed, "#workspace-save-button")
     async def handle_workspace_save_button(self, event: Button.Pressed) -> None:

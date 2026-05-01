@@ -70,10 +70,16 @@ def build_server_chatbook_service_from_config(
     config: Mapping[str, Any],
     *,
     policy_enforcer: Any = None,
-) -> tuple["ServerChatbookService", TLDWAPIClient]:
-    """Build a server chatbook service plus its owned API client from application config."""
-    client = build_runtime_api_client_provider_from_config(config).build_client()
-    return ServerChatbookService(client, policy_enforcer=policy_enforcer), client
+) -> tuple["ServerChatbookService", Any]:
+    """Build a server chatbook service plus its owned client provider from application config."""
+    provider = build_runtime_api_client_provider_from_config(config)
+    return (
+        ServerChatbookService.from_client_provider(
+            provider,
+            policy_enforcer=policy_enforcer,
+        ),
+        provider,
+    )
 
 
 def build_server_import_selections_from_manifest(
@@ -185,6 +191,15 @@ class ServerChatbookService:
             client_provider=build_runtime_api_client_provider_from_config(app_config or {}),
             policy_enforcer=policy_enforcer,
         )
+
+    @classmethod
+    def from_client_provider(
+        cls,
+        provider: Any,
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerChatbookService":
+        return cls(client_provider=provider, policy_enforcer=policy_enforcer)
 
     @classmethod
     def from_server_context_provider(

@@ -75,35 +75,45 @@ class StreamingTestApp(App):
 
 class TestChatStreamingWithTextual:
     """Test chat streaming functionality using Textual's testing framework."""
+
+    @staticmethod
+    def _legacy_chat_window_setting(section, key, default=None):
+        if section == "chat_defaults" and key == "enable_tabs":
+            return False
+        return default
     
     @pytest_asyncio.fixture
     async def streaming_app(self):
         """Create a test app with streaming setup."""
         app = StreamingTestApp()
         
-        async with app.run_test() as pilot:
-            # Wait for app to fully mount
-            await pilot.pause(0.1)
-            
-            # Mount the AI message widget in the chat log
-            chat_window = pilot.app.query_one("#chat-window", ChatWindowEnhanced)
-            chat_log = chat_window.query_one("#chat-log", VerticalScroll)
-            
-            # Create and mount an AI message widget
-            ai_widget = ChatMessageEnhanced(
-                message="Initial.",
-                role="AI",
-                message_id="test_msg_123"
-            )
-            await chat_log.mount(ai_widget)
-            app.current_ai_widget = ai_widget
-            
-            # Mark streaming as started
-            ai_widget._streaming_started = True
-            
-            await pilot.pause(0.1)
-            
-            yield pilot, app
+        with patch(
+            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
+            side_effect=self._legacy_chat_window_setting,
+        ):
+            async with app.run_test() as pilot:
+                # Wait for app to fully mount
+                await pilot.pause(0.1)
+
+                # Mount the AI message widget in the chat log
+                chat_window = pilot.app.query_one("#chat-window", ChatWindowEnhanced)
+                chat_log = chat_window.query_one("#chat-log", VerticalScroll)
+
+                # Create and mount an AI message widget
+                ai_widget = ChatMessageEnhanced(
+                    message="Initial.",
+                    role="AI",
+                    message_id="test_msg_123"
+                )
+                await chat_log.mount(ai_widget)
+                app.current_ai_widget = ai_widget
+
+                # Mark streaming as started
+                ai_widget._streaming_started = True
+
+                await pilot.pause(0.1)
+
+                yield pilot, app
     
     @pytest.mark.asyncio
     async def test_handle_streaming_chunk_appends_text(self, streaming_app):
@@ -239,9 +249,13 @@ class TestStreamingEdgeCases:
         """Create a minimal test app."""
         app = StreamingTestApp()
         
-        async with app.run_test() as pilot:
-            await pilot.pause(0.1)
-            yield pilot, app
+        with patch(
+            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
+            side_effect=TestChatStreamingWithTextual._legacy_chat_window_setting,
+        ):
+            async with app.run_test() as pilot:
+                await pilot.pause(0.1)
+                yield pilot, app
     
     async def test_streaming_without_widget(self, minimal_app):
         """Test streaming when no AI widget exists."""

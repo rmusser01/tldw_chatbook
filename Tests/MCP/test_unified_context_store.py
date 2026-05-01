@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore
 from tldw_chatbook.MCP.unified_control_models import ServerAccessContext, UnifiedMCPContext
 
@@ -105,3 +107,17 @@ def test_unified_mcp_context_store_keeps_destination_local_state_separate_from_r
 
     assert "runtime_policy_snapshot" not in raw_payload
     assert "server_reachability" not in raw_payload
+
+
+def test_unified_mcp_context_store_ignores_unwritable_save_path(monkeypatch, tmp_path):
+    store = UnifiedMCPContextStore(tmp_path / "unified_mcp_context.json")
+    original_open = Path.open
+
+    def deny_tmp_writes(self, *args, **kwargs):
+        if str(self).endswith(".json.tmp"):
+            raise PermissionError("denied")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", deny_tmp_writes)
+
+    store.save(UnifiedMCPContext(selected_section="overview"))

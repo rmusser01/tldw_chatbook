@@ -72,6 +72,7 @@ class NotesSidebarRight(VerticalScroll):
         yield Static("Keywords:", classes="sidebar-label", id="notes-keywords-label")
         yield TextArea("", id="notes-keywords-area", classes="notes-keywords-textarea")
         yield Button("Save All Changes", id="notes-save-current-button", variant="success")
+        yield Button("Use in Chat", id="notes-use-in-chat-button", variant="primary")
 
         with Horizontal(classes="auto-save-container", id="notes-auto-save-container"):
             yield Switch(id="notes-auto-save-toggle", value=self._auto_save_enabled, tooltip="Auto-save")
@@ -140,6 +141,9 @@ class NotesSidebarRight(VerticalScroll):
         else:
             save_button.label = f"Save {resource_name} Changes"
         save_button.display = is_note_resource
+
+        use_in_chat_button = self.query_one("#notes-use-in-chat-button", Button)
+        use_in_chat_button.display = is_note_resource
 
         delete_button = self.query_one("#notes-delete-button", Button)
         if canonical_scope == "workspace" and resource_kind == "note":

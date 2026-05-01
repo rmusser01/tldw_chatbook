@@ -82,6 +82,7 @@ class WorkspaceContextPanel(VerticalScroll):
                 yield Label("Archived", id="workspace-archived-label")
             yield Button("Save Workspace", id="workspace-save-button", variant="success")
             yield Button("Open Study", id="workspace-open-study-button", variant="primary")
+            yield Button("Use in Chat", id="workspace-use-in-chat-button", variant="primary")
 
         with Container(id="workspace-notes", classes="workspace-subview"):
             yield Static("Workspace Notes", classes="workspace-heading")
@@ -100,6 +101,7 @@ class WorkspaceContextPanel(VerticalScroll):
                 yield Label("Selected", id="workspace-source-selected-label")
             yield Button("Add Source", id="workspace-add-source-button", variant="primary")
             yield Button("Save Source", id="workspace-save-source-button", variant="success")
+            yield Button("Use in Chat", id="workspace-source-use-in-chat-button", variant="primary")
 
         with Container(id="workspace-artifacts", classes="workspace-subview"):
             yield Static("Workspace Artifacts", classes="workspace-heading")
@@ -110,6 +112,7 @@ class WorkspaceContextPanel(VerticalScroll):
             yield TextArea("", id="workspace-artifact-content-input")
             yield Button("Create Artifact", id="workspace-create-artifact-button", variant="primary")
             yield Button("Save Artifact", id="workspace-save-artifact-button", variant="success")
+            yield Button("Use in Chat", id="workspace-artifact-use-in-chat-button", variant="primary")
 
     def set_workspace_details(self, workspace: dict[str, Any]) -> None:
         self.workspace = dict(workspace or {})

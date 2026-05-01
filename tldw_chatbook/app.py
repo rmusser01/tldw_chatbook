@@ -79,6 +79,7 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_N
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_loop_scope_service import ServerChatLoopScopeService
 from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
 from tldw_chatbook.Chat.server_chat_loop_service import ServerChatLoopService
@@ -1290,6 +1291,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.runtime_policy
         )
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+        self.pending_chat_handoff: Optional[ChatHandoffPayload] = None
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
         self.loguru_logger = loguru_logger
@@ -1550,6 +1552,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             "subview": subview,
         }
         self.post_message(NavigateToScreen(TAB_NOTES))
+
+    def open_chat_with_handoff(self, payload: ChatHandoffPayload) -> None:
+        if not get_cli_setting("chat_defaults", "enable_tabs", True):
+            self.notify(
+                "Use in Chat requires chat tabs to be enabled.",
+                severity="warning",
+            )
+            return
+
+        self.pending_chat_handoff = payload
+        self.post_message(NavigateToScreen(TAB_CHAT))
 
     def _wire_character_persona_services(self) -> None:
         self.server_character_persona_service = ServerCharacterPersonaService.from_server_context_provider(

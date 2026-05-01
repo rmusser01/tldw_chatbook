@@ -14,8 +14,10 @@ from textual.widgets import Button, TextArea, Static
 from textual.reactive import reactive
 #
 # Local Imports
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_SEND, FALLBACK_SEND, EMOJI_STOP, FALLBACK_STOP
+from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
 #
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -68,7 +70,7 @@ class ChatSession(Container):
         yield VerticalScroll(id=f"chat-log-{self.session_data.tab_id}", classes="chat-log")
         
         # Image attachment indicator (for enhanced chat)
-        if hasattr(self.app_instance, 'chat_enhanced_mode') and self.app_instance.chat_enhanced_mode:
+        if getattr(self.app_instance, "chat_enhanced_mode", False) is True:
             yield Static(
                 "",
                 id=f"image-attachment-indicator-{self.session_data.tab_id}",
@@ -92,8 +94,8 @@ class ChatSession(Container):
             )
             
             # Attach file button (if enhanced mode)
-            if hasattr(self.app_instance, 'chat_enhanced_mode') and self.app_instance.chat_enhanced_mode:
-                from ..config import get_cli_setting
+            if getattr(self.app_instance, "chat_enhanced_mode", False) is True:
+                from tldw_chatbook.config import get_cli_setting
                 show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
                 if show_attach_button:
                     yield Button(
@@ -226,6 +228,16 @@ class ChatSession(Container):
             logger.info(f"Cleared chat log for tab {self.session_data.tab_id}")
         except Exception as e:
             logger.warning(f"Could not clear chat log for tab {self.session_data.tab_id}: {e}")
+
+    async def mount_handoff_card(self, payload: ChatHandoffPayload) -> None:
+        """Mount the staged context card at the top of this session's chat log."""
+        chat_log = self.query_one(f"#chat-log-{self.session_data.tab_id}")
+        await chat_log.mount(ChatHandoffCard(payload))
+
+    def set_draft_text(self, text: str) -> None:
+        """Preload the per-tab composer with handoff guidance."""
+        input_widget = self.query_one(f"#chat-input-{self.session_data.tab_id}", TextArea)
+        input_widget.load_text(text)
     
     # Button event handlers
     @on(Button.Pressed)

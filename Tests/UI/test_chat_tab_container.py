@@ -1,7 +1,8 @@
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 
@@ -18,6 +19,23 @@ def _make_session(session_data: ChatSessionData) -> Mock:
 
 
 class TestChatTabContainerShellSync:
+    def test_container_reads_chat_defaults_max_tabs(self, monkeypatch):
+        app = Mock()
+
+        def fake_get_cli_setting(section, key, default=None):
+            if section == "chat_defaults" and key == "max_tabs":
+                return 4
+            return default
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.get_cli_setting",
+            fake_get_cli_setting,
+        )
+
+        container = ChatTabContainer(app)
+
+        assert container.max_tabs == 4
+
     @pytest.mark.asyncio
     async def test_create_new_tab_reuse_publishes_active_session(self):
         app = Mock()
@@ -146,3 +164,45 @@ class TestChatTabContainerShellSync:
         assert isinstance(message, ChatTabContainer.ActiveSessionChanged)
         assert message.session_data is None
         assert container.active_session_id is None
+
+    @pytest.mark.asyncio
+    async def test_handoff_session_with_no_conversation_id_does_not_reuse_existing_tab(self):
+        app = Mock()
+        app.notify = Mock()
+        app.call_later = Mock()
+        existing = _make_session(
+            ChatSessionData(
+                tab_id="aaaaaaaa",
+                title="Existing",
+                conversation_id="conv-1",
+                runtime_backend="server",
+            )
+        )
+        container = ChatTabContainer(app)
+        container.sessions = {"aaaaaaaa": existing}
+        container.max_tabs = 10
+        mount_target = Mock()
+        mount_target.mount = AsyncMock()
+        container.query_one = Mock(return_value=mount_target)
+        container.post_message = Mock()
+
+        session_data = ChatSessionData(
+            tab_id="handoff",
+            title="Note: Plan",
+            conversation_id=None,
+            runtime_backend="server",
+            handoff_payload=ChatHandoffPayload(
+                source="notes",
+                item_type="note",
+                title="Plan",
+                body="Body",
+            ),
+        )
+
+        with patch(
+            "tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.ChatSession",
+            return_value=_make_session(session_data),
+        ):
+            tab_id = await container.create_new_tab(session_data=session_data)
+
+        assert tab_id != "aaaaaaaa"
