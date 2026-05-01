@@ -554,7 +554,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         """Refresh the list of available collections"""
         try:
             collections = self._load_available_collections()
-            self.app.call_from_thread(self._apply_available_collections, collections)
+            self.app.call_from_thread(lambda: self.run_worker(self._apply_available_collections(collections), exclusive=True))
         except Exception as e:
             logger.error(f"Error refreshing collections: {e}")
     
