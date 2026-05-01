@@ -1716,7 +1716,7 @@ git commit -m "feat: add search chat handoffs"
 - Optional Modify: `Docs/Development/navigation-architecture-analysis.md`
 - Modify: `Docs/superpowers/specs/2026-04-21-use-in-chat-handoffs-design.md` only if implementation deliberately deviates from spec.
 
-- [ ] **Step 1: Run focused handoff and adjacent suites**
+- [x] **Step 1: Run focused handoff and adjacent suites**
 
 Run:
 
@@ -1726,7 +1726,9 @@ pytest Tests/UX_Interop/test_server_parity_contracts.py Tests/UI/test_chat_first
 
 Expected: PASS.
 
-- [ ] **Step 2: Run broader Chat/UI smoke tests**
+Progress note: Passed. Combined handoff/search run included the listed files plus `Tests/UI/test_search_rag_window.py`: `128 passed, 16 skipped`.
+
+- [x] **Step 2: Run broader Chat/UI smoke tests**
 
 Run:
 
@@ -1736,7 +1738,9 @@ pytest Tests/UI/test_chat_window_enhanced.py Tests/UI/test_chat_shell_bar.py Tes
 
 Expected: PASS.
 
-- [ ] **Step 3: Run formatting/static checks available in this repo**
+Progress note: Passed with `55 passed, 16 skipped`.
+
+- [x] **Step 3: Run formatting/static checks available in this repo**
 
 Run:
 
@@ -1745,6 +1749,12 @@ pytest -q
 ```
 
 Expected: PASS or document any unrelated existing failures with exact test names and failure summaries.
+
+Progress note: Full `pytest -q` completed in 52:16 with `4847 passed, 219 skipped, 49 failed, 7 errors`. Handoff-focused files passed before the full sweep. A `pytest --lf -q` rerun reduced the reproducible set to `25 failed, 28 passed, 106 deselected`:
+
+- `Tests/RuntimePolicy/test_boundary_guards.py::test_raw_server_client_construction_is_confined_to_runtime_policy_boundaries` - raw `ServerChatbookService` construction still appears outside the runtime-policy allowlist.
+- Media ingest source panel failures all hit `InvalidSelectValueError: Illegal select value 'local_directory'` from `tldw_chatbook/Widgets/Media/media_ingestion_source_panel.py:118`: `Tests/UI/test_ingest_window.py::test_media_ingest_screen_mounts_rebuilt_window`, `Tests/UI/test_ingest_window.py::test_media_ingest_screen_passes_runtime_state_to_rebuilt_window`, `Tests/UI/test_ingestion_integration_comprehensive.py::test_rebuilt_ingest_window_mounts_current_panels`, `Tests/UI/test_ingestion_integration_comprehensive.py::test_processing_messages_update_window_state`, `Tests/UI/test_ingestion_integration_comprehensive.py::test_local_processing_handles_multiple_selected_files`, `Tests/UI/test_ingestion_ui_redesigned.py::TestMediaIngestWindowRebuilt::test_media_ingest_window_mounts_current_panels`, `Tests/UI/test_ingestion_ui_redesigned.py::TestMediaIngestWindowRebuilt::test_local_panel_exposes_current_file_ingest_controls`, `Tests/UI/test_ingestion_ui_redesigned.py::TestMediaIngestWindowRebuilt::test_source_panel_defaults_to_local_mode_message`, `Tests/UI/test_ingestion_ui_redesigned.py::TestMediaIngestWindowRebuilt::test_processing_selected_files_runs_ingest_and_resets_ui`, `Tests/UI/test_media_ingestion_source_panel.py::test_ingestion_source_panel_is_disabled_in_local_mode`, `Tests/UI/test_media_ingestion_source_panel.py::test_ingestion_source_panel_lists_sources_in_server_mode`, `Tests/UI/test_media_ingestion_source_panel.py::test_ingestion_source_panel_create_is_disabled_in_local_mode`, `Tests/UI/test_media_ingestion_source_panel.py::test_ingestion_source_panel_creates_allowed_server_source_and_refreshes_selection`, `Tests/UI/test_media_ingestion_source_panel.py::test_ingestion_source_panel_does_not_dispatch_create_when_runtime_state_switched_to_local`, `Tests/UI/test_media_ingestion_tab_integration.py::test_media_ingest_screen_exposes_current_window`, `Tests/UI/test_media_ingestion_tab_integration.py::test_media_ingest_screen_keeps_rebuilt_window_visible_in_server_mode`, `Tests/UI/test_new_ingest_integration.py::test_local_processing_uses_form_metadata`, `Tests/UI/test_new_ingest_integration.py::test_local_processing_resets_button_after_completion`, `Tests/UI/test_new_ingest_window.py::test_rebuilt_ingest_window_mounts_tabbed_shell`, `Tests/UI/test_new_ingest_window.py::test_rebuilt_ingest_window_tracks_active_tab`, `Tests/UI/test_new_ingest_window_integration.py::test_server_mode_loads_source_detail_on_mount`, `Tests/UI/test_new_ingest_window_integration.py::test_server_mode_save_sync_and_upload_use_scope_service`, and `Tests/UI/test_tab_links_navigation.py::TestTabLinksNavigation::test_all_tab_links_clickable_and_navigate`.
+- `Tests/tldw_api/test_research_runs_client.py::test_research_runs_client_routes_lifecycle_and_artifact_calls` - client now sends `{"limit": 10, "offset": 0}` where the test expects only `{"limit": 10}`.
 
 - [ ] **Step 4: Manual Textual smoke path**
 
@@ -1767,11 +1777,13 @@ Expected:
 - Workspace fixture states keep workspace IDs visible and do not render workspace notes as global notes.
 - Nothing is auto-sent before pressing Send.
 
-- [ ] **Step 5: Update docs only if behavior changed**
+Manual smoke note: Deferred. Automated Textual handoff and shell tests passed, but the broad suite currently fails when navigating into the ingest screen because the media ingestion source panel cannot compose its create-source select. No spec deviation was found in the shipped handoff behavior.
+
+- [x] **Step 5: Update docs only if behavior changed**
 
 If implementation deliberately deviates from the spec, update the spec with the exact shipped behavior before marking work complete.
 
-- [ ] **Step 6: Commit final docs/test adjustments**
+- [x] **Step 6: Commit final docs/test adjustments**
 
 ```bash
 git add Docs/Development/chat-first-shell-migration.md Docs/Development/navigation-architecture-analysis.md Docs/superpowers/specs/2026-04-21-use-in-chat-handoffs-design.md
