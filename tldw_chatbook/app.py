@@ -237,7 +237,7 @@ from tldw_chatbook.Companion_Interop import CompanionScopeService, ServerCompani
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Feedback_Interop import FeedbackScopeService, LocalFeedbackService, ServerFeedbackService
-from tldw_chatbook.Kanban_Interop import KanbanScopeService, ServerKanbanService
+from tldw_chatbook.Kanban_Interop import KanbanScopeService, LocalKanbanService, ServerKanbanService
 from tldw_chatbook.LLM_Provider_Catalog import (
     LLMProviderCatalogScopeService,
     LocalLLMProviderCatalogService,
@@ -1898,7 +1898,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        self.local_kanban_service = LocalKanbanService(
+            db_path=get_user_data_dir() / "tldw_chatbook_kanban.db",
+            policy_enforcer=self.service_policy_enforcer,
+        )
         self.kanban_scope_service = KanbanScopeService(
+            local_service=self.local_kanban_service,
             server_service=self.server_kanban_service,
             policy_enforcer=self.service_policy_enforcer,
         )

@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Kanban_Interop.kanban_scope_service import KanbanScopeService
+from tldw_chatbook.Kanban_Interop.server_kanban_service import KANBAN_OPERATION_SPECS
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -23,6 +24,26 @@ class FakeServerKanbanService:
     async def get_search_status(self):
         self.calls.append(("get_search_status",))
         return {"index_ready": True}
+
+
+class FakeLocalKanbanService:
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        if name not in KANBAN_OPERATION_SPECS:
+            raise AttributeError(name)
+
+        async def _operation(*args, **kwargs):
+            self.calls.append((name, args, kwargs))
+            return {"id": 1, "name": name}
+
+        return _operation
+
+
+class ExplodingServerKanbanService:
+    def __getattr__(self, name):
+        raise AssertionError(f"server should not dispatch {name}")
 
 
 class FakePolicyEnforcer:
@@ -76,10 +97,25 @@ async def test_kanban_scope_service_rejects_local_mode_without_dispatch():
     server = FakeServerKanbanService()
     scope = KanbanScopeService(server_service=server)
 
-    with pytest.raises(ValueError, match="server-only"):
+    with pytest.raises(ValueError, match="Local Kanban backend is unavailable"):
         await scope.list_boards(mode="local")
 
     assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_kanban_scope_service_dispatches_every_operation_locally():
+    local = FakeLocalKanbanService()
+    server = ExplodingServerKanbanService()
+    policy = FakePolicyEnforcer()
+    scope = KanbanScopeService(local_service=local, server_service=server, policy_enforcer=policy)
+
+    for operation_name, spec in KANBAN_OPERATION_SPECS.items():
+        args = _minimal_args_for(spec)
+        await scope.invoke(operation_name, *args, mode="local")
+
+    assert [call[0] for call in local.calls] == list(KANBAN_OPERATION_SPECS)
+    assert all(action_id.endswith(".local") for action_id in policy.calls)
 
 
 @pytest.mark.asyncio
@@ -95,20 +131,23 @@ async def test_kanban_scope_service_blocks_denied_action_before_dispatch():
 
 def test_kanban_scope_service_reports_local_and_server_contract_gaps():
     scope = KanbanScopeService(server_service=None)
+    local_scope = KanbanScopeService(local_service=FakeLocalKanbanService(), server_service=None)
 
     local_report = scope.list_unsupported_capabilities(mode="local")
+    ready_local_report = local_scope.list_unsupported_capabilities(mode="local")
     server_report = scope.list_unsupported_capabilities(mode="server")
 
     assert local_report == [
         {
-            "operation_id": "kanban.remote_only.local",
+            "operation_id": "kanban.local_backend_unavailable",
             "source": "local",
             "supported": False,
-            "reason_code": "remote_only_surface",
-            "user_message": "Server Kanban boards, lists, cards, labels, comments, checklists, links, search, activity, import/export, and bulk operations are unavailable in local/offline mode.",
+            "reason_code": "local_backend_unavailable",
+            "user_message": "Local Kanban backend is unavailable.",
             "affected_action_ids": [],
         }
     ]
+    assert ready_local_report == []
     assert server_report == [
         {
             "operation_id": "kanban.workflow_controls.server",
@@ -119,3 +158,12 @@ def test_kanban_scope_service_reports_local_and_server_contract_gaps():
             "affected_action_ids": [],
         }
     ]
+
+
+def _minimal_args_for(spec):
+    request_index = spec.request_arg_index if spec.request_arg_index is not None else -1
+    highest_index = max(tuple(spec.identifier_arg_indexes) + (request_index,))
+    args = [1 for _ in range(highest_index + 1)]
+    if spec.request_arg_index is not None:
+        args[spec.request_arg_index] = {}
+    return tuple(args)
