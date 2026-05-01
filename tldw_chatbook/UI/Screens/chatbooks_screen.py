@@ -3,17 +3,22 @@ Chatbooks Screen
 Screen wrapper for Chatbooks functionality in screen-based navigation.
 """
 
-from textual.screen import Screen
 from textual.app import ComposeResult
 from textual.reactive import reactive
 from typing import Optional, List, Dict, Any
 from loguru import logger
 
+from tldw_chatbook.Constants import TAB_CHATBOOKS
+
 from ..Chatbooks_Window_Improved import ChatbooksWindowImproved
+from ..Navigation.base_app_screen import BaseAppScreen
 
 
-class ChatbooksScreen(Screen):
+class ChatbooksScreen(BaseAppScreen):
     """Screen wrapper for Chatbooks functionality."""
+
+    def __init__(self, app_instance, **kwargs):
+        super().__init__(app_instance, TAB_CHATBOOKS, **kwargs)
     
     # Screen-specific state
     current_chatbook: reactive[Optional[Dict[str, Any]]] = reactive(None)
@@ -21,13 +26,14 @@ class ChatbooksScreen(Screen):
     is_editing: reactive[bool] = reactive(False)
     selected_chatbook_id: reactive[Optional[int]] = reactive(None)
     
-    def compose(self) -> ComposeResult:
+    def compose_content(self) -> ComposeResult:
         """Compose the Chatbooks screen with the Chatbooks window."""
         logger.info("Composing Chatbooks screen")
-        yield ChatbooksWindowImproved(self.app)
+        yield ChatbooksWindowImproved(self.app_instance)
     
     async def on_mount(self) -> None:
         """Initialize Chatbooks when screen is mounted."""
+        super().on_mount()
         logger.info("Chatbooks screen mounted")
         chatbooks_window = self.query_one(ChatbooksWindowImproved)
         self.chatbook_list = list(chatbooks_window.chatbooks)

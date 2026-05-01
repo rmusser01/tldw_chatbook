@@ -15,11 +15,13 @@ async def test_chatbooks_screen_uses_improved_window(monkeypatch):
 
     class ChatbooksScreenApp(App):
         def compose(self) -> ComposeResult:
-            yield ChatbooksScreen()
+            yield ChatbooksScreen(self)
 
     app = ChatbooksScreenApp()
     async with app.run_test() as pilot:
         assert app.screen.query_one(ChatbooksWindowImproved) is not None
+        assert app.screen.query_one("#nav-chat") is not None
+        assert app.screen.query_one("#nav-chatbooks") is not None
 
 
 @pytest.mark.asyncio

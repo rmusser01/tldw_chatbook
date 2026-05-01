@@ -115,6 +115,18 @@ from tldw_chatbook.runtime_policy import KeyringServerCredentialStore, RuntimeSe
 from tldw_chatbook.runtime_policy.server_parity_state import ServerParityStateRepositories
 
 
+PRIMARY_ROUTE_IDS = [
+    "chat",
+    "notes",
+    "media",
+    "ingest",
+    "search",
+    "study",
+    "ccp",
+    "chatbooks",
+]
+
+
 def _build_test_app() -> TldwCli:
     user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-test-"))
 
@@ -537,3 +549,15 @@ async def test_screen_navigation_routes_reach_real_app_handler():
 
             assert app.current_tab == route
             assert captured_destinations == [expected_screen_class]
+
+
+def test_primary_routed_screens_use_base_app_screen():
+    app = _build_test_app()
+
+    offenders = []
+    for route_id in PRIMARY_ROUTE_IDS:
+        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(route_id)
+        if screen_class is None or not issubclass(screen_class, BaseAppScreen):
+            offenders.append((route_id, screen_class))
+
+    assert offenders == []
