@@ -24,11 +24,9 @@ REMOTE_ONLY_DOMAIN_IDS = (
     "web_clipper",
     "server_tools",
     "text2sql",
-    "server_skills",
     "claims",
     "meetings",
     "outputs",
-    "kanban",
     "prompt_studio",
 )
 
@@ -38,7 +36,7 @@ REMOTE_UTILITY_DOMAIN_IDS = (
     "translation",
     "server_tools",
     "text2sql",
-    "server_skills",
+    "skills",
     "claims",
     "meetings",
     "outputs",
@@ -173,6 +171,22 @@ _DOMAIN_EDGE_CONTRACTS: tuple[DomainEdgeContract, ...] = (
         uses_event_contract=True,
         unsupported_local_reason_codes=("not_implemented_locally",),
     ),
+    DomainEdgeContract(
+        domain_id="skills",
+        label="Skills",
+        authority="local_and_server",
+        source_selector_states=("local", "server"),
+        view_model_contract="skills_source_honest_view_v1",
+        uses_event_contract=True,
+    ),
+    DomainEdgeContract(
+        domain_id="kanban",
+        label="Kanban",
+        authority="local_and_server",
+        source_selector_states=("local", "server"),
+        view_model_contract="kanban_source_honest_view_v1",
+        uses_event_contract=True,
+    ),
 )
 
 _REMOTE_ONLY_CONTRACTS: tuple[DomainEdgeContract, ...] = tuple(
@@ -191,17 +205,33 @@ _REMOTE_ONLY_CONTRACTS: tuple[DomainEdgeContract, ...] = tuple(
 _REMOTE_UTILITY_LOCAL_PARITY: tuple[RemoteUtilityLocalParityContract, ...] = tuple(
     RemoteUtilityLocalParityContract(
         domain_id=domain_id,
-        state="pilot" if domain_id == "translation" else "remote_only",
+        state=(
+            "pilot"
+            if domain_id == "translation"
+            else "planned"
+            if domain_id in {"skills", "kanban"}
+            else "remote_only"
+        ),
         local_adapter="TranslationScopeService.local_service" if domain_id == "translation" else None,
         notes=(
             "Text translation can route to an explicit local adapter; without it, local mode keeps "
             "the existing unsupported report."
             if domain_id == "translation"
+            else "Full local parity is planned behind the source-aware scope service."
+            if domain_id in {"skills", "kanban"}
             else "Server remains authoritative; local mode must render an unsupported report."
         ),
     )
     for domain_id in REMOTE_UTILITY_DOMAIN_IDS
 )
+
+_DOMAIN_ALIASES = {
+    "server_skills": "skills",
+}
+
+_REMOTE_UTILITY_ALIASES = {
+    "server_skills": "skills",
+}
 
 _CONTRACTS_BY_DOMAIN = {
     contract.domain_id: contract
@@ -218,6 +248,7 @@ def list_domain_edge_contracts() -> tuple[DomainEdgeContract, ...]:
 
 
 def get_domain_edge_contract(domain_id: str) -> DomainEdgeContract:
+    domain_id = _DOMAIN_ALIASES.get(domain_id, domain_id)
     try:
         return _CONTRACTS_BY_DOMAIN[domain_id]
     except KeyError as exc:
@@ -232,6 +263,7 @@ def build_domain_capability_matrix() -> dict[str, dict[str, object]]:
 
 
 def get_remote_utility_local_parity(domain_id: str) -> RemoteUtilityLocalParityContract:
+    domain_id = _REMOTE_UTILITY_ALIASES.get(domain_id, domain_id)
     try:
         return _REMOTE_UTILITY_PARITY_BY_DOMAIN[domain_id]
     except KeyError as exc:
