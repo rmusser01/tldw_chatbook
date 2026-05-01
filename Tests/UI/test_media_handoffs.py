@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ast
+import inspect
+import textwrap
 from unittest.mock import Mock
 
 import pytest
@@ -37,6 +40,17 @@ def test_media_viewer_builds_use_in_chat_event_for_loaded_media():
 
     assert event.media_data["id"] == "media-1"
     assert event.media_data["title"] == "Lecture"
+
+
+def test_media_viewer_clear_display_does_not_use_bare_except():
+    tree = ast.parse(textwrap.dedent(inspect.getsource(MediaViewerPanel.clear_display)))
+
+    bare_handlers = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler) and node.type is None
+    ]
+    assert bare_handlers == []
 
 
 @pytest.mark.asyncio

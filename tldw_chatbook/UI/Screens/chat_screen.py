@@ -3,6 +3,7 @@
 import inspect
 from typing import TYPE_CHECKING, Dict, Any, Optional
 from datetime import datetime
+import uuid
 from loguru import logger
 import toml
 from pathlib import Path
@@ -333,7 +334,7 @@ class ChatScreen(BaseAppScreen):
         title_item_type = payload.item_type.replace("-", " ").title()
         scope_type = payload.scope_type or "global"
         return ChatSessionData(
-            tab_id="handoff",
+            tab_id=uuid.uuid4().hex[:8],
             title=f"{title_item_type}: {payload.title}",
             conversation_id=None,
             is_ephemeral=True,

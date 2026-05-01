@@ -868,7 +868,7 @@ class MediaViewerPanel(Container):
             search_input.value = ""
             self._update_read_it_later_button()
             self._update_use_in_chat_button()
-        except:
+        except Exception:
             pass
 
     def _update_use_in_chat_button(self) -> None:
