@@ -47,6 +47,21 @@ from .local_kanban_db import initialize_schema, open_connection, transaction
 from .server_kanban_service import KANBAN_OPERATION_SPECS
 
 
+_SERVER_ACTION_SUFFIX = ".server"
+_LOCAL_ACTION_SUFFIX = ".local"
+
+
+def _derive_local_action_id(action_id: str) -> str:
+    if not action_id.endswith(_SERVER_ACTION_SUFFIX):
+        raise ValueError(f"Kanban operation action_id must end with {_SERVER_ACTION_SUFFIX!r}: {action_id}")
+    return f"{action_id[:-len(_SERVER_ACTION_SUFFIX)]}{_LOCAL_ACTION_SUFFIX}"
+
+
+LOCAL_KANBAN_OPERATION_ACTION_IDS = {
+    name: _derive_local_action_id(spec.action_id) for name, spec in KANBAN_OPERATION_SPECS.items()
+}
+
+
 class LocalKanbanService:
     """SQLite-backed local Kanban backend.
 
@@ -133,10 +148,10 @@ class LocalKanbanService:
 
     @classmethod
     def _local_action_id(cls, operation_name: str) -> str:
-        action_id = cls.operations[operation_name].action_id
-        if action_id.endswith(".server"):
-            return f"{action_id[:-len('.server')]}.local"
-        return action_id
+        try:
+            return LOCAL_KANBAN_OPERATION_ACTION_IDS[operation_name]
+        except KeyError as exc:
+            raise ValueError(f"Unknown Kanban operation: {operation_name}") from exc
 
     @staticmethod
     def _json_dump(value: Any) -> str | None:

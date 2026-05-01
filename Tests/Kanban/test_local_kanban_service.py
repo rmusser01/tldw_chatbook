@@ -2,8 +2,13 @@ import sqlite3
 
 import pytest
 
+from tldw_chatbook.Kanban_Interop import local_kanban_db
 from tldw_chatbook.Kanban_Interop.local_kanban_db import REQUIRED_KANBAN_TABLES
-from tldw_chatbook.Kanban_Interop.local_kanban_service import LocalKanbanService
+from tldw_chatbook.Kanban_Interop.local_kanban_service import (
+    LOCAL_KANBAN_OPERATION_ACTION_IDS,
+    LocalKanbanService,
+    _derive_local_action_id,
+)
 from tldw_chatbook.Kanban_Interop.server_kanban_service import KANBAN_OPERATION_SPECS
 
 
@@ -98,6 +103,34 @@ def test_local_kanban_service_enforces_local_policy_action_ids(tmp_path):
     service._enforce("kanban.boards.list.local")
 
     assert policy.calls == ["kanban.boards.list.local"]
+
+
+def test_local_kanban_operation_action_ids_are_explicit_and_local():
+    assert set(LOCAL_KANBAN_OPERATION_ACTION_IDS) == set(KANBAN_OPERATION_SPECS)
+    assert all(action_id.endswith(".local") for action_id in LOCAL_KANBAN_OPERATION_ACTION_IDS.values())
+    assert LOCAL_KANBAN_OPERATION_ACTION_IDS["create_board"] == "kanban.boards.create.local"
+
+
+def test_local_kanban_action_id_derivation_rejects_non_server_specs():
+    with pytest.raises(ValueError, match="must end with '.server'"):
+        _derive_local_action_id("kanban.boards.create")
+
+
+def test_local_kanban_fts_init_only_suppresses_missing_fts5():
+    class MissingFtsConnection:
+        def execute(self, *_args, **_kwargs):
+            raise sqlite3.OperationalError("no such module: fts5")
+
+    assert local_kanban_db._ensure_fts(MissingFtsConnection()) is False
+
+
+def test_local_kanban_fts_init_reraises_unrelated_operational_errors():
+    class BrokenConnection:
+        def execute(self, *_args, **_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        local_kanban_db._ensure_fts(BrokenConnection())
 
 
 @pytest.mark.asyncio

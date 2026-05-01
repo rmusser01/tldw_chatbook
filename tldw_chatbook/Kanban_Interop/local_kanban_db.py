@@ -24,6 +24,8 @@ REQUIRED_KANBAN_TABLES = {
     "kanban_card_links",
 }
 
+_FTS5_PROBE_TABLE = "__tldw_kanban_fts5_probe"
+
 
 def open_connection(db_path: str | Path) -> sqlite3.Connection:
     if str(db_path) != ":memory:":
@@ -235,20 +237,35 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_fts(conn: sqlite3.Connection) -> bool:
-    try:
-        conn.execute(
-            """
-            CREATE VIRTUAL TABLE IF NOT EXISTS kanban_cards_fts USING fts5(
-                title,
-                description,
-                content='kanban_cards',
-                content_rowid='id'
-            )
-            """
-        )
-    except sqlite3.OperationalError:
+    if not _sqlite_supports_fts5(conn):
         return False
+    conn.execute(
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS kanban_cards_fts USING fts5(
+            title,
+            description,
+            content='kanban_cards',
+            content_rowid='id'
+        )
+        """
+    )
     return True
+
+
+def _sqlite_supports_fts5(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute(f"DROP TABLE IF EXISTS {_FTS5_PROBE_TABLE}")
+        conn.execute(f"CREATE VIRTUAL TABLE {_FTS5_PROBE_TABLE} USING fts5(value)")
+        conn.execute(f"DROP TABLE {_FTS5_PROBE_TABLE}")
+    except sqlite3.OperationalError as exc:
+        if _is_missing_fts5_error(exc):
+            return False
+        raise
+    return True
+
+
+def _is_missing_fts5_error(exc: sqlite3.OperationalError) -> bool:
+    return "no such module: fts5" in str(exc).lower()
 
 
 @contextmanager
