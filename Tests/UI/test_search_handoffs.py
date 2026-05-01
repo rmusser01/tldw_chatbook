@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from tldw_chatbook.UI.Views.RAGSearch import search_rag_window
 from tldw_chatbook.UI.SearchWindow import SearchWindow
 from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
 from tldw_chatbook.UI.Views.RAGSearch.search_result import SearchResult
@@ -96,6 +97,40 @@ def test_search_rag_window_use_in_chat_handler_routes_to_app(tmp_path):
     payload = app.open_chat_with_handoff.call_args.args[0]
     assert payload.source == "search-rag"
     assert payload.body == "Retrieved text"
+
+
+@pytest.mark.asyncio
+async def test_search_rag_window_web_search_runs_bing_call_in_thread(tmp_path):
+    app = _search_app(runtime_backend="local")
+    with patch(
+        "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+        return_value=tmp_path,
+    ):
+        window = SearchRAGWindow(app_instance=app)
+    search_bing = Mock(return_value={"raw": "bing"})
+
+    with (
+        patch.object(search_rag_window, "WEB_SEARCH_AVAILABLE", True),
+        patch.object(search_rag_window, "search_web_bing", search_bing),
+        patch.object(
+            search_rag_window,
+            "parse_bing_results",
+            return_value=[
+                {
+                    "name": "Article",
+                    "snippet": "Snippet",
+                    "url": "https://example.com",
+                    "displayUrl": "example.com",
+                }
+            ],
+        ),
+        patch.object(search_rag_window.asyncio, "to_thread", AsyncMock(return_value={"raw": "bing"})) as to_thread,
+    ):
+        results = await window._perform_web_search("agent handoff")
+
+    to_thread.assert_awaited_once_with(search_bing, "agent handoff")
+    assert results[0]["title"] == "Article"
+    assert results[0]["metadata"]["url"] == "https://example.com"
 
 
 @pytest.mark.asyncio

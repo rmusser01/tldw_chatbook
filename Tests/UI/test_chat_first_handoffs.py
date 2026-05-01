@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import tomllib
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -142,6 +143,23 @@ async def test_chat_screen_consumes_pending_handoff_into_fresh_ephemeral_tab():
     assert session_data.workspace_id == "workspace-1"
     assert session_data.handoff_payload.title == "Transcript"
     assert app.pending_chat_handoff is None
+
+
+def test_chat_screen_handoff_session_data_uses_unique_valid_tab_ids():
+    payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Plan",
+        body="Body",
+    )
+    screen = ChatScreen(Mock())
+
+    first = screen._session_data_for_handoff(payload)
+    second = screen._session_data_for_handoff(payload)
+
+    assert re.fullmatch(r"[a-f0-9]{8}", first.tab_id)
+    assert re.fullmatch(r"[a-f0-9]{8}", second.tab_id)
+    assert first.tab_id != second.tab_id
 
 
 @pytest.mark.asyncio

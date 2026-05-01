@@ -1792,6 +1792,8 @@ git commit -m "docs: record chat handoff implementation notes"
 
 Skip this commit if no docs changed.
 
+PR #145 rebase/review note (2026-05-01): Rebasing onto latest `origin/dev` showed the first seven handoff implementation commits were already present in `dev` via the merged `codex/use-in-chat-handoffs` branch, so the PR branch dropped those duplicate commits and now carries only review-closeout deltas. Gemini inline review comments were verified against the rebased code: Unified MCP context save failures already log `OSError` on `origin/dev`; RAG web search now runs synchronous Bing IO through `asyncio.to_thread`; handoff session data now uses unique 8-character hex tab IDs instead of a hardcoded handoff placeholder; and `MediaViewerPanel.clear_display()` no longer uses a bare `except:`. Focused review regressions passed with `3 passed`; adjacent blocker suites passed with `48 passed`.
+
 ## Implementation Notes For Workers
 
 - Do not inject handoff context into legacy single-session Chat. The feature is intentionally tab-only for this slice.

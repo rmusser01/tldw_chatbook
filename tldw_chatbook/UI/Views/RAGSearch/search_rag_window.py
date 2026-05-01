@@ -636,7 +636,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             return []
             
         try:
-            web_results = await search_web_bing(query)
+            web_results = await asyncio.to_thread(search_web_bing, query)
             parsed_results = parse_bing_results(web_results)
             
             # Format web results to match our structure
