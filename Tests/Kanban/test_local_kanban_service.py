@@ -203,3 +203,82 @@ async def test_local_kanban_archives_deletes_restores_and_lists_activities(tmp_p
         "restore",
     ]
     assert any(activity["entity_type"] == "card" for activity in card_activities["activities"])
+
+
+@pytest.mark.asyncio
+async def test_local_kanban_labels_checklists_items_and_comments(tmp_path):
+    service = LocalKanbanService(db_path=tmp_path / "kanban.db")
+    board = await service.create_board({"name": "Project", "client_id": "board-1"})
+    kanban_list = await service.create_list(board["id"], {"name": "Todo", "client_id": "list-1"})
+    card = await service.create_card(kanban_list["id"], {"title": "Task", "client_id": "card-1"})
+
+    label = await service.create_label(board["id"], {"name": "Urgent", "color": "red"})
+    await service.assign_label_to_card(card["id"], label["id"])
+    checklist = await service.create_checklist(card["id"], {"name": "Steps"})
+    item = await service.create_checklist_item(checklist["id"], {"name": "Do it"})
+    checked = await service.check_checklist_item(item["id"])
+    comment = await service.create_comment(card["id"], {"content": "Looks good"})
+    updated_comment = await service.update_comment(comment["id"], {"content": "Ship it"})
+    deleted_comment = await service.delete_comment(comment["id"])
+
+    labels = await service.list_labels(board["id"])
+    card_labels = await service.list_card_labels(card["id"])
+    checklist_items = await service.list_checklist_items(checklist["id"])
+    comments = await service.list_comments(card["id"], include_deleted=True)
+    await service.toggle_all_checklist_items(checklist["id"], {"checked": False})
+    unchecked = await service.get_checklist_item(item["id"])
+    await service.remove_label_from_card(card["id"], label["id"])
+
+    assert labels["labels"][0]["name"] == "Urgent"
+    assert card_labels["labels"][0]["id"] == label["id"]
+    assert checked["checked"] is True
+    assert checklist_items["items"][0]["name"] == "Do it"
+    assert updated_comment["content"] == "Ship it"
+    assert deleted_comment["deleted"] is True
+    assert comments["pagination"]["total"] == 1
+    assert unchecked["checked"] is False
+    assert (await service.list_card_labels(card["id"]))["labels"] == []
+
+
+@pytest.mark.asyncio
+async def test_local_kanban_bulk_search_links_import_export(tmp_path):
+    source = LocalKanbanService(db_path=tmp_path / "source.db")
+    board = await source.create_board({"name": "Project", "client_id": "board-1"})
+    todo = await source.create_list(board["id"], {"name": "Todo", "client_id": "list-1"})
+    done = await source.create_list(board["id"], {"name": "Done", "client_id": "list-2"})
+    first = await source.create_card(todo["id"], {"title": "Alpha task", "client_id": "card-1"})
+    second = await source.create_card(todo["id"], {"title": "Beta task", "client_id": "card-2"})
+    label = await source.create_label(board["id"], {"name": "Focus", "color": "blue"})
+
+    moved = await source.bulk_move_cards({"card_ids": [first["id"], second["id"]], "target_list_id": done["id"]})
+    labeled = await source.bulk_label_cards({"card_ids": [first["id"], second["id"]], "add_label_ids": [label["id"]]})
+    search = await source.search_cards({"query": "Alpha", "search_mode": "hybrid"})
+    link = await source.add_card_link(first["id"], {"linked_type": "note", "linked_id": "note-1"})
+    links = await source.list_card_links(first["id"])
+    counts = await source.get_card_link_counts(first["id"])
+    linked_cards = await source.list_cards_by_linked_content("note", "note-1")
+    export_payload = await source.export_board(board["id"], {"include_archived": True})
+
+    target = LocalKanbanService(db_path=tmp_path / "target.db")
+    imported = await target.import_board({"data": export_payload, "board_name": "Imported Project"})
+
+    assert moved["moved_count"] == 2
+    assert labeled["updated_count"] == 2
+    assert search["local_search_degraded"] is True
+    assert search["effective_search_mode"] in {"fts", "like"}
+    assert link["linked_id"] == "note-1"
+    assert links["links"][0]["id"] == link["id"]
+    assert counts["note"] == 1
+    assert linked_cards["cards"][0]["id"] == first["id"]
+    assert export_payload["board"]["name"] == "Project"
+    assert imported["board"]["name"] == "Imported Project"
+    assert imported["import_stats"]["lists_imported"] == 2
+    assert imported["import_stats"]["cards_imported"] == 2
+
+
+def test_local_kanban_service_exposes_every_operation(tmp_path):
+    service = LocalKanbanService(db_path=tmp_path / "kanban.db")
+
+    missing = [name for name in KANBAN_OPERATION_SPECS if not callable(getattr(service, name, None))]
+
+    assert missing == []

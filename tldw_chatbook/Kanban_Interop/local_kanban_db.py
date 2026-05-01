@@ -140,6 +140,7 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
             client_id TEXT,
             name TEXT NOT NULL,
             checked INTEGER NOT NULL DEFAULT 0,
+            checked_at TEXT,
             position REAL NOT NULL DEFAULT 0,
             version INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,

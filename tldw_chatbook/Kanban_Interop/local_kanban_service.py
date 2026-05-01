@@ -12,14 +12,36 @@ from typing import Any, Iterator
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     KanbanBoardCreate,
+    KanbanBoardExportRequest,
+    KanbanBoardImportRequest,
     KanbanBoardUpdate,
+    KanbanBulkArchiveCardsRequest,
+    KanbanBulkCardLinksRequest,
+    KanbanBulkDeleteCardsRequest,
+    KanbanBulkLabelCardsRequest,
+    KanbanBulkMoveCardsRequest,
     KanbanCardCopyRequest,
+    KanbanCardCopyWithChecklistsRequest,
     KanbanCardCreate,
+    KanbanCardLinkCreate,
+    KanbanCardSearchRequest,
     KanbanCardMoveRequest,
     KanbanCardUpdate,
+    KanbanChecklistCreate,
+    KanbanChecklistItemCreate,
+    KanbanChecklistItemReorderRequest,
+    KanbanChecklistItemUpdate,
+    KanbanChecklistReorderRequest,
+    KanbanChecklistUpdate,
+    KanbanCommentCreate,
+    KanbanCommentUpdate,
+    KanbanLabelCreate,
+    KanbanLabelUpdate,
     KanbanListCreate,
     KanbanListUpdate,
     KanbanReorderRequest,
+    KanbanSearchRequest,
+    KanbanToggleAllChecklistItemsRequest,
 )
 from .local_kanban_db import initialize_schema, open_connection, transaction
 from .server_kanban_service import KANBAN_OPERATION_SPECS
@@ -894,5 +916,861 @@ class LocalKanbanService:
                 "activities": [self._activity_row_to_dict(row) for row in rows],
                 "pagination": self._pagination(limit=limit, offset=offset, total=total),
             }
+        finally:
+            conn.close()
+
+    def _label_row_to_dict(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "uuid": row["uuid"],
+            "board_id": row["board_id"],
+            "name": row["name"],
+            "color": row["color"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _checklist_row_to_dict(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "uuid": row["uuid"],
+            "card_id": row["card_id"],
+            "name": row["name"],
+            "position": int(row["position"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _checklist_item_row_to_dict(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "uuid": row["uuid"],
+            "checklist_id": row["checklist_id"],
+            "name": row["name"],
+            "position": int(row["position"]),
+            "checked": self._bool(row["checked"]),
+            "checked_at": row["checked_at"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _comment_row_to_dict(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "uuid": row["uuid"],
+            "card_id": row["card_id"],
+            "user_id": row["user_id"],
+            "content": row["content"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "deleted": self._bool(row["is_deleted"]),
+        }
+
+    def _link_row_to_dict(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "uuid": row["uuid"],
+            "card_id": row["card_id"],
+            "linked_type": row["linked_type"],
+            "linked_id": row["linked_id"],
+            "created_at": row["created_at"],
+        }
+
+    async def get_board_export(self, board_id: int, **kwargs: Any) -> dict[str, Any]:
+        return await self.export_board(board_id, kwargs)
+
+    async def export_board(self, board_id: int, request_data: Any | None = None) -> dict[str, Any]:
+        self._enforce(self._local_action_id("export_board"))
+        request = KanbanBoardExportRequest(**dict(request_data or {}))
+        conn = self.connect()
+        try:
+            board = self._board_row_to_dict(
+                conn,
+                self._row(conn, "SELECT * FROM kanban_boards WHERE id = ?", (board_id,), entity="board", entity_id=board_id),
+            )
+            labels = [
+                self._label_row_to_dict(row)
+                for row in conn.execute("SELECT * FROM kanban_labels WHERE board_id = ? ORDER BY id ASC", (board_id,)).fetchall()
+            ]
+            list_filters = ["board_id = ?"]
+            if not request.include_archived:
+                list_filters.append("is_archived = 0")
+            if not request.include_deleted:
+                list_filters.append("is_deleted = 0")
+            lists = []
+            for list_row in conn.execute(
+                f"SELECT * FROM kanban_lists WHERE {' AND '.join(list_filters)} ORDER BY position ASC, id ASC",
+                (board_id,),
+            ).fetchall():
+                list_payload = self._list_row_to_dict(conn, list_row)
+                card_filters = ["list_id = ?"]
+                if not request.include_archived:
+                    card_filters.append("is_archived = 0")
+                if not request.include_deleted:
+                    card_filters.append("is_deleted = 0")
+                cards = []
+                for card_row in conn.execute(
+                    f"SELECT * FROM kanban_cards WHERE {' AND '.join(card_filters)} ORDER BY position ASC, id ASC",
+                    (list_row["id"],),
+                ).fetchall():
+                    card_payload = self._card_row_to_dict(card_row)
+                    card_payload["labels"] = (await self.list_card_labels(card_row["id"]))["labels"]
+                    card_payload["checklists"] = self._checklists_for_card(conn, card_row["id"])
+                    card_payload["comments"] = (await self.list_comments(card_row["id"], include_deleted=request.include_deleted))["comments"]
+                    card_payload["links"] = (await self.list_card_links(card_row["id"]))["links"]
+                    cards.append(card_payload)
+                list_payload["cards"] = cards
+                lists.append(list_payload)
+            return {
+                "format": "json",
+                "exported_at": self._now(),
+                "board": board,
+                "labels": labels,
+                "lists": lists,
+            }
+        finally:
+            conn.close()
+
+    async def import_board(self, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("import_board"))
+        request = KanbanBoardImportRequest(**dict(request_data or {}))
+        data = request.data
+        source_board = data.get("board") or {}
+        board = await self.create_board(
+            {
+                "name": request.board_name or source_board.get("name") or "Imported Board",
+                "client_id": source_board.get("client_id") or f"import-{self._new_uuid()}",
+                "description": source_board.get("description"),
+                "activity_retention_days": source_board.get("activity_retention_days"),
+                "metadata": source_board.get("metadata"),
+            }
+        )
+        label_map: dict[int, int] = {}
+        for label_payload in data.get("labels") or []:
+            created = await self.create_label(
+                board["id"],
+                {"name": label_payload["name"], "color": label_payload.get("color") or "gray"},
+            )
+            label_map[int(label_payload["id"])] = created["id"]
+        lists_imported = cards_imported = checklists_imported = checklist_items_imported = comments_imported = 0
+        for list_payload in data.get("lists") or []:
+            created_list = await self.create_list(
+                board["id"],
+                {
+                    "name": list_payload["name"],
+                    "client_id": list_payload.get("client_id") or f"import-list-{self._new_uuid()}",
+                    "position": list_payload.get("position"),
+                },
+            )
+            lists_imported += 1
+            for card_payload in list_payload.get("cards") or []:
+                created_card = await self.create_card(
+                    created_list["id"],
+                    {
+                        "title": card_payload["title"],
+                        "client_id": card_payload.get("client_id") or f"import-card-{self._new_uuid()}",
+                        "description": card_payload.get("description"),
+                        "position": card_payload.get("position"),
+                        "priority": card_payload.get("priority"),
+                        "metadata": card_payload.get("metadata"),
+                    },
+                )
+                cards_imported += 1
+                for label_payload in card_payload.get("labels") or []:
+                    mapped_label_id = label_map.get(int(label_payload["id"]))
+                    if mapped_label_id is not None:
+                        await self.assign_label_to_card(created_card["id"], mapped_label_id)
+                for checklist_payload in card_payload.get("checklists") or []:
+                    created_checklist = await self.create_checklist(
+                        created_card["id"],
+                        {"name": checklist_payload["name"], "position": checklist_payload.get("position")},
+                    )
+                    checklists_imported += 1
+                    for item_payload in checklist_payload.get("items") or []:
+                        await self.create_checklist_item(
+                            created_checklist["id"],
+                            {
+                                "name": item_payload["name"],
+                                "position": item_payload.get("position"),
+                                "checked": item_payload.get("checked", False),
+                            },
+                        )
+                        checklist_items_imported += 1
+                for comment_payload in card_payload.get("comments") or []:
+                    if not comment_payload.get("deleted"):
+                        await self.create_comment(created_card["id"], {"content": comment_payload["content"]})
+                        comments_imported += 1
+        return {
+            "board": board,
+            "import_stats": {
+                "board_id": board["id"],
+                "lists_imported": lists_imported,
+                "cards_imported": cards_imported,
+                "labels_imported": len(label_map),
+                "checklists_imported": checklists_imported,
+                "checklist_items_imported": checklist_items_imported,
+                "comments_imported": comments_imported,
+            },
+        }
+
+    async def create_label(self, board_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("create_label"))
+        request = KanbanLabelCreate(**dict(request_data or {}))
+        now = self._now()
+        with self.transaction() as conn:
+            self._row(conn, "SELECT * FROM kanban_boards WHERE id = ?", (board_id,), entity="board", entity_id=board_id)
+            cursor = conn.execute(
+                "INSERT INTO kanban_labels (uuid, board_id, name, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (self._new_uuid(), board_id, request.name, request.color, now, now),
+            )
+            label_id = int(cursor.lastrowid)
+            self._record_activity(conn, board_id=board_id, action_type="label", entity_type="label", entity_id=label_id)
+            return self._label_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+            )
+
+    async def list_labels(self, board_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("list_labels"))
+        conn = self.connect()
+        try:
+            rows = conn.execute("SELECT * FROM kanban_labels WHERE board_id = ? ORDER BY id ASC", (board_id,)).fetchall()
+            return {"labels": [self._label_row_to_dict(row) for row in rows]}
+        finally:
+            conn.close()
+
+    async def get_label(self, label_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("get_label"))
+        conn = self.connect()
+        try:
+            return self._label_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+            )
+        finally:
+            conn.close()
+
+    async def update_label(self, label_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("update_label"))
+        request = KanbanLabelUpdate(**dict(request_data or {}))
+        with self.transaction() as conn:
+            row = self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+            conn.execute(
+                "UPDATE kanban_labels SET name = COALESCE(?, name), color = COALESCE(?, color), updated_at = ?, version = version + 1 WHERE id = ?",
+                (request.name, request.color, self._now(), label_id),
+            )
+            self._record_activity(conn, board_id=row["board_id"], action_type="label", entity_type="label", entity_id=label_id)
+            return self._label_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+            )
+
+    async def delete_label(self, label_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("delete_label"))
+        with self.transaction() as conn:
+            row = self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+            conn.execute("DELETE FROM kanban_labels WHERE id = ?", (label_id,))
+            self._record_activity(conn, board_id=row["board_id"], action_type="label", entity_type="label", entity_id=label_id, details={"deleted": True})
+            return {"detail": "deleted"}
+
+    async def assign_label_to_card(self, card_id: int, label_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("assign_label_to_card"))
+        with self.transaction() as conn:
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+            conn.execute(
+                "INSERT OR IGNORE INTO kanban_card_labels (card_id, label_id, created_at) VALUES (?, ?, ?)",
+                (card_id, label_id, self._now()),
+            )
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="label", entity_type="card_label", entity_id=label_id)
+            return {"detail": "assigned"}
+
+    async def remove_label_from_card(self, card_id: int, label_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("remove_label_from_card"))
+        with self.transaction() as conn:
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            conn.execute("DELETE FROM kanban_card_labels WHERE card_id = ? AND label_id = ?", (card_id, label_id))
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="label", entity_type="card_label", entity_id=label_id, details={"removed": True})
+            return {"detail": "removed"}
+
+    async def list_card_labels(self, card_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("list_card_labels"))
+        conn = self.connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT labels.*
+                FROM kanban_labels labels
+                JOIN kanban_card_labels card_labels ON card_labels.label_id = labels.id
+                WHERE card_labels.card_id = ?
+                ORDER BY labels.id ASC
+                """,
+                (card_id,),
+            ).fetchall()
+            return {"labels": [self._label_row_to_dict(row) for row in rows]}
+        finally:
+            conn.close()
+
+    async def create_checklist(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("create_checklist"))
+        request = KanbanChecklistCreate(**dict(request_data or {}))
+        now = self._now()
+        with self.transaction() as conn:
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            position = request.position if request.position is not None else int(conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM kanban_checklists WHERE card_id = ?", (card_id,)).fetchone()[0])
+            cursor = conn.execute(
+                "INSERT INTO kanban_checklists (uuid, card_id, name, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (self._new_uuid(), card_id, request.name, position, now, now),
+            )
+            checklist_id = int(cursor.lastrowid)
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="create", entity_type="checklist", entity_id=checklist_id)
+            return self._checklist_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
+            )
+
+    async def list_checklists(self, card_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("list_checklists"))
+        conn = self.connect()
+        try:
+            rows = conn.execute("SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC, id ASC", (card_id,)).fetchall()
+            return {"checklists": [self._checklist_row_to_dict(row) for row in rows]}
+        finally:
+            conn.close()
+
+    async def get_checklist(self, checklist_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("get_checklist"))
+        conn = self.connect()
+        try:
+            return self._checklist_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
+            )
+        finally:
+            conn.close()
+
+    async def update_checklist(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("update_checklist"))
+        request = KanbanChecklistUpdate(**dict(request_data or {}))
+        with self.transaction() as conn:
+            row = self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
+            conn.execute(
+                "UPDATE kanban_checklists SET name = COALESCE(?, name), updated_at = ?, version = version + 1 WHERE id = ?",
+                (request.name, self._now(), checklist_id),
+            )
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (row["card_id"],), entity="card", entity_id=row["card_id"])
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="update", entity_type="checklist", entity_id=checklist_id)
+            return self._checklist_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
+            )
+
+    async def delete_checklist(self, checklist_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("delete_checklist"))
+        with self.transaction() as conn:
+            row = self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (row["card_id"],), entity="card", entity_id=row["card_id"])
+            conn.execute("DELETE FROM kanban_checklists WHERE id = ?", (checklist_id,))
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="delete", entity_type="checklist", entity_id=checklist_id)
+            return {"detail": "deleted"}
+
+    async def reorder_checklists(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("reorder_checklists"))
+        request = KanbanChecklistReorderRequest(**dict(request_data or {}))
+        with self.transaction() as conn:
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            for position, checklist_id in enumerate(request.checklist_ids):
+                conn.execute("UPDATE kanban_checklists SET position = ?, updated_at = ? WHERE id = ? AND card_id = ?", (position, self._now(), checklist_id, card_id))
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="reorder", entity_type="checklist", entity_id=None, details={"ids": request.checklist_ids})
+            return {"success": True, "message": None}
+
+    async def create_checklist_item(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("create_checklist_item"))
+        request = KanbanChecklistItemCreate(**dict(request_data or {}))
+        now = self._now()
+        with self.transaction() as conn:
+            checklist = self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (checklist["card_id"],), entity="card", entity_id=checklist["card_id"])
+            position = request.position if request.position is not None else int(conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM kanban_checklist_items WHERE checklist_id = ?", (checklist_id,)).fetchone()[0])
+            cursor = conn.execute(
+                """
+                INSERT INTO kanban_checklist_items
+                    (uuid, checklist_id, name, checked, checked_at, position, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (self._new_uuid(), checklist_id, request.name, int(request.checked), now if request.checked else None, position, now, now),
+            )
+            item_id = int(cursor.lastrowid)
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="create", entity_type="checklist_item", entity_id=item_id)
+            return self._checklist_item_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_checklist_items WHERE id = ?", (item_id,), entity="checklist_item", entity_id=item_id)
+            )
+
+    async def list_checklist_items(self, checklist_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("list_checklist_items"))
+        conn = self.connect()
+        try:
+            rows = conn.execute("SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC, id ASC", (checklist_id,)).fetchall()
+            return {"items": [self._checklist_item_row_to_dict(row) for row in rows]}
+        finally:
+            conn.close()
+
+    async def get_checklist_item(self, item_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("get_checklist_item"))
+        conn = self.connect()
+        try:
+            return self._checklist_item_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_checklist_items WHERE id = ?", (item_id,), entity="checklist_item", entity_id=item_id)
+            )
+        finally:
+            conn.close()
+
+    async def update_checklist_item(self, item_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("update_checklist_item"))
+        request = KanbanChecklistItemUpdate(**dict(request_data or {}))
+        with self.transaction() as conn:
+            row = self._row(conn, "SELECT * FROM kanban_checklist_items WHERE id = ?", (item_id,), entity="checklist_item", entity_id=item_id)
+            checked_at = self._now() if request.checked else None
+            conn.execute(
+                """
+                UPDATE kanban_checklist_items
+                SET name = COALESCE(?, name),
+                    checked = COALESCE(?, checked),
+                    checked_at = CASE WHEN ? IS NULL THEN checked_at ELSE ? END,
+                    updated_at = ?,
+                    version = version + 1
+                WHERE id = ?
+                """,
+                (request.name, None if request.checked is None else int(request.checked), request.checked, checked_at, self._now(), item_id),
+            )
+            checklist = self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (row["checklist_id"],), entity="checklist", entity_id=row["checklist_id"])
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (checklist["card_id"],), entity="card", entity_id=checklist["card_id"])
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="update", entity_type="checklist_item", entity_id=item_id)
+            return self._checklist_item_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_checklist_items WHERE id = ?", (item_id,), entity="checklist_item", entity_id=item_id)
+            )
+
+    async def delete_checklist_item(self, item_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("delete_checklist_item"))
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM kanban_checklist_items WHERE id = ?", (item_id,))
+            return {"detail": "deleted"}
+
+    async def reorder_checklist_items(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("reorder_checklist_items"))
+        request = KanbanChecklistItemReorderRequest(**dict(request_data or {}))
+        with self.transaction() as conn:
+            for position, item_id in enumerate(request.item_ids):
+                conn.execute("UPDATE kanban_checklist_items SET position = ?, updated_at = ? WHERE id = ? AND checklist_id = ?", (position, self._now(), item_id, checklist_id))
+            return {"success": True, "message": None}
+
+    async def check_checklist_item(self, item_id: int) -> dict[str, Any]:
+        return await self.update_checklist_item(item_id, {"checked": True})
+
+    async def uncheck_checklist_item(self, item_id: int) -> dict[str, Any]:
+        return await self.update_checklist_item(item_id, {"checked": False})
+
+    async def toggle_all_checklist_items(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("toggle_all_checklist_items"))
+        request = KanbanToggleAllChecklistItemsRequest(**dict(request_data or {}))
+        now = self._now()
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE kanban_checklist_items SET checked = ?, checked_at = ?, updated_at = ?, version = version + 1 WHERE checklist_id = ?",
+                (int(request.checked), now if request.checked else None, now, checklist_id),
+            )
+            return {"success": True, "message": None}
+
+    def _checklists_for_card(self, conn: Any, card_id: int) -> list[dict[str, Any]]:
+        checklists = []
+        for checklist_row in conn.execute("SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC, id ASC", (card_id,)).fetchall():
+            payload = self._checklist_row_to_dict(checklist_row)
+            item_rows = conn.execute("SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC, id ASC", (checklist_row["id"],)).fetchall()
+            payload["items"] = [self._checklist_item_row_to_dict(item_row) for item_row in item_rows]
+            payload["total_items"] = len(payload["items"])
+            payload["checked_items"] = sum(1 for item in payload["items"] if item["checked"])
+            payload["progress_percent"] = int((payload["checked_items"] / payload["total_items"]) * 100) if payload["total_items"] else 0
+            checklists.append(payload)
+        return checklists
+
+    async def create_comment(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("create_comment"))
+        request = KanbanCommentCreate(**dict(request_data or {}))
+        now = self._now()
+        with self.transaction() as conn:
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            cursor = conn.execute(
+                "INSERT INTO kanban_comments (uuid, card_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (self._new_uuid(), card_id, request.content, now, now),
+            )
+            comment_id = int(cursor.lastrowid)
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="comment", entity_type="comment", entity_id=comment_id)
+            return self._comment_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
+            )
+
+    async def list_comments(self, card_id: int, *, include_deleted: bool = False, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        self._enforce(self._local_action_id("list_comments"))
+        where = ["card_id = ?"]
+        if not include_deleted:
+            where.append("is_deleted = 0")
+        conn = self.connect()
+        try:
+            total = conn.execute(f"SELECT COUNT(*) FROM kanban_comments WHERE {' AND '.join(where)}", (card_id,)).fetchone()[0]
+            rows = conn.execute(
+                f"SELECT * FROM kanban_comments WHERE {' AND '.join(where)} ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?",
+                (card_id, limit, offset),
+            ).fetchall()
+            return {"comments": [self._comment_row_to_dict(row) for row in rows], "pagination": self._pagination(limit=limit, offset=offset, total=total)}
+        finally:
+            conn.close()
+
+    async def get_comment(self, comment_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("get_comment"))
+        conn = self.connect()
+        try:
+            return self._comment_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
+            )
+        finally:
+            conn.close()
+
+    async def update_comment(self, comment_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("update_comment"))
+        request = KanbanCommentUpdate(**dict(request_data or {}))
+        with self.transaction() as conn:
+            row = self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (row["card_id"],), entity="card", entity_id=row["card_id"])
+            conn.execute("UPDATE kanban_comments SET content = ?, updated_at = ?, version = version + 1 WHERE id = ?", (request.content, self._now(), comment_id))
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="comment", entity_type="comment", entity_id=comment_id)
+            return self._comment_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
+            )
+
+    async def delete_comment(self, comment_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("delete_comment"))
+        with self.transaction() as conn:
+            row = self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (row["card_id"],), entity="card", entity_id=row["card_id"])
+            conn.execute("UPDATE kanban_comments SET is_deleted = 1, deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ?", (self._now(), self._now(), comment_id))
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="comment", entity_type="comment", entity_id=comment_id, details={"deleted": True})
+            return self._comment_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
+            )
+
+    async def bulk_move_cards(self, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("bulk_move_cards"))
+        request = KanbanBulkMoveCardsRequest(**dict(request_data or {}))
+        cards = []
+        for card_id in request.card_ids:
+            cards.append(await self.move_card(card_id, {"target_list_id": request.target_list_id, "position": request.position}))
+        return {"success": True, "moved_count": len(cards), "cards": cards}
+
+    async def bulk_archive_cards(self, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("bulk_archive_cards"))
+        request = KanbanBulkArchiveCardsRequest(**dict(request_data or {}))
+        for card_id in request.card_ids:
+            await self.archive_card(card_id)
+        return {"success": True, "archived_count": len(request.card_ids)}
+
+    async def bulk_unarchive_cards(self, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("bulk_unarchive_cards"))
+        request = KanbanBulkArchiveCardsRequest(**dict(request_data or {}))
+        for card_id in request.card_ids:
+            await self.unarchive_card(card_id)
+        return {"success": True, "unarchived_count": len(request.card_ids)}
+
+    async def bulk_delete_cards(self, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("bulk_delete_cards"))
+        request = KanbanBulkDeleteCardsRequest(**dict(request_data or {}))
+        for card_id in request.card_ids:
+            await self.delete_card(card_id)
+        return {"success": True, "deleted_count": len(request.card_ids)}
+
+    async def bulk_label_cards(self, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("bulk_label_cards"))
+        request = KanbanBulkLabelCardsRequest(**dict(request_data or {}))
+        for card_id in request.card_ids:
+            for label_id in request.add_label_ids or []:
+                await self.assign_label_to_card(card_id, label_id)
+            for label_id in request.remove_label_ids or []:
+                await self.remove_label_from_card(card_id, label_id)
+        return {"success": True, "updated_count": len(request.card_ids)}
+
+    async def filter_board_cards(
+        self,
+        board_id: int,
+        *,
+        query: str | None = None,
+        priority: str | None = None,
+        include_archived: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+        **_: Any,
+    ) -> dict[str, Any]:
+        self._enforce(self._local_action_id("filter_board_cards"))
+        cards, total = self._search_cards_raw(
+            query=query,
+            board_id=board_id,
+            priority=priority,
+            include_archived=include_archived,
+            limit=limit,
+            offset=offset,
+        )
+        return {"cards": cards, "pagination": self._pagination(limit=limit, offset=offset, total=total)}
+
+    async def copy_card_with_checklists(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("copy_card_with_checklists"))
+        request = KanbanCardCopyWithChecklistsRequest(**dict(request_data or {}))
+        copied = await self.copy_card(
+            card_id,
+            {
+                "target_list_id": request.target_list_id,
+                "new_client_id": request.new_client_id,
+                "position": request.position,
+                "new_title": request.new_title,
+            },
+        )
+        conn = self.connect()
+        try:
+            checklist_rows = conn.execute("SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC", (card_id,)).fetchall()
+            label_rows = conn.execute("SELECT label_id FROM kanban_card_labels WHERE card_id = ?", (card_id,)).fetchall()
+        finally:
+            conn.close()
+        if request.copy_labels:
+            for row in label_rows:
+                await self.assign_label_to_card(copied["id"], row["label_id"])
+        if request.copy_checklists:
+            for checklist_row in checklist_rows:
+                created = await self.create_checklist(copied["id"], {"name": checklist_row["name"], "position": checklist_row["position"]})
+                conn = self.connect()
+                try:
+                    item_rows = conn.execute("SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC", (checklist_row["id"],)).fetchall()
+                finally:
+                    conn.close()
+                for item_row in item_rows:
+                    await self.create_checklist_item(created["id"], {"name": item_row["name"], "position": item_row["position"], "checked": bool(item_row["checked"])})
+        return copied
+
+    def _search_cards_raw(
+        self,
+        *,
+        query: str | None,
+        board_id: int | None,
+        priority: str | None = None,
+        include_archived: bool = False,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        where = ["cards.is_deleted = 0"]
+        params: list[Any] = []
+        if not include_archived:
+            where.append("cards.is_archived = 0")
+        if board_id is not None:
+            where.append("cards.board_id = ?")
+            params.append(board_id)
+        if priority is not None:
+            where.append("cards.priority = ?")
+            params.append(priority)
+        if query:
+            where.append("(cards.title LIKE ? OR COALESCE(cards.description, '') LIKE ?)")
+            params.extend([f"%{query}%", f"%{query}%"])
+        where_sql = " AND ".join(where)
+        conn = self.connect()
+        try:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM kanban_cards cards WHERE {where_sql}",
+                tuple(params),
+            ).fetchone()[0]
+            rows = conn.execute(
+                f"SELECT cards.* FROM kanban_cards cards WHERE {where_sql} ORDER BY cards.updated_at DESC, cards.id DESC LIMIT ? OFFSET ?",
+                tuple(params + [limit, offset]),
+            ).fetchall()
+            return [self._card_row_to_dict(row) for row in rows], total
+        finally:
+            conn.close()
+
+    def _search_result_for_card(self, card: dict[str, Any]) -> dict[str, Any]:
+        conn = self.connect()
+        try:
+            board = self._row(conn, "SELECT * FROM kanban_boards WHERE id = ?", (card["board_id"],), entity="board", entity_id=card["board_id"])
+            list_row = self._row(conn, "SELECT * FROM kanban_lists WHERE id = ?", (card["list_id"],), entity="list", entity_id=card["list_id"])
+        finally:
+            conn.close()
+        labels = []
+        return {
+            "id": card["id"],
+            "uuid": card["uuid"],
+            "board_id": card["board_id"],
+            "board_name": board["name"],
+            "list_id": card["list_id"],
+            "list_name": list_row["name"],
+            "title": card["title"],
+            "description": card["description"],
+            "priority": card["priority"],
+            "due_date": card["due_date"],
+            "labels": labels,
+            "created_at": card["created_at"],
+            "updated_at": card["updated_at"],
+            "relevance_score": 1.0,
+        }
+
+    async def search_cards_basic(self, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("search_cards_basic"))
+        request = KanbanCardSearchRequest(**dict(request_data or {}))
+        cards, total = self._search_cards_raw(query=request.query, board_id=request.board_id, limit=request.limit, offset=request.offset)
+        return {"cards": cards, "pagination": self._pagination(limit=request.limit, offset=request.offset, total=total)}
+
+    async def search_cards_basic_get(self, query: str = "", **kwargs: Any) -> dict[str, Any]:
+        return await self.search_cards_basic({"query": query or kwargs.get("q") or kwargs.get("query", ""), **kwargs})
+
+    async def search_cards(self, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("search_cards"))
+        request = KanbanSearchRequest(**dict(request_data or {}))
+        effective_mode = "fts" if self.get_storage_status()["fts_available"] else "like"
+        cards, total = self._search_cards_raw(
+            query=request.query,
+            board_id=request.board_id,
+            priority=request.priority,
+            include_archived=request.include_archived,
+            limit=request.limit,
+            offset=request.offset,
+        )
+        results = [self._search_result_for_card(card) for card in cards]
+        return {
+            "query": request.query,
+            "search_mode": request.search_mode,
+            "effective_search_mode": effective_mode,
+            "local_search_degraded": request.search_mode in {"vector", "hybrid"} or effective_mode == "like",
+            "results": results,
+            "pagination": self._pagination(limit=request.limit, offset=request.offset, total=total),
+        }
+
+    async def search_cards_get(self, query: str = "", **kwargs: Any) -> dict[str, Any]:
+        return await self.search_cards({"query": query or kwargs.get("q") or kwargs.get("query", ""), **kwargs})
+
+    async def get_search_status(self) -> dict[str, Any]:
+        self._enforce(self._local_action_id("get_search_status"))
+        status = self.get_storage_status()
+        return {
+            "index_ready": True,
+            "fts_available": status["fts_available"],
+            "effective_search_mode": "fts" if status["fts_available"] else "like",
+            "local_search_degraded_modes": ["vector", "hybrid"],
+        }
+
+    async def add_card_link(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("add_card_link"))
+        request = KanbanCardLinkCreate(**dict(request_data or {}))
+        now = self._now()
+        with self.transaction() as conn:
+            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO kanban_card_links (uuid, card_id, linked_type, linked_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (self._new_uuid(), card_id, request.linked_type, request.linked_id, now),
+            )
+            if cursor.lastrowid:
+                link_id = int(cursor.lastrowid)
+            else:
+                link_id = conn.execute(
+                    "SELECT id FROM kanban_card_links WHERE card_id = ? AND linked_type = ? AND linked_id = ?",
+                    (card_id, request.linked_type, request.linked_id),
+                ).fetchone()["id"]
+            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="link", entity_type="card_link", entity_id=link_id)
+            return self._link_row_to_dict(
+                self._row(conn, "SELECT * FROM kanban_card_links WHERE id = ?", (link_id,), entity="card_link", entity_id=link_id)
+            )
+
+    async def list_card_links(self, card_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("list_card_links"))
+        conn = self.connect()
+        try:
+            rows = conn.execute("SELECT * FROM kanban_card_links WHERE card_id = ? ORDER BY id ASC", (card_id,)).fetchall()
+            return {"links": [self._link_row_to_dict(row) for row in rows]}
+        finally:
+            conn.close()
+
+    async def get_card_link_counts(self, card_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("get_card_link_counts"))
+        conn = self.connect()
+        try:
+            rows = conn.execute("SELECT linked_type, COUNT(*) AS count FROM kanban_card_links WHERE card_id = ? GROUP BY linked_type", (card_id,)).fetchall()
+            counts = {"media": 0, "note": 0}
+            counts.update({row["linked_type"]: row["count"] for row in rows})
+            return counts
+        finally:
+            conn.close()
+
+    async def remove_card_link(self, card_id: int, linked_type: str, linked_id: str) -> dict[str, Any]:
+        self._enforce(self._local_action_id("remove_card_link"))
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM kanban_card_links WHERE card_id = ? AND linked_type = ? AND linked_id = ?", (card_id, linked_type, str(linked_id)))
+            return {"detail": "removed"}
+
+    async def remove_card_link_by_id_for_card(self, card_id: int, link_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("remove_card_link_by_id_for_card"))
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM kanban_card_links WHERE card_id = ? AND id = ?", (card_id, link_id))
+            return {"detail": "removed"}
+
+    async def remove_card_link_by_id(self, link_id: int) -> dict[str, Any]:
+        self._enforce(self._local_action_id("remove_card_link_by_id"))
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM kanban_card_links WHERE id = ?", (link_id,))
+            return {"detail": "removed"}
+
+    async def bulk_add_card_links(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("bulk_add_card_links"))
+        request = KanbanBulkCardLinksRequest(**dict(request_data or {}))
+        links = []
+        skipped = 0
+        for link_request in request.links:
+            before = (await self.get_card_link_counts(card_id))[link_request.linked_type]
+            link = await self.add_card_link(card_id, link_request.model_dump())
+            after = (await self.get_card_link_counts(card_id))[link_request.linked_type]
+            skipped += 1 if after == before else 0
+            links.append(link)
+        return {"added_count": len(links) - skipped, "skipped_count": skipped, "links": links}
+
+    async def bulk_remove_card_links(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("bulk_remove_card_links"))
+        request = KanbanBulkCardLinksRequest(**dict(request_data or {}))
+        removed = 0
+        for link_request in request.links:
+            await self.remove_card_link(card_id, link_request.linked_type, link_request.linked_id)
+            removed += 1
+        return {"removed_count": removed}
+
+    async def list_cards_by_linked_content(self, linked_type: str, linked_id: str, **_: Any) -> dict[str, Any]:
+        self._enforce(self._local_action_id("list_cards_by_linked_content"))
+        conn = self.connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT cards.*, links.id AS link_id, links.created_at AS linked_at, boards.name AS board_name, lists.name AS list_name
+                FROM kanban_card_links links
+                JOIN kanban_cards cards ON cards.id = links.card_id
+                JOIN kanban_boards boards ON boards.id = cards.board_id
+                JOIN kanban_lists lists ON lists.id = cards.list_id
+                WHERE links.linked_type = ? AND links.linked_id = ?
+                ORDER BY links.id ASC
+                """,
+                (linked_type, str(linked_id)),
+            ).fetchall()
+            cards = [
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "description": row["description"],
+                    "board_id": row["board_id"],
+                    "board_name": row["board_name"],
+                    "list_id": row["list_id"],
+                    "list_name": row["list_name"],
+                    "position": int(row["position"]),
+                    "is_archived": self._bool(row["is_archived"]),
+                    "is_deleted": self._bool(row["is_deleted"]),
+                    "link_id": row["link_id"],
+                    "linked_at": row["linked_at"],
+                }
+                for row in rows
+            ]
+            return {"linked_type": linked_type, "linked_id": str(linked_id), "cards": cards}
         finally:
             conn.close()
