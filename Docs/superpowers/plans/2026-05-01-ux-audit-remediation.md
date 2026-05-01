@@ -321,7 +321,7 @@ Current-dev state: still open. The main navigation now says `Library` for CCP, b
 
 Purpose: make first-run diagnostics truthful and actionable without hiding real failures.
 
-Current-dev state: still open. Splash typing imports and NLTK download logging still match the audit findings.
+Branch state: partially completed in `codex/ux-startup-log-polish`. Splash import regressions, optional OpenAI TTS mapping fallback logging, and NLTK download-result logging are covered by focused tests. Broader optional dependency capability-state presentation remains open.
 
 ### Files
 
@@ -334,18 +334,18 @@ Current-dev state: still open. Splash typing imports and NLTK download logging s
 
 ### Steps
 
-- [ ] Add import tests for splash effects that previously failed on missing `Dict`.
-- [ ] Fix missing typing imports.
-- [ ] Add tests that missing optional OpenAI TTS mapping uses defaults without error-level startup noise.
-- [ ] Make NLTK download logging truthful: no success message when download fails.
+- [x] Add import tests for splash effects that previously failed on missing `Dict`.
+- [x] Fix missing typing imports.
+- [x] Add tests that missing optional OpenAI TTS mapping uses defaults without error-level startup noise.
+- [x] Make NLTK download logging truthful: no success message when download fails.
 - [ ] Present optional dependency gaps as capability states when user-relevant, not stack traces.
 - [ ] Keep real crashes/error states visible.
 
 ### Acceptance Criteria
 
-- [ ] Splash effects import without missing typing-name errors.
-- [ ] Missing optional TTS mapping falls back quietly.
-- [ ] Failed NLTK download is not logged as success.
+- [x] Splash effects import without missing typing-name errors.
+- [x] Missing optional TTS mapping falls back quietly.
+- [x] Failed NLTK download is not logged as success.
 - [ ] Optional dependency gaps tell users what capability is unavailable and how to recover.
 
 ## Phase 7: End-To-End Audit Replay And Closeout

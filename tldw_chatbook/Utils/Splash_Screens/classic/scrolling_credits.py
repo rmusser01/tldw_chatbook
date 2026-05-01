@@ -1,7 +1,7 @@
 """ScrollingCredits splash screen effect."""
 
 import time
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any, Dict, List, Tuple
 
 from ..base_effect import BaseEffect, register_effect
 
