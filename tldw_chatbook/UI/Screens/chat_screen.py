@@ -1151,6 +1151,12 @@ class ChatScreen(BaseAppScreen):
             
             # Try to find the chat log container (it's a VerticalScroll)
             chat_log = None
+            log_selectors = [
+                "#chat-log",
+                ".chat-log",
+                "#chat-messages-container",
+                ".chat-messages"
+            ]
             
             # First try the direct approach used in Chat_Window_Enhanced
             try:
@@ -1161,22 +1167,15 @@ class ChatScreen(BaseAppScreen):
             
             # If not found, try other selectors
             if not chat_log:
-                log_selectors = [
-                    "#chat-log",
-                    ".chat-log",
-                    "#chat-messages-container",
-                    ".chat-messages"
-                ]
-            
-            for selector in log_selectors:
-                try:
-                    containers = self.chat_window.query(selector)
-                    if containers:
-                        chat_log = containers.first()
-                        logger.debug(f"Found chat log container with selector: {selector}")
-                        break
-                except Exception as e:
-                    logger.debug(f"Could not find chat log with {selector}: {e}")
+                for selector in log_selectors:
+                    try:
+                        containers = self.chat_window.query(selector)
+                        if containers:
+                            chat_log = containers.first()
+                            logger.debug(f"Found chat log container with selector: {selector}")
+                            break
+                    except Exception as e:
+                        logger.debug(f"Could not find chat log with {selector}: {e}")
             
             if not chat_log:
                 logger.warning("Could not find chat log container to save messages")

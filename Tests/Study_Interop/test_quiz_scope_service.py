@@ -242,6 +242,12 @@ class FakeServerQuizService:
         }
 
 
+class EmptyMappingLocalQuizService(FakeLocalQuizService):
+    def list_quizzes(self, *, q=None, limit=100, offset=0):
+        self.calls.append(("list_quizzes", q, limit, offset))
+        return {"items": [], "count": 0}
+
+
 class PagedFakeServerQuizService:
     def __init__(self, pages, *, fail_on_offset=None):
         self.calls = []
@@ -295,6 +301,15 @@ async def test_quiz_scope_service_routes_quiz_list_by_backend():
     assert local_quizzes[0]["record_id"] == "local:quiz:quiz-local-1"
     assert server_quizzes[0]["record_id"] == "server:quiz:7"
     assert server_quizzes[0]["time_limit_seconds"] == 300
+
+
+@pytest.mark.asyncio
+async def test_local_quiz_list_empty_mapping_returns_empty_list():
+    scope = QuizScopeService(local_service=EmptyMappingLocalQuizService())
+
+    quizzes = await scope.list_quizzes(mode="local")
+
+    assert quizzes == []
 
 
 @pytest.mark.asyncio

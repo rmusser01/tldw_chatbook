@@ -6,6 +6,7 @@ from local files and from server-backed ingestion sources.
 """
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Dict, Any, Union, Mapping
 from datetime import datetime
@@ -74,6 +75,19 @@ class ProcessingError(Message):
     def __init__(self, error: str) -> None:
         self.error = error
         super().__init__()
+
+
+@dataclass(frozen=True)
+class LocalIngestionRequest:
+    """Captured local-ingestion form state safe to pass to a worker thread."""
+
+    files: tuple[Path, ...]
+    title: Optional[str]
+    author: Optional[str]
+    keywords: Optional[tuple[str, ...]]
+    perform_analysis: bool
+    perform_chunking: bool
+    chunk_size: int
 
 
 class LocalIngestionPanel(ScrollableContainer):
@@ -148,6 +162,7 @@ class LocalIngestionPanel(ScrollableContainer):
         # Get the media database from the app instance
         self.media_db = getattr(app_instance, 'media_db', None)
         self.supported_extensions = get_supported_extensions()
+        self._call_from_thread = None
     
     def compose(self) -> ComposeResult:
         """Compose the local ingestion interface."""
@@ -216,60 +231,78 @@ class LocalIngestionPanel(ScrollableContainer):
             return
         
         if not self.processing:
+            request = self._build_ingestion_request()
+            self._call_from_thread = self.app.call_from_thread
             self.processing = True
-            self.process_files()
+            self._start_processing_ui(len(request.files))
+            self.process_files(request)
     
+    def _build_ingestion_request(self) -> LocalIngestionRequest:
+        """Capture widget state on the UI thread before background processing."""
+        title = self.query_one("#local-title", Input).value or None
+        author = self.query_one("#local-author", Input).value or None
+        keywords_str = self.query_one("#local-keywords", Input).value
+        keywords = tuple(k.strip() for k in keywords_str.split(",") if k.strip()) if keywords_str else None
+        perform_analysis = self.query_one("#local-analyze", Checkbox).value
+        perform_chunking = self.query_one("#local-chunk", Checkbox).value
+        chunk_size = int(self.query_one("#local-chunk-size", Input).value or "500")
+
+        return LocalIngestionRequest(
+            files=tuple(self.selected_files),
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            perform_chunking=perform_chunking,
+            chunk_size=chunk_size,
+        )
+
+    def _start_processing_ui(self, file_count: int) -> None:
+        """Move processing controls into their busy state on the UI thread."""
+        process_btn = self.query_one("#local-process-btn", Button)
+        process_btn.disabled = True
+        process_btn.label = "Processing..."
+
+        progress_bar = self.query_one("#ingest-progress-bar", ProgressBar)
+        progress_bar.remove_class("hidden")
+        progress_bar.update(total=file_count, progress=0)
+
+        self.post_message(ProcessingStarted(file_count))
+
     @work(exclusive=True, thread=True)
-    async def process_files(self) -> None:
+    def process_files(self, request: LocalIngestionRequest) -> None:
         """Process selected files in a background thread."""
+        results = []
+        errors = []
+
         try:
-            # Disable button during processing
-            process_btn = self.query_one("#local-process-btn", Button)
-            process_btn.disabled = True
-            process_btn.label = "Processing..."
-            
-            # Show progress bar
-            progress_bar = self.query_one("#ingest-progress-bar", ProgressBar)
-            progress_bar.remove_class("hidden")
-            progress_bar.update(total=len(self.selected_files), progress=0)
-            
-            # Get form values
-            title = self.query_one("#local-title", Input).value or None
-            author = self.query_one("#local-author", Input).value or None
-            keywords_str = self.query_one("#local-keywords", Input).value
-            keywords = [k.strip() for k in keywords_str.split(",")] if keywords_str else None
-            
-            perform_analysis = self.query_one("#local-analyze", Checkbox).value
-            perform_chunking = self.query_one("#local-chunk", Checkbox).value
-            chunk_size = int(self.query_one("#local-chunk-size", Input).value or "500")
-            
-            results = []
-            errors = []
-            
             # Check if media_db is available
             if not self.media_db:
                 logger.error("Media database not available")
-                self.notify("Database not initialized", severity="error")
+                self._call_from_worker(
+                    self._fail_processing,
+                    "Database not initialized",
+                )
                 return
             
             # Process each file
-            for file_path in self.selected_files:
+            for file_path in request.files:
                 try:
                     logger.info(f"Processing file: {file_path}")
                     
                     chunk_options = {
                         "method": "sentences",
-                        "size": chunk_size,
+                        "size": request.chunk_size,
                         "overlap": 100,
-                    } if perform_chunking else None
+                    } if request.perform_chunking else None
                     
                     result = ingest_local_file(
                         file_path=file_path,
                         media_db=self.media_db,
-                        title=title or file_path.stem,
-                        author=author,
-                        keywords=keywords,
-                        perform_analysis=perform_analysis,
+                        title=request.title or file_path.stem,
+                        author=request.author,
+                        keywords=list(request.keywords) if request.keywords else None,
+                        perform_analysis=request.perform_analysis,
                         chunk_options=chunk_options
                     )
                     
@@ -289,45 +322,70 @@ class LocalIngestionPanel(ScrollableContainer):
                     })
                 
                 # Update progress
-                progress_bar.advance(1)
+                self._call_from_worker(self._advance_processing_progress)
             
             # Post completion message
-            self.post_message(ProcessingComplete(results + errors))
-            
-            # Show summary notification
-            success_count = len(results)
-            error_count = len(errors)
-            if error_count == 0:
-                self.notify(
-                    f"Successfully processed {success_count} file(s)",
-                    severity="information"
-                )
-            else:
-                self.notify(
-                    f"Processed {success_count} file(s), {error_count} error(s)",
-                    severity="warning"
-                )
+            self._call_from_worker(self._complete_processing, results + errors, len(results), len(errors))
             
         except Exception as e:
             logger.error(f"Processing error: {e}")
-            self.post_message(ProcessingError(str(e)))
-            self.notify(f"Processing failed: {e}", severity="error")
+            self._call_from_worker(self._fail_processing, str(e))
         
         finally:
-            # Reset UI state
-            self.processing = False
-            self.selected_files = []
-            process_btn.disabled = True
-            process_btn.label = "Process Selected Files"
-            
-            # Reset and hide progress bar
-            progress_bar = self.query_one("#ingest-progress-bar", ProgressBar)
-            progress_bar.add_class("hidden")
-            progress_bar.update(progress=0)
-            
-            # Reset label
-            label = self.query_one("#batch-info-label", Label)
-            label.update("")
+            self._call_from_worker(self._reset_processing_ui)
+
+    def _call_from_worker(self, callback, *args) -> None:
+        """Schedule a UI-thread callback from the ingestion worker thread."""
+        call_from_thread = self._call_from_thread
+        if call_from_thread is None:
+            raise RuntimeError("Local ingestion worker started without a UI callback.")
+        call_from_thread(callback, *args)
+
+    def _advance_processing_progress(self) -> None:
+        """Advance the progress bar on the UI thread."""
+        progress_bar = self.query_one("#ingest-progress-bar", ProgressBar)
+        progress_bar.advance(1)
+
+    def _complete_processing(
+        self,
+        results: List[Dict[str, Any]],
+        success_count: int,
+        error_count: int,
+    ) -> None:
+        """Post completion and notify from the UI thread."""
+        self.post_message(ProcessingComplete(results))
+
+        if error_count == 0:
+            self.notify(
+                f"Successfully processed {success_count} file(s)",
+                severity="information"
+            )
+        else:
+            self.notify(
+                f"Processed {success_count} file(s), {error_count} error(s)",
+                severity="warning"
+            )
+
+    def _fail_processing(self, error: str) -> None:
+        """Post processing failure and notify from the UI thread."""
+        self.post_message(ProcessingError(error))
+        self.notify(f"Processing failed: {error}", severity="error")
+
+    def _reset_processing_ui(self) -> None:
+        """Reset processing controls on the UI thread."""
+        self.processing = False
+        self.selected_files = []
+
+        process_btn = self.query_one("#local-process-btn", Button)
+        process_btn.disabled = True
+        process_btn.label = "Process Selected Files"
+
+        progress_bar = self.query_one("#ingest-progress-bar", ProgressBar)
+        progress_bar.add_class("hidden")
+        progress_bar.update(progress=0)
+
+        label = self.query_one("#batch-info-label", Label)
+        label.update("")
 
 
 class RemoteIngestionPanel(ScrollableContainer):

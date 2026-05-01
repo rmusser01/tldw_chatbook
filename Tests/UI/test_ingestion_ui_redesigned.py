@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from textual.widgets import Button, Checkbox, DirectoryTree, Input
+from textual.widgets import Button, Checkbox, DirectoryTree, Input, Select
 
 from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.UI.MediaIngestWindowRebuilt import (
@@ -15,6 +16,7 @@ from tldw_chatbook.UI.MediaIngestWindowRebuilt import (
     MediaIngestWindowRebuilt,
 )
 from tldw_chatbook.Widgets.Media.media_ingestion_source_panel import (
+    CREATE_SOURCE_TYPE_OPTIONS,
     MediaIngestionSourcePanel,
 )
 
@@ -98,6 +100,25 @@ class TestMediaIngestWindowRebuilt:
             assert upload_button.disabled is True
 
     @pytest.mark.asyncio
+    async def test_source_panel_create_type_default_is_allowed_in_server_mode(
+        self,
+        mock_app_instance: MagicMock,
+        widget_pilot,
+    ) -> None:
+        """Server-mode source creation should default to a valid source type."""
+        mock_app_instance.media_runtime_state = SimpleNamespace(runtime_backend="server")
+
+        async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+            await pilot.pause()
+
+            source_type = window.source_panel.query_one("#create-source-type", Select)
+            allowed_values = {value for _label, value in CREATE_SOURCE_TYPE_OPTIONS}
+
+            assert source_type.value in allowed_values
+            assert source_type.value == "local_directory"
+
+    @pytest.mark.asyncio
     async def test_processing_selected_files_runs_ingest_and_resets_ui(
         self,
         mock_app_instance: MagicMock,
@@ -127,3 +148,39 @@ class TestMediaIngestWindowRebuilt:
             assert local_panel.selected_files == []
             assert process_button.disabled is True
             assert process_button.label == "Process Selected Files"
+
+    @pytest.mark.asyncio
+    async def test_process_button_captures_form_state_before_worker_thread(
+        self,
+        mock_app_instance: MagicMock,
+        widget_pilot,
+    ) -> None:
+        """The threaded worker should receive captured form state, not query widgets from the worker."""
+        async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+            local_panel = window.local_panel
+
+            local_panel.selected_files = [Path("demo.mp4")]
+            process_button = local_panel.query_one("#local-process-btn", Button)
+            process_button.disabled = False
+            local_panel.query_one("#local-title", Input).value = "Demo Clip"
+            local_panel.query_one("#local-author", Input).value = "Ada"
+            local_panel.query_one("#local-keywords", Input).value = "ux, testing"
+            local_panel.query_one("#local-analyze", Checkbox).value = True
+            local_panel.query_one("#local-chunk", Checkbox).value = True
+            local_panel.query_one("#local-chunk-size", Input).value = "750"
+
+            with patch.object(local_panel, "process_files") as process_files:
+                local_panel.handle_process_button()
+
+            process_files.assert_called_once()
+            request = process_files.call_args.args[0]
+            assert request.files == (Path("demo.mp4"),)
+            assert request.title == "Demo Clip"
+            assert request.author == "Ada"
+            assert request.keywords == ("ux", "testing")
+            assert request.perform_analysis is True
+            assert request.chunk_size == 750
+            assert local_panel.processing is True
+            assert process_button.disabled is True
+            assert process_button.label == "Processing..."

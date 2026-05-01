@@ -73,6 +73,17 @@ class QuizScopeService:
             return await result
         return result
 
+    @staticmethod
+    def _items_from_list_response(records: Any) -> list[Any]:
+        if records is None:
+            return []
+        if isinstance(records, Mapping):
+            items = records.get("items")
+            if items is None:
+                return []
+            return list(items)
+        return list(records)
+
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
@@ -138,7 +149,7 @@ class QuizScopeService:
         page_offset = 0
         while True:
             response = await self._maybe_await(service.list_quizzes(q=q, limit=page_size, offset=page_offset))
-            page_items = list((response or {}).get("items") or response or [])
+            page_items = self._items_from_list_response(response)
             fetched_records.extend(page_items)
             if len(page_items) < page_size:
                 break
@@ -170,7 +181,7 @@ class QuizScopeService:
             if normalized_scope_type == "workspace":
                 raise ValueError("Workspace Study is unavailable in local mode")
             records = await self._maybe_await(service.list_quizzes(q=normalized_q, limit=limit, offset=offset))
-            items = list((records or {}).get("items") or records or [])
+            items = self._items_from_list_response(records)
             return [normalize_quiz_record(backend.value, record) for record in items]
 
         records = await self._load_scoped_server_quizzes(
@@ -259,7 +270,7 @@ class QuizScopeService:
                 offset=offset,
             )
         )
-        items = list((records or {}).get("items") or records or [])
+        items = self._items_from_list_response(records)
         return [normalize_quiz_question_record(backend.value, record) for record in items]
 
     async def create_question(
@@ -350,7 +361,7 @@ class QuizScopeService:
             raise ValueError("Workspace Study is unavailable in local mode")
         service = self._service_for(backend)
         records = await self._maybe_await(service.list_attempts(quiz_id=quiz_id, limit=limit, offset=offset))
-        items = list((records or {}).get("items") or records or [])
+        items = self._items_from_list_response(records)
         return [normalize_quiz_attempt_record(backend.value, record) for record in items]
 
     async def get_attempt(

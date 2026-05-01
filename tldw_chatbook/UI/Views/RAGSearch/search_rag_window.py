@@ -529,27 +529,32 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             table = self.query_one("#index-stats-table", DataTable)
             table.add_columns("Collection", "Documents", "Chunks", "Size", "Last Updated")
             self._refresh_index_stats()
+
+    def _load_available_collections(self) -> list[str]:
+        """Load available collection names without touching Textual widgets."""
+        return list(get_available_profiles())
+
+    async def _apply_available_collections(self, collections: list[str]) -> None:
+        """Apply loaded collection names to mounted Textual widgets."""
+        self.available_collections = list(collections)
+
+        collections_list = self.query_one("#collections-list", ListView)
+        await collections_list.clear()
+
+        for collection in self.available_collections:
+            await collections_list.append(ListItem(Static(collection)))
+
+        collection_select = self.query_one("#collection-select", Select)
+        collection_select.set_options(
+            [("All Collections", "all")] + [(c, c) for c in self.available_collections]
+        )
     
     @work(thread=True)
-    async def _refresh_collections_list(self) -> None:
+    def _refresh_collections_list(self) -> None:
         """Refresh the list of available collections"""
         try:
-            # Get available collections
-            self.available_collections = get_available_profiles()
-            
-            # Update UI
-            collections_list = self.query_one("#collections-list", ListView)
-            await collections_list.clear()
-            
-            for collection in self.available_collections:
-                item = ListItem(Static(collection))
-                await collections_list.append(item)
-                
-            # Update collection select
-            collection_select = self.query_one("#collection-select", Select)
-            collection_select.set_options(
-                [("all", "All Collections")] + [(c, c) for c in self.available_collections]
-            )
+            collections = self._load_available_collections()
+            self.app.call_from_thread(lambda: self.run_worker(self._apply_available_collections(collections), exclusive=True))
         except Exception as e:
             logger.error(f"Error refreshing collections: {e}")
     
