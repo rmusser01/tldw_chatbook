@@ -215,6 +215,7 @@ class TestTabLinksNavigation:
             
             # Final tab should be active
             final_tab = test_sequence[-1]
+            await _wait_for_current_tab(app, pilot, _expected_current_tab(final_tab))
             assert app.current_tab == _expected_current_tab(final_tab), f"Should end on {final_tab}"
             
             # Check active state is correct
