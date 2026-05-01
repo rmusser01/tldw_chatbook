@@ -6,6 +6,9 @@ import tomllib
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
+from textual.widgets import Button, TextArea
 
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload, HANDOFF_BODY_CHAR_LIMIT
@@ -13,6 +16,8 @@ from tldw_chatbook.config import CONFIG_TOML_CONTENT
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
+from tldw_chatbook.Widgets.Chat_Widgets.chat_session import ChatSession
 from tldw_chatbook.UX_Interop import (
     build_server_parity_fixture_payloads,
     build_server_parity_handoff_packet,
@@ -362,6 +367,48 @@ def test_handoff_card_uses_status_source_title_and_metadata():
     assert "Server: srv-primary" in text
     assert "Sync: dry-run only" in text
     assert "https://example.com" in text
+
+
+class _HandoffSessionHarness(App):
+    def __init__(self, session_data: ChatSessionData) -> None:
+        super().__init__()
+        self._session_data = session_data
+        self.host = Mock()
+        self.host.chat_enhanced_mode = False
+        self.host.notify = Mock()
+
+    def compose(self) -> ComposeResult:
+        yield ChatSession(self.host, self._session_data)
+
+
+@pytest.mark.asyncio
+async def test_user_can_clear_staged_handoff_context_before_send():
+    payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Plan",
+        body="Body",
+        suggested_prompt="Use this note.",
+    )
+    session_data = ChatSessionData(tab_id="tab1", handoff_payload=payload)
+    app = _HandoffSessionHarness(session_data)
+
+    async with app.run_test() as pilot:
+        session = pilot.app.query_one(ChatSession)
+        await session.mount_handoff_card(payload)
+        session.set_draft_text(payload.default_prompt())
+        await pilot.pause(0.05)
+
+        assert pilot.app.query_one(ChatHandoffCard) is not None
+        clear_button = pilot.app.query_one("#clear-chat-handoff-context-tab1", Button)
+
+        clear_button.press()
+        await pilot.pause(0.05)
+
+        with pytest.raises(NoMatches):
+            pilot.app.query_one(ChatHandoffCard)
+        assert session.session_data.handoff_payload is None
+        assert pilot.app.query_one("#chat-input-tab1", TextArea).text == ""
 
 
 @pytest.mark.asyncio
