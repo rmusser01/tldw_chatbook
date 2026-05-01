@@ -58,13 +58,11 @@ async def test_general_history_excludes_ccp_owned_sessions():
 
 # Mock external dependencies used in chat_events.py
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.os')
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced')
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage')
-async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mock_chat_message_enhanced_class, mock_os, mock_ccl, mock_app):
+async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mock_chat_message_enhanced_class, mock_ccl, mock_app):
     """Test a basic message send operation."""
-    mock_os.environ.get.return_value = "fake-key"
-    
+
     # Mock ChatMessage instances to track mount calls
     mock_user_msg = MagicMock()
     mock_ai_msg = MagicMock()
@@ -72,7 +70,8 @@ async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mo
     mock_chat_message_class.side_effect = [mock_user_msg, mock_ai_msg]
     mock_chat_message_enhanced_class.side_effect = [mock_user_msg, mock_ai_msg]
 
-    await handle_chat_send_button_pressed(mock_app, MagicMock())
+    with patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}):
+        await handle_chat_send_button_pressed(mock_app, MagicMock())
 
     # Assert UI updates
     # TextArea.clear is sync, not async
@@ -108,13 +107,11 @@ async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mo
 
 
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.os')
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced')
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage')
-async def test_handle_chat_send_with_active_character(mock_chat_message_class, mock_chat_message_enhanced_class, mock_os, mock_ccl, mock_app):
+async def test_handle_chat_send_with_active_character(mock_chat_message_class, mock_chat_message_enhanced_class, mock_ccl, mock_app):
     """Test that an active character's system prompt overrides the UI."""
-    mock_os.environ.get.return_value = "fake-key"
-    
+
     # Mock ChatMessage instances
     mock_user_msg = MagicMock()
     mock_ai_msg = MagicMock()
@@ -125,7 +122,8 @@ async def test_handle_chat_send_with_active_character(mock_chat_message_class, m
         'system_prompt': 'You are TestChar.'
     }
 
-    await handle_chat_send_button_pressed(mock_app, MagicMock())
+    with patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}):
+        await handle_chat_send_button_pressed(mock_app, MagicMock())
 
     worker_lambda = mock_app.run_worker.call_args[0][0]
     worker_lambda()
