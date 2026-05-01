@@ -25,6 +25,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_worldbooks
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_dictionaries
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Utils.Utils import safe_float, safe_int
 from tldw_chatbook.Utils.input_validation import validate_text_input, validate_number_range, sanitize_string
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
@@ -626,40 +627,12 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     text_area.focus()
 
     # --- 9. API Key Fetching ---
-    api_key_for_call = None
-    if selected_provider:
-        provider_settings_key = selected_provider.lower().replace(" ", "_")
-        provider_config_settings = app.app_config.get("api_settings", {}).get(provider_settings_key, {})
+    provider_readiness = get_provider_readiness(selected_provider, app.app_config)
+    api_key_for_call = provider_readiness.api_key
 
-        if "api_key" in provider_config_settings:
-            direct_config_key_checked = True
-            config_api_key = provider_config_settings.get("api_key", "").strip()
-            if config_api_key and config_api_key != "<API_KEY_HERE>":
-                api_key_for_call = config_api_key
-                loguru_logger.debug(f"Using API key for '{selected_provider}' from config file field.")
-
-        if not api_key_for_call: # If not found in direct 'api_key' field or it was empty
-            env_var_name = provider_config_settings.get("api_key_env_var", "").strip()
-            if env_var_name:
-                env_api_key = os.environ.get(env_var_name, "").strip()
-                if env_api_key:
-                    api_key_for_call = env_api_key
-                    loguru_logger.debug(f"Using API key for '{selected_provider}' from ENV var '{env_var_name}'.")
-                else:
-                    loguru_logger.debug(f"ENV var '{env_var_name}' for '{selected_provider}' not found or empty.")
-            else:
-                loguru_logger.debug(f"No 'api_key_env_var' specified for '{selected_provider}' in config.")
-
-    providers_requiring_key = ["OpenAI", "Anthropic", "Google", "MistralAI", "Groq", "Cohere", "OpenRouter", "HuggingFace", "DeepSeek"]
-    if selected_provider in providers_requiring_key and not api_key_for_call:
+    if provider_readiness.requires_api_key and not provider_readiness.ready:
         loguru_logger.error(f"API Key for '{selected_provider}' is missing and required.")
-        error_message_markup = (
-            f"API Key for {selected_provider} is missing.\n\n"
-            "Please add it to your config file under:\n"
-            f"\\[api_settings.{selected_provider.lower().replace(' ', '_')}\\]\n" 
-            "api_key = \"YOUR_KEY\"\n\n"
-            "Or set the environment variable specified by 'api_key_env_var' in the config for this provider."
-        )
+        error_message_markup = provider_readiness.user_message
         await chat_container.mount(ChatMessage(message=error_message_markup, role="System"))
         if app.current_ai_message_widget and app.current_ai_message_widget.is_mounted:
             await app.current_ai_message_widget.remove()

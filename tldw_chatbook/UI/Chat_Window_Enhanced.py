@@ -24,6 +24,7 @@ from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
 from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import ChatShellBar
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ..Widgets.voice_input_widget import VoiceInputWidget, VoiceInputMessage
+from ..Chat.provider_readiness import get_provider_readiness
 from ..config import get_cli_setting
 from ..Constants import TAB_CHAT
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE, EMOJI_SEND, FALLBACK_SEND, \
@@ -150,6 +151,7 @@ class ChatWindowEnhanced(Container):
             chat_log.display = False
         except NoMatches:
             pass
+        self.refresh_first_run_orientation()
     
     # Message Handlers using Textual's Message System
     
@@ -353,6 +355,42 @@ class ChatWindowEnhanced(Container):
         try:
             chat_log = self.query_one("#chat-log")
             chat_log.display = False
+        except NoMatches:
+            pass
+
+    def _selected_provider_for_orientation(self) -> Optional[str]:
+        """Return the current provider selector value, falling back to config."""
+        try:
+            provider_select = self.query_one("#chat-api-provider", Select)
+            if provider_select.value != Select.BLANK:
+                return str(provider_select.value)
+        except NoMatches:
+            pass
+
+        defaults = self.app_instance.app_config.get("chat_defaults", {})
+        if isinstance(defaults, dict):
+            provider = defaults.get("provider")
+            if provider:
+                return str(provider)
+        return None
+
+    def build_first_run_orientation_text(self, provider: Optional[str] = None) -> str:
+        """Build compact first-run guidance for the empty Chat state."""
+        selected_provider = provider or self._selected_provider_for_orientation()
+        readiness = get_provider_readiness(selected_provider, self.app_instance.app_config)
+
+        return (
+            "Chat is the agentic control surface for programming, research, and workspace tasks.\n"
+            f"Provider readiness: {readiness.user_message}\n"
+            "Context: Notes, Media, Search/RAG, Workspaces, Study flashcards/quizzes, "
+            "personas, and Chatbooks. Ctrl+P opens commands."
+        )
+
+    def refresh_first_run_orientation(self, provider: Optional[str] = None) -> None:
+        """Refresh the first-run empty-state guidance if it is mounted."""
+        try:
+            empty_state = self.query_one("#chat-empty-state", Static)
+            empty_state.update(self.build_first_run_orientation_text(provider))
         except NoMatches:
             pass
 
@@ -799,9 +837,7 @@ class ChatWindowEnhanced(Container):
             else:
                 # Legacy single-session mode - empty state + chat log
                 yield Static(
-                    "Welcome to tldw chatbook\n\n"
-                    "Start a conversation by typing below.\n\n"
-                    "Tip: Press Ctrl+P for the command palette",
+                    self.build_first_run_orientation_text(),
                     id="chat-empty-state",
                 )
                 yield VerticalScroll(id="chat-log")

@@ -111,6 +111,7 @@ class ChatScreen(BaseAppScreen):
                     compact_bar.sync_from_sidebar(provider=new_provider)
                 except Exception:
                     logger.debug("Compact bar not found for provider sync")
+                self.chat_window.refresh_first_run_orientation(new_provider)
             else:
                 logger.error("chat_window is None")
 
