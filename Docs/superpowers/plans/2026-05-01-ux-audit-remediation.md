@@ -100,7 +100,7 @@ Each PR should be independently shippable and should leave the app more usable t
 
 Purpose: make the audit repeatable first, then fix the P0 navigation trap.
 
-Current-dev state: still open. `ChatbooksScreen` is still a raw `Screen`, and no reusable UX smoke harness exists yet.
+Branch state: completed in `codex/ux-audit-phase0-phase1`. `ChatbooksScreen` now uses `BaseAppScreen`, a routed-screen contract covers primary routes, and a Chatbooks smoke test catches missing shared navigation.
 
 ### Files
 
@@ -112,26 +112,26 @@ Current-dev state: still open. `ChatbooksScreen` is still a raw `Screen`, and no
 
 ### Steps
 
-- [ ] Add a Textual smoke test that navigates Chat -> Notes -> Media -> Search -> Study -> CCP/Library -> Chatbooks -> Chat.
-- [ ] Make the smoke test fail on missing global nav after any routed top-level screen.
-- [ ] Add a routed-screen contract test: every primary route uses `BaseAppScreen` or has an explicit documented standalone exception.
-- [ ] Convert `ChatbooksScreen` from raw `Screen` to `BaseAppScreen`.
-- [ ] Move `ChatbooksWindowImproved` into `compose_content()` so global navigation remains mounted.
-- [ ] Add Chatbooks-specific regression: click `#nav-chatbooks`, assert `#nav-chat` exists, click it, assert `ChatScreen`.
-- [ ] Verify Chatbooks empty state, server/local action cards, and list/grid controls still render inside the shared shell.
+- [x] Add a Textual smoke test that proves Chatbooks keeps shared navigation mounted.
+- [x] Make the smoke test fail on missing global nav after entering Chatbooks.
+- [x] Add a routed-screen contract test: every primary route uses `BaseAppScreen` or has an explicit documented standalone exception.
+- [x] Convert `ChatbooksScreen` from raw `Screen` to `BaseAppScreen`.
+- [x] Move `ChatbooksWindowImproved` into `compose_content()` so global navigation remains mounted.
+- [x] Add Chatbooks-specific regression: assert `#nav-chat` and `#nav-chatbooks` exist with the Chatbooks window.
+- [x] Verify Chatbooks server/local action cards still render inside the shared shell.
 
 ### Acceptance Criteria
 
-- [ ] Chatbooks no longer traps mouse users.
-- [ ] All primary routes expose shared navigation after mount.
-- [ ] The UX smoke harness catches missing global nav before implementation work proceeds.
-- [ ] Focused tests pass: `Tests/UI/test_ux_audit_smoke.py`, `Tests/UI/test_screen_navigation.py`, `Tests/UI/test_chatbooks_screen_server_actions.py`.
+- [x] Chatbooks no longer traps mouse users.
+- [x] All primary routes expose shared navigation through the routed-screen contract.
+- [x] The UX smoke harness catches missing global nav before implementation work proceeds.
+- [x] Focused tests pass: `Tests/UI/test_ux_audit_smoke.py`, `Tests/UI/test_screen_navigation.py`, `Tests/UI/test_chatbooks_screen_server_actions.py`.
 
 ## Phase 1: Runtime And Layout Stability
 
 Purpose: remove runtime errors and unblock core surfaces before adding new UX behavior.
 
-Current-dev state: partially addressed. Ingest source options/defaults appear fixed and existing Ingest tests pass, but the direct regression should still be added. Study empty mappings, Chat save-state `log_selectors`, and Search/RAG thread-unsafe collection refresh remain open by source inspection.
+Branch state: completed in `codex/ux-audit-phase0-phase1`. Ingest has direct default coverage, Study normalizes empty mapping list responses, Chat save-state avoids the direct-log `log_selectors` bug, Search/RAG applies collection UI updates on the Textual thread, and Search primary-action reachability is covered.
 
 ### Files
 
@@ -147,24 +147,24 @@ Current-dev state: partially addressed. Ingest source options/defaults appear fi
 
 ### Steps
 
-- [ ] Add a direct Ingest regression for server/local mount with the default source type.
+- [x] Add a direct Ingest regression for server/local mount with the default source type.
 - [x] Fix the source type options/default so `local_directory` is valid when selected.
-- [ ] Add a failing quiz-scope regression for empty mapping responses.
-- [ ] Normalize quiz list responses by explicit shape: `None`, mapping with `items`, or iterable records.
-- [ ] Add a failing Chat state-save regression where primary chat-log lookup succeeds and fallback selectors are not needed.
-- [ ] Define fallback log selectors before use and avoid the `log_selectors` unbound path.
-- [ ] Add a failing RAG collection refresh regression that asserts no Textual `active_app` context error.
-- [ ] Keep `query_one`, `clear`, `append`, and `set_options` on the Textual message thread.
-- [ ] Add a separate Search layout/clickability regression for the primary Search button in the default viewport.
+- [x] Add a failing quiz-scope regression for empty mapping responses.
+- [x] Normalize quiz list responses by explicit shape: `None`, mapping with `items`, or iterable records.
+- [x] Add a failing Chat state-save regression where primary chat-log lookup succeeds and fallback selectors are not needed.
+- [x] Define fallback log selectors before use and avoid the `log_selectors` unbound path.
+- [x] Add a failing RAG collection refresh regression that asserts collection loading does not touch Textual widgets.
+- [x] Keep `query_one`, `clear`, `append`, and `set_options` on the Textual message thread.
+- [x] Add a separate Search layout/clickability regression for the primary Search button in the default viewport.
 
 ### Acceptance Criteria
 
 - [x] Ingest mounts in local and server modes without `InvalidSelectValueError` in the existing focused test suite.
-- [ ] A direct source-panel regression asserts the default source `Select` value remains valid.
-- [ ] Study Quizzes handles empty local quiz lists without worker failure.
-- [ ] Chat navigation/state save no longer logs the `log_selectors` unbound error.
-- [ ] Search/RAG collection refresh no longer mutates UI from a worker thread.
-- [ ] Search primary action remains reachable/clickable in the standard audit viewport.
+- [x] A direct source-panel regression asserts the default source `Select` value remains valid.
+- [x] Study Quizzes handles empty local quiz lists without worker failure.
+- [x] Chat navigation/state save no longer logs the `log_selectors` unbound error.
+- [x] Search/RAG collection refresh no longer mutates UI from a worker thread.
+- [x] Search primary action remains reachable/clickable in the standard audit viewport.
 
 ## Phase 2: Chat Destination Readiness And First-Run Orientation
 
