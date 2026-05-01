@@ -86,11 +86,14 @@ Recommended structure:
 - Metadata index: `tldw_chatbook_skills.json`.
 - Skill directories: `skills/<skill-name>/SKILL.md` plus supporting files.
 - Atomic writes for metadata and file contents.
+- A service-level single-writer lock around metadata and supporting-file mutations.
 - Path safety validation for skill names and supporting files.
 - Version increments on every mutation.
 - `expected_version` conflicts reported as deterministic `ValueError` codes, matching existing local service patterns.
 
 The local library must not read from or write to `~/.codex/skills`. A future import command can explicitly import from Codex skills, but this tranche only owns Chatbook's local skill library.
+
+All local skill mutations must run through the service instance so metadata and file contents cannot diverge. The implementation may use an `asyncio.Lock`, thread lock, or narrow synchronous write section, but tests must prove concurrent updates do not lose a version increment or overwrite a newer supporting-file change.
 
 ### Contract
 
@@ -109,6 +112,27 @@ The local library must not read from or write to `~/.codex/skills`. A future imp
 - `seed_builtin_skills(overwrite=False)`
 
 Use the generated Skills schema models for validation wherever possible.
+
+### Metadata Extraction
+
+Local Skills must expose the same metadata fields as `SkillResponse`, `SkillSummary`, `SkillContextPayload`, and `SkillExecutionResult`. Metadata comes from a normalized Chatbook-owned envelope, not from ad hoc UI defaults.
+
+Extraction rules:
+
+- Prefer explicit metadata stored in the local metadata index.
+- On create/import, parse optional YAML front matter at the top of `SKILL.md` for `description`, `argument_hint`, `allowed_tools`, `model`, `context`, `user_invocable`, and `disable_model_invocation`.
+- If front matter is absent, preserve caller-provided metadata when the import/create API is extended to accept it; otherwise use deterministic defaults matching `SkillBase`.
+- `description` may fall back to the first non-heading paragraph in `SKILL.md`, truncated to schema limits.
+- `argument_hint` has no heuristic fallback; absent means `None`.
+- `allowed_tools` defaults to `None`.
+- `model` defaults to `None`.
+- `context` defaults to `inline`.
+- `user_invocable` defaults to `True`.
+- `disable_model_invocation` defaults to `False`.
+
+The local metadata index is authoritative after import. Updating `SKILL.md` content must not silently drop metadata fields that were already stored. If front matter changes during an update, the implementation must either explicitly re-parse and persist the changed fields or document that metadata is updated only through a dedicated future API. The first implementation should re-parse front matter on content update because that keeps local file edits and service responses consistent.
+
+`get_context()` must build `available_skills` from this normalized metadata and must generate `context_text` deterministically from skill name, description, and argument hint. `execute_skill()` must return `allowed_tools`, `model_override`, and `execution_mode` from the same metadata source.
 
 ### Import And Export
 
@@ -190,6 +214,15 @@ Server responses include `user_id`, integer ids, UUIDs, and client ids. Local re
 - Card link add/list/count/remove/bulk add/bulk remove/list-by-linked-content.
 
 The local service should use the generated Kanban schema models for request validation and response-compatible dictionaries.
+
+Operation coverage is a hard gate. Add a generated parity test that iterates every key in `KANBAN_OPERATION_SPECS` and proves:
+
+- `LocalKanbanService` exposes a callable with the same operation name.
+- `KanbanScopeService(local_service=...)` dispatches each operation in `mode="local"`.
+- Local dispatch does not call `server_service`.
+- The local action id used for policy enforcement ends in `.local`.
+
+The generated coverage test is not a replacement for behavior tests. It prevents dynamic-dispatch drift; behavior tests still prove each operation's semantics.
 
 ### Activity Semantics
 
@@ -326,6 +359,8 @@ Skills tests:
 
 - Local service CRUD persists across service reload.
 - Version conflicts block stale updates/deletes.
+- Concurrent mutations are serialized and cannot lose version or supporting-file updates.
+- Metadata extraction covers YAML front matter, deterministic defaults, preserved metadata on content update, `get_context()`, and `execute_skill()`.
 - Supporting file validation and path traversal rejection.
 - Import/export round trip.
 - Execute renders a prompt and does not invoke models or tools.
@@ -334,6 +369,7 @@ Skills tests:
 
 Kanban tests:
 
+- Generated operation-coverage test iterates every `KANBAN_OPERATION_SPECS` key and proves local service plus local scope dispatch exists.
 - SQLite schema migration creates required tables and indexes.
 - Board/list/card CRUD persists across service reload.
 - Archive/delete/restore semantics match response contracts.
