@@ -1,5 +1,7 @@
 """Provider readiness tests for first-run Chat guidance."""
 
+import pytest
+
 from tldw_chatbook.Chat.provider_readiness import (
     ProviderReadiness,
     get_provider_readiness,
@@ -92,3 +94,32 @@ def test_keyless_local_provider_is_ready_without_api_key():
     assert readiness.requires_api_key is False
     assert readiness.api_key is None
     assert readiness.user_message == "Ollama is ready. No API key is required."
+
+
+@pytest.mark.parametrize("provider", ["vLLM", "Custom-2", "local-llm"])
+def test_known_keyless_provider_aliases_are_ready_without_api_key(provider):
+    readiness = get_provider_readiness(
+        provider,
+        {"api_settings": {}},
+        environ={},
+    )
+
+    assert readiness.ready is True
+    assert readiness.requires_api_key is False
+    assert readiness.api_key is None
+
+
+def test_unknown_provider_without_key_is_not_ready():
+    readiness = get_provider_readiness(
+        "OpenAi Typo",
+        {"api_settings": {}},
+        environ={},
+    )
+
+    assert readiness.ready is False
+    assert readiness.requires_api_key is True
+    assert readiness.api_key is None
+    assert readiness.reason == "Unknown provider"
+    assert readiness.recovery == (
+        "Choose a supported provider or add api_key under [api_settings.openai_typo]."
+    )

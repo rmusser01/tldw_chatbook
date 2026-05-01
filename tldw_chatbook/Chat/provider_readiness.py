@@ -7,19 +7,6 @@ from dataclasses import dataclass
 from typing import Mapping, Optional
 
 
-PROVIDERS_REQUIRING_API_KEY = frozenset(
-    {
-        "Anthropic",
-        "Cohere",
-        "DeepSeek",
-        "Google",
-        "Groq",
-        "HuggingFace",
-        "MistralAI",
-        "OpenAI",
-        "OpenRouter",
-    }
-)
 PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
     {
         "anthropic",
@@ -28,11 +15,36 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
         "google",
         "groq",
         "huggingface",
+        "mistral",
         "mistralai",
+        "moonshot",
         "openai",
         "openrouter",
+        "zai",
     }
 )
+KEYLESS_PROVIDER_KEYS = frozenset(
+    {
+        "aphrodite",
+        "custom",
+        "custom_2",
+        "koboldcpp",
+        "llama_cpp",
+        "local_llm",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_mlx_lm",
+        "local_ollama",
+        "local_onnx",
+        "local_transformers",
+        "local_vllm",
+        "ollama",
+        "oobabooga",
+        "tabbyapi",
+        "vllm",
+    }
+)
+KNOWN_PROVIDER_KEYS = PROVIDERS_REQUIRING_API_KEY_KEYS | KEYLESS_PROVIDER_KEYS
 
 _PLACEHOLDER_KEYS = frozenset(
     {
@@ -87,6 +99,11 @@ def _valid_api_key(value: object) -> Optional[str]:
     return stripped or None
 
 
+def _requires_api_key(provider_key: str) -> bool:
+    """Return True unless the provider is known to work without credentials."""
+    return provider_key not in KEYLESS_PROVIDER_KEYS
+
+
 def get_provider_readiness(
     provider: Optional[str],
     app_config: Mapping[str, object],
@@ -128,12 +145,13 @@ def get_provider_readiness(
         if isinstance(maybe_provider_settings, Mapping):
             provider_settings = maybe_provider_settings
 
+    requires_api_key = _requires_api_key(provider_key)
     configured_key = _valid_api_key(provider_settings.get("api_key"))
     if configured_key:
         return ProviderReadiness(
             provider=provider_name,
             provider_key=provider_key,
-            requires_api_key=provider_key in PROVIDERS_REQUIRING_API_KEY_KEYS,
+            requires_api_key=requires_api_key,
             ready=True,
             api_key=configured_key,
             api_key_source=f"config:api_settings.{provider_key}.api_key",
@@ -149,7 +167,7 @@ def get_provider_readiness(
         return ProviderReadiness(
             provider=provider_name,
             provider_key=provider_key,
-            requires_api_key=provider_key in PROVIDERS_REQUIRING_API_KEY_KEYS,
+            requires_api_key=requires_api_key,
             ready=True,
             api_key=env_key,
             api_key_source=f"env:{env_var}",
@@ -158,7 +176,19 @@ def get_provider_readiness(
             recovery=None,
         )
 
-    requires_api_key = provider_key in PROVIDERS_REQUIRING_API_KEY_KEYS
+    if provider_key not in KNOWN_PROVIDER_KEYS and not provider_settings:
+        return ProviderReadiness(
+            provider=provider_name,
+            provider_key=provider_key,
+            requires_api_key=True,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=env_var,
+            reason="Unknown provider",
+            recovery=f"Choose a supported provider or add api_key under [api_settings.{provider_key}].",
+        )
+
     if not requires_api_key:
         return ProviderReadiness(
             provider=provider_name,
