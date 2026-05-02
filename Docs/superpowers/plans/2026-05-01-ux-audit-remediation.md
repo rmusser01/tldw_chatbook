@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#158, plus active handoff recovery slice
-Branch context: current `dev` / `origin/dev` at `67fe89e1`; active branch `codex/ux-handoff-recovery-copy`
+Status: Current-dev rebaseline after UX remediation PRs #146-#159, plus active invalid-selection handoff slice
+Branch context: current `dev` / `origin/dev` at `abecc37b`; active branch `codex/ux-handoff-invalid-selection-smoke`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -46,11 +46,12 @@ Current source state plus this branch:
 - Phase 5 Notes empty-state cleanup is merged: local, server, and workspace scopes now provide visible creation/import routes.
 - Phase 5 CCP/Library empty-state cleanup is merged: conversations, characters, personas, prompts, dictionaries, and world/lore books now explain creation/import routes and their relationship to Chat.
 - Phase 5 Chatbooks empty-state cleanup is merged: empty Chatbooks explains portable context packs, import/create recovery, Chat reuse, and shared-navigation escape.
-- Phase 4 handoff recovery copy is implemented in `codex/ux-handoff-recovery-copy`: Notes, Media, RAG Search, and Web Search explain how to recover when the Chat handoff surface is unavailable.
+- Phase 4 handoff recovery copy is merged through PR #159: Notes, Media, RAG Search, and Web Search explain how to recover when the Chat handoff surface is unavailable.
+- Phase 4 invalid-selection hardening is active in `codex/ux-handoff-invalid-selection-smoke`: Notes and workspace source/artifact `Use in Chat` actions are disabled until a valid selection exists and expose tooltip recovery copy.
 - Phase 6 still needs optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target remaining Phase 4 invalid-selection/source-authority smoke cases, remaining compact-label/tooltips work in Phase 5, Phase 6 capability-state presentation, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, remaining compact-label/tooltips work in Phase 5, Phase 6 capability-state presentation, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -247,7 +248,7 @@ Branch state: clear/dismiss behavior completed in `codex/ux-chat-handoff-clear-c
 
 Purpose: verify and harden the source-side handoff surfaces that have now landed in current `dev`.
 
-Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG Search, and dedicated Web Search handoffs are implemented and covered by focused tests. Remaining work is to close disabled-state, invalid-selection, and source-authority edge cases in the shared UX smoke pass.
+Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG Search, and dedicated Web Search handoffs are implemented and covered by focused tests. The active invalid-selection slice disables Notes and workspace source/artifact handoffs until a valid item is selected. Remaining work is to close source-authority edge cases in the shared UX smoke pass.
 
 ### Files
 
@@ -270,6 +271,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 - [x] Wire Media selected hydrated detail `Use in Chat`.
 - [x] Wire RAG result card `Use in Chat` through a Textual message.
 - [x] Cardify dedicated Web Search results enough to support `Use in Chat`.
+- [x] Disable Notes and workspace item `Use in Chat` actions until a valid selected item exists, with tooltip recovery copy.
 - [ ] Disable or explain source actions when server/auth/capability contracts block them.
 - [ ] Consume backend-owned `UX_Interop` and `runtime_policy` contracts consistently; do not rebuild source authority from raw config.
 - [ ] Keep dry-run sync reports diagnostic only; do not imply mirroring or write sync in source screens.
@@ -278,6 +280,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 ### Acceptance Criteria
 
 - [x] Notes, Workspaces, Media, RAG Search, and Web Search can each stage one selected item into Chat in focused tests.
+- [x] Notes and workspace item invalid-selection actions are disabled with recovery copy in mounted Textual tests.
 - [ ] No invalid selection navigates to Chat in live smoke coverage.
 - [ ] Disabled handoff actions have a reason and a recovery path.
 - [x] Workspace handoffs preserve `workspace_id` and isolation metadata in focused tests.

@@ -195,6 +195,7 @@ class NotesScreen(BaseAppScreen):
 
     def _set_state(self, **changes: Any) -> None:
         self.state = self.validate_state(replace(self.state, **changes))
+        self._update_use_in_chat_action_states()
 
     def _notify(self, message: str, *, severity: str = "information", timeout: Optional[float] = None) -> None:
         self.app_instance.notify(message, severity=severity, timeout=timeout)
@@ -229,6 +230,59 @@ class NotesScreen(BaseAppScreen):
                 "are also soft-deleted by the server."
             )
         return "This note will be moved to trash and can be recovered later."
+
+    def _has_selected_note_for_handoff(self) -> bool:
+        if self.state.scope_type == ScopeType.SERVER_NOTE:
+            return self.state.selected_server_note_id is not None or self.state.selected_note_id is not None
+        if self.state.scope_type == ScopeType.WORKSPACE:
+            return bool(self.state.selected_workspace_id) and (
+                self.state.selected_workspace_note_id is not None or self.state.selected_note_id is not None
+            )
+        return self.state.selected_note_id is not None or self.state.selected_local_note_id is not None
+
+    def _set_handoff_button_state(
+        self,
+        selector: str,
+        *,
+        disabled: bool,
+        disabled_tooltip: str,
+        enabled_tooltip: str,
+    ) -> None:
+        try:
+            button = self.query_one(selector, Button)
+        except QueryError:
+            return
+        button.disabled = disabled
+        button.tooltip = disabled_tooltip if disabled else enabled_tooltip
+
+    def _update_use_in_chat_action_states(self) -> None:
+        if not self.is_mounted:
+            return
+        self._set_handoff_button_state(
+            "#notes-use-in-chat-button",
+            disabled=not self._has_selected_note_for_handoff(),
+            disabled_tooltip="Select a note before using it in Chat.",
+            enabled_tooltip="Use the selected note in Chat.",
+        )
+        workspace_selected = bool(self.state.selected_workspace_id)
+        self._set_handoff_button_state(
+            "#workspace-use-in-chat-button",
+            disabled=not workspace_selected,
+            disabled_tooltip="Select a workspace before using it in Chat.",
+            enabled_tooltip="Use the selected workspace in Chat.",
+        )
+        self._set_handoff_button_state(
+            "#workspace-source-use-in-chat-button",
+            disabled=not (workspace_selected and self.state.selected_workspace_source_id is not None),
+            disabled_tooltip="Select a workspace source before using it in Chat.",
+            enabled_tooltip="Use the selected workspace source in Chat.",
+        )
+        self._set_handoff_button_state(
+            "#workspace-artifact-use-in-chat-button",
+            disabled=not (workspace_selected and self.state.selected_workspace_artifact_id is not None),
+            disabled_tooltip="Select a workspace artifact before using it in Chat.",
+            enabled_tooltip="Use the selected workspace artifact in Chat.",
+        )
 
     def _update_scope_context_ui(self) -> None:
         if not self.is_mounted:
@@ -295,6 +349,7 @@ class NotesScreen(BaseAppScreen):
                 save_button.label = "Save Note"
 
             sidebar_right.apply_scope_context(self.state.scope_type.value, resource_kind)
+            self._update_use_in_chat_action_states()
         except QueryError:
             return
 
