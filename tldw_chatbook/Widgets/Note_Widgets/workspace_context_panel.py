@@ -217,13 +217,28 @@ class WorkspaceContextPanel(VerticalScroll):
             await list_view.append(list_item)
 
     async def populate_workspace_notes(self, notes: list[dict[str, Any]]) -> None:
-        await self._populate_list("workspace-notes-list", notes, "No workspace notes.", "note_id")
+        await self._populate_list(
+            "workspace-notes-list",
+            notes,
+            "No workspace notes yet. Create Workspace Note from the Notes Navigator to start this workspace.",
+            "note_id",
+        )
 
     async def populate_workspace_sources(self, sources: list[dict[str, Any]]) -> None:
-        await self._populate_list("workspace-sources-list", sources, "No workspace sources.", "source_id")
+        await self._populate_list(
+            "workspace-sources-list",
+            sources,
+            "No workspace sources yet. Add Source from selected Media so Chat and Study can use it.",
+            "source_id",
+        )
 
     async def populate_workspace_artifacts(self, artifacts: list[dict[str, Any]]) -> None:
-        await self._populate_list("workspace-artifacts-list", artifacts, "No workspace artifacts.", "artifact_id")
+        await self._populate_list(
+            "workspace-artifacts-list",
+            artifacts,
+            "No workspace artifacts yet. Create Artifact to capture generated outputs for this workspace.",
+            "artifact_id",
+        )
 
     async def on_mount(self) -> None:
         self.set_workspace_details(self.workspace)

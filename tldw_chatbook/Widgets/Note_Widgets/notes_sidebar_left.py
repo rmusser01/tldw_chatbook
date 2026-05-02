@@ -158,7 +158,10 @@ class NotesSidebarLeft(VerticalScroll):
             "notes-list-view",
             notes_data,
             title_id="local-notes-title",
-            empty_message="No local notes found.",
+            empty_message=(
+                "No local notes yet. Create Blank Note for a private draft, "
+                "or Import Note to bring in a file."
+            ),
             item_kind="local",
         )
 
@@ -167,7 +170,10 @@ class NotesSidebarLeft(VerticalScroll):
             "server-notes-list-view",
             notes_data,
             title_id="server-notes-title",
-            empty_message="No server notes found.",
+            empty_message=(
+                "No server notes yet. Open Server Notes and Create Server Note "
+                "when the server backend is available."
+            ),
             item_kind="server",
         )
 
@@ -176,7 +182,10 @@ class NotesSidebarLeft(VerticalScroll):
             "workspaces-list-view",
             workspaces_data,
             title_id="workspaces-title",
-            empty_message="No workspaces found.",
+            empty_message=(
+                "No workspaces yet. Create Workspace to organize notes, sources, artifacts, "
+                "and Study materials together."
+            ),
             item_kind="workspace",
         )
 

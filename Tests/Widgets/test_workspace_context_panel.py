@@ -10,6 +10,10 @@ from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarR
 from tldw_chatbook.Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPanel
 
 
+def _list_item_text(list_view: ListView) -> str:
+    return str(list_view.children[0].query_one(Label).renderable)
+
+
 class PanelTestApp(App[None]):
     def __init__(self, widget):
         super().__init__()
@@ -143,6 +147,55 @@ async def test_notes_sidebar_left_scope_population_keeps_lists_separate():
         assert getattr(local_item, "note_id") == 1
         assert getattr(server_item, "note_id") == "srv-1"
         assert getattr(workspace_item, "workspace_id") == "ws-1"
+
+
+@pytest.mark.asyncio
+async def test_notes_sidebar_left_empty_states_explain_scope_and_creation_routes():
+    sidebar = NotesSidebarLeft()
+    app = PanelTestApp(sidebar)
+
+    async with app.run_test() as pilot:
+        await sidebar.populate_local_notes_list([])
+        await sidebar.populate_server_notes_list([])
+        await sidebar.populate_workspaces_list([])
+
+        local_text = _list_item_text(sidebar.query_one("#notes-list-view", ListView))
+        server_text = _list_item_text(sidebar.query_one("#server-notes-list-view", ListView))
+        workspace_text = _list_item_text(sidebar.query_one("#workspaces-list-view", ListView))
+
+        assert "No local notes yet." in local_text
+        assert "Create Blank Note" in local_text
+        assert "Import Note" in local_text
+        assert "No server notes yet." in server_text
+        assert "Server Notes" in server_text
+        assert "Create Server Note" in server_text
+        assert "No workspaces yet." in workspace_text
+        assert "Create Workspace" in workspace_text
+        assert "notes, sources, artifacts" in workspace_text
+
+
+@pytest.mark.asyncio
+async def test_workspace_context_panel_empty_states_explain_workspace_resource_routes():
+    panel = WorkspaceContextPanel()
+    app = PanelTestApp(panel)
+
+    async with app.run_test() as pilot:
+        await panel.populate_workspace_notes([])
+        await panel.populate_workspace_sources([])
+        await panel.populate_workspace_artifacts([])
+
+        notes_text = _list_item_text(panel.query_one("#workspace-notes-list", ListView))
+        sources_text = _list_item_text(panel.query_one("#workspace-sources-list", ListView))
+        artifacts_text = _list_item_text(panel.query_one("#workspace-artifacts-list", ListView))
+
+        assert "No workspace notes yet." in notes_text
+        assert "Create Workspace Note" in notes_text
+        assert "No workspace sources yet." in sources_text
+        assert "Add Source" in sources_text
+        assert "Media" in sources_text
+        assert "No workspace artifacts yet." in artifacts_text
+        assert "Create Artifact" in artifacts_text
+        assert "outputs" in artifacts_text
 
 
 @pytest.mark.asyncio
