@@ -132,6 +132,19 @@ class NotesScreen(BaseAppScreen):
 
     _auto_save_timer: Optional[Timer] = None
     _search_timer: Optional[Timer] = None
+    _HANDOFF_ACTION_STATE_FIELDS = frozenset(
+        {
+            "scope_type",
+            "workspace_subview",
+            "selected_note_id",
+            "selected_local_note_id",
+            "selected_server_note_id",
+            "selected_workspace_id",
+            "selected_workspace_note_id",
+            "selected_workspace_source_id",
+            "selected_workspace_artifact_id",
+        }
+    )
 
     def __init__(self, app_instance: "TldwCli", **kwargs: Any):
         super().__init__(app_instance, "notes", **kwargs)
@@ -195,7 +208,8 @@ class NotesScreen(BaseAppScreen):
 
     def _set_state(self, **changes: Any) -> None:
         self.state = self.validate_state(replace(self.state, **changes))
-        self._update_use_in_chat_action_states()
+        if self._HANDOFF_ACTION_STATE_FIELDS.intersection(changes):
+            self._update_use_in_chat_action_states()
 
     def _notify(self, message: str, *, severity: str = "information", timeout: Optional[float] = None) -> None:
         self.app_instance.notify(message, severity=severity, timeout=timeout)
@@ -232,6 +246,8 @@ class NotesScreen(BaseAppScreen):
         return "This note will be moved to trash and can be recovered later."
 
     def _has_selected_note_for_handoff(self) -> bool:
+        if not self._is_note_editor_context():
+            return False
         if self.state.scope_type == ScopeType.SERVER_NOTE:
             return self.state.selected_server_note_id is not None or self.state.selected_note_id is not None
         if self.state.scope_type == ScopeType.WORKSPACE:

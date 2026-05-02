@@ -378,6 +378,41 @@ class TestNotesScreenMethods:
 
             assert button.disabled is False
 
+    def test_notes_handoff_requires_note_editor_context(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.SOURCES,
+            selected_workspace_id="workspace-1",
+            selected_note_id="source-1",
+            selected_workspace_source_id="source-1",
+        )
+
+        assert screen._has_selected_note_for_handoff() is False
+
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.ARTIFACTS,
+            selected_workspace_id="workspace-1",
+            selected_note_id="artifact-1",
+            selected_workspace_artifact_id="artifact-1",
+        )
+
+        assert screen._has_selected_note_for_handoff() is False
+
+    def test_set_state_updates_handoff_actions_only_for_selection_changes(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen._update_use_in_chat_action_states = Mock()  # type: ignore[method-assign]
+
+        screen._set_state(word_count=12, has_unsaved_changes=True)
+
+        screen._update_use_in_chat_action_states.assert_not_called()
+
+        screen._set_state(selected_note_id=1)
+
+        screen._update_use_in_chat_action_states.assert_called_once_with()
+
     @pytest.mark.asyncio
     async def test_workspace_item_handoff_buttons_track_selected_items(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
