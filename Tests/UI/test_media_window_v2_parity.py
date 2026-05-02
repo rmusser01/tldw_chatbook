@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Collapsible, Select, Static
+from textual.widgets import Button, Collapsible, Label, Select, Static
 
 from tldw_chatbook.Event_Handlers.media_events import (
     MediaAnalysisSaveEvent,
@@ -20,6 +20,11 @@ from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 from tldw_chatbook.Widgets.Media.media_search_panel import MediaBrowseSubviewChangedEvent, MediaSearchPanel
 from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
+
+
+def _plain_text(widget) -> str:
+    rendered = widget.render()
+    return getattr(rendered, "plain", str(rendered))
 
 
 def _build_media_window(*, runtime_backend: str = "local", scope_service: Optional[Mock] = None):
@@ -55,6 +60,35 @@ def _build_media_window(*, runtime_backend: str = "local", scope_service: Option
     window.query_one = Mock(return_value=empty_state)
     window.run_worker = lambda coro, exclusive=True: coro.close()
     return window, app
+
+
+@pytest.mark.asyncio
+async def test_media_empty_state_orients_first_time_users():
+    app_instance = SimpleNamespace(
+        _media_types_for_ui=["All Media"],
+        media_runtime_state=MediaRuntimeState(runtime_backend="local"),
+        media_reading_scope_service=Mock(),
+        notify=Mock(),
+        media_db=None,
+    )
+    app_instance.media_reading_scope_service.search_media = AsyncMock(return_value={"items": [], "total": 0})
+
+    class MediaWindowApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield MediaWindow(app_instance)
+
+    app = MediaWindowApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        empty_label = app.query_one("#empty-state-label", Label)
+        text = _plain_text(empty_label)
+
+        assert "Media Library" in text
+        assert "Ingest" in text
+        assert "Select a media item" in text
+        assert "analysis" in text
+        assert "Use in Chat" in text
 
 
 @pytest.mark.asyncio
