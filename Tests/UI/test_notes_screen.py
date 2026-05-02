@@ -356,6 +356,98 @@ class TestNotesScreenMethods:
         assert "try again" in message
         assert mock_app_instance.notify.call_args.kwargs["severity"] == "warning"
 
+    @pytest.mark.asyncio
+    async def test_notes_use_in_chat_button_is_disabled_until_note_selected(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            button = screen.query_one("#notes-use-in-chat-button", Button)
+            assert button.disabled is True
+            assert "Select a note" in str(button.tooltip)
+
+            screen._set_state(
+                scope_type=ScopeType.LOCAL_NOTE,
+                selected_note_id=1,
+                selected_note_title="Local Note 1",
+                selected_note_content="Content 1",
+            )
+            await pilot.pause()
+
+            assert button.disabled is False
+
+    def test_notes_handoff_requires_note_editor_context(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.SOURCES,
+            selected_workspace_id="workspace-1",
+            selected_note_id="source-1",
+            selected_workspace_source_id="source-1",
+        )
+
+        assert screen._has_selected_note_for_handoff() is False
+
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.ARTIFACTS,
+            selected_workspace_id="workspace-1",
+            selected_note_id="artifact-1",
+            selected_workspace_artifact_id="artifact-1",
+        )
+
+        assert screen._has_selected_note_for_handoff() is False
+
+    def test_set_state_updates_handoff_actions_only_for_selection_changes(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen._update_use_in_chat_action_states = Mock()  # type: ignore[method-assign]
+
+        screen._set_state(word_count=12, has_unsaved_changes=True)
+
+        screen._update_use_in_chat_action_states.assert_not_called()
+
+        screen._set_state(selected_note_id=1)
+
+        screen._update_use_in_chat_action_states.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_workspace_item_handoff_buttons_track_selected_items(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen._set_state(
+                scope_type=ScopeType.WORKSPACE,
+                workspace_subview=WorkspaceSubview.SOURCES,
+                selected_workspace_id="workspace-1",
+                selected_workspace_source_id=None,
+                selected_workspace_artifact_id=None,
+            )
+            await pilot.pause()
+
+            workspace_button = screen.query_one("#workspace-use-in-chat-button", Button)
+            source_button = screen.query_one("#workspace-source-use-in-chat-button", Button)
+            artifact_button = screen.query_one("#workspace-artifact-use-in-chat-button", Button)
+
+            assert workspace_button.disabled is False
+            assert source_button.disabled is True
+            assert "Select a workspace source" in str(source_button.tooltip)
+            assert artifact_button.disabled is True
+            assert "Select a workspace artifact" in str(artifact_button.tooltip)
+
+            screen._set_state(
+                selected_workspace_source_id="source-1",
+                selected_workspace_artifact_id="artifact-1",
+            )
+            await pilot.pause()
+
+            assert source_button.disabled is False
+            assert artifact_button.disabled is False
+
     def test_workspace_use_in_chat_button_uses_button_section_not_current_subview(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
         screen.state = NotesScreenState(
