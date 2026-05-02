@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#170, plus active Media Analysis navigation-tooltip slice
-Branch context: current `dev` / `origin/dev` at `c8386c5f`; active branch `codex/ux-media-analysis-nav-tooltips`
+Status: Current-dev rebaseline after UX remediation PRs #146-#171, plus active Search/RAG saved-search action slice
+Branch context: current `dev` / `origin/dev` at `03ab9b8d`; active branch `codex/ux-rag-saved-search-actions`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `c8386c5f`:
+Verified on current `dev` at `03ab9b8d`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -58,11 +58,12 @@ Current source state plus this branch:
 - Phase 5 Media Viewer action-tooltip copy is merged through PR #168: Media Viewer `Use in Chat` and `Save for Later` actions expose selection/capability recovery reasons.
 - Phase 5 Media Analysis action-tooltip copy is merged through PR #169: Media analysis save/note/edit/overwrite/delete actions expose generated-analysis and saved-version recovery reasons.
 - Phase 5 Media Highlight action-tooltip copy is merged through PR #170: Media reading-highlight update/delete actions expose selected-highlight recovery reasons.
-- Phase 5 Media Analysis navigation-tooltip copy is active in `codex/ux-media-analysis-nav-tooltips`: Media analysis previous/next version navigation should explain empty, first-version, and last-version states.
+- Phase 5 Media Analysis navigation-tooltip copy is merged through PR #171: Media analysis previous/next version navigation explains empty, first-version, and last-version states.
+- Phase 5 Search/RAG saved-search action recovery is active in `codex/ux-rag-saved-search-actions`: saved-search Load/Delete actions should explain selection requirements and let selected searches repopulate the Search/RAG controls.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond Web Search, Media Source, Study Quiz, Study Flashcard, Media Viewer, Media Analysis, Media Highlight, and Media Analysis navigation actions, Phase 6 capability-state presentation beyond Speech/STTS and Web Search where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond Web Search, Media Source, Study Quiz, Study Flashcard, Media Viewer, Media Analysis, Media Highlight, Media Analysis navigation, and Search/RAG saved-search actions, Phase 6 capability-state presentation beyond Speech/STTS and Web Search where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -301,7 +302,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, and #170. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, and Media Highlight actions expose selected-highlight tooltips.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, and #171. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, Media Highlight actions expose selected-highlight tooltips, and Media Analysis navigation actions expose saved-version boundary tooltips.
 
 ### Files
 
@@ -335,6 +336,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 - [x] Add Media Analysis action tooltips for save, note, edit, overwrite, and delete states when generated analysis or saved versions are missing.
 - [x] Add Media Reading Highlight action tooltips for update/delete states when no highlight is selected.
 - [x] Add Media Analysis navigation tooltips for previous/next saved-version boundary states.
+- [x] Add Search/RAG saved-search action recovery for Load/Delete selection states and selected-config reuse.
 - [ ] Add tooltips or short descriptions where compact labels remain necessary outside top navigation.
 
 ### Acceptance Criteria
@@ -434,4 +436,4 @@ Current-dev state: not started. The smoke/replay artifacts need to be regenerate
 
 ## Next Step
 
-After this Media Analysis navigation-tooltip slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage and the remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this Search/RAG saved-search action slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage and the remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.

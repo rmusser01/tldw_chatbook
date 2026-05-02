@@ -341,6 +341,48 @@ class TestSearchRAGWindow:
                 "notes": False,
             }
 
+    @pytest.mark.asyncio
+    async def test_saved_search_load_applies_selected_config_to_controls(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Loading a saved search should repopulate the search controls for reuse."""
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+            saved_panel = window.query_one("#saved-searches-panel", SavedSearchesPanel)
+            saved_panel.save_search(
+                "Agent UX Search",
+                {
+                    "query": "agent UX",
+                    "mode": "hybrid",
+                    "collection": "all",
+                    "top_k": 7,
+                    "temperature": 0.35,
+                    "filters": {"media": True, "conversations": False, "notes": True},
+                },
+            )
+            await pilot.pause()
+
+            saved_list = saved_panel.query_one("#saved-searches-list", ListView)
+            saved_list.index = 0
+            saved_list.action_select_cursor()
+            await pilot.pause()
+
+            load_button = saved_panel.query_one("#load-saved-search", Button)
+            assert load_button.disabled is False
+            load_button.press()
+            await pilot.pause()
+
+            assert window.query_one("#search-query-input", Input).value == "agent UX"
+            assert window.query_one("#search-mode-select", Select).value == "hybrid"
+            assert window.query_one("#top-k-input", Input).value == "7"
+            assert window.query_one("#temperature-input", Input).value == "0.35"
+            assert window.query_one("#filter-media", Checkbox).value is True
+            assert window.query_one("#filter-conversations", Checkbox).value is False
+            assert window.query_one("#filter-notes", Checkbox).value is True
+
 
 @pytest.mark.ui
 class TestSearchHistoryDropdown:
@@ -407,6 +449,49 @@ class TestSavedSearchesPanel:
 
                 persisted = json.loads(saved_path.read_text())
                 assert persisted["Agent UX Search"]["config"] == config
+
+    @pytest.mark.asyncio
+    async def test_saved_search_actions_explain_selection_requirement_and_delete_selected(
+        self,
+        temp_user_data_dir: Path,
+        widget_pilot,
+    ) -> None:
+        """Saved-search actions should explain selection requirements and recover after deletion."""
+        with patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=temp_user_data_dir,
+        ):
+            async with await widget_pilot(SavedSearchesPanel) as pilot:
+                panel = pilot.app.test_widget
+                load_button = panel.query_one("#load-saved-search", Button)
+                delete_button = panel.query_one("#delete-saved-search", Button)
+
+                assert load_button.disabled is True
+                assert "Select a saved search before loading it" in str(load_button.tooltip)
+                assert delete_button.disabled is True
+                assert "Select a saved search before deleting it" in str(delete_button.tooltip)
+
+                panel.save_search("Agent UX Search", {"query": "agent UX", "mode": "plain"})
+                await pilot.pause()
+
+                saved_list = panel.query_one("#saved-searches-list", ListView)
+                saved_list.index = 0
+                saved_list.action_select_cursor()
+                await pilot.pause()
+
+                assert panel.selected_search_name == "Agent UX Search"
+                assert load_button.disabled is False
+                assert "Load the selected saved search" in str(load_button.tooltip)
+                assert delete_button.disabled is False
+                assert "Delete the selected saved search" in str(delete_button.tooltip)
+
+                delete_button.press()
+                await pilot.pause()
+
+                assert "Agent UX Search" not in panel.saved_searches
+                assert panel.selected_search_name is None
+                assert load_button.disabled is True
+                assert "Select a saved search before loading it" in str(load_button.tooltip)
 
 
 @pytest.mark.ui

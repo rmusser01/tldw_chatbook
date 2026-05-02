@@ -510,6 +510,44 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             self.app_instance.notify(USE_IN_CHAT_UNAVAILABLE_RECOVERY, severity="warning")
             return
         open_chat(payload)
+
+    @on(SavedSearchesPanel.LoadRequested)
+    def handle_saved_search_load_requested(self, event: SavedSearchesPanel.LoadRequested) -> None:
+        """Apply a selected saved search to the active Search/RAG controls."""
+        event.stop()
+        config = dict(event.config)
+
+        self.query_one("#search-query-input", Input).value = str(config.get("query") or "")
+        if "mode" in config:
+            self.query_one("#search-mode-select", Select).value = config["mode"]
+        if "collection" in config:
+            self.query_one("#collection-select", Select).value = config["collection"]
+        if "top_k" in config:
+            self.query_one("#top-k-input", Input).value = str(config["top_k"] if config["top_k"] is not None else "")
+        if "temperature" in config:
+            self.query_one("#temperature-input", Input).value = str(config["temperature"] if config["temperature"] is not None else "")
+
+        filters = config.get("filters") or config.get("sources") or {}
+        if filters:
+            self.query_one("#filter-media", Checkbox).value = bool(filters.get("media", True))
+            self.query_one("#filter-conversations", Checkbox).value = bool(filters.get("conversations", True))
+            self.query_one("#filter-notes", Checkbox).value = bool(filters.get("notes", True))
+
+        if "enable_parent_docs" in config:
+            parent_docs_enabled = bool(config["enable_parent_docs"])
+            self.enable_parent_docs = parent_docs_enabled
+            self.query_one("#parent-docs-checkbox", Checkbox).value = parent_docs_enabled
+        if "parent_strategy" in config:
+            self.query_one("#parent-strategy-select", Select).value = config["parent_strategy"]
+        if "parent_size" in config:
+            self.query_one("#parent-size-input", Input).value = str(config["parent_size"] if config["parent_size"] is not None else "")
+
+        self.last_search_config = config
+        self.query_one("#search-query-input", Input).focus()
+        self.app_instance.notify(
+            f"Loaded saved search '{event.name}' into Search.",
+            severity="information",
+        )
     
     # Setup methods implementation
     def _setup_history_table(self) -> None:
