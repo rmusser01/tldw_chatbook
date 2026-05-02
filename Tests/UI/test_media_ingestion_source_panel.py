@@ -80,6 +80,83 @@ async def test_ingestion_source_panel_create_is_disabled_in_local_mode():
 
 
 @pytest.mark.asyncio
+async def test_ingestion_source_panel_disabled_actions_explain_local_mode_recovery():
+    scope_service = Mock()
+    app = SourcePanelTestApp(runtime_backend="local", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(MediaIngestionSourcePanel)
+        panel.runtime_backend = "local"
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        sync_button = panel.query_one("#sync-source-btn", Button)
+        save_button = panel.query_one("#save-source-btn", Button)
+        upload_button = panel.query_one("#upload-archive-btn", Button)
+
+        for button in (sync_button, save_button, upload_button):
+            assert button.disabled is True
+            assert "Switch Media to server mode" in str(button.tooltip)
+            assert "select a source" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_ingestion_source_panel_disabled_actions_explain_empty_server_sources():
+    scope_service = Mock()
+    scope_service.list_ingestion_sources = AsyncMock(return_value=[])
+    app = SourcePanelTestApp(runtime_backend="server", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(MediaIngestionSourcePanel)
+        panel.runtime_backend = "server"
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        sync_button = panel.query_one("#sync-source-btn", Button)
+        save_button = panel.query_one("#save-source-btn", Button)
+        upload_button = panel.query_one("#upload-archive-btn", Button)
+
+        for button in (sync_button, save_button, upload_button):
+            assert button.disabled is True
+            assert "Create or select a server ingestion source" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_ingestion_source_panel_upload_disabled_action_explains_non_archive_source():
+    scope_service = Mock()
+    scope_service.list_ingestion_sources = AsyncMock(
+        return_value=[
+            {
+                "id": "server:ingestion_source:7",
+                "source_id": "7",
+                "source_type": "git_repository",
+                "sink_type": "media",
+                "enabled": True,
+            }
+        ]
+    )
+    scope_service.list_ingestion_source_items = AsyncMock(return_value=[])
+    app = SourcePanelTestApp(runtime_backend="server", scope_service=scope_service)
+
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one(MediaIngestionSourcePanel)
+        panel.runtime_backend = "server"
+        await panel.refresh_for_mode()
+        await pilot.pause(0.05)
+
+        sync_button = panel.query_one("#sync-source-btn", Button)
+        save_button = panel.query_one("#save-source-btn", Button)
+        upload_button = panel.query_one("#upload-archive-btn", Button)
+
+        assert sync_button.disabled is False
+        assert sync_button.tooltip is None
+        assert save_button.disabled is False
+        assert save_button.tooltip is None
+        assert upload_button.disabled is True
+        assert "only available for archive ingestion sources" in str(upload_button.tooltip)
+
+
+@pytest.mark.asyncio
 async def test_ingestion_source_panel_creates_allowed_server_source_and_refreshes_selection():
     created_source = {
         "id": "server:ingestion_source:7",
