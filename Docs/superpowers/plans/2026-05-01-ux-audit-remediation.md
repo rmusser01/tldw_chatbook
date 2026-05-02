@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#174, plus active handoff first-send smoke slice
-Branch context: current `dev` / `origin/dev` at `d0fbcad6`; active branch `codex/ux-handoff-first-send-smoke`
+Status: Current-dev rebaseline after UX remediation PRs #146-#175, plus active invalid-selection smoke slice
+Branch context: current `dev` / `origin/dev` at `ab921c01`; active branch `codex/ux-invalid-selection-smoke`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `d0fbcad6`:
+Verified on current `dev` at `ab921c01`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -62,11 +62,12 @@ Current source state plus this branch:
 - Phase 5 Search/RAG saved-search action recovery is merged through PR #172: saved-search Load/Delete actions explain selection requirements and selected searches repopulate the Search/RAG controls.
 - Phase 5 Media list pagination-tooltip copy is merged through PR #173: Media result pagination explains single-page, first-page, middle-page, and last-page navigation states.
 - Phase 5 Media multi-item review action-tooltip copy is merged through PR #174: batch Generate/Cancel analysis actions explain no-selection, selected, and in-progress states.
-- Phase 4/7 handoff first-send smoke coverage is active in `codex/ux-handoff-first-send-smoke`: a mounted Textual test stages a handoff into a real Chat tab and verifies the first-send path applies staged context before marking the payload sent.
+- Phase 4/7 handoff first-send smoke coverage is merged through PR #175: a mounted Textual test stages a handoff into a real Chat tab and verifies the first-send path applies staged context before marking the payload sent.
+- Phase 4 invalid-selection smoke coverage is active in `codex/ux-invalid-selection-smoke`: mounted Textual tests press empty Notes, workspace source/artifact, and Media handoff actions and verify they expose recovery copy without staging Chat.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond Web Search, Media Source, Study Quiz, Study Flashcard, Media Viewer, Media Analysis, Media Highlight, Media Analysis navigation, Search/RAG saved-search actions, Media list pagination, and Media multi-item review actions, Phase 6 capability-state presentation beyond Speech/STTS and Web Search where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live source-handoff replay cases, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond Web Search, Media Source, Study Quiz, Study Flashcard, Media Viewer, Media Analysis, Media Highlight, Media Analysis navigation, Search/RAG saved-search actions, Media list pagination, and Media multi-item review actions, Phase 6 capability-state presentation beyond Speech/STTS and Web Search where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -263,7 +264,7 @@ Branch state: clear/dismiss behavior completed in `codex/ux-chat-handoff-clear-c
 
 Purpose: verify and harden the source-side handoff surfaces that have now landed in current `dev`.
 
-Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG Search, and dedicated Web Search handoffs are implemented and covered by focused tests. The active invalid-selection slice disables Notes and workspace source/artifact handoffs until a valid item is selected. Remaining work is to close source-authority edge cases in the shared UX smoke pass.
+Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG Search, and dedicated Web Search handoffs are implemented and covered by focused tests. Notes, workspace source/artifact, and Media invalid-selection states now have shared-harness smoke coverage in the active branch. Remaining work is to close source-authority edge cases and broader source-handoff replay in the shared UX smoke pass.
 
 ### Files
 
@@ -291,12 +292,13 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 - [ ] Consume backend-owned `UX_Interop` and `runtime_policy` contracts consistently; do not rebuild source authority from raw config.
 - [ ] Keep dry-run sync reports diagnostic only; do not imply mirroring or write sync in source screens.
 - [ ] Replay each source handoff in the Phase 0/7 smoke harness.
+- [x] Replay invalid-selection handoff states for Notes, workspace source/artifact, and Media in the Phase 0/7 smoke harness.
 
 ### Acceptance Criteria
 
 - [x] Notes, Workspaces, Media, RAG Search, and Web Search can each stage one selected item into Chat in focused tests.
 - [x] Notes and workspace item invalid-selection actions are disabled with recovery copy in mounted Textual tests.
-- [ ] No invalid selection navigates to Chat in live smoke coverage.
+- [x] No invalid selection navigates to Chat in live smoke coverage.
 - [ ] Disabled handoff actions have a reason and a recovery path.
 - [x] Workspace handoffs preserve `workspace_id` and isolation metadata in focused tests.
 - [x] Web Search is in scope and not silently omitted.
@@ -441,4 +443,4 @@ Current-dev state: partially started. A mounted handoff first-send smoke test no
 
 ## Next Step
 
-After this handoff first-send smoke slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage across each source surface and the remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this invalid-selection smoke slice, the remaining Phase 4 work is source-authority smoke coverage and broader source-handoff replay across each source surface. The remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.

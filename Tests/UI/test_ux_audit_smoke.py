@@ -6,16 +6,20 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, TextArea
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import apply_current_handoff_context
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.notes_scope_models import ScopeType, WorkspaceSubview
+from tldw_chatbook.UI.Screens.notes_screen import NotesScreen
 from tldw_chatbook.UI.Chatbooks_Window_Improved import ChatbooksWindowImproved
 from tldw_chatbook.UI.Screens.chatbooks_screen import ChatbooksScreen
 from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
+from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
 
 
 class ChatbooksShellSmokeApp(App[None]):
@@ -86,20 +90,21 @@ async def test_handoff_smoke_replays_chat_staging_and_first_send(monkeypatch):
     app = HandoffFirstSendSmokeApp(payload)
     observed: dict[str, str | None] = {}
 
-    async def fake_send_handler(app, event):
-        tab_container = app.query_one(ChatTabContainer)
+    async def fake_send_handler(chat_app, event):
+        tab_container = app.tab_container
+        assert tab_container is not None
         session = tab_container.sessions[tab_container.active_session_id]
         payload = session.session_data.handoff_payload
 
-        app.host._current_chat_handoff_payload = payload
+        chat_app._current_chat_handoff_payload = payload
         observed["wrapped_prompt"] = apply_current_handoff_context(
-            app.host,
+            chat_app,
             "Summarize the usability issue.",
         )
-        observed["active_handoff_title"] = app.host._current_chat_handoff_payload.title
+        observed["active_handoff_title"] = chat_app._current_chat_handoff_payload.title
 
         payload.status = "sent"
-        app.host._current_chat_handoff_payload = None
+        chat_app._current_chat_handoff_payload = None
 
     monkeypatch.setattr(
         "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed",
@@ -138,3 +143,110 @@ async def test_handoff_smoke_replays_chat_staging_and_first_send(monkeypatch):
         assert "[User prompt]\nSummarize the usability issue." in observed["wrapped_prompt"]
         assert session.session_data.handoff_payload.status == "sent"
         assert app.host._current_chat_handoff_payload is None
+
+
+def _empty_notes_service() -> Mock:
+    service = Mock()
+    service.list_notes.return_value = []
+    return service
+
+
+class InvalidNotesSelectionSmokeApp(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        app_instance = SimpleNamespace(
+            notes_service=_empty_notes_service(),
+            notes_user_id="default_user",
+            notes_scope_service=None,
+            server_notes_workspace_service=None,
+            notify=Mock(),
+            open_chat_with_handoff=Mock(),
+            open_study_screen=Mock(),
+            open_notes_workspace=Mock(),
+            call_from_thread=Mock(),
+            loguru_logger=Mock(),
+            current_selected_note_id=None,
+            current_selected_note_version=None,
+            current_selected_note_title="",
+            current_selected_note_content="",
+        )
+        self.app_instance = app_instance
+        self.screen_under_test = NotesScreen(app_instance)
+
+    def on_mount(self) -> None:
+        self.push_screen(self.screen_under_test)
+
+
+@pytest.mark.asyncio
+async def test_invalid_notes_and_workspace_handoffs_do_not_stage_chat_in_smoke():
+    app = InvalidNotesSelectionSmokeApp()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_under_test
+
+        note_button = screen.query_one("#notes-use-in-chat-button", Button)
+        assert note_button.disabled is True
+        assert "Select a note" in str(note_button.tooltip)
+
+        note_button.press()
+        await pilot.pause(0.05)
+
+        app.app_instance.open_chat_with_handoff.assert_not_called()
+
+        screen._set_state(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.SOURCES,
+            selected_workspace_id="workspace-1",
+            selected_workspace_source_id=None,
+            selected_workspace_artifact_id=None,
+        )
+        await pilot.pause(0.05)
+
+        workspace_button = screen.query_one("#workspace-use-in-chat-button", Button)
+        source_button = screen.query_one("#workspace-source-use-in-chat-button", Button)
+        artifact_button = screen.query_one("#workspace-artifact-use-in-chat-button", Button)
+
+        assert workspace_button.disabled is False
+        assert source_button.disabled is True
+        assert "Select a workspace source" in str(source_button.tooltip)
+        assert artifact_button.disabled is True
+        assert "Select a workspace artifact" in str(artifact_button.tooltip)
+
+        source_button.press()
+        artifact_button.press()
+        await pilot.pause(0.05)
+
+        app.app_instance.open_chat_with_handoff.assert_not_called()
+
+
+class InvalidMediaSelectionSmokeApp(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.use_in_chat_requests = 0
+        self.panel = MediaViewerPanel(SimpleNamespace(notify=Mock()))
+
+    def compose(self) -> ComposeResult:
+        yield self.panel
+
+    @on(MediaViewerPanel.UseInChatRequested)
+    def handle_media_use_in_chat(self, event: MediaViewerPanel.UseInChatRequested) -> None:
+        self.use_in_chat_requests += 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_media_handoff_selection_does_not_post_request_in_smoke():
+    app = InvalidMediaSelectionSmokeApp()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+
+        button = app.panel.query_one("#media-use-in-chat-button", Button)
+        assert button.disabled is True
+        assert "Select a media item before using it in Chat" in str(button.tooltip)
+
+        button.press()
+        await pilot.pause(0.05)
+
+        assert app.use_in_chat_requests == 0
+        assert app.panel._build_use_in_chat_event() is None
