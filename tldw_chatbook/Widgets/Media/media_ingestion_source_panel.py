@@ -30,6 +30,7 @@ CREATE_SOURCE_POLICY_OPTIONS = [("Canonical", "canonical")]
 SOURCE_ACTION_TOOLTIP_LOCAL_MODE = "Switch Media to server mode and select a source to use this action."
 SOURCE_ACTION_TOOLTIP_NO_SOURCE = "Create or select a server ingestion source to use this action."
 SOURCE_ACTION_TOOLTIP_ARCHIVE_ONLY = "Upload Archive is only available for archive ingestion sources."
+SOURCE_ACTION_TOOLTIP_SERVICE_UNAVAILABLE = "Media source service is unavailable."
 
 
 class MediaIngestionSourcePanel(ScrollableContainer):
