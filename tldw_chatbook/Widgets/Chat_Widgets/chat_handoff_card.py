@@ -73,10 +73,12 @@ class ChatHandoffCard(Container):
             parts.append(f"Workspace: {self.payload.workspace_id}")
         if self.payload.sync_dry_run_report:
             parts.append("Sync: dry-run only")
+            parts.extend(self._sync_dry_run_labels())
         if self.payload.body_truncated:
             parts.append("Content: preview truncated")
         if self.payload.unsupported_reports:
             parts.append(f"Unsupported actions: {len(self.payload.unsupported_reports)}")
+            parts.extend(self._unsupported_report_labels())
         if metadata:
             parts.append(metadata)
         parts.append("Review the draft below and send when ready.")
@@ -106,3 +108,25 @@ class ChatHandoffCard(Container):
             "shared": "Shared source",
         }
         return labels.get(str(state), str(state).replace("_", " ").title())
+
+    def _sync_dry_run_labels(self) -> list[str]:
+        report = self.payload.sync_dry_run_report
+        if not isinstance(report, dict):
+            return []
+        labels: list[str] = []
+        if report.get("write_enabled") is False:
+            labels.append("Write sync is not enabled.")
+        user_message = report.get("user_message")
+        if user_message:
+            labels.append(str(user_message))
+        return labels
+
+    def _unsupported_report_labels(self) -> list[str]:
+        labels: list[str] = []
+        for report in self.payload.unsupported_reports[:3]:
+            user_message = None
+            if isinstance(report, dict):
+                user_message = report.get("user_message") or report.get("unsupported_user_message")
+            if user_message:
+                labels.append(str(user_message))
+        return labels

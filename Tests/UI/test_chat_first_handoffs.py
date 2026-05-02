@@ -369,6 +369,49 @@ def test_handoff_card_uses_status_source_title_and_metadata():
     assert "https://example.com" in text
 
 
+def test_handoff_card_surfaces_backend_contract_recovery_without_implying_write_sync():
+    fixtures = build_server_parity_fixture_payloads()
+    payload = ChatHandoffPayload(
+        source="workspace",
+        item_type="workspace-source",
+        title="Workspace Transcript",
+        body="Transcript body",
+        runtime_backend="server",
+        source_owner="workspace",
+        source_selector_state="workspace",
+        active_server_profile_id="srv-primary",
+        workspace_id="workspace-a",
+        unsupported_reports=[fixtures["unsupported_action"]],
+        sync_dry_run_report=fixtures["sync_dry_run_report"],
+    )
+
+    card = ChatHandoffCard(payload)
+    text = card.render_text()
+
+    assert "Sync: dry-run only" in text
+    assert "Resolve workspace conflicts before syncing." in text
+    assert "Write sync is not enabled." in text
+    assert "Unsupported actions: 1" in text
+    assert "Server first-class conversation creation is not available." in text
+    assert "sync enabled" not in text.lower()
+    assert "will sync automatically" not in text.lower()
+
+
+def test_handoff_card_ignores_malformed_sync_dry_run_report_copy():
+    payload = {
+        "source": "workspace",
+        "item_type": "workspace-source",
+        "title": "Workspace Transcript",
+        "body": "Transcript body",
+        "sync_dry_run_report": ["malformed-report"],
+    }
+
+    text = ChatHandoffCard(payload).render_text()
+
+    assert "Sync: dry-run only" in text
+    assert "Write sync is not enabled." not in text
+
+
 class _HandoffSessionHarness(App):
     def __init__(self, session_data: ChatSessionData) -> None:
         super().__init__()
