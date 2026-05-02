@@ -257,6 +257,30 @@ def test_search_window_dedicated_web_result_unavailable_explains_recovery():
     assert app.notify.call_args.kwargs["severity"] == "warning"
 
 
+def test_search_window_dedicated_web_result_policy_block_explains_recovery():
+    app = _search_app(runtime_backend="local")
+    app.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+    app.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+    window = SearchWindow(app_instance=app)
+    event = SearchResult.UseInChatRequested(
+        0,
+        {
+            "title": "Article",
+            "content": "Snippet",
+            "source": "web",
+            "metadata": {"url": "https://example.com"},
+        },
+    )
+
+    window.handle_search_result_use_in_chat(event)
+
+    app.open_chat_with_handoff.assert_not_called()
+    message = app.notify.call_args.args[0]
+    assert "research.search.providers.launch.server requires server mode" in message
+    assert "switch source" in message.lower()
+    assert app.notify.call_args.kwargs["severity"] == "warning"
+
+
 @pytest.mark.asyncio
 async def test_search_window_disabled_web_search_nav_explains_dependency_recovery(monkeypatch):
     monkeypatch.setattr(search_window_module, "WEB_SEARCH_AVAILABLE", False)
