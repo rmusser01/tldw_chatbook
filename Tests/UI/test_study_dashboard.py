@@ -173,6 +173,8 @@ async def test_study_quizzes_section_offers_shell_level_start_flow():
         assert quiz_session is not None
         assert quiz_start is not None
         assert "Tree Drill" in _text(quiz_summary)
+        assert quiz_start.disabled is False
+        assert "Start the selected quiz" in str(quiz_start.tooltip)
 
         await pilot.click("#quiz-start")
         await pilot.pause(0.3)
@@ -182,3 +184,23 @@ async def test_study_quizzes_section_offers_shell_level_start_flow():
 
         assert study_window.current_view == "quizzes"
         assert "Question 1 of 1." in _text(quiz_status)
+
+
+@pytest.mark.asyncio
+async def test_study_quizzes_start_action_explains_no_quiz_recovery():
+    app_instance = _build_app_instance()
+    app_instance.study_quiz_scope_service.quizzes = []
+    app_instance.study_quiz_scope_service.questions = []
+    app = StudyDashboardTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        await pilot.click("#view-quizzes-btn")
+        await pilot.pause(0.4)
+
+        quiz_start = app.screen.query_one("#quiz-start", Button)
+        quiz_summary = app.screen.query_one("#quiz-session-summary", Static)
+
+        assert "No quizzes available yet." in _text(quiz_summary)
+        assert quiz_start.disabled is True
+        assert "Create or import a quiz" in str(quiz_start.tooltip)

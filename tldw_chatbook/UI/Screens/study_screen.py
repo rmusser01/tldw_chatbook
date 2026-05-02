@@ -15,6 +15,13 @@ from textual.widgets import Button
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Study_Window import StudyWindow
 from ...Widgets.Study import QuizSessionWidget, StudyDashboard
+from ...Widgets.Study.quiz_session_widget import (
+    QUIZ_START_ATTEMPT_ACTIVE_TOOLTIP,
+    QUIZ_START_ENABLED_TOOLTIP,
+    QUIZ_START_NO_QUIZZES_TOOLTIP,
+    QUIZ_START_SCOPE_UNAVAILABLE_TOOLTIP,
+    QUIZ_START_SELECT_TOOLTIP,
+)
 from .notes_scope_models import WorkspaceSubview
 from .study_scope_models import StudyScopeContext, StudyScopeState, StudyScopeType
 
@@ -268,7 +275,7 @@ class StudyScreen(BaseAppScreen):
         if controller is None:
             self.quiz_session_widget.update_session_summary("Select a quiz to begin.")
             self.quiz_session_widget.update_status("")
-            self.quiz_session_widget.set_start_enabled(False)
+            self.quiz_session_widget.set_start_enabled(False, QUIZ_START_SELECT_TOOLTIP)
             return
 
         quiz_name = None
@@ -294,7 +301,18 @@ class StudyScreen(BaseAppScreen):
         attempt_active = bool(getattr(controller, "current_attempt_id", None)) and bool(
             getattr(controller, "current_attempt_questions", None)
         )
-        self.quiz_session_widget.set_start_enabled(bool(quiz_name) and scope_available and not attempt_active)
+        start_enabled = bool(quiz_name) and scope_available and not attempt_active
+        if start_enabled:
+            tooltip = QUIZ_START_ENABLED_TOOLTIP
+        elif quiz_name and not scope_available:
+            tooltip = QUIZ_START_SCOPE_UNAVAILABLE_TOOLTIP
+        elif quiz_name and attempt_active:
+            tooltip = QUIZ_START_ATTEMPT_ACTIVE_TOOLTIP
+        elif getattr(controller, "has_quizzes", False):
+            tooltip = QUIZ_START_SELECT_TOOLTIP
+        else:
+            tooltip = QUIZ_START_NO_QUIZZES_TOOLTIP
+        self.quiz_session_widget.set_start_enabled(start_enabled, tooltip)
 
     def sync_shell_from_window(self) -> None:
         self._sync_dashboard_widgets()
