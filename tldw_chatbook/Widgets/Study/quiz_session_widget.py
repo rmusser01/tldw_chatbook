@@ -13,6 +13,9 @@ QUIZ_START_SELECT_TOOLTIP = "Select a quiz before starting."
 QUIZ_START_NO_QUIZZES_TOOLTIP = "Create or import a quiz before starting a session."
 QUIZ_START_SCOPE_UNAVAILABLE_TOOLTIP = "Switch to an available study scope before starting a quiz."
 QUIZ_START_ATTEMPT_ACTIVE_TOOLTIP = "Finish the current quiz attempt before starting another."
+QUIZ_REVIEW_ENABLED_TOOLTIP = "Review the selected quiz in Chat."
+QUIZ_REVIEW_SELECT_TOOLTIP = "Select a quiz before reviewing it in Chat."
+QUIZ_REVIEW_HANDOFF_UNAVAILABLE_TOOLTIP = "Chat handoff is unavailable from this app state."
 
 
 class QuizSessionWidget(Widget):
@@ -62,7 +65,12 @@ class QuizSessionWidget(Widget):
                     disabled=True,
                     tooltip=QUIZ_START_SELECT_TOOLTIP,
                 )
-                yield Button("Review in chat", id="quiz-open-in-chat")
+                yield Button(
+                    "Review in chat",
+                    id="quiz-open-in-chat",
+                    disabled=True,
+                    tooltip=QUIZ_REVIEW_SELECT_TOOLTIP,
+                )
 
     def update_scope_summary(self, summary: str) -> None:
         if self.is_mounted:
@@ -82,4 +90,12 @@ class QuizSessionWidget(Widget):
             button.disabled = not enabled
             button.tooltip = tooltip or (
                 QUIZ_START_ENABLED_TOOLTIP if enabled else QUIZ_START_SELECT_TOOLTIP
+            )
+
+    def set_review_in_chat_enabled(self, enabled: bool, tooltip: str | None = None) -> None:
+        if self.is_mounted:
+            button = self.query_one("#quiz-open-in-chat", Button)
+            button.disabled = not enabled
+            button.tooltip = tooltip or (
+                QUIZ_REVIEW_ENABLED_TOOLTIP if enabled else QUIZ_REVIEW_SELECT_TOOLTIP
             )

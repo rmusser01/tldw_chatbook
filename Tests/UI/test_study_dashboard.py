@@ -1,10 +1,13 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from textual.app import App
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.UI.Screens.study_screen import StudyScreen
+from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeContext, StudyScopeType
 from tldw_chatbook.UI.Study_Window import StudyWindow
 
 
@@ -199,8 +202,74 @@ async def test_study_quizzes_start_action_explains_no_quiz_recovery():
         await pilot.pause(0.4)
 
         quiz_start = app.screen.query_one("#quiz-start", Button)
+        review_in_chat = app.screen.query_one("#quiz-open-in-chat", Button)
         quiz_summary = app.screen.query_one("#quiz-session-summary", Static)
 
         assert "No quizzes available yet." in _text(quiz_summary)
         assert quiz_start.disabled is True
         assert "Create or import a quiz" in str(quiz_start.tooltip)
+        assert review_in_chat.disabled is True
+        assert "Select a quiz before reviewing it in Chat" in str(review_in_chat.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_study_quizzes_review_in_chat_stages_selected_quiz_context():
+    app_instance = _build_app_instance()
+    app_instance.open_chat_with_handoff = Mock()
+    app = StudyDashboardTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        await pilot.click("#view-quizzes-btn")
+        await pilot.pause(0.4)
+
+        review_in_chat = app.screen.query_one("#quiz-open-in-chat", Button)
+
+        assert review_in_chat.disabled is False
+        assert "Review the selected quiz in Chat" in str(review_in_chat.tooltip)
+
+        await pilot.click("#quiz-open-in-chat")
+        await pilot.pause(0.2)
+
+        app_instance.open_chat_with_handoff.assert_called_once()
+        payload = app_instance.open_chat_with_handoff.call_args.args[0]
+
+        assert isinstance(payload, ChatHandoffPayload)
+        assert payload.source == "study"
+        assert payload.item_type == "quiz"
+        assert payload.title == "Tree Drill"
+        assert "Tree Drill" in payload.body
+        assert "Quiz status" in payload.body
+        assert payload.suggested_prompt == "Help me review this quiz and identify what to study next."
+
+
+@pytest.mark.asyncio
+async def test_study_quizzes_review_in_chat_preserves_workspace_scope_metadata():
+    app_instance = _build_app_instance()
+    app_instance.current_runtime_backend = "server"
+    app_instance.pending_study_scope_context = StudyScopeContext(
+        scope_type=StudyScopeType.WORKSPACE,
+        workspace_id="workspace-1",
+        workspace_name="Research Workspace",
+    )
+    app_instance.open_chat_with_handoff = Mock()
+    app = StudyDashboardTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        await pilot.click("#view-quizzes-btn")
+        await pilot.pause(0.4)
+
+        await pilot.click("#quiz-open-in-chat")
+        await pilot.pause(0.2)
+
+        payload = app_instance.open_chat_with_handoff.call_args.args[0]
+
+        assert payload.runtime_backend == "server"
+        assert payload.source_owner == "workspace"
+        assert payload.source_selector_state == "workspace"
+        assert payload.scope_type == "workspace"
+        assert payload.workspace_id == "workspace-1"
+        assert payload.backend_contracts == {
+            "workspace_isolation": {"workspace_scope_id": "workspace-1"}
+        }
