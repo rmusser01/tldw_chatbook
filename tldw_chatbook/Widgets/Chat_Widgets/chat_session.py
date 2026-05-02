@@ -248,7 +248,8 @@ class ChatSession(Container):
         """Remove staged handoff context before the user sends."""
         payload = self.session_data.handoff_payload
         self.session_data.handoff_payload = None
-        self.app_instance._current_chat_handoff_payload = None
+        if getattr(self.app_instance, "_current_chat_handoff_payload", None) is payload:
+            self.app_instance._current_chat_handoff_payload = None
 
         if payload is not None:
             try:
@@ -259,6 +260,8 @@ class ChatSession(Container):
                 logger.debug(f"Could not clear handoff draft text: {e}")
 
         for card in list(self.query(ChatHandoffCard)):
+            if getattr(card.payload, "status", "staged") == "sent":
+                continue
             try:
                 await card.remove()
             except Exception as e:
@@ -276,9 +279,6 @@ class ChatSession(Container):
             await self.handle_suggest_button(event)
         elif button_id == f"attach-image-{self.session_data.tab_id}":
             await self.handle_attach_button(event)
-        elif button_id == f"clear-chat-handoff-context-{self.session_data.tab_id}":
-            event.stop()
-            await self.clear_handoff_context()
 
     @on(ChatHandoffCard.ClearRequested)
     async def on_handoff_clear_requested(self, event: ChatHandoffCard.ClearRequested) -> None:

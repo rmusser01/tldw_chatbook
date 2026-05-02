@@ -392,6 +392,7 @@ async def test_user_can_clear_staged_handoff_context_before_send():
     )
     session_data = ChatSessionData(tab_id="tab1", handoff_payload=payload)
     app = _HandoffSessionHarness(session_data)
+    app.host._current_chat_handoff_payload = payload
 
     async with app.run_test() as pilot:
         session = pilot.app.query_one(ChatSession)
@@ -408,7 +409,75 @@ async def test_user_can_clear_staged_handoff_context_before_send():
         with pytest.raises(NoMatches):
             pilot.app.query_one(ChatHandoffCard)
         assert session.session_data.handoff_payload is None
+        assert app.host._current_chat_handoff_payload is None
         assert pilot.app.query_one("#chat-input-tab1", TextArea).text == ""
+
+
+@pytest.mark.asyncio
+async def test_clear_staged_handoff_context_preserves_unrelated_global_payload():
+    payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Plan",
+        body="Body",
+        suggested_prompt="Use this note.",
+    )
+    other_payload = ChatHandoffPayload(
+        source="media",
+        item_type="media",
+        title="Other tab",
+        body="Other body",
+        suggested_prompt="Use this media.",
+    )
+    session_data = ChatSessionData(tab_id="tab1", handoff_payload=payload)
+    app = _HandoffSessionHarness(session_data)
+    app.host._current_chat_handoff_payload = other_payload
+
+    async with app.run_test() as pilot:
+        session = pilot.app.query_one(ChatSession)
+        await session.mount_handoff_card(payload)
+        session.set_draft_text(payload.default_prompt())
+        await pilot.pause(0.05)
+
+        pilot.app.query_one("#clear-chat-handoff-context-tab1", Button).press()
+        await pilot.pause(0.05)
+
+        assert app.host._current_chat_handoff_payload is other_payload
+
+
+@pytest.mark.asyncio
+async def test_clear_staged_handoff_context_keeps_sent_handoff_cards():
+    staged_payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Plan",
+        body="Body",
+        suggested_prompt="Use this note.",
+    )
+    sent_payload = ChatHandoffPayload(
+        source="media",
+        item_type="media",
+        title="Already sent",
+        body="Sent body",
+        status="sent",
+    )
+    session_data = ChatSessionData(tab_id="tab1", handoff_payload=staged_payload)
+    app = _HandoffSessionHarness(session_data)
+
+    async with app.run_test() as pilot:
+        session = pilot.app.query_one(ChatSession)
+        await session.get_chat_log().mount(ChatHandoffCard(sent_payload))
+        await session.mount_handoff_card(staged_payload)
+        session.set_draft_text(staged_payload.default_prompt())
+        await pilot.pause(0.05)
+
+        pilot.app.query_one("#clear-chat-handoff-context-tab1", Button).press()
+        await pilot.pause(0.05)
+
+        cards = list(pilot.app.query(ChatHandoffCard))
+        assert len(cards) == 1
+        assert cards[0].payload.status == "sent"
+        assert cards[0].payload.title == "Already sent"
 
 
 @pytest.mark.asyncio
