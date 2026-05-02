@@ -98,6 +98,20 @@ class TestSearchRAGWindow:
         ):
             assert window._load_available_collections() == ["default", "research"]
 
+    def test_handle_search_worker_runs_on_textual_thread(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+    ) -> None:
+        """Search orchestration should keep UI mutations on the Textual thread."""
+        window = SearchRAGWindow(mock_app_instance, id="test-search-window")
+        window.run_worker = MagicMock()
+
+        window.handle_search(MagicMock())
+
+        assert window.run_worker.call_args.kwargs["exclusive"] is True
+        assert window.run_worker.call_args.kwargs["thread"] is False
+
     @pytest.mark.asyncio
     async def test_apply_available_collections_updates_list_and_select(
         self,
@@ -142,6 +156,26 @@ class TestSearchRAGWindow:
             assert window.query_one("#filter-conversations", Checkbox)
             assert window.query_one("#filter-notes", Checkbox)
             assert window.query_one("#saved-searches-panel", SavedSearchesPanel)
+
+    @pytest.mark.asyncio
+    async def test_initial_search_empty_state_explains_search_modes_collections_and_chat_handoff(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """First-run Search should explain modes, collection scope, and Chat handoff."""
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+
+            empty_state = window.query_one("#search-empty-state", Static)
+            empty_text = _text(empty_state)
+
+            assert "Plain Search" in empty_text
+            assert "RAG" in empty_text
+            assert "collections" in empty_text
+            assert "Use in Chat" in empty_text
+            assert "Chat context" in empty_text
 
     @pytest.mark.asyncio
     async def test_primary_search_action_is_reachable_in_default_layout(
@@ -248,6 +282,33 @@ class TestSearchRAGWindow:
             assert "hidden" not in window.query_one("#pagination-enhanced").classes
             assert "Page 1 of 2" in _text(page_info)
             assert "12 results" in _text(page_info)
+
+    @pytest.mark.asyncio
+    async def test_display_results_shows_zero_result_recovery_empty_state(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Zero-result searches should leave a recovery path instead of a blank pane."""
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+
+            window.search_results = []
+            window.total_results = 0
+            window.last_search_config = {"query": "missing topic", "mode": "hybrid", "collection": "all"}
+
+            await window._display_results()
+            await pilot.pause()
+
+            empty_state = window.query_one("#search-empty-state", Static)
+            empty_text = _text(empty_state)
+
+            assert "No results found" in empty_text
+            assert "Plain Search" in empty_text
+            assert "All Collections" in empty_text
+            assert "Ingest" in empty_text
+            assert "Use in Chat" in empty_text
 
     @pytest.mark.asyncio
     async def test_record_search_to_history_persists_entry(
