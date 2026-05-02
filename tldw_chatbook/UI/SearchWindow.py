@@ -18,7 +18,9 @@ from loguru import logger
 from pathlib import Path
 
 from ..Chat.chat_handoff_messages import USE_IN_CHAT_UNAVAILABLE_RECOVERY
+from ..Chat.chat_handoff_models import ChatHandoffPayload
 from ..Notes.Notes_Library import NotesInteropService
+from ..runtime_policy.types import RuntimeSourceState
 from .Views.RAGSearch.search_handoff import build_search_chat_handoff_payload
 from .Views.RAGSearch.search_result import SearchResult
 
@@ -84,6 +86,7 @@ WEB_SEARCH_DEPENDENCY_RECOVERY = (
     'Web Search requires optional dependencies. Install them with pip install -e ".[websearch]" '
     "and restart Chatbook."
 )
+WEB_HANDOFF_POLICY_RECOVERY = "Switch source, sign in, or reconnect the server before using this web result in Chat."
 
 
 class SearchWindow(Container):
@@ -345,6 +348,32 @@ class SearchWindow(Container):
             runtime_backend=self._authoritative_runtime_backend(),
         )
 
+    @staticmethod
+    def _web_handoff_runtime_action_id(payload: ChatHandoffPayload) -> str | None:
+        if payload.source != "search-web":
+            return None
+        if payload.source_owner != "server" and payload.source_selector_state != "server":
+            return None
+        return "research.search.providers.launch.server"
+
+    def _web_handoff_policy_blocking_message(self, payload: ChatHandoffPayload) -> str:
+        action_id = self._web_handoff_runtime_action_id(payload)
+        if not action_id:
+            return ""
+
+        runtime_state = getattr(getattr(self.app_instance, "runtime_policy", None), "state", None)
+        policy_engine = getattr(self.app_instance, "ui_policy_engine", None)
+        evaluate = getattr(policy_engine, "evaluate", None)
+        if not isinstance(runtime_state, RuntimeSourceState) or not callable(evaluate):
+            return ""
+
+        decision = evaluate(action_id=action_id, state=runtime_state)
+        if getattr(decision, "allowed", True):
+            return ""
+
+        message = str(getattr(decision, "user_message", None) or "This Web Search action is blocked by runtime policy.")
+        return f"{message} {WEB_HANDOFF_POLICY_RECOVERY}"
+
     def _normalize_web_search_results(self, raw_results: Any, query: str) -> List[Dict[str, Any]]:
         if isinstance(raw_results, dict) and "web_search_results_dict" in raw_results:
             raw_results = raw_results.get("web_search_results_dict", {}).get("results", [])
@@ -417,6 +446,10 @@ class SearchWindow(Container):
     def handle_search_result_use_in_chat(self, event: SearchResult.UseInChatRequested) -> None:
         event.stop()
         payload = self._build_search_chat_handoff_payload(event.result)
+        policy_message = self._web_handoff_policy_blocking_message(payload)
+        if policy_message:
+            self.app_instance.notify(policy_message, severity="warning")
+            return
         open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
         if not callable(open_chat):
             self.app_instance.notify(USE_IN_CHAT_UNAVAILABLE_RECOVERY, severity="warning")
