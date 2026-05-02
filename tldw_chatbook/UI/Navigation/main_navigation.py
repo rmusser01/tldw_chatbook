@@ -37,6 +37,25 @@ class MainNavigationBar(Container):
         ("AI Config", [("llm", "Models"), ("stts", "Speech"), ("evals", "Evals")]),
         ("System", [("tools_settings", "Settings"), ("customize", "Customize"), ("logs", "Logs"), ("stats", "Stats"), ("coding", "Coding")]),
     ]
+    NAV_TOOLTIPS = {
+        "chat": "Agentic chat and control surface.",
+        "chatbooks": "Portable context packs for Chat.",
+        "notes": "Capture notes and send selected context to Chat.",
+        "media": "Browse saved media, transcripts, and analysis.",
+        "ingest": "Import files, URLs, feeds, and media.",
+        "search": "Search saved content and RAG collections.",
+        "subscriptions": "Track feeds, watchlists, reminders, and alerts.",
+        "ccp": "Manage conversations, characters, personas, prompts, dictionaries, and lore.",
+        "study": "Practice with flashcards and quizzes.",
+        "llm": "Configure providers and local model runtimes.",
+        "stts": "Use speech-to-text, dictation, and text-to-speech.",
+        "evals": "Run model, prompt, and task evaluations.",
+        "tools_settings": "Configure app settings and tools.",
+        "customize": "Adjust appearance, themes, and UI preferences.",
+        "logs": "Inspect application logs and diagnostics.",
+        "stats": "Review usage and database statistics.",
+        "coding": "Use the code-focused chat workspace.",
+    }
 
     DEFAULT_CSS = """
     MainNavigationBar {
@@ -112,7 +131,8 @@ class MainNavigationBar(Container):
                     button = Button(
                         label,
                         id=f"nav-{screen_id}",
-                        classes="nav-button"
+                        classes="nav-button",
+                        tooltip=self.NAV_TOOLTIPS.get(screen_id),
                     )
                     if screen_id == self.active_screen:
                         button.add_class("active")

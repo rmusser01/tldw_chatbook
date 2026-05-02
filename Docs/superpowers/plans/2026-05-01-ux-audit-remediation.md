@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#160, plus active command-palette label consistency slice
-Branch context: current `dev` / `origin/dev` at `e2304777`; active branch `codex/ux-command-palette-labels`
+Status: Current-dev rebaseline after UX remediation PRs #146-#161, plus active main-navigation tooltip slice
+Branch context: current `dev` / `origin/dev` at `6e88af24`; active branch `codex/ux-main-nav-tooltips`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `e2304777`:
+Verified on current `dev` at `6e88af24`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -48,11 +48,12 @@ Current source state plus this branch:
 - Phase 5 Chatbooks empty-state cleanup is merged: empty Chatbooks explains portable context packs, import/create recovery, Chat reuse, and shared-navigation escape.
 - Phase 4 handoff recovery copy is merged through PR #159: Notes, Media, RAG Search, and Web Search explain how to recover when the Chat handoff surface is unavailable.
 - Phase 4 invalid-selection hardening is merged through PR #160: Notes and workspace source/artifact `Use in Chat` actions are disabled until a valid selection exists and expose tooltip recovery copy.
-- Phase 5 command-palette label consistency is active in `codex/ux-command-palette-labels`: command-palette tab navigation should use the same `Library`, `Models`, `Speech`, and `Settings` labels as top-level navigation while preserving route IDs.
+- Phase 5 command-palette label consistency is merged through PR #161: command-palette tab navigation uses the same `Library`, `Models`, `Speech`, and `Settings` labels as top-level navigation while preserving route IDs.
+- Phase 5 main-navigation tooltip copy is active in `codex/ux-main-nav-tooltips`: compact top-level labels should expose concise descriptions of each destination without changing route IDs.
 - Phase 6 still needs optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, remaining compact-label/tooltips work outside command-palette tab navigation, Phase 6 capability-state presentation, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, any remaining compact-label/tooltips work outside top navigation and command-palette tab navigation, Phase 6 capability-state presentation, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -291,7 +292,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, and #160. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, and invalid source-selection handoff controls are disabled with recovery copy. The active `codex/ux-command-palette-labels` slice aligns command-palette tab navigation labels with the same IA names.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, and #161. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, and command-palette tab navigation aligns with the same IA names. The active `codex/ux-main-nav-tooltips` slice adds explanatory descriptions to compact main-navigation labels.
 
 ### Files
 
@@ -316,6 +317,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 - [x] Chatbooks empty state keeps portable knowledge-pack explanation and retains escape navigation.
 - [x] Rename top-level navigation jargon while preserving route IDs: `CCP` -> `Library`, `LLM` -> `Models`, and `S/TT/S` -> `Speech`.
 - [x] Align command-palette tab navigation with current top-level labels while preserving route IDs.
+- [x] Add main-navigation tooltips that explain compact destination labels without changing route IDs.
 - [ ] Add tooltips or short descriptions where compact labels remain necessary.
 
 ### Acceptance Criteria
@@ -324,6 +326,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 - [ ] A power user still has direct access to dense controls and shortcuts.
 - [x] Route IDs and saved navigation contracts remain stable for command-palette tab navigation.
 - [x] Tests assert command-palette labels and core top-level product surfaces remain visible.
+- [x] Tests assert top-level navigation descriptions for compact labels.
 
 ## Phase 6: Startup Capability And Log Polish
 
