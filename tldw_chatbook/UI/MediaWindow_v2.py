@@ -47,6 +47,7 @@ from ..Event_Handlers.media_events import (
 )
 from ..Chat.chat_handoff_messages import USE_IN_CHAT_UNAVAILABLE_RECOVERY
 from ..Chat.chat_handoff_models import ChatHandoffPayload
+from ..runtime_policy.types import RuntimeSourceState
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -57,6 +58,7 @@ MEDIA_EMPTY_STATE_COPY = (
     "Use Ingest to add files, URLs, archives, or transcripts. Select a media item here.\n"
     "Details, analysis, save/export, and Use in Chat actions appear after a media item is selected."
 )
+MEDIA_HANDOFF_POLICY_RECOVERY = "Switch source, sign in, or reconnect the server before using this media item in Chat."
 
 
 class MediaWindow(Container):
@@ -413,6 +415,32 @@ class MediaWindow(Container):
                 "content_available": bool(detail.get("content")),
             },
         )
+
+    @staticmethod
+    def _media_handoff_runtime_action_id(backend: str | None) -> str | None:
+        """Return the runtime-policy action for a Media detail handoff."""
+        normalized = str(backend or "").strip().lower()
+        if normalized not in {"local", "server"}:
+            return None
+        return f"media.items.detail.{normalized}"
+
+    def _media_handoff_policy_blocking_message(self, payload: ChatHandoffPayload) -> str:
+        action_id = self._media_handoff_runtime_action_id(payload.runtime_backend)
+        if not action_id:
+            return ""
+
+        runtime_state = getattr(getattr(self.app_instance, "runtime_policy", None), "state", None)
+        policy_engine = getattr(self.app_instance, "ui_policy_engine", None)
+        evaluate = getattr(policy_engine, "evaluate", None)
+        if not isinstance(runtime_state, RuntimeSourceState) or not callable(evaluate):
+            return ""
+
+        decision = evaluate(action_id=action_id, state=runtime_state)
+        if getattr(decision, "allowed", True):
+            return ""
+
+        message = str(getattr(decision, "user_message", None) or "This media source action is blocked by runtime policy.")
+        return f"{message} {MEDIA_HANDOFF_POLICY_RECOVERY}"
 
     def _show_viewer(self) -> None:
         """Hide the empty state and display the viewer panel."""
@@ -988,6 +1016,10 @@ class MediaWindow(Container):
         payload = self._build_current_media_chat_handoff_payload(event.media_data)
         if payload is None:
             self.app_instance.notify("Select a media item before using it in Chat.", severity="warning")
+            return
+        policy_message = self._media_handoff_policy_blocking_message(payload)
+        if policy_message:
+            self.app_instance.notify(policy_message, severity="warning")
             return
         open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
         if not callable(open_chat):

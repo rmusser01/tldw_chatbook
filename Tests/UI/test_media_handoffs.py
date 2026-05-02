@@ -3,12 +3,16 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button
 
+from tldw_chatbook.runtime_policy.engine import PolicyEngine
+from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
@@ -135,4 +139,30 @@ def test_media_window_use_in_chat_unavailable_explains_recovery():
     assert "Use in Chat is unavailable" in message
     assert "Open Chat" in message
     assert "try again" in message
+    assert app.notify.call_args.kwargs["severity"] == "warning"
+
+
+def test_media_window_use_in_chat_policy_block_explains_recovery():
+    app = _media_app(runtime_backend="local")
+    app.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+    app.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+    window = MediaWindow(app)
+    window.runtime_state = app.media_runtime_state
+    window.viewer_panel = Mock()
+    window.viewer_panel.media_data = None
+    event = MediaViewerPanel.UseInChatRequested(
+        {
+            "id": "media-1",
+            "backend": "server",
+            "title": "Lecture",
+            "content": "Transcript",
+        }
+    )
+
+    window.handle_media_use_in_chat(event)
+
+    app.open_chat_with_handoff.assert_not_called()
+    message = app.notify.call_args.args[0]
+    assert "media.items.detail.server requires server mode" in message
+    assert "switch source" in message.lower()
     assert app.notify.call_args.kwargs["severity"] == "warning"
