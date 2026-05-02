@@ -26,13 +26,13 @@ from ..UI.Navigation.main_navigation import NavigateToScreen
 
 # Label overrides for tab display names
 _TAB_LABELS = {
-    TAB_CCP: "CCP",
+    TAB_CCP: "Library",
     TAB_TOOLS_SETTINGS: "Settings",
     TAB_INGEST: "Ingest",
-    TAB_LLM: "LLM",
+    TAB_LLM: "Models",
     TAB_EVALS: "Evals",
     TAB_CODING: "Coding",
-    TAB_STTS: "S/TT/S",
+    TAB_STTS: "Speech",
     TAB_STUDY: "Study",
     TAB_CHATBOOKS: "Chatbooks",
     TAB_CUSTOMIZE: "Customize",

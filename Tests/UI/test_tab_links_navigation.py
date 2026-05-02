@@ -139,18 +139,18 @@ class TestTabLinksNavigation:
         """Test that each tab has the correct label text."""
         expected_labels = {
             TAB_CHAT: "Chat",
-            TAB_CCP: "CCP",
+            TAB_CCP: "Library",
             TAB_NOTES: "Notes",
             TAB_MEDIA: "Media",
             TAB_SEARCH: "Search",
             TAB_INGEST: "Ingest",
             TAB_EVALS: "Evals",
-            TAB_LLM: "LLM",
+            TAB_LLM: "Models",
             TAB_TOOLS_SETTINGS: "Settings",
             TAB_STATS: "Stats",
             TAB_LOGS: "Logs",
             TAB_CODING: "Coding",
-            TAB_STTS: "S/TT/S",
+            TAB_STTS: "Speech",
             TAB_STUDY: "Study",
             TAB_CHATBOOKS: "Chatbooks"
         }
@@ -168,13 +168,13 @@ class TestTabLinksNavigation:
                 
                 # Handle special cases where tab_id doesn't match expected labels
                 if tab_id == "conversations_characters_prompts":
-                    expected = "CCP"
+                    expected = "Library"
                 elif tab_id == "llm_management":
-                    expected = "LLM"
+                    expected = "Models"
                 elif tab_id == "subscriptions":
                     expected = "Subscriptions"
                 elif tab_id == "stts":
-                    expected = "S/TT/S"
+                    expected = "Speech"
                 else:
                     expected = expected_labels.get(tab_id, tab_id.replace('_', ' ').title())
                 

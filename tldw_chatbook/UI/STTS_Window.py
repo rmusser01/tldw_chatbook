@@ -4116,7 +4116,7 @@ class STTSWindow(Container):
         """Compose the S/TT/S window"""
         # Sidebar
         with Vertical(classes="stts-sidebar"):
-            yield Label("S/TT/S Menu", classes="section-title")
+            yield Label("Speech Menu", classes="section-title")
             yield Button("🎤 TTS Playground", id="view-playground-btn", classes="sidebar-button", variant="primary")
             yield Button("⚙️ TTS Settings", id="view-settings-btn", classes="sidebar-button")
             yield Button("📚 AudioBook/Podcast", id="view-audiobook-btn", classes="sidebar-button")
