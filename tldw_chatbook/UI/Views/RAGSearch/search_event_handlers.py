@@ -43,7 +43,7 @@ class SearchEventHandlersMixin:
     """Mixin class containing all event handlers for SearchRAGWindow"""
     
     @on(Button.Pressed, "#search-button")
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def handle_search(self, event: Button.Pressed) -> None:
         """Handle search button press with improved error handling and feedback"""
         if self.is_searching or self.active_searches >= MAX_CONCURRENT_SEARCHES:

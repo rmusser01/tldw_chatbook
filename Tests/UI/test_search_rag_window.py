@@ -98,6 +98,20 @@ class TestSearchRAGWindow:
         ):
             assert window._load_available_collections() == ["default", "research"]
 
+    def test_handle_search_worker_runs_on_textual_thread(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+    ) -> None:
+        """Search orchestration should keep UI mutations on the Textual thread."""
+        window = SearchRAGWindow(mock_app_instance, id="test-search-window")
+        window.run_worker = MagicMock()
+
+        window.handle_search(MagicMock())
+
+        assert window.run_worker.call_args.kwargs["exclusive"] is True
+        assert window.run_worker.call_args.kwargs["thread"] is False
+
     @pytest.mark.asyncio
     async def test_apply_available_collections_updates_list_and_select(
         self,
