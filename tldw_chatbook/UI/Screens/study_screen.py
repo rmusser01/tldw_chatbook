@@ -12,10 +12,14 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button
 
+from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Study_Window import StudyWindow
 from ...Widgets.Study import QuizSessionWidget, StudyDashboard
 from ...Widgets.Study.quiz_session_widget import (
+    QUIZ_REVIEW_ENABLED_TOOLTIP,
+    QUIZ_REVIEW_HANDOFF_UNAVAILABLE_TOOLTIP,
+    QUIZ_REVIEW_SELECT_TOOLTIP,
     QUIZ_START_ATTEMPT_ACTIVE_TOOLTIP,
     QUIZ_START_ENABLED_TOOLTIP,
     QUIZ_START_NO_QUIZZES_TOOLTIP,
@@ -276,6 +280,7 @@ class StudyScreen(BaseAppScreen):
             self.quiz_session_widget.update_session_summary("Select a quiz to begin.")
             self.quiz_session_widget.update_status("")
             self.quiz_session_widget.set_start_enabled(False, QUIZ_START_SELECT_TOOLTIP)
+            self.quiz_session_widget.set_review_in_chat_enabled(False, QUIZ_REVIEW_SELECT_TOOLTIP)
             return
 
         quiz_name = None
@@ -313,6 +318,73 @@ class StudyScreen(BaseAppScreen):
         else:
             tooltip = QUIZ_START_NO_QUIZZES_TOOLTIP
         self.quiz_session_widget.set_start_enabled(start_enabled, tooltip)
+
+        open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not quiz_name:
+            self.quiz_session_widget.set_review_in_chat_enabled(False, QUIZ_REVIEW_SELECT_TOOLTIP)
+        elif not callable(open_chat):
+            self.quiz_session_widget.set_review_in_chat_enabled(
+                False,
+                QUIZ_REVIEW_HANDOFF_UNAVAILABLE_TOOLTIP,
+            )
+        else:
+            self.quiz_session_widget.set_review_in_chat_enabled(True, QUIZ_REVIEW_ENABLED_TOOLTIP)
+
+    def _build_quiz_chat_handoff_payload(self) -> ChatHandoffPayload | None:
+        controller = getattr(self.study_window_widget, "quizzes_controller", None)
+        if controller is None:
+            return None
+
+        label_getter = getattr(controller, "selected_quiz_label", None)
+        quiz_name = label_getter() if callable(label_getter) else None
+        if not quiz_name:
+            return None
+
+        id_getter = getattr(controller, "_selected_quiz_id", None)
+        quiz_id = id_getter() if callable(id_getter) else None
+        status = self._status_text_from_window("#quiz-attempt-status") or "No active attempt."
+        question = self._status_text_from_window("#quiz-attempt-question")
+        attempt_questions = list(getattr(controller, "current_attempt_questions", None) or [])
+
+        body_lines = [
+            f"Quiz: {quiz_name}",
+            f"Scope: {self._scope_summary_text()}",
+            f"Quiz status: {status}",
+        ]
+        if attempt_questions:
+            body_lines.append(f"Active attempt questions: {len(attempt_questions)}")
+        if question:
+            body_lines.append(f"Current question: {question}")
+
+        runtime_backend = self._runtime_backend()
+        scope_type = self.scope_state.scope_type.value
+        workspace_id = (
+            self.scope_state.workspace_id
+            if scope_type == StudyScopeType.WORKSPACE.value
+            else None
+        )
+        source_owner = "workspace" if workspace_id else runtime_backend
+        backend_contracts = (
+            {"workspace_isolation": {"workspace_scope_id": workspace_id}}
+            if workspace_id
+            else {}
+        )
+        return ChatHandoffPayload.from_source_content(
+            source="study",
+            item_type="quiz",
+            title=str(quiz_name),
+            body="\n".join(body_lines),
+            source_id=str(quiz_id) if quiz_id else None,
+            display_summary=f"Study quiz: {quiz_name}",
+            suggested_prompt="Help me review this quiz and identify what to study next.",
+            runtime_backend=runtime_backend,
+            source_owner=source_owner,
+            source_selector_state=source_owner,
+            scope_type=scope_type,
+            workspace_id=workspace_id,
+            backend_contracts=backend_contracts,
+            metadata={"scope_summary": self._scope_summary_text()},
+        )
 
     def sync_shell_from_window(self) -> None:
         self._sync_dashboard_widgets()
@@ -674,3 +746,11 @@ class StudyScreen(BaseAppScreen):
         quiz_name = study_window.quizzes_controller.selected_quiz_label() or "Quiz session"
         self._record_study_session(section="quizzes", topic=quiz_name)
         self.sync_shell_from_window()
+
+    @on(Button.Pressed, "#quiz-open-in-chat")
+    def handle_quiz_review_in_chat(self) -> None:
+        open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
+        payload = self._build_quiz_chat_handoff_payload()
+        if not callable(open_chat) or payload is None:
+            return
+        open_chat(payload)
