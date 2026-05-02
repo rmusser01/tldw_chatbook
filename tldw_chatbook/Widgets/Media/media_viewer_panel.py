@@ -45,6 +45,11 @@ ANALYSIS_DELETE_ENABLED_TOOLTIP = "Delete this saved analysis version."
 ANALYSIS_DELETE_EDITING_TOOLTIP = "Cancel editing before deleting an analysis."
 ANALYSIS_SAVE_EDITING_TOOLTIP = "Finish or cancel editing before saving."
 ANALYSIS_SAVE_NOTE_EDITING_TOOLTIP = "Finish or cancel editing before saving as a note."
+READING_HIGHLIGHT_ADD_TOOLTIP = "Add a reading highlight to this media item."
+READING_HIGHLIGHT_UPDATE_DISABLED_TOOLTIP = "Select a reading highlight before updating it."
+READING_HIGHLIGHT_UPDATE_ENABLED_TOOLTIP = "Update this reading highlight."
+READING_HIGHLIGHT_DELETE_DISABLED_TOOLTIP = "Select a reading highlight before deleting it."
+READING_HIGHLIGHT_DELETE_ENABLED_TOOLTIP = "Delete this reading highlight."
 
 
 class ContentSearchEvent(Message):
@@ -541,9 +546,26 @@ class MediaViewerPanel(Container):
                             yield Label("Color:", classes="edit-label")
                             yield Input("yellow", id="reading-highlight-color")
                             with Horizontal(classes="edit-actions"):
-                                yield Button("Add Highlight", id="add-reading-highlight-btn", variant="success")
-                                yield Button("Update Highlight", id="update-reading-highlight-btn", variant="primary", disabled=True)
-                                yield Button("Delete Highlight", id="delete-reading-highlight-btn", variant="error", disabled=True)
+                                yield Button(
+                                    "Add Highlight",
+                                    id="add-reading-highlight-btn",
+                                    variant="success",
+                                    tooltip=READING_HIGHLIGHT_ADD_TOOLTIP,
+                                )
+                                yield Button(
+                                    "Update Highlight",
+                                    id="update-reading-highlight-btn",
+                                    variant="primary",
+                                    disabled=True,
+                                    tooltip=READING_HIGHLIGHT_UPDATE_DISABLED_TOOLTIP,
+                                )
+                                yield Button(
+                                    "Delete Highlight",
+                                    id="delete-reading-highlight-btn",
+                                    variant="error",
+                                    disabled=True,
+                                    tooltip=READING_HIGHLIGHT_DELETE_DISABLED_TOOLTIP,
+                                )
                     
                     # Edit mode (hidden by default)
                     with Container(id="metadata-edit", classes="edit-section hidden"):
