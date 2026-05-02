@@ -929,6 +929,55 @@ def test_media_viewer_load_analysis_versions_resets_button_state_when_empty():
 
 
 @pytest.mark.asyncio
+async def test_media_viewer_analysis_navigation_explains_boundary_states():
+    class TestMediaViewerPanel(MediaViewerPanel):
+        def populate_providers(self) -> None:
+            pass
+
+    class MediaViewerPanelApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield TestMediaViewerPanel(SimpleNamespace())
+
+    app = MediaViewerPanelApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one(MediaViewerPanel)
+        prev_button = panel.query_one("#prev-analysis-btn", Button)
+        next_button = panel.query_one("#next-analysis-btn", Button)
+
+        panel.all_analyses = []
+        panel.current_analysis_index = 0
+        panel._update_analysis_navigation()
+        await pilot.pause()
+
+        assert prev_button.disabled is True
+        assert "No saved analysis versions to navigate" in str(prev_button.tooltip)
+        assert next_button.disabled is True
+        assert "No saved analysis versions to navigate" in str(next_button.tooltip)
+
+        panel.all_analyses = [
+            {"analysis_content": "Newest saved analysis", "version_number": 2},
+            {"analysis_content": "Older saved analysis", "version_number": 1},
+        ]
+        panel.current_analysis_index = 0
+        panel._update_analysis_navigation()
+        await pilot.pause()
+
+        assert prev_button.disabled is True
+        assert "Already viewing the first analysis version" in str(prev_button.tooltip)
+        assert next_button.disabled is False
+        assert "Show the next analysis version" in str(next_button.tooltip)
+
+        panel.current_analysis_index = 1
+        panel._update_analysis_navigation()
+        await pilot.pause()
+
+        assert prev_button.disabled is False
+        assert "Show the previous analysis version" in str(prev_button.tooltip)
+        assert next_button.disabled is True
+        assert "Already viewing the last analysis version" in str(next_button.tooltip)
+
+
+@pytest.mark.asyncio
 async def test_media_viewer_analysis_actions_explain_disabled_and_available_states():
     class TestMediaViewerPanel(MediaViewerPanel):
         def populate_providers(self) -> None:
