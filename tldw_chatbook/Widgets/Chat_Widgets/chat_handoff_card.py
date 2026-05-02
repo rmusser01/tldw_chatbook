@@ -110,7 +110,9 @@ class ChatHandoffCard(Container):
         return labels.get(str(state), str(state).replace("_", " ").title())
 
     def _sync_dry_run_labels(self) -> list[str]:
-        report = self.payload.sync_dry_run_report or {}
+        report = self.payload.sync_dry_run_report
+        if not isinstance(report, dict):
+            return []
         labels: list[str] = []
         if report.get("write_enabled") is False:
             labels.append("Write sync is not enabled.")

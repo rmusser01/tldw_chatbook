@@ -397,6 +397,21 @@ def test_handoff_card_surfaces_backend_contract_recovery_without_implying_write_
     assert "will sync automatically" not in text.lower()
 
 
+def test_handoff_card_ignores_malformed_sync_dry_run_report_copy():
+    payload = {
+        "source": "workspace",
+        "item_type": "workspace-source",
+        "title": "Workspace Transcript",
+        "body": "Transcript body",
+        "sync_dry_run_report": ["malformed-report"],
+    }
+
+    text = ChatHandoffCard(payload).render_text()
+
+    assert "Sync: dry-run only" in text
+    assert "Write sync is not enabled." not in text
+
+
 class _HandoffSessionHarness(App):
     def __init__(self, session_data: ChatSessionData) -> None:
         super().__init__()
