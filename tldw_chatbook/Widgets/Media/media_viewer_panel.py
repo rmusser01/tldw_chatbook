@@ -1520,9 +1520,9 @@ class MediaViewerPanel(Container):
             
             if self.analysis_edit_mode:
                 save_btn.disabled = True
-                save_btn.tooltip = ANALYSIS_SAVE_DISABLED_TOOLTIP
+                save_btn.tooltip = ANALYSIS_SAVE_EDITING_TOOLTIP
                 save_as_note_btn.disabled = True
-                save_as_note_btn.tooltip = ANALYSIS_SAVE_NOTE_DISABLED_TOOLTIP
+                save_as_note_btn.tooltip = ANALYSIS_SAVE_NOTE_EDITING_TOOLTIP
                 edit_btn.label = "Cancel Edit"
                 edit_btn.tooltip = ANALYSIS_EDIT_CANCEL_TOOLTIP
                 overwrite_btn.disabled = False
