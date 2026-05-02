@@ -540,7 +540,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         if "parent_strategy" in config:
             self.query_one("#parent-strategy-select", Select).value = config["parent_strategy"]
         if "parent_size" in config:
-            self.query_one("#parent-size-input", Input).value = str(config["parent_size"])
+            self.query_one("#parent-size-input", Input).value = str(config["parent_size"] if config["parent_size"] is not None else "")
 
         self.last_search_config = config
         self.query_one("#search-query-input", Input).focus()
