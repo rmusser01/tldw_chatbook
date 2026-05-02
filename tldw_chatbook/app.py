@@ -76,7 +76,8 @@ from .config import (
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
+    get_tab_display_label
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
@@ -468,29 +469,51 @@ class ThemeProvider(Provider):
 
 class TabNavigationProvider(Provider):
     """Provider for tab navigation commands."""
+
+    TAB_HELP_TEXT = {
+        TAB_CHAT: "Switch to the main chat interface",
+        TAB_CCP: "Switch to Library for conversations, characters, personas, prompts, dictionaries, and world books",
+        TAB_NOTES: "Switch to notes management",
+        TAB_MEDIA: "Switch to media library",
+        TAB_SEARCH: "Switch to search and RAG",
+        TAB_INGEST: "Switch to content ingestion",
+        TAB_EVALS: "Switch to evaluation tools",
+        TAB_LLM: "Switch to model and provider management",
+        TAB_STTS: "Switch to speech-to-text and text-to-speech tools",
+        TAB_STUDY: "Switch to flashcards and quizzes",
+        TAB_WRITING: "Switch to writing tools",
+        TAB_RESEARCH: "Switch to research workflows",
+        TAB_SUBSCRIPTIONS: "Switch to subscriptions and watchlists",
+        TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
+        TAB_TOOLS_SETTINGS: "Switch to settings and configuration",
+        TAB_LOGS: "Switch to application logs",
+        TAB_CODING: "Switch to coding assistant",
+        TAB_STATS: "Switch to statistics view",
+        TAB_CUSTOMIZE: "Switch to appearance customization",
+    }
+
+    POPULAR_TABS = (
+        TAB_CHAT,
+        TAB_CHATBOOKS,
+        TAB_NOTES,
+        TAB_MEDIA,
+        TAB_SEARCH,
+        TAB_TOOLS_SETTINGS,
+    )
     
     def __init__(self, screen, *args, **kwargs):
         """Initialize the TabNavigationProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
+
+    def _tab_command(self, tab_id: str) -> tuple[str, str, str]:
+        label = get_tab_display_label(tab_id)
+        help_text = self.TAB_HELP_TEXT.get(tab_id, f"Switch to {label}")
+        return f"Tab Navigation: Switch to {label}", tab_id, help_text
     
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
         
-        tab_commands = [
-            ("Tab Navigation: Switch to Chat", TAB_CHAT, "Switch to the main chat interface"),
-            ("Tab Navigation: Switch to Character Chat", TAB_CCP, "Switch to character and conversation management"),
-            ("Tab Navigation: Switch to Notes", TAB_NOTES, "Switch to notes management"),
-            ("Tab Navigation: Switch to Media", TAB_MEDIA, "Switch to media library"),
-            ("Tab Navigation: Switch to Search", TAB_SEARCH, "Switch to search interface"),
-            ("Tab Navigation: Switch to Ingest", TAB_INGEST, "Switch to content ingestion"),
-            ("Tab Navigation: Switch to Tools & Settings", TAB_TOOLS_SETTINGS, "Switch to settings and configuration"),
-            ("Tab Navigation: Switch to Customize", TAB_CUSTOMIZE, "Switch to appearance customization"),
-            ("Tab Navigation: Switch to LLM Management", TAB_LLM, "Switch to LLM provider management"),
-            ("Tab Navigation: Switch to Logs", TAB_LOGS, "Switch to application logs"),
-            ("Tab Navigation: Switch to Stats", TAB_STATS, "Switch to statistics view"),
-            ("Tab Navigation: Switch to Evaluations", TAB_EVALS, "Switch to evaluation tools"),
-            ("Tab Navigation: Switch to Coding", TAB_CODING, "Switch to coding assistant"),
-        ]
+        tab_commands = [self._tab_command(tab_id) for tab_id in ALL_TABS]
         
         for command_text, tab_id, help_text in tab_commands:
             score = matcher.match(command_text)
@@ -503,14 +526,7 @@ class TabNavigationProvider(Provider):
                 )
     
     async def discover(self) -> Hits:
-        popular_tabs = [
-            ("Tab Navigation: Switch to Chat", TAB_CHAT, "Switch to the main chat interface"),
-            ("Tab Navigation: Switch to Character Chat", TAB_CCP, "Switch to character and conversation management"),
-            ("Tab Navigation: Switch to Notes", TAB_NOTES, "Switch to notes management"),
-            ("Tab Navigation: Switch to Search", TAB_SEARCH, "Switch to search interface"),
-            ("Tab Navigation: Switch to Tools & Settings", TAB_TOOLS_SETTINGS, "Switch to settings and configuration"),
-            ("Tab Navigation: Switch to Customize", TAB_CUSTOMIZE, "Switch to appearance customization"),
-        ]
+        popular_tabs = [self._tab_command(tab_id) for tab_id in self.POPULAR_TABS]
         
         for command_text, tab_id, help_text in popular_tabs:
             yield Hit(

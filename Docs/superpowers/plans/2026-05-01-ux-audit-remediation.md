@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#159, plus active invalid-selection handoff slice
-Branch context: current `dev` / `origin/dev` at `abecc37b`; active branch `codex/ux-handoff-invalid-selection-smoke`
+Status: Current-dev rebaseline after UX remediation PRs #146-#160, plus active command-palette label consistency slice
+Branch context: current `dev` / `origin/dev` at `e2304777`; active branch `codex/ux-command-palette-labels`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `67fe89e1`:
+Verified on current `dev` at `e2304777`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -47,11 +47,12 @@ Current source state plus this branch:
 - Phase 5 CCP/Library empty-state cleanup is merged: conversations, characters, personas, prompts, dictionaries, and world/lore books now explain creation/import routes and their relationship to Chat.
 - Phase 5 Chatbooks empty-state cleanup is merged: empty Chatbooks explains portable context packs, import/create recovery, Chat reuse, and shared-navigation escape.
 - Phase 4 handoff recovery copy is merged through PR #159: Notes, Media, RAG Search, and Web Search explain how to recover when the Chat handoff surface is unavailable.
-- Phase 4 invalid-selection hardening is active in `codex/ux-handoff-invalid-selection-smoke`: Notes and workspace source/artifact `Use in Chat` actions are disabled until a valid selection exists and expose tooltip recovery copy.
+- Phase 4 invalid-selection hardening is merged through PR #160: Notes and workspace source/artifact `Use in Chat` actions are disabled until a valid selection exists and expose tooltip recovery copy.
+- Phase 5 command-palette label consistency is active in `codex/ux-command-palette-labels`: command-palette tab navigation should use the same `Library`, `Models`, `Speech`, and `Settings` labels as top-level navigation while preserving route IDs.
 - Phase 6 still needs optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, remaining compact-label/tooltips work in Phase 5, Phase 6 capability-state presentation, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, remaining compact-label/tooltips work outside command-palette tab navigation, Phase 6 capability-state presentation, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -290,7 +291,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, and #158. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, and the current `codex/ux-handoff-recovery-copy` slice clarifies blocked handoff recovery.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, and #160. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, and invalid source-selection handoff controls are disabled with recovery copy. The active `codex/ux-command-palette-labels` slice aligns command-palette tab navigation labels with the same IA names.
 
 ### Files
 
@@ -314,14 +315,15 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, a
 - [x] CCP/Library empty states explain personas, characters, prompts, dictionaries, and how they relate to Chat.
 - [x] Chatbooks empty state keeps portable knowledge-pack explanation and retains escape navigation.
 - [x] Rename top-level navigation jargon while preserving route IDs: `CCP` -> `Library`, `LLM` -> `Models`, and `S/TT/S` -> `Speech`.
+- [x] Align command-palette tab navigation with current top-level labels while preserving route IDs.
 - [ ] Add tooltips or short descriptions where compact labels remain necessary.
 
 ### Acceptance Criteria
 
 - [ ] A first-time user can identify what Chat, Notes, Media, Search, Study, personas, and Chatbooks are for from visible text.
 - [ ] A power user still has direct access to dense controls and shortcuts.
-- [ ] Route IDs and saved navigation contracts remain stable.
-- [ ] Tests assert the key user-facing labels and core product surfaces remain visible.
+- [x] Route IDs and saved navigation contracts remain stable for command-palette tab navigation.
+- [x] Tests assert command-palette labels and core top-level product surfaces remain visible.
 
 ## Phase 6: Startup Capability And Log Polish
 
