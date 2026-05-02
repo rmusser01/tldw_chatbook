@@ -851,7 +851,46 @@ async def test_quizzes_view_shows_explicit_empty_state_when_no_quizzes_exist():
 
         status = app.screen.query_one("#quiz-attempt-status", Static)
 
-        assert "Create a quiz to begin practicing." in _text(status)
+        status_text = _text(status)
+        assert "No quizzes yet." in status_text
+        assert "Create a quiz" in status_text
+        assert "add questions" in status_text
+        assert "start an attempt" in status_text
+
+
+@pytest.mark.asyncio
+async def test_workspace_quizzes_empty_state_explains_workspace_recovery_path():
+    scope = WorkspaceFilteredQuizScopeService()
+    scope.workspace_quizzes = []
+    scope.workspace_attempts = []
+    app_instance = SimpleNamespace(
+        study_scope_service=None,
+        study_quiz_scope_service=scope,
+        pending_study_scope_context=StudyScopeContext(
+            scope_type=StudyScopeType.WORKSPACE,
+            workspace_id="ws-1",
+            workspace_name="Research",
+        ),
+        current_runtime_backend="server",
+        runtime_backend=None,
+        app_config={},
+        notify=lambda *args, **kwargs: None,
+    )
+    app = StudyTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#view-quizzes-btn")
+        await pilot.pause(0.3)
+
+        status = app.screen.query_one("#quiz-attempt-status", Static)
+        create_button = app.screen.query_one("#create-quiz-button", Button)
+
+        status_text = _text(status)
+        assert "No quizzes in this workspace yet." in status_text
+        assert "Create a workspace quiz" in status_text
+        assert "switch to Global Study" in status_text
+        assert create_button.disabled is False
 
 
 @pytest.mark.asyncio
@@ -883,7 +922,7 @@ async def test_quizzes_view_deletes_selected_quiz_and_resets_selection():
 
         assert ("delete_quiz", "local", "quiz-local-1", None, False) in scope.calls
         assert _is_blank(quiz_select.value)
-        assert "Create a quiz to begin practicing." in _text(status)
+        assert "No quizzes yet." in _text(status)
 
 
 @pytest.mark.asyncio

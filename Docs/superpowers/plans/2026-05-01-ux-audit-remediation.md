@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#150
-Branch context: current `dev` / `origin/dev` at `0f59a8e9`
+Status: Current-dev rebaseline after UX remediation PRs #146-#153
+Branch context: current `dev` / `origin/dev` at `4554130e`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `0f59a8e9`:
+Verified on current `dev` at `4554130e`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -39,11 +39,13 @@ Verified on current `dev` at `0f59a8e9`:
 Still open by current source inspection:
 
 - Phase 4 still needs disabled-state/recovery consistency for blocked source handoffs and live smoke replay.
-- Phase 5 still needs cross-surface empty/disabled-state language cleanup. Current branch `codex/ux-ia-language-labels` addresses top-level `CCP`/`LLM`/`S/TT/S` navigation labels while preserving route IDs.
+- Phase 5 top-level IA labels are merged: visible navigation now uses `Library`, `Models`, and `Speech` while preserving route IDs.
+- Phase 5 Media empty-state copy is merged: Media now points users toward Ingest and selected-item requirements for analysis/save/export.
+- Phase 5 Study empty-state cleanup is in progress on `codex/ux-study-empty-state`: flashcards and quizzes need separate no-content guidance for global/local vs workspace scopes while preserving backend-unavailable states.
 - Phase 6 still needs optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target Phase 4 disabled/recovery states, Phase 5 empty-state/IA language, Phase 6 capability-state presentation, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target Phase 4 disabled/recovery states, the remaining Phase 5 empty-state surfaces, Phase 6 capability-state presentation, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -280,7 +282,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: in progress in `codex/ux-ia-language-labels`. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs. Broader empty/disabled-state language remains open.
+Branch state: partially merged through PRs #152 and #153. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, and Media empty states now direct users to Ingest plus selected-item recovery actions. Current slice `codex/ux-study-empty-state` covers Study flashcard/quiz empty states.
 
 ### Files
 
@@ -297,8 +299,8 @@ Branch state: in progress in `codex/ux-ia-language-labels`. Top-level navigation
 ### Steps
 
 - [ ] Standardize disabled primary actions: disabled reason, next action, and no silent no-op.
-- [ ] Study empty states distinguish no decks/quizzes from unavailable runtime.
-- [ ] Media empty states point to Ingest and explain when analysis/save/export need a selected item.
+- [x] Study empty states distinguish no decks/quizzes from unavailable runtime.
+- [x] Media empty states point to Ingest and explain when analysis/save/export need a selected item.
 - [ ] Search empty states explain plain search vs RAG, collections, and Chat handoff flow.
 - [ ] Notes empty states clarify local/server/workspace scope and creation/import routes.
 - [ ] CCP/Library empty states explain personas, characters, prompts, dictionaries, and how they relate to Chat.

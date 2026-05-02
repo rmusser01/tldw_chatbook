@@ -102,8 +102,11 @@ class StudyFlashcardsController:
 
     def _scope_empty_message(self) -> str:
         if self._scope_type() == "workspace":
-            return "No study decks in this workspace yet."
-        return "Create a deck to begin studying."
+            return (
+                "No study decks in this workspace yet. Create a workspace deck, "
+                "or switch to Global Study to review existing decks."
+            )
+        return "No study decks yet. Create a deck, add flashcards, then start reviewing."
 
     def _scope_arguments(self) -> dict[str, Any]:
         scope_type = self._scope_type()
