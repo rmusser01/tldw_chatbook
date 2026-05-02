@@ -37,9 +37,10 @@ try:
         DeveloperProvider
     )
     from tldw_chatbook.Constants import (
+        ALL_TABS,
         TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, 
         TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS, 
-        TAB_STATS, TAB_EVALS, TAB_CODING
+        TAB_STATS, TAB_EVALS, TAB_CODING, TAB_STTS, get_tab_display_label
     )
     IMPORTS_AVAILABLE = True
 except ImportError as e:
@@ -76,6 +77,15 @@ except ImportError as e:
     TAB_STATS = "stats"
     TAB_EVALS = "evals"
     TAB_CODING = "coding"
+    TAB_STTS = "stts"
+    ALL_TABS = [
+        TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
+        TAB_INGEST, TAB_EVALS, TAB_LLM, TAB_STTS,
+        TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_CODING, TAB_STATS,
+    ]
+
+    def get_tab_display_label(tab_id):
+        return tab_id.replace("_", " ").title()
 
 #######################################################################################################################
 #
@@ -250,9 +260,11 @@ class TestTabNavigationProvider:
         assert len(hits) == 6  # Popular tabs defined in discover method
         tab_names = [hit.text for hit in hits]
         assert any("Chat" in name for name in tab_names)
-        assert any("Character Chat" in name for name in tab_names)
+        assert any("Chatbooks" in name for name in tab_names)
         assert any("Notes" in name for name in tab_names)
-        assert any("Customize" in name for name in tab_names)
+        assert any("Media" in name for name in tab_names)
+        assert any("Search" in name for name in tab_names)
+        assert any("Settings" in name for name in tab_names)
     
     @pytest.mark.asyncio
     async def test_search_shows_all_tabs(self, tab_provider):
@@ -261,16 +273,34 @@ class TestTabNavigationProvider:
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
         
-        # Should show all 13 tabs
-        assert len(hits) == 13
+        assert len(hits) == len(ALL_TABS)
         
         # Check that all major tabs are present
         tab_texts = [hit.text for hit in hits]
         assert any("Chat" in text for text in tab_texts)
-        assert any("Character Chat" in text for text in tab_texts)
-        assert any("Tools & Settings" in text for text in tab_texts)
-        assert any("LLM Management" in text for text in tab_texts)
+        assert any("Library" in text for text in tab_texts)
+        assert any("Settings" in text for text in tab_texts)
+        assert any("Models" in text for text in tab_texts)
+        assert any("Speech" in text for text in tab_texts)
         assert any("Coding" in text for text in tab_texts)
+
+    @pytest.mark.asyncio
+    async def test_search_uses_current_display_labels_for_renamed_tabs(self, tab_provider):
+        """Command palette labels should match top-level navigation labels."""
+        hits = []
+        async for hit in tab_provider.search("tab"):
+            hits.append(hit)
+
+        by_text = {hit.text: hit for hit in hits}
+
+        for tab_id in (TAB_CCP, TAB_LLM, TAB_STTS, TAB_TOOLS_SETTINGS):
+            expected_text = f"Tab Navigation: Switch to {get_tab_display_label(tab_id)}"
+            assert expected_text in by_text
+
+        joined_text = "\n".join(by_text)
+        assert "Character Chat" not in joined_text
+        assert "LLM Management" not in joined_text
+        assert "Tools & Settings" not in joined_text
     
     def test_switch_tab_success(self, tab_provider):
         """Test successful tab switching."""
