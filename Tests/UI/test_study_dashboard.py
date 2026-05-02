@@ -119,6 +119,30 @@ def _text(widget: Static) -> str:
 
 
 @pytest.mark.asyncio
+async def test_study_section_bar_explains_compact_labels():
+    app = StudyDashboardTestApp(_build_app_instance())
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+
+        expected_tooltips = {
+            "#view-dashboard-btn": "Review due cards, recent decks, quizzes, and resume study sessions.",
+            "#view-structured-btn": "Build or follow structured learning paths.",
+            "#view-flashcards-btn": "Review decks and spaced-repetition cards.",
+            "#view-quizzes-btn": "Create, start, and review quizzes.",
+            "#view-study-guide-btn": "Generate or open study guides from your material.",
+            "#view-mindmaps-btn": "Explore topics as visual knowledge maps.",
+            "#view-course-btn": "Create course outlines and study sequences.",
+            "#view-learning-map-btn": "Open the learning map for relationships across study material.",
+        }
+
+        for selector, tooltip in expected_tooltips.items():
+            button = app.screen.query_one(selector, Button)
+
+            assert str(button.tooltip) == tooltip
+
+
+@pytest.mark.asyncio
 async def test_study_dashboard_surfaces_due_and_recent_items():
     app = StudyDashboardTestApp(_build_app_instance())
 
