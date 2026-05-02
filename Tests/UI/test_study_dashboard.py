@@ -133,6 +133,9 @@ async def test_study_dashboard_surfaces_due_and_recent_items():
         assert "Binary Trees" in _text(recent_decks)
         assert "Tree Drill" in _text(recent_quizzes)
         assert resume_button is not None
+        assert resume_button.disabled is True
+        assert "No study session to resume" in str(resume_button.tooltip)
+        assert "Open flashcards or quizzes" in str(resume_button.tooltip)
 
 
 @pytest.mark.asyncio
@@ -143,6 +146,10 @@ async def test_study_dashboard_resume_action_returns_to_last_session():
         await pilot.pause(0.3)
         app.screen.current_study_session = {"section": "quizzes", "topic": "Binary Trees"}
         await pilot.pause(0.1)
+
+        resume_button = app.screen.query_one("#study-resume-last", Button)
+        assert resume_button.disabled is False
+        assert "Resume the most recent study session" in str(resume_button.tooltip)
 
         await pilot.click("#study-resume-last")
         await pilot.pause(0.2)

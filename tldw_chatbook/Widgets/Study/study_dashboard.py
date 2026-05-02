@@ -8,6 +8,12 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 
+RESUME_DISABLED_TOOLTIP = (
+    "No study session to resume. Open flashcards or quizzes to start a session."
+)
+RESUME_ENABLED_TOOLTIP = "Resume the most recent study session."
+
+
 class StudyDashboard(Widget):
     """Summarize due work, recents, and resume actions."""
 
@@ -70,7 +76,13 @@ class StudyDashboard(Widget):
                     yield Static("Recent Quizzes", classes="study-dashboard-heading")
                     yield Static("No recent quizzes yet.", id="study-recent-quizzes", classes="study-dashboard-value")
             with Horizontal(classes="study-dashboard-actions"):
-                yield Button("Resume last session", id="study-resume-last", disabled=True, variant="primary")
+                yield Button(
+                    "Resume last session",
+                    id="study-resume-last",
+                    disabled=True,
+                    variant="primary",
+                    tooltip=RESUME_DISABLED_TOOLTIP,
+                )
                 yield Button("Open flashcards", id="study-open-flashcards")
                 yield Button("Open quizzes", id="study-open-quizzes")
 
@@ -99,6 +111,8 @@ class StudyDashboard(Widget):
         if summary:
             button.label = f"Resume {summary}"
             button.disabled = False
+            button.tooltip = RESUME_ENABLED_TOOLTIP
         else:
             button.label = "Resume last session"
             button.disabled = True
+            button.tooltip = RESUME_DISABLED_TOOLTIP
