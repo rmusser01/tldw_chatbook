@@ -517,15 +517,15 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         event.stop()
         config = dict(event.config)
 
-        self.query_one("#search-query-input", Input).value = str(config.get("query", ""))
+        self.query_one("#search-query-input", Input).value = str(config.get("query") or "")
         if "mode" in config:
             self.query_one("#search-mode-select", Select).value = config["mode"]
         if "collection" in config:
             self.query_one("#collection-select", Select).value = config["collection"]
         if "top_k" in config:
-            self.query_one("#top-k-input", Input).value = str(config["top_k"])
+            self.query_one("#top-k-input", Input).value = str(config["top_k"] if config["top_k"] is not None else "")
         if "temperature" in config:
-            self.query_one("#temperature-input", Input).value = str(config["temperature"])
+            self.query_one("#temperature-input", Input).value = str(config["temperature"] if config["temperature"] is not None else "")
 
         filters = config.get("filters") or config.get("sources") or {}
         if filters:
