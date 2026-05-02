@@ -20,6 +20,13 @@ if TYPE_CHECKING:
     from ..app import TldwCli
 
 
+GENERATE_ANALYSES_NO_SELECTION_TOOLTIP = "Select at least one media item before generating analyses."
+GENERATE_ANALYSES_ENABLED_TOOLTIP = "Generate analyses for the selected media items."
+GENERATE_ANALYSES_IN_PROGRESS_TOOLTIP = "Analysis generation is already running."
+CANCEL_GENERATION_DISABLED_TOOLTIP = "No analysis generation is running."
+CANCEL_GENERATION_ENABLED_TOOLTIP = "Cancel the running analysis generation."
+
+
 class AnalysisGenerationEvent(Message):
     """Event for analysis generation progress updates."""
     
@@ -96,8 +103,20 @@ class MultiItemReviewWindow(Container):
                 # Analysis controls
                 with Horizontal(classes="analysis-controls"):
                     yield Checkbox("Save analyses permanently", id="save-analyses-checkbox", value=False)
-                    yield Button("Generate Analyses", id="generate-analyses", variant="success", disabled=True)
-                    yield Button("Cancel", id="cancel-generation", variant="error", disabled=True)
+                    yield Button(
+                        "Generate Analyses",
+                        id="generate-analyses",
+                        variant="success",
+                        disabled=True,
+                        tooltip=GENERATE_ANALYSES_NO_SELECTION_TOOLTIP,
+                    )
+                    yield Button(
+                        "Cancel",
+                        id="cancel-generation",
+                        variant="error",
+                        disabled=True,
+                        tooltip=CANCEL_GENERATION_DISABLED_TOOLTIP,
+                    )
                     
                 # Progress indicator
                 yield ProgressBar(id="analysis-progress", classes="analysis-progress hidden", show_eta=False)
@@ -252,8 +271,29 @@ class MultiItemReviewWindow(Container):
         
     def update_generate_button(self) -> None:
         """Enable/disable generate button based on selection."""
-        button = self.query_one("#generate-analyses", Button)
-        button.disabled = len(self.selected_items) == 0 or self.analysis_in_progress
+        self._update_generation_action_states()
+
+    def _update_generation_action_states(self) -> None:
+        """Keep generation controls and recovery copy synchronized."""
+        generate_button = self.query_one("#generate-analyses", Button)
+        cancel_button = self.query_one("#cancel-generation", Button)
+
+        if self.analysis_in_progress:
+            generate_button.disabled = True
+            generate_button.tooltip = GENERATE_ANALYSES_IN_PROGRESS_TOOLTIP
+            cancel_button.disabled = False
+            cancel_button.tooltip = CANCEL_GENERATION_ENABLED_TOOLTIP
+            return
+
+        has_selection = len(self.selected_items) > 0
+        generate_button.disabled = not has_selection
+        generate_button.tooltip = (
+            GENERATE_ANALYSES_ENABLED_TOOLTIP
+            if has_selection
+            else GENERATE_ANALYSES_NO_SELECTION_TOOLTIP
+        )
+        cancel_button.disabled = True
+        cancel_button.tooltip = CANCEL_GENERATION_DISABLED_TOOLTIP
         
     @on(Button.Pressed, "#generate-analyses")
     async def handle_generate_analyses(self) -> None:
@@ -265,8 +305,7 @@ class MultiItemReviewWindow(Container):
         self.analysis_results.clear()
         
         # Update UI
-        self.query_one("#generate-analyses", Button).disabled = True
-        self.query_one("#cancel-generation", Button).disabled = False
+        self._update_generation_action_states()
         self.query_one("#analysis-progress", ProgressBar).remove_class("hidden")
         self.query_one("#progress-label", Static).remove_class("hidden")
         
@@ -365,8 +404,7 @@ class MultiItemReviewWindow(Container):
     def _reset_generation_ui(self) -> None:
         """Reset the UI after generation completes."""
         self.analysis_in_progress = False
-        self.query_one("#generate-analyses", Button).disabled = len(self.selected_items) == 0
-        self.query_one("#cancel-generation", Button).disabled = True
+        self._update_generation_action_states()
         self.query_one("#analysis-progress", ProgressBar).add_class("hidden")
         self.query_one("#progress-label", Static).add_class("hidden")
         
