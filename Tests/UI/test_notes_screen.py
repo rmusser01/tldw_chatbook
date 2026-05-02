@@ -341,6 +341,21 @@ class TestNotesScreenMethods:
         event.stop.assert_called_once()
         mock_app_instance.open_chat_with_handoff.assert_called_once_with(payload)
 
+    def test_notes_use_in_chat_unavailable_explains_recovery(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen._build_current_chat_handoff_payload = Mock(return_value=Mock())
+        mock_app_instance.open_chat_with_handoff = None
+        event = Mock()
+
+        screen.handle_use_in_chat_button(event)
+
+        event.stop.assert_called_once()
+        message = mock_app_instance.notify.call_args.args[0]
+        assert "Use in Chat is unavailable" in message
+        assert "Open Chat" in message
+        assert "try again" in message
+        assert mock_app_instance.notify.call_args.kwargs["severity"] == "warning"
+
     def test_workspace_use_in_chat_button_uses_button_section_not_current_subview(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
         screen.state = NotesScreenState(

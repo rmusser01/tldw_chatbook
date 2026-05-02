@@ -17,6 +17,7 @@ import inspect
 from loguru import logger
 from pathlib import Path
 
+from ..Chat.chat_handoff_messages import USE_IN_CHAT_UNAVAILABLE_RECOVERY
 from ..Notes.Notes_Library import NotesInteropService
 from .Views.RAGSearch.search_handoff import build_search_chat_handoff_payload
 from .Views.RAGSearch.search_result import SearchResult
@@ -403,7 +404,7 @@ class SearchWindow(Container):
         payload = self._build_search_chat_handoff_payload(event.result)
         open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
         if not callable(open_chat):
-            self.app_instance.notify("Use in Chat is not available.", severity="warning")
+            self.app_instance.notify(USE_IN_CHAT_UNAVAILABLE_RECOVERY, severity="warning")
             return
         open_chat(payload)
 
