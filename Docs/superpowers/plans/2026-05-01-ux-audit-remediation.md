@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#154
-Branch context: current `dev` / `origin/dev` at `860e2524`
+Status: Current-dev rebaseline after UX remediation PRs #146-#155
+Branch context: current `dev` / `origin/dev` at `ea3525ae`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `860e2524`:
+Verified on current `dev` at `ea3525ae`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -42,7 +42,8 @@ Still open by current source inspection:
 - Phase 5 top-level IA labels are merged: visible navigation now uses `Library`, `Models`, and `Speech` while preserving route IDs.
 - Phase 5 Media empty-state copy is merged: Media now points users toward Ingest and selected-item requirements for analysis/save/export.
 - Phase 5 Study empty-state cleanup is merged: flashcards and quizzes now separate no-content guidance for global/local vs workspace scopes while preserving backend-unavailable states.
-- Phase 5 Search empty-state cleanup is in progress on `codex/ux-search-empty-states`: initial and zero-result panes need visible guidance for plain search, RAG collections, and Chat handoff flow.
+- Phase 5 Search empty-state cleanup is merged: initial and zero-result panes now provide visible guidance for plain search, RAG collections, and Chat handoff flow.
+- Phase 5 Notes empty-state cleanup is merged: local, server, and workspace scopes now provide visible creation/import routes.
 - Phase 6 still needs optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
@@ -283,7 +284,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, and #154. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, and Study flashcard/quiz empty states distinguish no-content from unavailable runtime. Current slice `codex/ux-search-empty-states` covers Search/RAG empty states.
+Branch state: partially merged through PRs #152, #153, #154, and #155. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, and Notes empty states clarify local/server/workspace scope and creation/import routes.
 
 ### Files
 
@@ -303,7 +304,7 @@ Branch state: partially merged through PRs #152, #153, and #154. Top-level navig
 - [x] Study empty states distinguish no decks/quizzes from unavailable runtime.
 - [x] Media empty states point to Ingest and explain when analysis/save/export need a selected item.
 - [x] Search empty states explain plain search vs RAG, collections, and Chat handoff flow.
-- [ ] Notes empty states clarify local/server/workspace scope and creation/import routes.
+- [x] Notes empty states clarify local/server/workspace scope and creation/import routes.
 - [ ] CCP/Library empty states explain personas, characters, prompts, dictionaries, and how they relate to Chat.
 - [ ] Chatbooks empty state keeps portable knowledge-pack explanation and retains escape navigation.
 - [x] Rename top-level navigation jargon while preserving route IDs: `CCP` -> `Library`, `LLM` -> `Models`, and `S/TT/S` -> `Speech`.
