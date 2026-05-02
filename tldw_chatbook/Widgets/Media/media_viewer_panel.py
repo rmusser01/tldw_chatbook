@@ -43,6 +43,8 @@ ANALYSIS_OVERWRITE_ENABLED_TOOLTIP = "Overwrite the saved analysis with the edit
 ANALYSIS_DELETE_DISABLED_TOOLTIP = "Select a saved analysis version before deleting it."
 ANALYSIS_DELETE_ENABLED_TOOLTIP = "Delete this saved analysis version."
 ANALYSIS_DELETE_EDITING_TOOLTIP = "Cancel editing before deleting an analysis."
+ANALYSIS_SAVE_EDITING_TOOLTIP = "Finish or cancel editing before saving."
+ANALYSIS_SAVE_NOTE_EDITING_TOOLTIP = "Finish or cancel editing before saving as a note."
 
 
 class ContentSearchEvent(Message):
