@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.widgets import Static
+from textual.message import Message
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 
@@ -29,12 +30,20 @@ class ChatHandoffCard(Container):
     }
     """
 
-    def __init__(self, payload: ChatHandoffPayload, **kwargs):
+    class ClearRequested(Message):
+        """Request that the owning chat session clear staged context."""
+
+        def __init__(self, payload: ChatHandoffPayload) -> None:
+            super().__init__()
+            self.payload = payload
+
+    def __init__(self, payload: ChatHandoffPayload, clear_action_id: str | None = None, **kwargs):
         super().__init__(**kwargs)
         normalized_payload = ChatHandoffPayload.from_dict(payload)
         if normalized_payload is None:
             raise ValueError("ChatHandoffCard requires a handoff payload")
         self.payload = normalized_payload
+        self.clear_action_id = clear_action_id
 
     def render_text(self) -> str:
         status = "Context sent" if self.payload.status == "sent" else "Context staged"
@@ -75,6 +84,18 @@ class ChatHandoffCard(Container):
 
     def compose(self) -> ComposeResult:
         yield Static(self.render_text(), classes="chat-handoff-card-body")
+        if self.payload.status != "sent" and self.clear_action_id:
+            yield Button(
+                "Clear staged context",
+                id=self.clear_action_id,
+                classes="chat-handoff-clear-button",
+                tooltip="Remove this context from the next message",
+            )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if self.clear_action_id and event.button.id == self.clear_action_id:
+            event.stop()
+            self.post_message(self.ClearRequested(self.payload))
 
     def _source_chip_label(self) -> str:
         state = self.payload.source_selector_state or self.payload.source_owner

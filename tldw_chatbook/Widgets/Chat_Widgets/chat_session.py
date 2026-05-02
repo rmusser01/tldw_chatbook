@@ -232,12 +232,41 @@ class ChatSession(Container):
     async def mount_handoff_card(self, payload: ChatHandoffPayload) -> None:
         """Mount the staged context card at the top of this session's chat log."""
         chat_log = self.query_one(f"#chat-log-{self.session_data.tab_id}")
-        await chat_log.mount(ChatHandoffCard(payload))
+        await chat_log.mount(
+            ChatHandoffCard(
+                payload,
+                clear_action_id=f"clear-chat-handoff-context-{self.session_data.tab_id}",
+            )
+        )
 
     def set_draft_text(self, text: str) -> None:
         """Preload the per-tab composer with handoff guidance."""
         input_widget = self.query_one(f"#chat-input-{self.session_data.tab_id}", TextArea)
         input_widget.load_text(text)
+
+    async def clear_handoff_context(self) -> None:
+        """Remove staged handoff context before the user sends."""
+        payload = self.session_data.handoff_payload
+        self.session_data.handoff_payload = None
+        if getattr(self.app_instance, "_current_chat_handoff_payload", None) is payload:
+            self.app_instance._current_chat_handoff_payload = None
+
+        if payload is not None:
+            try:
+                input_widget = self.get_chat_input()
+                if input_widget.text.strip() == payload.default_prompt():
+                    input_widget.clear()
+            except Exception as e:
+                logger.debug(f"Could not clear handoff draft text: {e}")
+
+        for card in list(self.query(ChatHandoffCard)):
+            if getattr(card.payload, "status", "staged") == "sent":
+        for card in list(self.query(ChatHandoffCard)):
+            if card.payload.status != "sent":
+                try:
+                    await card.remove()
+                except Exception as e:
+                    logger.debug(f"Could not remove handoff card: {e}")
     
     # Button event handlers
     @on(Button.Pressed)
@@ -251,6 +280,12 @@ class ChatSession(Container):
             await self.handle_suggest_button(event)
         elif button_id == f"attach-image-{self.session_data.tab_id}":
             await self.handle_attach_button(event)
+
+    @on(ChatHandoffCard.ClearRequested)
+    async def on_handoff_clear_requested(self, event: ChatHandoffCard.ClearRequested) -> None:
+        """Handle clear requests emitted by the staged-context card."""
+        event.stop()
+        await self.clear_handoff_context()
     
     # Lifecycle management methods
     
