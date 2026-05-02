@@ -879,6 +879,28 @@ def test_media_viewer_metadata_display_includes_reading_highlights():
     assert "Check this" in rendered_text
 
 
+@pytest.mark.asyncio
+async def test_media_viewer_highlight_actions_explain_disabled_selection_state():
+    class TestMediaViewerPanel(MediaViewerPanel):
+        def populate_providers(self) -> None:
+            pass
+
+    class MediaViewerPanelApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield TestMediaViewerPanel(SimpleNamespace())
+
+    app = MediaViewerPanelApp()
+    async with app.run_test():
+        panel = app.query_one(MediaViewerPanel)
+        update_button = panel.query_one("#update-reading-highlight-btn", Button)
+        delete_button = panel.query_one("#delete-reading-highlight-btn", Button)
+
+        assert update_button.disabled is True
+        assert "Select a reading highlight before updating it" in str(update_button.tooltip)
+        assert delete_button.disabled is True
+        assert "Select a reading highlight before deleting it" in str(delete_button.tooltip)
+
+
 def test_media_viewer_load_analysis_versions_resets_button_state_when_empty():
     panel = MediaViewerPanel(Mock())
     panel.media_data = {"id": "local:media:7", "title": "Doc"}
