@@ -261,12 +261,11 @@ class ChatSession(Container):
 
         for card in list(self.query(ChatHandoffCard)):
             if getattr(card.payload, "status", "staged") == "sent":
-        for card in list(self.query(ChatHandoffCard)):
-            if card.payload.status != "sent":
-                try:
-                    await card.remove()
-                except Exception as e:
-                    logger.debug(f"Could not remove handoff card: {e}")
+                continue
+            try:
+                await card.remove()
+            except Exception as e:
+                logger.debug(f"Could not remove handoff card: {e}")
     
     # Button event handlers
     @on(Button.Pressed)

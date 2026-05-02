@@ -51,6 +51,13 @@ if TYPE_CHECKING:
     from ..app import TldwCli
 
 
+MEDIA_EMPTY_STATE_COPY = (
+    "Media Library\n"
+    "Use Ingest to add files, URLs, archives, or transcripts. Select a media item here.\n"
+    "Details, analysis, save/export, and Use in Chat actions appear after a media item is selected."
+)
+
+
 class MediaWindow(Container):
     """
     Orchestrator for the Media Tab components.
@@ -824,7 +831,7 @@ class MediaWindow(Container):
                 
                 # Empty state placeholder (initially hidden or shown based on selection)
                 yield Container(
-                    Label("Select a media item to view details", id="empty-state-label"),
+                    Label(MEDIA_EMPTY_STATE_COPY, id="empty-state-label"),
                     id="media-empty-state",
                     classes="hidden"
                 )
