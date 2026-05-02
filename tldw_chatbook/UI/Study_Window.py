@@ -925,13 +925,7 @@ class StudyWindow(Container):
         if callable(scope_checker):
             scope_enabled = bool(scope_checker())
 
-        delete_deck_button.disabled = server_mode or not scope_enabled
-        if not scope_enabled:
-            delete_deck_button.tooltip = FLASHCARD_SCOPE_UNAVAILABLE_TOOLTIP
-        elif server_mode:
-            delete_deck_button.tooltip = FLASHCARD_DELETE_DECK_SERVER_TOOLTIP
-        else:
-            delete_deck_button.tooltip = None
+        delete_deck_note.display = server_mode
         delete_deck_note.display = server_mode
 
     def _schedule_flashcards_refresh(self) -> None:
