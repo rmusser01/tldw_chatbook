@@ -280,6 +280,8 @@ class NotesScreen(BaseAppScreen):
                 return "notes.detail.server"
             if self.state.scope_type == ScopeType.WORKSPACE:
                 return "notes.detail.workspace"
+            if self.state.scope_type == ScopeType.LOCAL_NOTE:
+                return "notes.detail.local"
             return None
         if action_id in {
             "workspace-use-in-chat-button",

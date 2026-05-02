@@ -277,6 +277,43 @@ async def test_contract_blocked_workspace_handoff_explains_recovery_without_stag
 
 
 @pytest.mark.asyncio
+async def test_contract_blocked_local_note_handoff_explains_recovery_without_staging():
+    app = NotesSmokeApp(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="srv-primary",
+            server_configured=True,
+            server_reachability="reachable",
+            server_auth_state="authenticated",
+        )
+    )
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_under_test
+
+        screen._set_state(
+            scope_type=ScopeType.LOCAL_NOTE,
+            selected_note_id=1,
+            selected_note_title="Local Note",
+            selected_note_content="Body",
+        )
+        await pilot.pause(0.05)
+
+        note_button = screen.query_one("#notes-use-in-chat-button", Button)
+
+        assert note_button.disabled is True
+        tooltip = str(note_button.tooltip)
+        assert "notes.detail.local requires local mode" in tooltip
+        assert "switch source" in tooltip
+
+        note_button.press()
+        await pilot.pause(0.05)
+
+        app.app_instance.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_valid_notes_and_workspace_handoffs_stage_app_payloads_in_smoke():
     app = NotesSmokeApp()
 
