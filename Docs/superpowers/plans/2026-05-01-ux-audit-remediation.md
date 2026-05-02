@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#173, plus active Media multi-item review action-tooltip slice
-Branch context: current `dev` / `origin/dev` at `fddf7dba`; active branch `codex/ux-multi-review-action-tooltips`
+Status: Current-dev rebaseline after UX remediation PRs #146-#174, plus active handoff first-send smoke slice
+Branch context: current `dev` / `origin/dev` at `d0fbcad6`; active branch `codex/ux-handoff-first-send-smoke`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `fddf7dba`:
+Verified on current `dev` at `d0fbcad6`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -61,7 +61,8 @@ Current source state plus this branch:
 - Phase 5 Media Analysis navigation-tooltip copy is merged through PR #171: Media analysis previous/next version navigation explains empty, first-version, and last-version states.
 - Phase 5 Search/RAG saved-search action recovery is merged through PR #172: saved-search Load/Delete actions explain selection requirements and selected searches repopulate the Search/RAG controls.
 - Phase 5 Media list pagination-tooltip copy is merged through PR #173: Media result pagination explains single-page, first-page, middle-page, and last-page navigation states.
-- Phase 5 Media multi-item review action-tooltip copy is active in `codex/ux-multi-review-action-tooltips`: batch Generate/Cancel analysis actions should explain no-selection, selected, and in-progress states.
+- Phase 5 Media multi-item review action-tooltip copy is merged through PR #174: batch Generate/Cancel analysis actions explain no-selection, selected, and in-progress states.
+- Phase 4/7 handoff first-send smoke coverage is active in `codex/ux-handoff-first-send-smoke`: a mounted Textual test stages a handoff into a real Chat tab and verifies the first-send path applies staged context before marking the payload sent.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
@@ -246,7 +247,7 @@ Branch state: clear/dismiss behavior completed in `codex/ux-chat-handoff-clear-c
 - [x] Inject staged context into the first user send in an auditable way.
 - [x] Add clear/undo behavior for staged context before send.
 - [x] Fail closed when chat tabs are explicitly disabled.
-- [ ] Replay handoff creation and first send in the Phase 0/7 smoke harness.
+- [x] Replay handoff creation and first send in the Phase 0/7 smoke harness.
 
 ### Acceptance Criteria
 
@@ -256,7 +257,7 @@ Branch state: clear/dismiss behavior completed in `codex/ux-chat-handoff-clear-c
 - [x] Large bodies are capped and truthfully marked truncated.
 - [x] Local/server/workspace state remains visible and source-honest in payload/card tests.
 - [x] Users can clear or dismiss staged context before Send.
-- [ ] The behavior passes live Textual smoke replay, not only unit/widget tests.
+- [x] The behavior passes live Textual smoke replay, not only unit/widget tests.
 
 ## Phase 4: Source Handoff Surfaces Closeout
 
@@ -304,7 +305,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, #171, #172, and #173. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, Media Highlight actions expose selected-highlight tooltips, Media Analysis navigation actions expose saved-version boundary tooltips, Search/RAG saved-search actions expose selection/reuse recovery, and Media list pagination exposes result-page boundary tooltips.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, #171, #172, #173, and #174. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, Media Highlight actions expose selected-highlight tooltips, Media Analysis navigation actions expose saved-version boundary tooltips, Search/RAG saved-search actions expose selection/reuse recovery, Media list pagination exposes result-page boundary tooltips, and Media multi-item review actions expose generation/cancellation state tooltips.
 
 ### Files
 
@@ -390,7 +391,7 @@ Branch state: partially completed in `codex/ux-startup-log-polish`, with Speech/
 
 Purpose: prove the plan actually fixes the observed UX failures.
 
-Current-dev state: not started. The smoke/replay artifacts need to be regenerated after Phases 0, 1, 2, 5, and 6 land, then rerun against the already-merged handoff flows.
+Current-dev state: partially started. A mounted handoff first-send smoke test now covers Chat staging and send-time context application; the broader replay artifacts still need to be regenerated after Phases 0, 1, 2, 5, and 6 land, then rerun against each source workflow.
 
 ### Files
 
@@ -440,4 +441,4 @@ Current-dev state: not started. The smoke/replay artifacts need to be regenerate
 
 ## Next Step
 
-After this Media multi-item review action-tooltip slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage and the remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this handoff first-send smoke slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage across each source surface and the remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
