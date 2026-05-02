@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#181, plus active Web Search handoff policy-smoke slice
-Branch context: current `dev` / `origin/dev` at `a80f472e`; active branch `codex/ux-web-handoff-policy-smoke`
+Status: Current-dev rebaseline after UX remediation PRs #146-#182, plus active source-policy handoff smoke closeout slice
+Branch context: current `dev` / `origin/dev` at `33a8ee3b`; active branch `codex/ux-source-policy-handoff-smoke-closeout`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `a80f472e`:
+Verified on current `dev` at `33a8ee3b`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -69,7 +69,8 @@ Current source state plus this branch:
 - Phase 4 Notes/Workspace source capability-contract smoke coverage is merged through PR #179: Notes/Workspace handoff buttons consume runtime-policy denial state and expose recovery copy without staging Chat.
 - Phase 4 Media handoff policy-smoke is merged through PR #180: Media `Use in Chat` consumes runtime-policy denial state and exposes recovery copy without staging Chat.
 - Phase 4 RAG handoff policy-smoke is merged through PR #181: server-owned RAG result `Use in Chat` consumes runtime-policy denial state and exposes recovery copy without staging Chat.
-- Phase 4 Web Search handoff policy-smoke is active in `codex/ux-web-handoff-policy-smoke`: dedicated Web Search result `Use in Chat` consumes runtime-policy denial state and exposes recovery copy without staging Chat.
+- Phase 4 Web Search handoff policy-smoke is merged through PR #182: dedicated Web Search result `Use in Chat` consumes runtime-policy denial state and exposes recovery copy without staging Chat.
+- Phase 4 source-policy handoff smoke closeout is active in `codex/ux-source-policy-handoff-smoke-closeout`: mounted smoke coverage replays policy-blocked Media, RAG, and Web Search handoffs through real button events.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
@@ -270,7 +271,7 @@ Branch state: clear/dismiss behavior completed in `codex/ux-chat-handoff-clear-c
 
 Purpose: verify and harden the source-side handoff surfaces that have now landed in current `dev`.
 
-Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG Search, and dedicated Web Search handoffs are implemented and covered by focused tests. Notes, workspace source/artifact, and Media invalid-selection states now have shared-harness smoke coverage. Valid source handoffs from mounted source surfaces replay into the app-owned Chat seam. Backend-provided dry-run and unsupported-action messages are visible on staged Chat context cards. Runtime-policy-denied Notes/Workspace handoff smoke coverage is merged through PR #179. Media handoff policy-denial recovery is merged through PR #180. RAG handoff policy-denial recovery is merged through PR #181. The active branch extends policy-denial recovery to dedicated Web Search result `Use in Chat`. Remaining work is to close remaining source-action capability edge cases in the shared UX smoke pass.
+Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG Search, and dedicated Web Search handoffs are implemented and covered by focused tests. Notes, workspace source/artifact, and Media invalid-selection states now have shared-harness smoke coverage. Valid source handoffs from mounted source surfaces replay into the app-owned Chat seam. Backend-provided dry-run and unsupported-action messages are visible on staged Chat context cards. Runtime-policy-denied Notes/Workspace handoff smoke coverage is merged through PR #179. Media handoff policy-denial recovery is merged through PR #180. RAG handoff policy-denial recovery is merged through PR #181. Web Search handoff policy-denial recovery is merged through PR #182. The active branch closes mounted smoke coverage for policy-blocked Media, RAG, and Web Search `Use in Chat`. Remaining work is to close remaining source-action capability edge cases in the shared UX smoke pass.
 
 ### Files
 
@@ -304,6 +305,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 - [x] Explain runtime-policy-blocked Media handoff actions with recovery copy and no Chat staging.
 - [x] Explain runtime-policy-blocked server RAG result handoff actions with recovery copy and no Chat staging.
 - [x] Explain runtime-policy-blocked Web Search result handoff actions with recovery copy and no Chat staging.
+- [x] Replay runtime-policy-blocked Media, RAG, and Web Search handoff actions in mounted smoke coverage.
 
 ### Acceptance Criteria
 
@@ -454,4 +456,4 @@ Current-dev state: partially started. A mounted handoff first-send smoke test no
 
 ## Next Step
 
-After this Web Search handoff policy-smoke slice, remaining Phase 4 work should focus on broader live source-handoff replay or any non-handoff source actions where policy state can still block a visible action. The remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this source-policy handoff smoke closeout slice, remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. The remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
