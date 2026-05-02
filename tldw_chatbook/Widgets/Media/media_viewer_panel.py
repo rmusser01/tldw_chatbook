@@ -45,6 +45,11 @@ ANALYSIS_DELETE_ENABLED_TOOLTIP = "Delete this saved analysis version."
 ANALYSIS_DELETE_EDITING_TOOLTIP = "Cancel editing before deleting an analysis."
 ANALYSIS_SAVE_EDITING_TOOLTIP = "Finish or cancel editing before saving."
 ANALYSIS_SAVE_NOTE_EDITING_TOOLTIP = "Finish or cancel editing before saving as a note."
+ANALYSIS_NAV_EMPTY_TOOLTIP = "No saved analysis versions to navigate."
+ANALYSIS_NAV_PREVIOUS_ENABLED_TOOLTIP = "Show the previous analysis version."
+ANALYSIS_NAV_PREVIOUS_DISABLED_TOOLTIP = "Already viewing the first analysis version."
+ANALYSIS_NAV_NEXT_ENABLED_TOOLTIP = "Show the next analysis version."
+ANALYSIS_NAV_NEXT_DISABLED_TOOLTIP = "Already viewing the last analysis version."
 READING_HIGHLIGHT_ADD_TOOLTIP = "Add a reading highlight to this media item."
 READING_HIGHLIGHT_UPDATE_DISABLED_TOOLTIP = "Select a reading highlight before updating it."
 READING_HIGHLIGHT_UPDATE_ENABLED_TOOLTIP = "Update this reading highlight."
@@ -705,9 +710,19 @@ class MediaViewerPanel(Container):
                     
                     # Analysis navigation (for multiple analyses)
                     with Horizontal(classes="analysis-navigation"):
-                        yield Button("◀", id="prev-analysis-btn", disabled=True)
+                        yield Button(
+                            "◀",
+                            id="prev-analysis-btn",
+                            disabled=True,
+                            tooltip=ANALYSIS_NAV_EMPTY_TOOLTIP,
+                        )
                         yield Static("Analysis 0/0", id="analysis-indicator")
-                        yield Button("▶", id="next-analysis-btn", disabled=True)
+                        yield Button(
+                            "▶",
+                            id="next-analysis-btn",
+                            disabled=True,
+                            tooltip=ANALYSIS_NAV_EMPTY_TOOLTIP,
+                        )
                     
                     # Analysis date info
                     yield Static("", id="analysis-date-info")
@@ -1342,11 +1357,23 @@ class MediaViewerPanel(Container):
             if total_analyses == 0:
                 prev_btn.disabled = True
                 next_btn.disabled = True
+                prev_btn.tooltip = ANALYSIS_NAV_EMPTY_TOOLTIP
+                next_btn.tooltip = ANALYSIS_NAV_EMPTY_TOOLTIP
                 indicator.update("No analyses")
             else:
                 # Update navigation buttons
                 prev_btn.disabled = self.current_analysis_index == 0
                 next_btn.disabled = self.current_analysis_index >= total_analyses - 1
+                prev_btn.tooltip = (
+                    ANALYSIS_NAV_PREVIOUS_DISABLED_TOOLTIP
+                    if prev_btn.disabled
+                    else ANALYSIS_NAV_PREVIOUS_ENABLED_TOOLTIP
+                )
+                next_btn.tooltip = (
+                    ANALYSIS_NAV_NEXT_DISABLED_TOOLTIP
+                    if next_btn.disabled
+                    else ANALYSIS_NAV_NEXT_ENABLED_TOOLTIP
+                )
                 
                 # Update indicator (1-based for display)
                 current_display = self.current_analysis_index + 1
