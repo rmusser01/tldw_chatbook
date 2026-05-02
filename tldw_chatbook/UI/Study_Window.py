@@ -22,6 +22,12 @@ from tldw_chatbook.UI.Study_Modules import StudyFlashcardsController, StudyQuizz
 from .Screens.study_scope_models import StudyScopeType
 # StudyDB import removed - using ChaChaNotes_DB instead
 
+QUIZ_SCOPE_UNAVAILABLE_TOOLTIP = (
+    "Workspace Study requires server mode. Switch to server mode or use Global Study to edit quizzes."
+)
+QUIZ_ATTEMPT_ACTIVE_TOOLTIP = "Submit the active quiz attempt before editing quizzes or starting another attempt."
+QUIZ_SUBMIT_INACTIVE_TOOLTIP = "Start a quiz attempt before submitting an answer."
+
 # Type checking imports
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -971,6 +977,31 @@ class StudyWindow(Container):
         submit_answer_button.disabled = not scope_enabled or not attempt_active
         load_attempt_button.disabled = not scope_enabled or attempt_active
         history_select.disabled = not scope_enabled or attempt_active
+
+        if not scope_enabled:
+            for button in (
+                create_quiz_button,
+                delete_quiz_button,
+                create_question_button,
+                delete_question_button,
+                start_attempt_button,
+                submit_answer_button,
+                load_attempt_button,
+            ):
+                button.tooltip = QUIZ_SCOPE_UNAVAILABLE_TOOLTIP
+            return
+
+        mutation_buttons = (
+            create_quiz_button,
+            delete_quiz_button,
+            create_question_button,
+            delete_question_button,
+            start_attempt_button,
+            load_attempt_button,
+        )
+        for button in mutation_buttons:
+            button.tooltip = QUIZ_ATTEMPT_ACTIVE_TOOLTIP if attempt_active else None
+        submit_answer_button.tooltip = None if attempt_active else QUIZ_SUBMIT_INACTIVE_TOOLTIP
 
     @on(Button.Pressed, "#create-deck-button")
     def handle_create_deck(self) -> None:

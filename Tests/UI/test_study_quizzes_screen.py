@@ -555,6 +555,16 @@ async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavai
         assert start_attempt_button.disabled is True
         assert submit_answer_button.disabled is True
         assert load_attempt_button.disabled is True
+        for button in (
+            create_quiz_button,
+            delete_quiz_button,
+            create_question_button,
+            delete_question_button,
+            start_attempt_button,
+            submit_answer_button,
+            load_attempt_button,
+        ):
+            assert "Workspace Study requires server mode" in str(button.tooltip)
 
 
 @pytest.mark.asyncio
@@ -750,6 +760,16 @@ async def test_active_attempt_disables_quiz_mutations_and_blocks_second_start():
         assert history_select.disabled is True
         assert answer_input.disabled is False
         assert submit_answer_button.disabled is False
+        for button in (
+            create_quiz_button,
+            delete_quiz_button,
+            create_question_button,
+            delete_question_button,
+            start_attempt_button,
+            load_attempt_button,
+        ):
+            assert "Submit the active quiz attempt" in str(button.tooltip)
+        assert submit_answer_button.tooltip is None
 
         await controller.start_attempt()
         await pilot.pause(0.1)
