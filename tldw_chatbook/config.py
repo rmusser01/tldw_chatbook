@@ -326,10 +326,7 @@ def load_openai_mappings() -> Dict:
         with mapping_path.open("r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e_res:
-        logger.error(
-            f"Failed to load OpenAI TTS mappings via importlib.resources: {e_res}",
-            exc_info=True,
-        )
+        logger.debug(f"OpenAI TTS mappings unavailable via importlib.resources: {e_res}")
 
     # Fallback: direct path within the installed package directory
     try:
@@ -339,10 +336,7 @@ def load_openai_mappings() -> Dict:
         with open(mapping_path_fs, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e_fs:
-        logger.error(
-            f"Failed to load OpenAI TTS mappings from filesystem: {e_fs}",
-            exc_info=True,
-        )
+        logger.warning(f"OpenAI TTS mappings unavailable; using built-in defaults. Reason: {e_fs}")
         return {
             "models": {"tts-1": "openai_official_tts-1"},
             "voices": {"alloy": "alloy"},

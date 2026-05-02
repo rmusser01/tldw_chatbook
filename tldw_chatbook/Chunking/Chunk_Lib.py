@@ -96,8 +96,11 @@ def ensure_nltk_data():
     except LookupError:
         logger.info("NLTK 'punkt' tokenizer not found. Downloading...")
         try:
-            nltk.download('punkt')
-            logger.info("'punkt' downloaded successfully.")
+            download_ok = nltk.download('punkt')
+            if download_ok:
+                logger.info("'punkt' downloaded successfully.")
+            else:
+                logger.warning("NLTK 'punkt' download did not complete; sentence tokenization may fall back or fail later.")
         except Exception as e:
             logger.error(f"Failed to download 'punkt': {e}")
             # Depending on how critical this is, you might raise an error or just warn
