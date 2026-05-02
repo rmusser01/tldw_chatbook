@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Optional, List, Dict, Any, Union
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
-from textual.widgets import Static, Button, Input, ListView, Select, Collapsible, Label, TextArea, Checkbox
+from textual.widgets import Static, Button, Input, ListView, Select, Collapsible, Label, TextArea, Checkbox, ListItem
 from textual.reactive import reactive
 from textual import on
 from textual.message import Message
@@ -183,6 +183,30 @@ class CCPSidebarWidget(VerticalScroll):
     
     # Reactive state reference (will be linked to parent screen's state)
     state: reactive[Optional['CCPScreenState']] = reactive(None)
+    EMPTY_STATE_TEXT = {
+        "conversations": (
+            "No conversations yet. Start in Chat to create a conversation, "
+            "or Import Conversation to bring one into the Library."
+        ),
+        "characters": (
+            "No characters yet. Create Character or Import Character Card, "
+            "then launch character-backed Chat from here."
+        ),
+        "personas": (
+            "No personas yet. Create Persona to define reusable behavior, "
+            "then launch persona-backed Chat from here."
+        ),
+        "prompts": (
+            "No prompts yet. Create New Prompt to save reusable Chat instructions."
+        ),
+        "dictionaries": (
+            "No chat dictionaries yet. Create Dictionary to add terms, lore, or rules "
+            "that can enrich Chat context."
+        ),
+        "worldbooks": (
+            "No world books yet. Create World Book for setting and lore that can become Chat context."
+        ),
+    }
     
     def __init__(self, parent_screen: Optional['CCPScreen'] = None, **kwargs):
         """Initialize the sidebar widget.
@@ -205,7 +229,7 @@ class CCPSidebarWidget(VerticalScroll):
     
     def compose(self) -> ComposeResult:
         """Compose the sidebar UI."""
-        yield Static("CCP Navigation", classes="sidebar-title")
+        yield Static("Library Navigation", classes="sidebar-title")
         
         # ===== Conversations Section =====
         with Collapsible(title="Conversations", id="ccp-conversations-collapsible"):
@@ -232,7 +256,11 @@ class CCPSidebarWidget(VerticalScroll):
                          value=True)
             
             # Results list
-            yield ListView(id="conv-char-search-results-list", classes="sidebar-listview")
+            yield ListView(
+                self._empty_list_item("conversations"),
+                id="conv-char-search-results-list",
+                classes="sidebar-listview",
+            )
             yield Button("Load Selected", id="conv-char-load-button", classes="sidebar-button")
             
             # Conversation details (shown when a conversation is loaded)
@@ -259,8 +287,12 @@ class CCPSidebarWidget(VerticalScroll):
                        classes="sidebar-button")
             yield Button("Create Character", id="ccp-create-character-button", 
                        classes="sidebar-button")
-            yield Select([], prompt="Select Character...", allow_blank=True, 
-                       id="conv-char-character-select")
+            yield Select(
+                self._empty_select_options("characters"),
+                prompt="Select Character...",
+                allow_blank=True,
+                id="conv-char-character-select",
+            )
             yield Button("Load Character", id="ccp-right-pane-load-character-button", 
                        classes="sidebar-button")
             yield Button("Refresh List", id="ccp-refresh-character-list-button", 
@@ -280,7 +312,12 @@ class CCPSidebarWidget(VerticalScroll):
         # ===== Personas Section =====
         with Collapsible(title="Persona Profiles", id="ccp-personas-collapsible", collapsed=False):
             yield Button("Create Persona", id="ccp-create-persona-button", classes="sidebar-button")
-            yield Select([], prompt="Select Persona...", allow_blank=True, id="ccp-persona-select")
+            yield Select(
+                self._empty_select_options("personas"),
+                prompt="Select Persona...",
+                allow_blank=True,
+                id="ccp-persona-select",
+            )
             yield Button("Load Persona", id="ccp-load-persona-button", classes="sidebar-button")
             yield Button("Refresh Personas", id="ccp-refresh-persona-list-button", classes="sidebar-button")
         
@@ -291,7 +328,11 @@ class CCPSidebarWidget(VerticalScroll):
                        classes="sidebar-button")
             yield Input(id="ccp-prompt-search-input", placeholder="Search prompts...", 
                       classes="sidebar-input")
-            yield ListView(id="ccp-prompts-listview", classes="sidebar-listview")
+            yield ListView(
+                self._empty_list_item("prompts"),
+                id="ccp-prompts-listview",
+                classes="sidebar-listview",
+            )
             yield Button("Load Selected", id="ccp-prompt-load-selected-button", 
                        classes="sidebar-button")
             
@@ -308,8 +349,12 @@ class CCPSidebarWidget(VerticalScroll):
                        classes="sidebar-button")
             yield Button("Create Dictionary", id="ccp-create-dictionary-button", 
                        classes="sidebar-button")
-            yield Select([], prompt="Select Dictionary...", allow_blank=True, 
-                       id="ccp-dictionary-select")
+            yield Select(
+                self._empty_select_options("dictionaries"),
+                prompt="Select Dictionary...",
+                allow_blank=True,
+                id="ccp-dictionary-select",
+            )
             yield Button("Load Dictionary", id="ccp-load-dictionary-button", 
                        classes="sidebar-button")
             yield Button("Refresh List", id="ccp-refresh-dictionary-list-button", 
@@ -332,7 +377,11 @@ class CCPSidebarWidget(VerticalScroll):
                        classes="sidebar-button")
             yield Input(id="ccp-worldbook-search-input", placeholder="Search world books...", 
                       classes="sidebar-input")
-            yield ListView(id="ccp-worldbooks-listview", classes="sidebar-listview")
+            yield ListView(
+                self._empty_list_item("worldbooks"),
+                id="ccp-worldbooks-listview",
+                classes="sidebar-listview",
+            )
             yield Button("Load Selected", id="ccp-worldbook-load-button", 
                        classes="sidebar-button")
             yield Button("Edit Selected", id="ccp-worldbook-edit-button", 
@@ -361,6 +410,23 @@ class CCPSidebarWidget(VerticalScroll):
             self._dictionary_select = self.query_one("#ccp-dictionary-select", Select)
         except Exception as e:
             logger.warning(f"Could not cache all widget references: {e}")
+
+    @classmethod
+    def empty_state_text(cls, item_type: str) -> str:
+        return cls.EMPTY_STATE_TEXT.get(item_type, "No Library items yet.")
+
+    @classmethod
+    def _empty_list_item(cls, item_type: str) -> ListItem:
+        return ListItem(Static(cls.empty_state_text(item_type)))
+
+    @classmethod
+    def _empty_select_options(cls, item_type: str) -> list[tuple[str, Any]]:
+        return [(cls.empty_state_text(item_type), Select.BLANK)]
+
+    @staticmethod
+    def _has_selected_value(select: Select) -> bool:
+        value = select.value
+        return value not in {None, "", Select.BLANK, Select.NULL}
 
     async def _emit_message_to_app(self, message: Message, handler_name: str) -> None:
         """Post the message through Textual and mirror it to app-level test callbacks."""
@@ -425,7 +491,7 @@ class CCPSidebarWidget(VerticalScroll):
         """Handle load character button press."""
         event.stop()
         # Get selected character from select widget
-        if self._character_select and self._character_select.value:
+        if self._character_select and self._has_selected_value(self._character_select):
             self.post_message(CharacterLoadRequested(str(self._character_select.value)))
         else:
             self.post_message(CharacterLoadRequested())
@@ -434,7 +500,7 @@ class CCPSidebarWidget(VerticalScroll):
     async def handle_load_persona(self, event: Button.Pressed) -> None:
         """Handle load persona button press."""
         event.stop()
-        if self._persona_select and self._persona_select.value:
+        if self._persona_select and self._has_selected_value(self._persona_select):
             await self._emit_message_to_app(
                 PersonaLoadRequested(str(self._persona_select.value)),
                 "on_persona_load_requested",
@@ -487,7 +553,7 @@ class CCPSidebarWidget(VerticalScroll):
         """Handle load dictionary button press."""
         event.stop()
         # Get selected dictionary from select widget
-        if self._dictionary_select and self._dictionary_select.value:
+        if self._dictionary_select and self._has_selected_value(self._dictionary_select):
             try:
                 dict_id = int(self._dictionary_select.value)
                 self.post_message(DictionaryLoadRequested(dict_id))
@@ -512,8 +578,10 @@ class CCPSidebarWidget(VerticalScroll):
         """
         if self._conv_results_list:
             self._conv_results_list.clear()
+            if not results:
+                self._conv_results_list.append(self._empty_list_item("conversations"))
+                return
             for conv in results:
-                from textual.widgets import ListItem, Static
                 title = conv.get('name', 'Untitled')
                 conv_id = conv.get('conversation_id', conv.get('id'))
                 list_item = ListItem(Static(title), id=f"conv-result-{conv_id}")
@@ -526,8 +594,11 @@ class CCPSidebarWidget(VerticalScroll):
             characters: List of available characters
         """
         if self._character_select:
-            options = [(char.get('name', 'Unnamed'), str(char.get('id'))) 
-                      for char in characters]
+            options = (
+                [(char.get('name', 'Unnamed'), str(char.get('id'))) for char in characters]
+                if characters
+                else self._empty_select_options("characters")
+            )
             self._character_select.set_options(options)
     
     def update_dictionary_list(self, dictionaries: List[Dict[str, Any]]) -> None:
@@ -537,17 +608,21 @@ class CCPSidebarWidget(VerticalScroll):
             dictionaries: List of available dictionaries
         """
         if self._dictionary_select:
-            options = [(d.get('name', 'Unnamed'), str(d.get('id'))) 
-                      for d in dictionaries]
+            options = (
+                [(d.get('name', 'Unnamed'), str(d.get('id'))) for d in dictionaries]
+                if dictionaries
+                else self._empty_select_options("dictionaries")
+            )
             self._dictionary_select.set_options(options)
 
     def update_persona_list(self, personas: List[Dict[str, Any]]) -> None:
         """Update the persona select options."""
         if self._persona_select:
-            options = [
-                (persona.get("name", "Unnamed Persona"), str(persona.get("id")))
-                for persona in personas
-            ]
+            options = (
+                [(persona.get("name", "Unnamed Persona"), str(persona.get("id"))) for persona in personas]
+                if personas
+                else self._empty_select_options("personas")
+            )
             self._persona_select.set_options(options)
     
     def show_conversation_details(self, show: bool = True) -> None:

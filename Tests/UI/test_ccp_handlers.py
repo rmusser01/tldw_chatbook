@@ -3,6 +3,8 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from textual.app import App, ComposeResult
+from textual.widgets import ListView, Static
 
 from tldw_chatbook.Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
 from tldw_chatbook.UI.CCP_Modules import (
@@ -10,6 +12,7 @@ from tldw_chatbook.UI.CCP_Modules import (
     CCPConversationHandler,
     CCPMessageManager,
     CCPPersonaHandler,
+    CCPPromptHandler,
     PersonaMessage,
     ViewChangeMessage,
 )
@@ -292,6 +295,32 @@ class TestCCPPersonaHandler:
             "Local chat greetings are not available yet.",
             severity="warning",
         )
+
+
+class TestCCPPromptHandler:
+    """Prompt handler Library empty-state coverage."""
+
+    @pytest.mark.asyncio
+    async def test_empty_prompt_search_results_keep_library_guidance(self, mock_window):
+        class TestApp(App):
+            def compose(self) -> ComposeResult:
+                yield ListView(id="ccp-prompts-listview")
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            list_view = pilot.app.query_one("#ccp-prompts-listview", ListView)
+            mock_window.query_one.return_value = list_view
+            handler = CCPPromptHandler(mock_window)
+            handler.search_results = []
+
+            await handler._update_search_results_ui()
+            await pilot.pause()
+
+            assert len(list_view.children) == 1
+            empty_text = str(list_view.children[0].query_one(Static).render())
+            assert "No prompts yet." in empty_text
+            assert "Create New Prompt" in empty_text
+            assert "Chat instructions" in empty_text
 
 
 class TestCCPMessageManager:
