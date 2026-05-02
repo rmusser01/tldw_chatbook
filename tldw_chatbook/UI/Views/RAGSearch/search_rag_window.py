@@ -475,6 +475,10 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         # Check if embeddings/RAG dependencies are available
         if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
             from ....Utils.widget_helpers import alert_embeddings_not_available
+            recovery_copy = (
+                'Search/RAG requires optional embeddings dependencies. '
+                'Install them with pip install -e ".[embeddings_rag]" and restart.'
+            )
             # Show alert after a short delay to ensure UI is ready
             self.set_timer(0.1, lambda: alert_embeddings_not_available(self))
             # Disable search functionality
@@ -483,6 +487,10 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                 search_input = self.query_one("#search-query-input", Input)
                 search_input.disabled = True
                 search_input.placeholder = "Embeddings not available - install dependencies"
+                search_input.tooltip = recovery_copy
+                search_button = self.query_one("#search-button", Button)
+                search_button.disabled = True
+                search_button.tooltip = recovery_copy
             except NoMatches:
                 pass
         

@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#182, plus active source-policy handoff smoke closeout slice
-Branch context: current `dev` / `origin/dev` at `33a8ee3b`; active branch `codex/ux-source-policy-handoff-smoke-closeout`
+Status: Current-dev rebaseline after UX remediation PRs #146-#183, plus active Search/RAG dependency action-state slice
+Branch context: current `dev` / `origin/dev` at `1b4a8e70`; active branch `codex/ux-rag-dependency-action-state`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `33a8ee3b`:
+Verified on current `dev` at `1b4a8e70`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -38,7 +38,7 @@ Verified on current `dev` at `33a8ee3b`:
 
 Current source state plus this branch:
 
-- Phase 4 still needs disabled-state/recovery consistency for remaining policy-blocked source handoffs and live smoke replay.
+- Phase 4 still needs broader live smoke replay and any non-handoff source actions where policy state can still block a visible action.
 - Phase 5 top-level IA labels are merged: visible navigation now uses `Library`, `Models`, and `Speech` while preserving route IDs.
 - Phase 5 Media empty-state copy is merged: Media now points users toward Ingest and selected-item requirements for analysis/save/export.
 - Phase 5 Study empty-state cleanup is merged: flashcards and quizzes now separate no-content guidance for global/local vs workspace scopes while preserving backend-unavailable states.
@@ -70,11 +70,12 @@ Current source state plus this branch:
 - Phase 4 Media handoff policy-smoke is merged through PR #180: Media `Use in Chat` consumes runtime-policy denial state and exposes recovery copy without staging Chat.
 - Phase 4 RAG handoff policy-smoke is merged through PR #181: server-owned RAG result `Use in Chat` consumes runtime-policy denial state and exposes recovery copy without staging Chat.
 - Phase 4 Web Search handoff policy-smoke is merged through PR #182: dedicated Web Search result `Use in Chat` consumes runtime-policy denial state and exposes recovery copy without staging Chat.
-- Phase 4 source-policy handoff smoke closeout is active in `codex/ux-source-policy-handoff-smoke-closeout`: mounted smoke coverage replays policy-blocked Media, RAG, and Web Search handoffs through real button events.
+- Phase 4 source-policy handoff smoke closeout is merged through PR #183: mounted smoke coverage replays policy-blocked Media, RAG, and Web Search handoffs through real button events.
+- Phase 6 Search/RAG dependency action-state is active in `codex/ux-rag-dependency-action-state`: missing embeddings/RAG dependencies disable the primary Search action and expose install recovery copy.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target any remaining Phase 4 source-authority and broader live source-handoff replay cases, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond Web Search, Media Source, Study Quiz, Study Flashcard, Media Viewer, Media Analysis, Media Highlight, Media Analysis navigation, Search/RAG saved-search actions, Media list pagination, and Media multi-item review actions, Phase 6 capability-state presentation beyond Speech/STTS and Web Search where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target broader live source-handoff replay cases, any non-handoff source actions where policy state can still block a visible action, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond the already-covered Web Search, Media Source, Study Quiz, Study Flashcard, Media Viewer, Media Analysis, Media Highlight, Media Analysis navigation, Search/RAG saved-search actions, Media list pagination, and Media multi-item review actions, Phase 6 capability-state presentation beyond Speech/STTS, Web Search, and Search/RAG embeddings where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -371,7 +372,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 
 Purpose: make first-run diagnostics truthful and actionable without hiding real failures.
 
-Branch state: partially completed in `codex/ux-startup-log-polish`, with Speech/STTS capability-state merged through PR #163 and Web Search disabled-state merged through PR #164. Splash import regressions, optional OpenAI TTS mapping fallback logging, and NLTK download-result logging are covered by focused tests. Broader optional dependency capability-state presentation remains open.
+Branch state: partially completed in `codex/ux-startup-log-polish`, with Speech/STTS capability-state merged through PR #163 and Web Search disabled-state merged through PR #164. Search/RAG embeddings dependency action-state is active in `codex/ux-rag-dependency-action-state`. Splash import regressions, optional OpenAI TTS mapping fallback logging, and NLTK download-result logging are covered by focused tests. Broader optional dependency capability-state presentation remains open.
 
 ### Files
 
@@ -390,6 +391,7 @@ Branch state: partially completed in `codex/ux-startup-log-polish`, with Speech/
 - [x] Make NLTK download logging truthful: no success message when download fails.
 - [x] Expose local Speech/STTS TTS and STT dependency gaps as an inline capability state before failed actions.
 - [x] Expose missing Web Search optional dependencies as disabled-state and pane recovery copy.
+- [x] Expose missing Search/RAG embeddings dependencies as a disabled primary Search action with install recovery copy.
 - [ ] Present optional dependency gaps as capability states when user-relevant, not stack traces.
 - [ ] Keep real crashes/error states visible.
 
@@ -400,6 +402,7 @@ Branch state: partially completed in `codex/ux-startup-log-polish`, with Speech/
 - [x] Failed NLTK download is not logged as success.
 - [x] Speech/STTS tells users when local Text-to-Speech or Speech Recognition dependencies are unavailable and how to recover.
 - [x] Search tells users when Web Search dependencies are unavailable and how to recover.
+- [x] Search/RAG tells users when embeddings dependencies are unavailable and disables the primary Search action before failure.
 - [ ] Optional dependency gaps tell users what capability is unavailable and how to recover.
 
 ## Phase 7: End-To-End Audit Replay And Closeout
@@ -456,4 +459,4 @@ Current-dev state: partially started. A mounted handoff first-send smoke test no
 
 ## Next Step
 
-After this source-policy handoff smoke closeout slice, remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. The remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this Search/RAG dependency action-state slice, remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. The remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
