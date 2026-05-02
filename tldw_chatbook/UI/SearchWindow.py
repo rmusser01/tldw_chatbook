@@ -431,7 +431,6 @@ class SearchWindow(Container):
         button_id = event.button.id
         if not button_id or "-disabled" in button_id: 
             logger.debug(f"SearchWindow.handle_nav: Ignoring disabled button press: {button_id}")
-            self.app_instance.notify(WEB_SEARCH_DEPENDENCY_RECOVERY, severity="warning")
             return
 
         logger.info(f"SearchWindow.handle_nav: Search nav button '{button_id}' pressed.")
