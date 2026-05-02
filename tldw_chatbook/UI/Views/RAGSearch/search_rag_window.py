@@ -174,6 +174,30 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             "fastest_search": float('inf'),
             "slowest_search": 0.0
         }
+
+    def _search_empty_state_text(self, *, no_results: bool = False) -> str:
+        if no_results:
+            return (
+                "No results found.\n"
+                "Try Plain Search, switch Collection to All Collections, or use Ingest to add/index content.\n"
+                "When results appear, Use in Chat turns a selected result into Chat context."
+            )
+        return (
+            "Start with a query.\n"
+            "Plain Search scans indexed text quickly; contextual and hybrid RAG use collections for deeper retrieval.\n"
+            "Use All Collections to search broadly, or choose a collection to narrow scope.\n"
+            "Each result can be sent to Chat with Use in Chat, turning search evidence into Chat context."
+        )
+
+    async def _mount_search_empty_state(self, *, no_results: bool = False) -> None:
+        results_list = self.query_one("#results-list-enhanced")
+        await results_list.mount(
+            Static(
+                self._search_empty_state_text(no_results=no_results),
+                id="search-empty-state",
+                classes="search-empty-state",
+            )
+        )
         
     def compose(self) -> ComposeResult:
         """Create the UI layout"""
@@ -344,7 +368,12 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                     yield Button("🔄 Refresh", id="refresh-results", classes="results-action-button")
                             
                             # Results list
-                            yield VerticalScroll(id="results-list-enhanced", classes="results-list-enhanced")
+                            with VerticalScroll(id="results-list-enhanced", classes="results-list-enhanced"):
+                                yield Static(
+                                    self._search_empty_state_text(),
+                                    id="search-empty-state",
+                                    classes="search-empty-state",
+                                )
                             
                             # Pagination
                             with Horizontal(id="pagination-enhanced", classes="pagination-enhanced hidden"):
@@ -696,6 +725,10 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         start_idx = (self.current_page - 1) * self.results_per_page
         end_idx = start_idx + self.results_per_page
         page_results = self.search_results[start_idx:end_idx]
+        if not page_results:
+            await self._mount_search_empty_state(no_results=True)
+            self._update_pagination()
+            return
         
         # Display results
         for idx, result in enumerate(page_results):

@@ -91,7 +91,7 @@ class SearchEventHandlersMixin:
             history_dropdown.hide()
             
             # Clear previous results
-            await self._clear_results()
+            await self._clear_results(show_empty_state=False)
             
             # Perform search based on mode
             search_mode = search_config['mode']
@@ -258,10 +258,12 @@ class SearchEventHandlersMixin:
         
         return config
     
-    async def _clear_results(self) -> None:
+    async def _clear_results(self, *, show_empty_state: bool = True) -> None:
         """Clear the results display"""
         results_list = self.query_one("#results-list-enhanced")
         await results_list.remove_children()
+        if show_empty_state:
+            await self._mount_search_empty_state()
     
     def _update_parent_inclusion_preview(self) -> None:
         """Update the parent inclusion preview text"""
