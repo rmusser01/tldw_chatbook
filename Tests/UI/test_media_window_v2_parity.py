@@ -79,7 +79,7 @@ async def test_media_empty_state_orients_first_time_users():
 
     app = MediaWindowApp()
     async with app.run_test() as pilot:
-        await pilot.pause(0.05)
+        await pilot.pause()
 
         empty_label = app.query_one("#empty-state-label", Label)
         text = _plain_text(empty_label)
