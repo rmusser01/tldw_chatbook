@@ -43,11 +43,13 @@ ANALYSIS_OVERWRITE_ENABLED_TOOLTIP = "Overwrite the saved analysis with the edit
 ANALYSIS_DELETE_DISABLED_TOOLTIP = "Select a saved analysis version before deleting it."
 ANALYSIS_DELETE_ENABLED_TOOLTIP = "Delete this saved analysis version."
 ANALYSIS_DELETE_EDITING_TOOLTIP = "Cancel editing before deleting an analysis."
-READING_HIGHLIGHT_ADD_TOOLTIP = "Add a reading highlight to this media item."
-READING_HIGHLIGHT_UPDATE_DISABLED_TOOLTIP = "Select a reading highlight before updating it."
-READING_HIGHLIGHT_DELETE_DISABLED_TOOLTIP = "Select a reading highlight before deleting it."
 ANALYSIS_SAVE_EDITING_TOOLTIP = "Finish or cancel editing before saving."
 ANALYSIS_SAVE_NOTE_EDITING_TOOLTIP = "Finish or cancel editing before saving as a note."
+READING_HIGHLIGHT_ADD_TOOLTIP = "Add a reading highlight to this media item."
+READING_HIGHLIGHT_UPDATE_DISABLED_TOOLTIP = "Select a reading highlight before updating it."
+READING_HIGHLIGHT_UPDATE_ENABLED_TOOLTIP = "Update this reading highlight."
+READING_HIGHLIGHT_DELETE_DISABLED_TOOLTIP = "Select a reading highlight before deleting it."
+READING_HIGHLIGHT_DELETE_ENABLED_TOOLTIP = "Delete this reading highlight."
 
 
 class ContentSearchEvent(Message):
