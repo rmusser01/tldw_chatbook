@@ -25,6 +25,13 @@ if TYPE_CHECKING:
     from ...app import TldwCli
 
 
+MEDIA_USE_IN_CHAT_DISABLED_TOOLTIP = "Select a media item before using it in Chat."
+MEDIA_USE_IN_CHAT_ENABLED_TOOLTIP = "Use the selected media item in Chat."
+READ_IT_LATER_DISABLED_TOOLTIP = "Read-it-later is unavailable for this media item."
+READ_IT_LATER_SAVE_TOOLTIP = "Save this item for later reading."
+READ_IT_LATER_REMOVE_TOOLTIP = "Remove this item from Read-it-later."
+
+
 class ContentSearchEvent(Message):
     """Event fired when searching within content."""
     
@@ -491,6 +498,7 @@ class MediaViewerPanel(Container):
                                     id="media-use-in-chat-button",
                                     variant="primary",
                                     disabled=True,
+                                    tooltip=MEDIA_USE_IN_CHAT_DISABLED_TOOLTIP,
                                 )
                                 yield Button(
                                     "Save for Later",
@@ -498,6 +506,7 @@ class MediaViewerPanel(Container):
                                     variant="default",
                                     classes="hidden",
                                     disabled=True,
+                                    tooltip=READ_IT_LATER_DISABLED_TOOLTIP,
                                 )
                                 yield Button("Delete", id="delete-button", variant="error")
 
@@ -878,6 +887,11 @@ class MediaViewerPanel(Container):
         except Exception:
             return
         button.disabled = not bool(self.media_data)
+        button.tooltip = (
+            MEDIA_USE_IN_CHAT_ENABLED_TOOLTIP
+            if self.media_data
+            else MEDIA_USE_IN_CHAT_DISABLED_TOOLTIP
+        )
 
     def _build_use_in_chat_event(self) -> Optional[UseInChatRequested]:
         if not self.media_data:
@@ -899,9 +913,11 @@ class MediaViewerPanel(Container):
         if supports_toggle:
             button.remove_class("hidden")
             button.label = "Remove from Read-it-later" if is_saved else "Save for Later"
+            button.tooltip = READ_IT_LATER_REMOVE_TOOLTIP if is_saved else READ_IT_LATER_SAVE_TOOLTIP
         else:
             button.add_class("hidden")
             button.label = "Save for Later"
+            button.tooltip = READ_IT_LATER_DISABLED_TOOLTIP
     
     def _format_content_for_reading(self, content: str) -> str:
         """Format content for better readability."""

@@ -120,6 +120,7 @@ async def test_media_viewer_updates_saved_button_state_from_normalized_record():
         assert button.label == "Remove from Read-it-later"
         assert button.disabled is False
         assert button.has_class("hidden") is False
+        assert "Remove this item from Read-it-later" in str(button.tooltip)
 
         panel.load_media(
             {
@@ -135,6 +136,7 @@ async def test_media_viewer_updates_saved_button_state_from_normalized_record():
         assert button.label == "Save for Later"
         assert button.disabled is False
         assert button.has_class("hidden") is False
+        assert "Save this item for later reading" in str(button.tooltip)
 
         panel.load_media(
             {
@@ -150,6 +152,7 @@ async def test_media_viewer_updates_saved_button_state_from_normalized_record():
         assert button.label == "Save for Later"
         assert button.disabled is True
         assert button.has_class("hidden") is True
+        assert "Read-it-later is unavailable for this media item" in str(button.tooltip)
 
 
 @pytest.mark.asyncio

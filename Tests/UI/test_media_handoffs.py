@@ -61,11 +61,13 @@ async def test_media_viewer_use_in_chat_button_tracks_loaded_media():
     async with app.run_test() as pilot:
         button = panel.query_one("#media-use-in-chat-button", Button)
         assert button.disabled is True
+        assert "Select a media item before using it in Chat" in str(button.tooltip)
 
         panel.load_media({"id": "media-1", "title": "Lecture", "content": "Transcript"})
         await pilot.pause()
 
         assert button.disabled is False
+        assert "Use the selected media item in Chat" in str(button.tooltip)
 
 
 def test_media_window_builds_handoff_from_hydrated_detail():
