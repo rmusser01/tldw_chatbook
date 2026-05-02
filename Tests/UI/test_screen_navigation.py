@@ -478,6 +478,45 @@ async def test_main_navigation_copy_and_order():
 
 
 @pytest.mark.asyncio
+async def test_main_navigation_buttons_explain_compact_labels():
+    expected_tooltips = {
+        "nav-chat": "Agentic chat and control surface.",
+        "nav-chatbooks": "Portable context packs for Chat.",
+        "nav-notes": "Capture notes and send selected context to Chat.",
+        "nav-media": "Browse saved media, transcripts, and analysis.",
+        "nav-ingest": "Import files, URLs, feeds, and media.",
+        "nav-search": "Search saved content and RAG collections.",
+        "nav-subscriptions": "Track feeds, watchlists, reminders, and alerts.",
+        "nav-ccp": "Manage conversations, characters, personas, prompts, dictionaries, and lore.",
+        "nav-study": "Practice with flashcards and quizzes.",
+        "nav-llm": "Configure providers and local model runtimes.",
+        "nav-stts": "Use speech-to-text, dictation, and text-to-speech.",
+        "nav-evals": "Run model, prompt, and task evaluations.",
+        "nav-tools_settings": "Configure app settings and tools.",
+        "nav-customize": "Adjust appearance, themes, and UI preferences.",
+        "nav-logs": "Inspect application logs and diagnostics.",
+        "nav-stats": "Review usage and database statistics.",
+        "nav-coding": "Use the code-focused chat workspace.",
+    }
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="chat")
+
+    app = TestApp()
+
+    async with app.run_test(size=(160, 20)) as pilot:
+        await pilot.pause(0.1)
+
+        actual_tooltips = {
+            button.id: str(button.tooltip)
+            for button in app.query(".nav-button")
+        }
+
+        assert actual_tooltips == expected_tooltips
+
+
+@pytest.mark.asyncio
 async def test_main_navigation_route_ids_remain_intact():
     class TestApp(App):
         def compose(self):
