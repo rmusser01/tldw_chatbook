@@ -160,14 +160,17 @@ class EmptyStateWidget(Container):
         yield Static(book_art, classes="empty-state-icon")
         yield Static("No Chatbooks Yet", classes="empty-state-title")
         yield Static(
-            "Chatbooks are portable knowledge packs containing conversations, notes, "
-            "characters, and media. Create your first one to get started!",
+            "Chatbooks are portable knowledge packs for moving reusable context "
+            "between sessions, machines, or teams. They can bundle conversations, "
+            "notes, characters/personas, prompts, and media so you can restore a "
+            "project or seed Chat later. Start with Create Local Pack, Import Local "
+            "Pack, or use the shared navigation to return to Chat.",
             classes="empty-state-description"
         )
         
         with Container(classes="empty-state-actions"):
-            yield Button("✨ Create New", id="empty-create-btn", variant="primary")
-            yield Button("📥 Import", id="empty-import-btn", variant="default")
+            yield Button("✨ Create Local Pack", id="empty-create-btn", variant="primary")
+            yield Button("📥 Import Local Pack", id="empty-import-btn", variant="default")
             yield Button("📋 Browse Templates", id="empty-templates-btn", variant="default")
 
 
