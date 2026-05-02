@@ -21,6 +21,13 @@ if TYPE_CHECKING:
     from ...app import TldwCli
 
 
+MEDIA_PAGINATION_SINGLE_PAGE_TOOLTIP = "Only one page of media results is available."
+MEDIA_PAGINATION_PREVIOUS_ENABLED_TOOLTIP = "Show the previous media results page."
+MEDIA_PAGINATION_PREVIOUS_FIRST_TOOLTIP = "Already on the first media results page."
+MEDIA_PAGINATION_NEXT_ENABLED_TOOLTIP = "Show the next media results page."
+MEDIA_PAGINATION_NEXT_LAST_TOOLTIP = "Already on the last media results page."
+
+
 class MediaItemSelectedEvent(Message):
     """Event fired when a media item is selected."""
     
@@ -170,9 +177,19 @@ class MediaListPanel(Container):
         
         # Pagination
         with Horizontal(classes="pagination-bar"):
-            yield Button("Previous", id="prev-button", disabled=True)
+            yield Button(
+                "Previous",
+                id="prev-button",
+                disabled=True,
+                tooltip=MEDIA_PAGINATION_SINGLE_PAGE_TOOLTIP,
+            )
             yield Label("Page 1 / 1", id="page-label", classes="page-label")
-            yield Button("Next", id="next-button", disabled=True)
+            yield Button(
+                "Next",
+                id="next-button",
+                disabled=True,
+                tooltip=MEDIA_PAGINATION_SINGLE_PAGE_TOOLTIP,
+            )
     
     def watch_items(self, items: List[Dict[str, Any]]) -> None:
         """Update the list when items change."""
@@ -300,6 +317,20 @@ class MediaListPanel(Container):
             
             prev_button.disabled = self.current_page <= 1
             next_button.disabled = self.current_page >= self.total_pages
+            if self.total_pages <= 1:
+                prev_button.tooltip = MEDIA_PAGINATION_SINGLE_PAGE_TOOLTIP
+                next_button.tooltip = MEDIA_PAGINATION_SINGLE_PAGE_TOOLTIP
+            else:
+                prev_button.tooltip = (
+                    MEDIA_PAGINATION_PREVIOUS_FIRST_TOOLTIP
+                    if prev_button.disabled
+                    else MEDIA_PAGINATION_PREVIOUS_ENABLED_TOOLTIP
+                )
+                next_button.tooltip = (
+                    MEDIA_PAGINATION_NEXT_LAST_TOOLTIP
+                    if next_button.disabled
+                    else MEDIA_PAGINATION_NEXT_ENABLED_TOOLTIP
+                )
             
             page_label.update(f"Page {self.current_page} / {self.total_pages}")
         except:

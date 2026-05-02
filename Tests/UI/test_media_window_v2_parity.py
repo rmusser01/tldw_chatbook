@@ -18,6 +18,7 @@ from tldw_chatbook.Event_Handlers.media_events import (
 )
 from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
+from tldw_chatbook.Widgets.Media.media_list_panel import MediaListPanel
 from tldw_chatbook.Widgets.Media.media_search_panel import MediaBrowseSubviewChangedEvent, MediaSearchPanel
 from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
 
@@ -89,6 +90,59 @@ async def test_media_empty_state_orients_first_time_users():
         assert "Select a media item" in text
         assert "analysis" in text
         assert "Use in Chat" in text
+
+
+@pytest.mark.asyncio
+async def test_media_list_pagination_explains_boundary_states():
+    class MediaListPanelApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield MediaListPanel(SimpleNamespace())
+
+    app = MediaListPanelApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one(MediaListPanel)
+        prev_button = panel.query_one("#prev-button", Button)
+        next_button = panel.query_one("#next-button", Button)
+
+        panel.current_page = 1
+        panel.total_pages = 1
+        panel.update_pagination()
+        await pilot.pause()
+
+        assert prev_button.disabled is True
+        assert "Only one page of media results is available" in str(prev_button.tooltip)
+        assert next_button.disabled is True
+        assert "Only one page of media results is available" in str(next_button.tooltip)
+
+        panel.current_page = 1
+        panel.total_pages = 3
+        panel.update_pagination()
+        await pilot.pause()
+
+        assert prev_button.disabled is True
+        assert "Already on the first media results page" in str(prev_button.tooltip)
+        assert next_button.disabled is False
+        assert "Show the next media results page" in str(next_button.tooltip)
+
+        panel.current_page = 2
+        panel.total_pages = 3
+        panel.update_pagination()
+        await pilot.pause()
+
+        assert prev_button.disabled is False
+        assert "Show the previous media results page" in str(prev_button.tooltip)
+        assert next_button.disabled is False
+        assert "Show the next media results page" in str(next_button.tooltip)
+
+        panel.current_page = 3
+        panel.total_pages = 3
+        panel.update_pagination()
+        await pilot.pause()
+
+        assert prev_button.disabled is False
+        assert "Show the previous media results page" in str(prev_button.tooltip)
+        assert next_button.disabled is True
+        assert "Already on the last media results page" in str(next_button.tooltip)
 
 
 @pytest.mark.asyncio
