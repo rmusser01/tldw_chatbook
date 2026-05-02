@@ -29,8 +29,11 @@ def test_nltk_download_false_is_not_logged_as_success(monkeypatch: pytest.Monkey
     messages: list[tuple[str, str]] = []
     sink_id = logger.add(lambda message: messages.append((message.record["level"].name, message.record["message"])))
     try:
+        def mock_find(_path):
+            raise LookupError("missing")
+
         fake_nltk = SimpleNamespace(
-            data=SimpleNamespace(find=lambda _path: (_ for _ in ()).throw(LookupError("missing"))),
+            data=SimpleNamespace(find=mock_find),
             download=lambda _package: False,
         )
 
