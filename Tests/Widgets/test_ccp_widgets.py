@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Label, ListView, Select, Static
 
 from tldw_chatbook.UI.Screens.ccp_screen import CCPScreenState
 from tldw_chatbook.Widgets.CCP_Widgets import (
@@ -15,6 +16,26 @@ from tldw_chatbook.Widgets.CCP_Widgets import (
     PersonaSaveRequested,
     StartPersonaChatRequested,
 )
+
+
+def _list_text(list_view: ListView) -> str:
+    if not list_view.children:
+        return ""
+    list_item = list_view.children[0]
+    try:
+        return str(list_item.query_one(Static).render())
+    except Exception:
+        return str(list_item.query_one(Label).render())
+
+
+def _select_option_text(select: Select) -> str:
+    labels = []
+    for option in getattr(select, "_options", []):
+        if isinstance(option, tuple):
+            labels.append(str(option[0]))
+        else:
+            labels.append(str(getattr(option, "prompt", option)))
+    return "\n".join(labels)
 
 
 @pytest.fixture
@@ -53,6 +74,47 @@ class TestCCPSidebarWidget:
             assert sidebar.query_one("#ccp-persona-select")
             assert sidebar.query_one("#ccp-load-persona-button")
             assert sidebar.query_one("#ccp-refresh-persona-list-button")
+
+    @pytest.mark.asyncio
+    async def test_empty_library_states_explain_assets_and_chat_flow(self, mock_parent_screen):
+        class TestApp(App):
+            def compose(self) -> ComposeResult:
+                yield CCPSidebarWidget(parent_screen=mock_parent_screen)
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            sidebar = pilot.app.query_one(CCPSidebarWidget)
+
+            sidebar.update_conversation_results([])
+            sidebar.update_character_list([])
+            sidebar.update_persona_list([])
+            sidebar.update_dictionary_list([])
+
+            conversation_text = _list_text(sidebar.query_one("#conv-char-search-results-list", ListView))
+            prompt_text = _list_text(sidebar.query_one("#ccp-prompts-listview", ListView))
+            worldbook_text = _list_text(sidebar.query_one("#ccp-worldbooks-listview", ListView))
+            character_text = _select_option_text(sidebar.query_one("#conv-char-character-select", Select))
+            persona_text = _select_option_text(sidebar.query_one("#ccp-persona-select", Select))
+            dictionary_text = _select_option_text(sidebar.query_one("#ccp-dictionary-select", Select))
+
+            assert "No conversations yet." in conversation_text
+            assert "Chat" in conversation_text
+            assert "Import Conversation" in conversation_text
+            assert "No characters yet." in character_text
+            assert "Create Character" in character_text
+            assert "character-backed Chat" in character_text
+            assert "No personas yet." in persona_text
+            assert "Create Persona" in persona_text
+            assert "persona-backed Chat" in persona_text
+            assert "No prompts yet." in prompt_text
+            assert "Create New Prompt" in prompt_text
+            assert "Chat instructions" in prompt_text
+            assert "No chat dictionaries yet." in dictionary_text
+            assert "Create Dictionary" in dictionary_text
+            assert "Chat context" in dictionary_text
+            assert "No world books yet." in worldbook_text
+            assert "Create World Book" in worldbook_text
+            assert "Chat context" in worldbook_text
 
     @pytest.mark.asyncio
     async def test_load_persona_button_posts_message(self, mock_parent_screen):

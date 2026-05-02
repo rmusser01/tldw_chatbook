@@ -6,6 +6,7 @@ from textual import work
 from textual.widgets import ListView, ListItem, Input, TextArea, Button, Static
 
 from .ccp_messages import PromptMessage, ViewChangeMessage
+from ...Widgets.CCP_Widgets.ccp_sidebar_widget import CCPSidebarWidget
 
 if TYPE_CHECKING:
     from ..Conv_Char_Window import CCPWindow
@@ -169,6 +170,10 @@ class CCPPromptHandler:
             results_list = self.window.query_one("#ccp-prompts-listview", ListView)
             results_list.clear()
             self._prompt_result_ids = {}
+
+            if not self.search_results:
+                results_list.append(ListItem(Static(CCPSidebarWidget.empty_state_text("prompts"))))
+                return
             
             for index, prompt in enumerate(self.search_results):
                 name = prompt.get('name', 'Untitled')
