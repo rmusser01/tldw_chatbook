@@ -86,12 +86,20 @@ async def test_handoff_smoke_replays_chat_staging_and_first_send(monkeypatch):
     app = HandoffFirstSendSmokeApp(payload)
     observed: dict[str, str | None] = {}
 
-    async def fake_send_handler(host, event):
+    async def fake_send_handler(app, event):
+        tab_container = app.query_one(ChatTabContainer)
+        session = tab_container.sessions[tab_container.active_session_id]
+        payload = session.session_data.handoff_payload
+
+        app.host._current_chat_handoff_payload = payload
         observed["wrapped_prompt"] = apply_current_handoff_context(
-            host,
+            app.host,
             "Summarize the usability issue.",
         )
-        observed["active_handoff_title"] = host._current_chat_handoff_payload.title
+        observed["active_handoff_title"] = app.host._current_chat_handoff_payload.title
+
+        payload.status = "sent"
+        app.host._current_chat_handoff_payload = None
 
     monkeypatch.setattr(
         "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed",
