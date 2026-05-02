@@ -627,7 +627,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "kanban_boards_tasks",
         "Kanban Boards / Tasks",
         "kanban",
-        sources=REMOTE_ONLY_SOURCES,
+        sources=SEPARATED_SOURCES,
         resources=(
             _resource("kanban.boards", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, ARCHIVE, RESTORE, IMPORT, EXPORT)),
             _resource("kanban.lists", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, ARCHIVE, RESTORE, REORDER)),
@@ -764,7 +764,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "server_skills",
         "Server Skills",
         "skills",
-        sources=REMOTE_ONLY_SOURCES,
+        sources=SEPARATED_SOURCES,
         resources=(
             _resource("skills", actions=CRUD_ACTIONS),
             _resource("skills.context", actions=(LIST,)),

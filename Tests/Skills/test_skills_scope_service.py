@@ -80,11 +80,47 @@ async def test_skills_scope_service_routes_server_operations_and_normalizes_reco
 
 
 @pytest.mark.asyncio
-async def test_skills_scope_service_honestly_rejects_local_mode_as_remote_only():
+async def test_skills_scope_service_routes_local_operations_without_server_dispatch():
+    local = FakeSkillsService()
+    server = FakeSkillsService()
+    policy = FakePolicyEnforcer()
+    scope = SkillsScopeService(local_service=local, server_service=server, policy_enforcer=policy)
+
+    listed = await scope.list_skills(mode="local", include_hidden=True)
+    context = await scope.get_context(mode="local")
+    fetched = await scope.get_skill("summarize-notes", mode="local")
+    imported = await scope.import_skill(mode="local", name="rewrite-draft", content="# Skill", overwrite=True)
+    executed = await scope.execute_skill("summarize-notes", mode="local", args="note-1")
+
+    assert listed["backend"] == "local"
+    assert listed["skills"][0]["record_id"] == "local:skill:summarize-notes"
+    assert context["available_skills"][0]["record_id"] == "local:skill:summarize-notes"
+    assert fetched["record_id"] == "local:skill:summarize-notes"
+    assert imported["record_id"] == "local:skill:rewrite-draft"
+    assert executed["record_id"] == "local:skill_execution:summarize-notes"
+    assert local.calls == [
+        ("list_skills", {"include_hidden": True}),
+        ("get_context",),
+        ("get_skill", "summarize-notes"),
+        ("import_skill", {"name": "rewrite-draft", "content": "# Skill", "overwrite": True}),
+        ("execute_skill", "summarize-notes", {"args": "note-1"}),
+    ]
+    assert server.calls == []
+    assert policy.calls == [
+        "skills.list.local",
+        "skills.context.list.local",
+        "skills.detail.local",
+        "skills.import.launch.local",
+        "skills.execute.launch.local",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_skills_scope_service_reports_missing_local_backend_before_dispatch():
     server = FakeSkillsService()
     scope = SkillsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
 
-    with pytest.raises(ValueError, match="Server skills are server-only"):
+    with pytest.raises(ValueError, match="Local skills backend is unavailable"):
         await scope.list_skills(mode="local")
 
     assert server.calls == []
@@ -104,15 +140,17 @@ async def test_skills_scope_service_blocks_denied_server_action_before_dispatch(
 
 def test_skills_scope_service_reports_known_unsupported_capabilities():
     scope = SkillsScopeService(server_service=FakeSkillsService())
+    local_scope = SkillsScopeService(local_service=FakeSkillsService(), server_service=FakeSkillsService())
 
     assert scope.list_unsupported_capabilities(mode="server") == []
+    assert local_scope.list_unsupported_capabilities(mode="local") == []
     assert scope.list_unsupported_capabilities(mode="local") == [
         {
-            "operation_id": "skills.remote_only.local",
+            "operation_id": "skills.local_backend_unavailable",
             "source": "local",
             "supported": False,
-            "reason_code": "remote_only_surface",
-            "user_message": "Server skills are unavailable in local/offline mode.",
+            "reason_code": "local_backend_unavailable",
+            "user_message": "Local skills backend is unavailable.",
             "affected_action_ids": [],
         }
     ]

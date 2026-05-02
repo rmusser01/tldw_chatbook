@@ -10,6 +10,7 @@ from tldw_chatbook.runtime_policy.domain_edge_contracts import (
     get_remote_utility_local_parity,
     list_domain_edge_contracts,
 )
+from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.unsupported_capabilities import validate_unsupported_capability_report
 
 
@@ -28,7 +29,7 @@ def test_domain_edge_matrix_covers_priority_server_parity_domains():
         "translation",
         "server_tools",
         "text2sql",
-        "server_skills",
+        "skills",
         "claims",
         "meetings",
         "outputs",
@@ -44,6 +45,11 @@ def test_domain_edge_matrix_covers_priority_server_parity_domains():
     assert matrix["sharing"]["authority"] == "remote_only"
     assert matrix["translation"]["authority"] == "local_parity"
     assert matrix["translation"]["source_selector_states"] == ("local", "server")
+    assert matrix["skills"]["authority"] == "local_and_server"
+    assert matrix["skills"]["source_selector_states"] == ("local", "server")
+    assert matrix["kanban"]["authority"] == "local_and_server"
+    assert matrix["kanban"]["source_selector_states"] == ("local", "server")
+    assert "server_skills" not in matrix
     assert matrix["media_reading"]["uses_event_contract"] is True
     assert matrix["notes_workspaces"]["uses_sync_contract"] is True
 
@@ -68,8 +74,29 @@ def test_remote_utility_local_parity_registry_tracks_translation_pilot():
     assert translation.state == "pilot"
     assert translation.local_adapter == "TranslationScopeService.local_service"
     assert matrix["translation"]["state"] == "pilot"
+    assert matrix["skills"]["state"] == "planned"
+    assert matrix["kanban"]["state"] == "planned"
+    assert "server_skills" not in matrix
     assert matrix["sharing"]["state"] == "remote_only"
     assert matrix["outputs"]["state"] == "remote_only"
+
+
+def test_server_skills_alias_returns_canonical_skills_contract():
+    assert get_domain_edge_contract("server_skills") is get_domain_edge_contract("skills")
+    assert get_remote_utility_local_parity("server_skills") is get_remote_utility_local_parity("skills")
+
+
+def test_skills_and_kanban_have_local_policy_actions():
+    for action_id in [
+        "skills.list.local",
+        "skills.execute.launch.local",
+        "kanban.boards.list.local",
+        "kanban.cards.create.local",
+        "kanban.card_links.delete.local",
+    ]:
+        entry = CAPABILITY_REGISTRY[action_id]
+        assert entry.required_source == "local"
+        assert entry.authority_owner == "local"
 
 
 def test_required_reason_codes_are_explicit_and_reportable():

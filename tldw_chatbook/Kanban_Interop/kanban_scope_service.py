@@ -1,4 +1,4 @@
-"""Source-aware routing for server-owned Kanban resources."""
+"""Source-aware routing for local and server Kanban resources."""
 
 from __future__ import annotations
 
@@ -14,13 +14,13 @@ class KanbanBackend(str, Enum):
     SERVER = "server"
 
 
-_LOCAL_UNSUPPORTED_CAPABILITIES = [
+_LOCAL_BACKEND_UNAVAILABLE_CAPABILITY = [
     {
-        "operation_id": "kanban.remote_only.local",
+        "operation_id": "kanban.local_backend_unavailable",
         "source": "local",
         "supported": False,
-        "reason_code": "remote_only_surface",
-        "user_message": "Server Kanban boards, lists, cards, labels, comments, checklists, links, search, activity, import/export, and bulk operations are unavailable in local/offline mode.",
+        "reason_code": "local_backend_unavailable",
+        "user_message": "Local Kanban backend is unavailable.",
         "affected_action_ids": [],
     }
 ]
@@ -38,11 +38,12 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
 
 
 class KanbanScopeService:
-    """Route Kanban operations through the active server without local Kanban authority."""
+    """Route Kanban operations across local and active-server backends."""
 
     operations = KANBAN_OPERATION_SPECS
 
-    def __init__(self, *, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(self, *, local_service: Any = None, server_service: Any = None, policy_enforcer: Any = None):
+        self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
@@ -65,9 +66,11 @@ class KanbanScopeService:
         except ValueError as exc:
             raise ValueError(f"Invalid Kanban backend: {mode}") from exc
 
-    def _require_server_service(self, mode: KanbanBackend) -> Any:
+    def _require_service(self, mode: KanbanBackend) -> Any:
         if mode == KanbanBackend.LOCAL:
-            raise ValueError("Server Kanban records are server-only; switch to server mode to manage them.")
+            if self.local_service is None:
+                raise ValueError("Local Kanban backend is unavailable.")
+            return self.local_service
         if self.server_service is None:
             raise ValueError("Server Kanban backend is unavailable.")
         return self.server_service
@@ -76,6 +79,12 @@ class KanbanScopeService:
         if self.policy_enforcer is None:
             return
         self.policy_enforcer.require_allowed(action_id=action_id)
+
+    @staticmethod
+    def _source_action_id(action_id: str, mode: KanbanBackend) -> str:
+        if mode == KanbanBackend.LOCAL and action_id.endswith(".server"):
+            return f"{action_id[:-len('.server')]}.local"
+        return action_id
 
     @staticmethod
     async def _maybe_await(value: Any) -> Any:
@@ -100,7 +109,9 @@ class KanbanScopeService:
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == KanbanBackend.LOCAL:
-            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+            if self.local_service is None:
+                return [dict(item) for item in _LOCAL_BACKEND_UNAVAILABLE_CAPABILITY]
+            return []
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     async def invoke(
@@ -115,8 +126,8 @@ class KanbanScopeService:
         except KeyError as exc:
             raise ValueError(f"Unknown Kanban operation: {operation_name}") from exc
         normalized_mode = self._normalize_mode(mode)
-        service = self._require_server_service(normalized_mode)
-        self._enforce_policy(spec.action_id)
+        service = self._require_service(normalized_mode)
+        self._enforce_policy(self._source_action_id(spec.action_id, normalized_mode))
         result = await self._maybe_await(getattr(service, operation_name)(*args, **kwargs))
         normalized = ServerKanbanService._normalize_response(
             self._dump(result),

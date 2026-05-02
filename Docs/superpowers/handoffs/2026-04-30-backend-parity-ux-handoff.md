@@ -104,7 +104,7 @@ Domain readiness summary:
 | Audio/Voice | mixed | Ready; websocket streaming/session controls can be unsupported unless adapter capability reports clear them. |
 | Translation | mixed/local parity pilot | Ready; server translation remains available, and local translation is available only when `TranslationScopeService.local_service` is configured. |
 
-Remote-only utility rows are individually ready for UX: sharing, web clipper, server tools, Text2SQL, server skills, claims, meetings, outputs, Kanban, and Prompt Studio. Translation is no longer in the remote-only set; it is the first adapter-backed local parity pilot.
+Remote-only utility rows are individually ready for UX: sharing, web clipper, server tools, Text2SQL, claims, meetings, outputs, and Prompt Studio. Translation, Skills, and Kanban are no longer in the remote-only set; they have explicit local/server parity rows and source selectors. Workflow orchestration remains deferred outside Kanban board/list/card parity.
 
 ## Unsupported Action Reports
 

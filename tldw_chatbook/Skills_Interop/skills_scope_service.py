@@ -1,4 +1,4 @@
-"""Source-aware routing for active-server skills."""
+"""Source-aware routing for local and server skills."""
 
 from __future__ import annotations
 
@@ -12,22 +12,23 @@ class SkillsBackend(str, Enum):
     SERVER = "server"
 
 
-_LOCAL_UNSUPPORTED_CAPABILITIES = [
+_LOCAL_BACKEND_UNAVAILABLE_CAPABILITY = [
     {
-        "operation_id": "skills.remote_only.local",
+        "operation_id": "skills.local_backend_unavailable",
         "source": "local",
         "supported": False,
-        "reason_code": "remote_only_surface",
-        "user_message": "Server skills are unavailable in local/offline mode.",
+        "reason_code": "local_backend_unavailable",
+        "user_message": "Local skills backend is unavailable.",
         "affected_action_ids": [],
     }
 ]
 
 
 class SkillsScopeService:
-    """Route server SKILL.md actions without merging them into local instruction assets."""
+    """Route source-aware SKILL.md actions across local and server backends."""
 
-    def __init__(self, *, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(self, *, local_service: Any = None, server_service: Any = None, policy_enforcer: Any = None):
+        self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
@@ -41,11 +42,11 @@ class SkillsScopeService:
         except ValueError as exc:
             raise ValueError(f"Invalid skills backend: {mode}") from exc
 
-    def _require_server_service(self, mode: SkillsBackend) -> Any:
+    def _require_service(self, mode: SkillsBackend) -> Any:
         if mode == SkillsBackend.LOCAL:
-            raise ValueError(
-                "Server skills are server-only; local instruction assets stay separate until sync is designed."
-            )
+            if self.local_service is None:
+                raise ValueError("Local skills backend is unavailable.")
+            return self.local_service
         if self.server_service is None:
             raise ValueError("Server skills backend is unavailable.")
         return self.server_service
@@ -60,6 +61,12 @@ class SkillsScopeService:
         if self.policy_enforcer is None:
             return
         self.policy_enforcer.require_allowed(action_id=action_id)
+
+    @staticmethod
+    def _source_action_id(action_id: str, mode: SkillsBackend) -> str:
+        if mode == SkillsBackend.LOCAL and action_id.endswith(".server"):
+            return f"{action_id[:-len('.server')]}.local"
+        return action_id
 
     @staticmethod
     def _with_record_id(mode: SkillsBackend, kind: str, item: dict[str, Any]) -> dict[str, Any]:
@@ -104,8 +111,8 @@ class SkillsScopeService:
         mode: SkillsBackend | str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == SkillsBackend.LOCAL:
-            return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
+        if normalized_mode == SkillsBackend.LOCAL and self.local_service is None:
+            return [dict(item) for item in _LOCAL_BACKEND_UNAVAILABLE_CAPABILITY]
         return []
 
     async def _call(
@@ -118,8 +125,8 @@ class SkillsScopeService:
         kwargs: dict[str, Any] | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._require_server_service(normalized_mode)
-        self._enforce_policy(action_id)
+        service = self._require_service(normalized_mode)
+        self._enforce_policy(self._source_action_id(action_id, normalized_mode))
         result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
         return self._normalize_response(normalized_mode, result)
 
@@ -177,8 +184,8 @@ class SkillsScopeService:
         **kwargs: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        service = self._require_server_service(normalized_mode)
-        self._enforce_policy("skills.delete.server")
+        service = self._require_service(normalized_mode)
+        self._enforce_policy(self._source_action_id("skills.delete.server", normalized_mode))
         result = await self._maybe_await(service.delete_skill(skill_name, **kwargs))
         if not isinstance(result, dict):
             result = {"name": skill_name, "deleted": bool(result)}
