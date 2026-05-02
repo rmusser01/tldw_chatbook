@@ -278,22 +278,22 @@ class MultiItemReviewWindow(Container):
         generate_button = self.query_one("#generate-analyses", Button)
         cancel_button = self.query_one("#cancel-generation", Button)
 
-        has_selection = len(self.selected_items) > 0
-        generate_button.disabled = not has_selection or self.analysis_in_progress
-        cancel_button.disabled = not self.analysis_in_progress
-
         if self.analysis_in_progress:
+            generate_button.disabled = True
             generate_button.tooltip = GENERATE_ANALYSES_IN_PROGRESS_TOOLTIP
-        elif not has_selection:
-            generate_button.tooltip = GENERATE_ANALYSES_NO_SELECTION_TOOLTIP
-        else:
-            generate_button.tooltip = GENERATE_ANALYSES_ENABLED_TOOLTIP
+            cancel_button.disabled = False
+            cancel_button.tooltip = CANCEL_GENERATION_ENABLED_TOOLTIP
+            return
 
-        cancel_button.tooltip = (
-            CANCEL_GENERATION_ENABLED_TOOLTIP
-            if self.analysis_in_progress
-            else CANCEL_GENERATION_DISABLED_TOOLTIP
+        has_selection = len(self.selected_items) > 0
+        generate_button.disabled = not has_selection
+        generate_button.tooltip = (
+            GENERATE_ANALYSES_ENABLED_TOOLTIP
+            if has_selection
+            else GENERATE_ANALYSES_NO_SELECTION_TOOLTIP
         )
+        cancel_button.disabled = True
+        cancel_button.tooltip = CANCEL_GENERATION_DISABLED_TOOLTIP
         
     @on(Button.Pressed, "#generate-analyses")
     async def handle_generate_analyses(self) -> None:
