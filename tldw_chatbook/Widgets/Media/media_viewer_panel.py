@@ -30,6 +30,21 @@ MEDIA_USE_IN_CHAT_ENABLED_TOOLTIP = "Use the selected media item in Chat."
 READ_IT_LATER_DISABLED_TOOLTIP = "Read-it-later is unavailable for this media item."
 READ_IT_LATER_SAVE_TOOLTIP = "Save this item for later reading."
 READ_IT_LATER_REMOVE_TOOLTIP = "Remove this item from Read-it-later."
+ANALYSIS_SAVE_DISABLED_TOOLTIP = "Generate an analysis before saving it."
+ANALYSIS_SAVE_ENABLED_TOOLTIP = "Save this generated analysis."
+ANALYSIS_SAVE_EXISTING_TOOLTIP = "This analysis is already saved. Use Overwrite to update it."
+ANALYSIS_SAVE_NOTE_DISABLED_TOOLTIP = "Generate an analysis before saving it as a note."
+ANALYSIS_SAVE_NOTE_ENABLED_TOOLTIP = "Save this analysis as a note."
+ANALYSIS_EDIT_DISABLED_TOOLTIP = "Generate or select an analysis before editing it."
+ANALYSIS_EDIT_ENABLED_TOOLTIP = "Edit this analysis."
+ANALYSIS_EDIT_CANCEL_TOOLTIP = "Cancel editing this analysis."
+ANALYSIS_OVERWRITE_DISABLED_TOOLTIP = "Save an analysis before overwriting it."
+ANALYSIS_OVERWRITE_ENABLED_TOOLTIP = "Overwrite the saved analysis with the edited text."
+ANALYSIS_DELETE_DISABLED_TOOLTIP = "Select a saved analysis version before deleting it."
+ANALYSIS_DELETE_ENABLED_TOOLTIP = "Delete this saved analysis version."
+ANALYSIS_DELETE_EDITING_TOOLTIP = "Cancel editing before deleting an analysis."
+ANALYSIS_SAVE_EDITING_TOOLTIP = "Finish or cancel editing before saving."
+ANALYSIS_SAVE_NOTE_EDITING_TOOLTIP = "Finish or cancel editing before saving as a note."
 
 
 class ContentSearchEvent(Message):
@@ -682,11 +697,41 @@ class MediaViewerPanel(Container):
                     
                     # Analysis action buttons
                     with Horizontal(classes="analysis-actions"):
-                        yield Button("Save", id="save-analysis-btn", variant="success", disabled=True)
-                        yield Button("Save as Note", id="save-as-note-btn", variant="success", disabled=True)
-                        yield Button("Edit", id="edit-analysis-btn", variant="primary", disabled=True)
-                        yield Button("Overwrite", id="overwrite-analysis-btn", variant="warning", disabled=True)
-                        yield Button("Delete", id="delete-analysis-btn", variant="error", disabled=True)
+                        yield Button(
+                            "Save",
+                            id="save-analysis-btn",
+                            variant="success",
+                            disabled=True,
+                            tooltip=ANALYSIS_SAVE_DISABLED_TOOLTIP,
+                        )
+                        yield Button(
+                            "Save as Note",
+                            id="save-as-note-btn",
+                            variant="success",
+                            disabled=True,
+                            tooltip=ANALYSIS_SAVE_NOTE_DISABLED_TOOLTIP,
+                        )
+                        yield Button(
+                            "Edit",
+                            id="edit-analysis-btn",
+                            variant="primary",
+                            disabled=True,
+                            tooltip=ANALYSIS_EDIT_DISABLED_TOOLTIP,
+                        )
+                        yield Button(
+                            "Overwrite",
+                            id="overwrite-analysis-btn",
+                            variant="warning",
+                            disabled=True,
+                            tooltip=ANALYSIS_OVERWRITE_DISABLED_TOOLTIP,
+                        )
+                        yield Button(
+                            "Delete",
+                            id="delete-analysis-btn",
+                            variant="error",
+                            disabled=True,
+                            tooltip=ANALYSIS_DELETE_DISABLED_TOOLTIP,
+                        )
                     
                     # Add some padding at the bottom to ensure scrolling works
                     yield Static("", classes="bottom-spacer")
@@ -1475,16 +1520,34 @@ class MediaViewerPanel(Container):
             
             if self.analysis_edit_mode:
                 save_btn.disabled = True
+                save_btn.tooltip = ANALYSIS_SAVE_EDITING_TOOLTIP
                 save_as_note_btn.disabled = True
+                save_as_note_btn.tooltip = ANALYSIS_SAVE_NOTE_EDITING_TOOLTIP
                 edit_btn.label = "Cancel Edit"
+                edit_btn.tooltip = ANALYSIS_EDIT_CANCEL_TOOLTIP
                 overwrite_btn.disabled = False
+                overwrite_btn.tooltip = ANALYSIS_OVERWRITE_ENABLED_TOOLTIP
                 delete_btn.disabled = True
+                delete_btn.tooltip = ANALYSIS_DELETE_EDITING_TOOLTIP
             else:
                 save_btn.disabled = not self.current_analysis or self.has_existing_analysis
+                if not self.current_analysis:
+                    save_btn.tooltip = ANALYSIS_SAVE_DISABLED_TOOLTIP
+                elif self.has_existing_analysis:
+                    save_btn.tooltip = ANALYSIS_SAVE_EXISTING_TOOLTIP
+                else:
+                    save_btn.tooltip = ANALYSIS_SAVE_ENABLED_TOOLTIP
                 save_as_note_btn.disabled = not self.current_analysis
+                save_as_note_btn.tooltip = (
+                    ANALYSIS_SAVE_NOTE_ENABLED_TOOLTIP if self.current_analysis else ANALYSIS_SAVE_NOTE_DISABLED_TOOLTIP
+                )
                 edit_btn.label = "Edit"
                 edit_btn.disabled = not self.current_analysis
+                edit_btn.tooltip = ANALYSIS_EDIT_ENABLED_TOOLTIP if self.current_analysis else ANALYSIS_EDIT_DISABLED_TOOLTIP
                 overwrite_btn.disabled = not self.has_existing_analysis
+                overwrite_btn.tooltip = (
+                    ANALYSIS_OVERWRITE_ENABLED_TOOLTIP if self.has_existing_analysis else ANALYSIS_OVERWRITE_DISABLED_TOOLTIP
+                )
                 # Delete button enabled only when there's a saved analysis with UUID
                 # Check if current analysis has a UUID (not a legacy analysis)
                 has_deletable_analysis = False
@@ -1495,6 +1558,9 @@ class MediaViewerPanel(Container):
                         has_deletable_analysis = (current_analysis.get('uuid') is not None or 
                                                   current_analysis.get('version_number') == 'unsaved')
                 delete_btn.disabled = not has_deletable_analysis
+                delete_btn.tooltip = (
+                    ANALYSIS_DELETE_ENABLED_TOOLTIP if has_deletable_analysis else ANALYSIS_DELETE_DISABLED_TOOLTIP
+                )
                 
         except Exception:
             pass
