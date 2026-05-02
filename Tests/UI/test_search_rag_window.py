@@ -196,6 +196,35 @@ class TestSearchRAGWindow:
             assert search_button.disabled is False
 
     @pytest.mark.asyncio
+    async def test_missing_embeddings_dependency_disables_primary_search_action_with_recovery(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Missing RAG dependencies should disable Search with actionable recovery copy."""
+        with patch.dict(
+            search_rag_window_module.DEPENDENCIES_AVAILABLE,
+            {"embeddings_rag": False},
+            clear=False,
+        ):
+            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                window = pilot.app.test_widget
+
+                search_input = window.query_one("#search-query-input", Input)
+                search_button = window.query_one("#search-button", Button)
+
+                assert search_input.disabled is True
+                assert "Embeddings not available" in search_input.placeholder
+                assert search_button.disabled is True
+                assert (
+                    "Search/RAG requires optional embeddings dependencies"
+                    in str(search_button.tooltip)
+                )
+                assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
+                assert window.is_searching is True
+
+    @pytest.mark.asyncio
     async def test_get_search_config_reads_current_controls(
         self,
         mock_app_instance: MagicMock,
