@@ -731,7 +731,11 @@ async def test_flashcards_view_shows_explicit_empty_state_when_no_decks_exist():
         status = app.screen.query_one("#review-status", Static)
         create_button = app.screen.query_one("#create-deck-button", Button)
 
-        assert "Create a deck" in _text(status)
+        status_text = _text(status)
+        assert "No study decks yet." in status_text
+        assert "Create a deck" in status_text
+        assert "add flashcards" in status_text
+        assert "start reviewing" in status_text
         assert create_button.display is True
 
 
@@ -872,7 +876,10 @@ async def test_scope_transition_resets_review_state_and_clears_flashcards_panel(
         assert _is_blank(move_target_select.value)
         assert _text(review_front) == ""
         assert _text(review_back) == ""
-        assert "No study decks in this workspace yet." in _text(review_status)
+        status_text = _text(review_status)
+        assert "No study decks in this workspace yet." in status_text
+        assert "Create a workspace deck" in status_text
+        assert "switch to Global Study" in status_text
 
 
 @pytest.mark.asyncio

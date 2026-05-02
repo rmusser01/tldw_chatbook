@@ -102,8 +102,11 @@ class StudyQuizzesController:
 
     def _scope_empty_message(self) -> str:
         if self._scope_type() == StudyScopeType.WORKSPACE.value:
-            return "No quizzes in this workspace yet."
-        return "Create a quiz to begin practicing."
+            return (
+                "No quizzes in this workspace yet. Create a workspace quiz, "
+                "or switch to Global Study to practice existing quizzes."
+            )
+        return "No quizzes yet. Create a quiz, add questions, then start an attempt."
 
     def _scope_arguments(self) -> dict[str, Any]:
         scope_type = self._scope_type()
@@ -403,7 +406,7 @@ class StudyQuizzesController:
         quiz_id = self._selected_quiz_id()
         if quiz_id is None:
             if not self.has_quizzes:
-                self.reset_quiz_panel(self._scope_empty_message() if self._scope_type() == StudyScopeType.WORKSPACE.value else "Create a quiz to begin practicing.")
+                self.reset_quiz_panel(self._scope_empty_message())
             else:
                 self.reset_quiz_panel("Select a quiz to manage its questions.")
             return
