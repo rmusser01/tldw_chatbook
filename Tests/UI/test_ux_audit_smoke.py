@@ -156,7 +156,12 @@ def _empty_notes_service() -> Mock:
     return service
 
 
-class InvalidNotesSelectionSmokeApp(App[None]):
+def _assert_single_handoff_payload(open_chat_with_handoff: Mock) -> ChatHandoffPayload:
+    open_chat_with_handoff.assert_called_once()
+    return open_chat_with_handoff.call_args.args[0]
+
+
+class NotesSmokeApp(App[None]):
     def __init__(self) -> None:
         super().__init__()
         app_instance = SimpleNamespace(
@@ -184,7 +189,7 @@ class InvalidNotesSelectionSmokeApp(App[None]):
 
 @pytest.mark.asyncio
 async def test_invalid_notes_and_workspace_handoffs_do_not_stage_chat_in_smoke():
-    app = InvalidNotesSelectionSmokeApp()
+    app = NotesSmokeApp()
 
     async with app.run_test(size=(160, 40)) as pilot:
         await pilot.pause(0.1)
@@ -227,7 +232,7 @@ async def test_invalid_notes_and_workspace_handoffs_do_not_stage_chat_in_smoke()
 
 @pytest.mark.asyncio
 async def test_valid_notes_and_workspace_handoffs_stage_app_payloads_in_smoke():
-    app = InvalidNotesSelectionSmokeApp()
+    app = NotesSmokeApp()
 
     async with app.run_test(size=(160, 40)) as pilot:
         await pilot.pause(0.1)
@@ -249,7 +254,7 @@ async def test_valid_notes_and_workspace_handoffs_stage_app_payloads_in_smoke():
         note_button.press()
         await pilot.pause(0.05)
 
-        note_payload = app.app_instance.open_chat_with_handoff.call_args.args[0]
+        note_payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
         assert note_payload.source == "notes"
         assert note_payload.source_id == "7"
         assert note_payload.title == "Draft Note"
@@ -299,7 +304,7 @@ async def test_valid_notes_and_workspace_handoffs_stage_app_payloads_in_smoke():
         workspace_button.press()
         await pilot.pause(0.05)
 
-        workspace_payload = app.app_instance.open_chat_with_handoff.call_args.args[0]
+        workspace_payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
         assert workspace_payload.source == "workspace"
         assert workspace_payload.item_type == "workspace"
         assert workspace_payload.source_id == "workspace-1"
@@ -316,7 +321,7 @@ async def test_valid_notes_and_workspace_handoffs_stage_app_payloads_in_smoke():
         workspace_note_button.press()
         await pilot.pause(0.05)
 
-        workspace_note_payload = app.app_instance.open_chat_with_handoff.call_args.args[0]
+        workspace_note_payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
         assert workspace_note_payload.source == "workspace"
         assert workspace_note_payload.item_type == "workspace-note"
         assert workspace_note_payload.source_id == "note-1"
@@ -334,18 +339,19 @@ async def test_valid_notes_and_workspace_handoffs_stage_app_payloads_in_smoke():
         source_button.press()
         await pilot.pause(0.05)
 
-        source_payload = app.app_instance.open_chat_with_handoff.call_args.args[0]
+        source_payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
         assert source_payload.source == "workspace"
         assert source_payload.item_type == "workspace-source"
         assert source_payload.workspace_id == "workspace-1"
         assert source_payload.source_id == "source-1"
         assert source_payload.title == "Transcript"
+        assert source_payload.body == "Transcript\nvideo\nhttps://example.com/transcript"
 
         app.app_instance.open_chat_with_handoff.reset_mock()
         artifact_button.press()
         await pilot.pause(0.05)
 
-        artifact_payload = app.app_instance.open_chat_with_handoff.call_args.args[0]
+        artifact_payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
         assert artifact_payload.source == "workspace"
         assert artifact_payload.item_type == "workspace-artifact"
         assert artifact_payload.workspace_id == "workspace-1"
@@ -426,7 +432,7 @@ async def test_valid_media_handoff_replays_from_mounted_window_to_app_seam():
         button.press()
         await pilot.pause(0.05)
 
-        payload = app.app_instance.open_chat_with_handoff.call_args.args[0]
+        payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
         assert payload.source == "media"
         assert payload.source_id == "media-1"
         assert payload.title == "Lecture"
@@ -482,7 +488,7 @@ async def test_valid_rag_search_handoff_replays_from_mounted_window_to_app_seam(
             button.press()
             await pilot.pause(0.05)
 
-            payload = app.app_instance.open_chat_with_handoff.call_args.args[0]
+            payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
             assert payload.source == "search-rag"
             assert payload.item_type == "rag-result"
             assert payload.runtime_backend == "server"
@@ -528,7 +534,7 @@ async def test_valid_web_search_handoff_replays_from_mounted_window_to_app_seam(
         button.press()
         await pilot.pause(0.05)
 
-        payload = app.app_instance.open_chat_with_handoff.call_args.args[0]
+        payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
         assert payload.source == "search-web"
         assert payload.item_type == "web-result"
         assert payload.metadata["url"] == "https://example.com"
