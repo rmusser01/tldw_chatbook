@@ -45,6 +45,33 @@ TAB_GROUPS = {
     "System": [TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, TAB_LOGS, TAB_STATS],
 }
 
+TAB_DISPLAY_LABELS = {
+    TAB_CHAT: "Chat",
+    TAB_CCP: "Library",
+    TAB_NOTES: "Notes",
+    TAB_MEDIA: "Media",
+    TAB_SEARCH: "Search",
+    TAB_INGEST: "Ingest",
+    TAB_EVALS: "Evals",
+    TAB_LLM: "Models",
+    TAB_TOOLS_SETTINGS: "Settings",
+    TAB_STATS: "Stats",
+    TAB_LOGS: "Logs",
+    TAB_CODING: "Coding",
+    TAB_STTS: "Speech",
+    TAB_STUDY: "Study",
+    TAB_WRITING: "Writing",
+    TAB_RESEARCH: "Research",
+    TAB_SUBSCRIPTIONS: "Subscriptions",
+    TAB_CHATBOOKS: "Chatbooks",
+    TAB_CUSTOMIZE: "Customize",
+}
+
+
+def get_tab_display_label(tab_id: str) -> str:
+    """Return the user-facing label for a top-level tab ID."""
+    return TAB_DISPLAY_LABELS.get(tab_id, tab_id.replace("_", " ").title())
+
 # Subscription types
 SUBSCRIPTION_TYPES = [
     "rss",

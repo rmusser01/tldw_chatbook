@@ -14,9 +14,7 @@ if TYPE_CHECKING:
     from ..app import TldwCli
 
 from ..Constants import (
-    TAB_CCP, TAB_TOOLS_SETTINGS, TAB_INGEST, TAB_LLM, TAB_EVALS,
-    TAB_CODING, TAB_STTS, TAB_STUDY, TAB_CHATBOOKS, TAB_CUSTOMIZE,
-    TAB_GROUPS,
+    TAB_CCP, TAB_GROUPS, get_tab_display_label,
 )
 from ..UI.Navigation.main_navigation import NavigateToScreen
 #
@@ -24,24 +22,10 @@ from ..UI.Navigation.main_navigation import NavigateToScreen
 #
 # Functions:
 
-# Label overrides for tab display names
-_TAB_LABELS = {
-    TAB_CCP: "Library",
-    TAB_TOOLS_SETTINGS: "Settings",
-    TAB_INGEST: "Ingest",
-    TAB_LLM: "Models",
-    TAB_EVALS: "Evals",
-    TAB_CODING: "Coding",
-    TAB_STTS: "Speech",
-    TAB_STUDY: "Study",
-    TAB_CHATBOOKS: "Chatbooks",
-    TAB_CUSTOMIZE: "Customize",
-}
-
 
 def _get_tab_label(tab_id: str) -> str:
     """Return the display label for a tab ID."""
-    return _TAB_LABELS.get(tab_id, tab_id.replace('_', ' ').title())
+    return get_tab_display_label(tab_id)
 
 
 class TabLinks(ScrollableContainer):
