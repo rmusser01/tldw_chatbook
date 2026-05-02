@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Markdown
 
+from tldw_chatbook.runtime_policy.engine import PolicyEngine
+from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI import SearchWindow as search_window_module
 from tldw_chatbook.UI.Views.RAGSearch import search_rag_window
 from tldw_chatbook.UI.SearchWindow import SearchWindow
@@ -121,6 +125,34 @@ def test_search_rag_window_use_in_chat_unavailable_explains_recovery(tmp_path):
     assert "Use in Chat is unavailable" in message
     assert "Open Chat" in message
     assert "try again" in message
+    assert app.notify.call_args.kwargs["severity"] == "warning"
+
+
+def test_search_rag_window_use_in_chat_policy_block_explains_recovery(tmp_path):
+    app = _search_app(runtime_backend="server")
+    app.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+    app.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+    with patch(
+        "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+        return_value=tmp_path,
+    ):
+        window = SearchRAGWindow(app_instance=app)
+    event = SearchResult.UseInChatRequested(
+        0,
+        {
+            "title": "Server Chunk",
+            "content": "Retrieved text",
+            "source": "notes",
+            "metadata": {"document_id": "doc-1"},
+        },
+    )
+
+    window.handle_search_result_use_in_chat(event)
+
+    app.open_chat_with_handoff.assert_not_called()
+    message = app.notify.call_args.args[0]
+    assert "rag.media_embeddings.search.server requires server mode" in message
+    assert "switch source" in message.lower()
     assert app.notify.call_args.kwargs["severity"] == "warning"
 
 
