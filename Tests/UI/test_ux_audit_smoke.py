@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -12,6 +13,9 @@ from textual.widgets import Button, TextArea
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import apply_current_handoff_context
+from tldw_chatbook.runtime_policy.engine import PolicyEngine
+from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
 from tldw_chatbook.UI.SearchWindow import SearchWindow
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -162,7 +166,7 @@ def _assert_single_handoff_payload(open_chat_with_handoff: Mock) -> ChatHandoffP
 
 
 class NotesSmokeApp(App[None]):
-    def __init__(self) -> None:
+    def __init__(self, runtime_state: RuntimeSourceState | None = None) -> None:
         super().__init__()
         app_instance = SimpleNamespace(
             notes_service=_empty_notes_service(),
@@ -180,6 +184,9 @@ class NotesSmokeApp(App[None]):
             current_selected_note_title="",
             current_selected_note_content="",
         )
+        if runtime_state is not None:
+            app_instance.runtime_policy = SimpleNamespace(state=runtime_state)
+            app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
         self.app_instance = app_instance
         self.screen_under_test = NotesScreen(app_instance)
 
@@ -225,6 +232,82 @@ async def test_invalid_notes_and_workspace_handoffs_do_not_stage_chat_in_smoke()
 
         source_button.press()
         artifact_button.press()
+        await pilot.pause(0.05)
+
+        app.app_instance.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_contract_blocked_workspace_handoff_explains_recovery_without_staging():
+    checked_at = datetime.now(timezone.utc)
+    app = NotesSmokeApp(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="srv-primary",
+            server_configured=True,
+            server_reachability="reachable",
+            server_reachability_checked_at=checked_at,
+            server_auth_state="auth_required",
+            server_auth_checked_at=checked_at,
+        )
+    )
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_under_test
+
+        screen._set_state(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.DETAILS,
+            selected_workspace_id="workspace-1",
+        )
+        await pilot.pause(0.05)
+
+        workspace_button = screen.query_one("#workspace-use-in-chat-button", Button)
+
+        assert workspace_button.disabled is True
+        tooltip = str(workspace_button.tooltip)
+        assert "notes.workspace.detail.server requires server authentication" in tooltip
+        assert "Sign in" in tooltip
+
+        workspace_button.press()
+        await pilot.pause(0.05)
+
+        app.app_instance.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_contract_blocked_local_note_handoff_explains_recovery_without_staging():
+    app = NotesSmokeApp(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="srv-primary",
+            server_configured=True,
+            server_reachability="reachable",
+            server_auth_state="authenticated",
+        )
+    )
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_under_test
+
+        screen._set_state(
+            scope_type=ScopeType.LOCAL_NOTE,
+            selected_note_id=1,
+            selected_note_title="Local Note",
+            selected_note_content="Body",
+        )
+        await pilot.pause(0.05)
+
+        note_button = screen.query_one("#notes-use-in-chat-button", Button)
+
+        assert note_button.disabled is True
+        tooltip = str(note_button.tooltip)
+        assert "notes.detail.local requires local mode" in tooltip
+        assert "switch source" in tooltip
+
+        note_button.press()
         await pilot.pause(0.05)
 
         app.app_instance.open_chat_with_handoff.assert_not_called()

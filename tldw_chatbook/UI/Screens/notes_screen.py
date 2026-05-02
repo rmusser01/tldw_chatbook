@@ -22,6 +22,7 @@ from textual.widgets import Button, Input, Label, ListView, Select, Switch, Text
 from ...Chat.chat_handoff_messages import USE_IN_CHAT_UNAVAILABLE_RECOVERY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Event_Handlers.Audio_Events.dictation_integration_events import InsertDictationTextEvent
+from ...runtime_policy.types import RuntimeSourceState
 from ...Third_Party.textual_fspicker import FileSave
 from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
 from ...Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
@@ -33,6 +34,8 @@ from ...Widgets.emoji_picker import EmojiPickerScreen, EmojiSelected
 from ..Navigation.base_app_screen import BaseAppScreen
 from .notes_scope_models import NotesScreenState, PendingNavigation, ScopeType, WorkspaceSubview
 from .study_scope_models import StudyScopeContext, StudyScopeType
+
+HANDOFF_POLICY_RECOVERY = "Sign in, reconnect the server, or switch source before using this item in Chat."
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -271,32 +274,87 @@ class NotesScreen(BaseAppScreen):
         button.disabled = disabled
         button.tooltip = disabled_tooltip if disabled else enabled_tooltip
 
+    def _handoff_runtime_action_id(self, action_id: str | None) -> str | None:
+        if action_id == "notes-use-in-chat-button":
+            if self.state.scope_type == ScopeType.SERVER_NOTE:
+                return "notes.detail.server"
+            if self.state.scope_type == ScopeType.WORKSPACE:
+                return "notes.detail.workspace"
+            if self.state.scope_type == ScopeType.LOCAL_NOTE:
+                return "notes.detail.local"
+            return None
+        if action_id in {
+            "workspace-use-in-chat-button",
+            "workspace-source-use-in-chat-button",
+            "workspace-artifact-use-in-chat-button",
+        }:
+            return "notes.workspace.detail.server"
+        return None
+
+    def _handoff_policy_blocking_message(self, action_id: str | None) -> str:
+        runtime_action_id = self._handoff_runtime_action_id(action_id)
+        if not runtime_action_id:
+            return ""
+        runtime_state = getattr(getattr(self.app_instance, "runtime_policy", None), "state", None)
+        policy_engine = getattr(self.app_instance, "ui_policy_engine", None)
+        evaluate = getattr(policy_engine, "evaluate", None)
+        if not isinstance(runtime_state, RuntimeSourceState) or not callable(evaluate):
+            return ""
+        decision = evaluate(action_id=runtime_action_id, state=runtime_state)
+        if getattr(decision, "allowed", True):
+            return ""
+        message = str(getattr(decision, "user_message", None) or "This source action is blocked by runtime policy.")
+        return f"{message} {HANDOFF_POLICY_RECOVERY}"
+
     def _update_use_in_chat_action_states(self) -> None:
         if not self.is_mounted:
             return
+        note_selected = self._has_selected_note_for_handoff()
+        notes_policy_message = (
+            self._handoff_policy_blocking_message("notes-use-in-chat-button")
+            if note_selected
+            else ""
+        )
         self._set_handoff_button_state(
             "#notes-use-in-chat-button",
-            disabled=not self._has_selected_note_for_handoff(),
-            disabled_tooltip="Select a note before using it in Chat.",
+            disabled=(not note_selected) or bool(notes_policy_message),
+            disabled_tooltip=notes_policy_message or "Select a note before using it in Chat.",
             enabled_tooltip="Use the selected note in Chat.",
         )
         workspace_selected = bool(self.state.selected_workspace_id)
+        workspace_policy_message = (
+            self._handoff_policy_blocking_message("workspace-use-in-chat-button")
+            if workspace_selected
+            else ""
+        )
         self._set_handoff_button_state(
             "#workspace-use-in-chat-button",
-            disabled=not workspace_selected,
-            disabled_tooltip="Select a workspace before using it in Chat.",
+            disabled=(not workspace_selected) or bool(workspace_policy_message),
+            disabled_tooltip=workspace_policy_message or "Select a workspace before using it in Chat.",
             enabled_tooltip="Use the selected workspace in Chat.",
+        )
+        source_selected = workspace_selected and self.state.selected_workspace_source_id is not None
+        source_policy_message = (
+            self._handoff_policy_blocking_message("workspace-source-use-in-chat-button")
+            if source_selected
+            else ""
         )
         self._set_handoff_button_state(
             "#workspace-source-use-in-chat-button",
-            disabled=not (workspace_selected and self.state.selected_workspace_source_id is not None),
-            disabled_tooltip="Select a workspace source before using it in Chat.",
+            disabled=(not source_selected) or bool(source_policy_message),
+            disabled_tooltip=source_policy_message or "Select a workspace source before using it in Chat.",
             enabled_tooltip="Use the selected workspace source in Chat.",
+        )
+        artifact_selected = workspace_selected and self.state.selected_workspace_artifact_id is not None
+        artifact_policy_message = (
+            self._handoff_policy_blocking_message("workspace-artifact-use-in-chat-button")
+            if artifact_selected
+            else ""
         )
         self._set_handoff_button_state(
             "#workspace-artifact-use-in-chat-button",
-            disabled=not (workspace_selected and self.state.selected_workspace_artifact_id is not None),
-            disabled_tooltip="Select a workspace artifact before using it in Chat.",
+            disabled=(not artifact_selected) or bool(artifact_policy_message),
+            disabled_tooltip=artifact_policy_message or "Select a workspace artifact before using it in Chat.",
             enabled_tooltip="Use the selected workspace artifact in Chat.",
         )
 
@@ -2366,6 +2424,10 @@ class NotesScreen(BaseAppScreen):
         action_id = getattr(getattr(event, "button", None), "id", None)
         if not isinstance(action_id, str):
             action_id = None
+        policy_message = self._handoff_policy_blocking_message(action_id)
+        if policy_message:
+            self._notify(policy_message, severity="warning")
+            return
         payload = self._build_current_chat_handoff_payload(action_id=action_id)
         if payload is None:
             self._notify("Select an item before using it in Chat.", severity="warning")
