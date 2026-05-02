@@ -21,7 +21,7 @@ from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from tldw_chatbook.UI.Dictation_Window_Improved import ImprovedDictationWindow as DictationWindow
-from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE, check_stt_deps, check_tts_deps
 # Note: Not using form_components due to generator/widget incompatibility
 
 import json
@@ -4135,11 +4135,13 @@ class STTSWindow(Container):
             yield Button("🎙️ Voice Cloning", id="view-voice-cloning-btn", classes="sidebar-button")
             yield Button("🔤 Speech Recognition", id="view-stt-btn", classes="sidebar-button")
             yield Button("🎵 Audio Effects", id="view-effects-btn", classes="sidebar-button", disabled=True)
-            yield Static(
+            capability_status = Static(
                 self._speech_capability_status_text(),
                 id="speech-capability-status",
                 classes="speech-capability-status",
             )
+            capability_status.tooltip = self._speech_capability_status_tooltip()
+            yield capability_status
         
         # Content area
         with Container(classes="stts-content"):
@@ -4148,25 +4150,29 @@ class STTSWindow(Container):
 
     def _speech_capability_status_text(self) -> str:
         """Return a concise local speech dependency status for the sidebar."""
+        check_tts_deps()
+        check_stt_deps()
+
         tts_available = DEPENDENCIES_AVAILABLE.get("tts_processing", False)
         stt_available = DEPENDENCIES_AVAILABLE.get("stt_processing", False)
 
         if tts_available and stt_available:
-            return "Local speech capabilities ready: Text-to-Speech and Speech Recognition dependencies detected."
+            return "Local speech: ready"
 
         unavailable = []
         if not tts_available:
-            unavailable.append("Text-to-Speech unavailable")
+            unavailable.append("TTS")
         if not stt_available:
-            unavailable.append("Speech Recognition unavailable")
+            unavailable.append("STT")
 
+        return "Local speech missing: " + ", ".join(unavailable)
+
+    def _speech_capability_status_tooltip(self) -> str:
+        """Return install guidance for local speech dependencies."""
         return (
-            "Local speech capabilities need optional dependencies: "
-            + "; ".join(unavailable)
-            + (
-                '. Install local providers with pip install -e '
-                '".[local_tts,transcription_faster_whisper,speech_recording]" and restart.'
-            )
+            "Install local providers with pip install "
+            '"tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]" '
+            "and restart."
         )
     
     def watch_current_view(self, old_view: str, new_view: str) -> None:
