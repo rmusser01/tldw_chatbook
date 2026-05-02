@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#163, plus active Web Search disabled-state slice
-Branch context: current `dev` / `origin/dev` at `1b80f96f`; active branch `codex/ux-web-search-disabled-state`
+Status: Current-dev rebaseline after UX remediation PRs #146-#164, plus active Media Source disabled-actions slice
+Branch context: current `dev` / `origin/dev` at `b57746c9`; active branch `codex/ux-media-source-disabled-actions`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `1b80f96f`:
+Verified on current `dev` at `b57746c9`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -51,11 +51,12 @@ Current source state plus this branch:
 - Phase 5 command-palette label consistency is merged through PR #161: command-palette tab navigation uses the same `Library`, `Models`, `Speech`, and `Settings` labels as top-level navigation while preserving route IDs.
 - Phase 5 main-navigation tooltip copy is merged through PR #162: compact top-level labels expose concise descriptions of each destination without changing route IDs.
 - Phase 6 Speech/STTS capability-state copy is merged through PR #163: local Text-to-Speech and Speech Recognition dependency gaps are visible before failed actions.
-- Phase 5/6 Web Search disabled-state copy is active in `codex/ux-web-search-disabled-state`: missing Web Search optional dependencies should render as a real disabled action with recovery copy, not a clickable-looking no-op.
+- Phase 5/6 Web Search disabled-state copy is merged through PR #164: missing Web Search optional dependencies render as a real disabled action with recovery copy, not a clickable-looking no-op.
+- Phase 5 Media Source disabled-action copy is active in `codex/ux-media-source-disabled-actions`: disabled source sync/save/upload actions should expose mode, selection, or archive-support recovery reasons.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond Web Search, Phase 6 capability-state presentation beyond Speech/STTS and Web Search where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond Web Search and Media Source actions, Phase 6 capability-state presentation beyond Speech/STTS and Web Search where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -294,7 +295,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, and #163. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, and Speech/STTS exposes local dependency capability states.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, and #164. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, and Web Search missing dependencies render as disabled-state recovery copy.
 
 ### Files
 
@@ -321,6 +322,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 - [x] Align command-palette tab navigation with current top-level labels while preserving route IDs.
 - [x] Add main-navigation tooltips that explain compact destination labels without changing route IDs.
 - [x] Render missing Web Search dependencies as a disabled nav action with tooltip and pane recovery copy.
+- [x] Add disabled-action recovery tooltips for Media Source sync/save/upload actions when server mode, selected source, or archive support is missing.
 - [ ] Add tooltips or short descriptions where compact labels remain necessary outside top navigation.
 
 ### Acceptance Criteria
@@ -335,7 +337,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 
 Purpose: make first-run diagnostics truthful and actionable without hiding real failures.
 
-Branch state: partially completed in `codex/ux-startup-log-polish`, with Speech/STTS capability-state merged through PR #163 and the Web Search disabled-state slice active in `codex/ux-web-search-disabled-state`. Splash import regressions, optional OpenAI TTS mapping fallback logging, and NLTK download-result logging are covered by focused tests. Broader optional dependency capability-state presentation remains open.
+Branch state: partially completed in `codex/ux-startup-log-polish`, with Speech/STTS capability-state merged through PR #163 and Web Search disabled-state merged through PR #164. Splash import regressions, optional OpenAI TTS mapping fallback logging, and NLTK download-result logging are covered by focused tests. Broader optional dependency capability-state presentation remains open.
 
 ### Files
 
@@ -420,4 +422,4 @@ Current-dev state: not started. The smoke/replay artifacts need to be regenerate
 
 ## Next Step
 
-After this Web Search disabled-state slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage and the remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this Media Source disabled-actions slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage and the remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.

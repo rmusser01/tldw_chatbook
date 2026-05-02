@@ -27,6 +27,11 @@ CREATE_SOURCE_TYPE_OPTIONS = [
 ]
 CREATE_SOURCE_POLICY_OPTIONS = [("Canonical", "canonical")]
 
+SOURCE_ACTION_TOOLTIP_LOCAL_MODE = "Switch Media to server mode and select a source to use this action."
+SOURCE_ACTION_TOOLTIP_NO_SOURCE = "Create or select a server ingestion source to use this action."
+SOURCE_ACTION_TOOLTIP_ARCHIVE_ONLY = "Upload Archive is only available for archive ingestion sources."
+SOURCE_ACTION_TOOLTIP_SERVICE_UNAVAILABLE = "Media source service is unavailable."
+
 
 class MediaIngestionSourcePanel(ScrollableContainer):
     """Manage server-backed ingestion sources from the media ingest view."""
@@ -190,6 +195,26 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         self.query_one("#create-config-input", Input).disabled = disabled
         self.query_one("#create-source-btn", Button).disabled = disabled
 
+    def _set_source_action_state(
+        self,
+        *,
+        disabled: bool,
+        tooltip: Optional[str],
+        upload_disabled: Optional[bool] = None,
+        upload_tooltip: Optional[str] = None,
+    ) -> None:
+        """Keep disabled source actions explanatory instead of silent no-ops."""
+        save_button = self.query_one("#save-source-btn", Button)
+        sync_button = self.query_one("#sync-source-btn", Button)
+        upload_button = self.query_one("#upload-archive-btn", Button)
+
+        for button in (save_button, sync_button):
+            button.disabled = disabled
+            button.tooltip = tooltip
+
+        upload_button.disabled = disabled if upload_disabled is None else upload_disabled
+        upload_button.tooltip = tooltip if upload_tooltip is None else upload_tooltip
+
     def _source_index_for_identity(self, source_identity: Any) -> Optional[int]:
         source_identity_str = str(source_identity or "")
         if not source_identity_str:
@@ -225,9 +250,7 @@ class MediaIngestionSourcePanel(ScrollableContainer):
             await self._clear_list_view("#source-list")
             await self._clear_list_view("#source-items-list")
             self.query_one("#source-detail", Static).update("Server ingestion sources require server mode.")
-            self.query_one("#save-source-btn", Button).disabled = True
-            self.query_one("#sync-source-btn", Button).disabled = True
-            self.query_one("#upload-archive-btn", Button).disabled = True
+            self._set_source_action_state(disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_LOCAL_MODE)
             return
 
         self._show_server_ui(True)
@@ -236,6 +259,7 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         if self.scope_service is None:
             self._set_create_controls_disabled(True)
             self.query_one("#source-detail", Static).update("Media source service is unavailable.")
+            self._set_source_action_state(disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_SERVICE_UNAVAILABLE)
             return
 
         sources = await self._maybe_await(self.scope_service.list_ingestion_sources(mode="server"))
@@ -251,9 +275,7 @@ class MediaIngestionSourcePanel(ScrollableContainer):
             self.selected_source = None
             self.query_one("#source-detail", Static).update("No server ingestion sources found.")
             await self._clear_list_view("#source-items-list")
-            self.query_one("#save-source-btn", Button).disabled = True
-            self.query_one("#sync-source-btn", Button).disabled = True
-            self.query_one("#upload-archive-btn", Button).disabled = True
+            self._set_source_action_state(disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_NO_SOURCE)
 
     async def _load_source_list(self) -> None:
         list_view = await self._clear_list_view("#source-list")
@@ -280,17 +302,12 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         detail = self.query_one("#source-detail", Static)
         policy_input = self.query_one("#source-policy-input", Input)
         enabled_checkbox = self.query_one("#source-enabled-checkbox", Checkbox)
-        save_button = self.query_one("#save-source-btn", Button)
-        sync_button = self.query_one("#sync-source-btn", Button)
-        upload_button = self.query_one("#upload-archive-btn", Button)
 
         if not self.selected_source:
             detail.update("No source selected.")
             policy_input.value = ""
             enabled_checkbox.value = False
-            save_button.disabled = True
-            sync_button.disabled = True
-            upload_button.disabled = True
+            self._set_source_action_state(disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_NO_SOURCE)
             return
 
         source = self.selected_source
@@ -307,9 +324,13 @@ class MediaIngestionSourcePanel(ScrollableContainer):
 
         policy_input.value = str(source.get("policy") or "")
         enabled_checkbox.value = bool(source.get("enabled", False))
-        save_button.disabled = False
-        sync_button.disabled = False
-        upload_button.disabled = not self._archive_upload_supported(source)
+        archive_supported = self._archive_upload_supported(source)
+        self._set_source_action_state(
+            disabled=False,
+            tooltip=None,
+            upload_disabled=not archive_supported,
+            upload_tooltip=None if archive_supported else SOURCE_ACTION_TOOLTIP_ARCHIVE_ONLY,
+        )
 
     async def _load_source_items(self) -> None:
         items_view = await self._clear_list_view("#source-items-list")
