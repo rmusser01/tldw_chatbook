@@ -80,6 +80,10 @@ SEARCH_NAV_EMBEDDINGS_MANAGE = "search-nav-embeddings-manage"
 # UI Constant for "Local Server" provider display name
 LOCAL_SERVER_PROVIDER_DISPLAY_NAME = "Local OpenAI-Compliant Server"
 LOCAL_SERVER_PROVIDER_INTERNAL_ID = "local_openai_compliant"  # Internal ID to distinguish
+WEB_SEARCH_DEPENDENCY_RECOVERY = (
+    'Web Search requires optional dependencies. Install them with pip install -e ".[websearch]" '
+    "and restart Chatbook."
+)
 
 
 class SearchWindow(Container):
@@ -196,7 +200,13 @@ class SearchWindow(Container):
             if WEB_SEARCH_AVAILABLE:
                 yield Button("Web Search", id=SEARCH_NAV_WEB_SEARCH, classes="search-nav-button")
             else:
-                yield Button("Web Search", id="search-nav-web-search-disabled", classes="search-nav-button disabled")
+                yield Button(
+                    "Web Search",
+                    id="search-nav-web-search-disabled",
+                    classes="search-nav-button disabled",
+                    disabled=True,
+                    tooltip=WEB_SEARCH_DEPENDENCY_RECOVERY,
+                )
             # Add Embeddings navigation buttons
             yield Button("Create Embeddings", id=SEARCH_NAV_EMBEDDINGS_CREATE, classes="search-nav-button")
             yield Button("Manage Embeddings", id=SEARCH_NAV_EMBEDDINGS_MANAGE, classes="search-nav-button")
@@ -242,7 +252,12 @@ class SearchWindow(Container):
             else:
                 with Container(id=SEARCH_VIEW_WEB_SEARCH, classes="search-view-area"):
                     with VerticalScroll():
-                        yield Markdown("### Web Search/Scraping Is Not Currently Installed\n\n...")
+                        yield Markdown(
+                            "### Web Search requires optional dependencies\n\n"
+                            "Install the Web Search extra and restart Chatbook:\n\n"
+                            '```bash\npip install -e ".[websearch]"\n```\n\n'
+                            "RAG search, saved collections, and embeddings remain available from the other Search sections."
+                        )
                         
             # Embeddings views
             # Create Embeddings View - Now using new SearchEmbeddingsWindow

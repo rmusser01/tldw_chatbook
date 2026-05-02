@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#162, plus active Speech capability-state slice
-Branch context: current `dev` / `origin/dev` at `b375d7fe`; active branch `codex/ux-speech-capability-state`
+Status: Current-dev rebaseline after UX remediation PRs #146-#163, plus active Web Search disabled-state slice
+Branch context: current `dev` / `origin/dev` at `1b80f96f`; active branch `codex/ux-web-search-disabled-state`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `b375d7fe`:
+Verified on current `dev` at `1b80f96f`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -50,11 +50,12 @@ Current source state plus this branch:
 - Phase 4 invalid-selection hardening is merged through PR #160: Notes and workspace source/artifact `Use in Chat` actions are disabled until a valid selection exists and expose tooltip recovery copy.
 - Phase 5 command-palette label consistency is merged through PR #161: command-palette tab navigation uses the same `Library`, `Models`, `Speech`, and `Settings` labels as top-level navigation while preserving route IDs.
 - Phase 5 main-navigation tooltip copy is merged through PR #162: compact top-level labels expose concise descriptions of each destination without changing route IDs.
-- Phase 6 Speech/STTS capability-state copy is active in `codex/ux-speech-capability-state`: local Text-to-Speech and Speech Recognition dependency gaps should be visible before failed actions.
+- Phase 6 Speech/STTS capability-state copy is merged through PR #163: local Text-to-Speech and Speech Recognition dependency gaps are visible before failed actions.
+- Phase 5/6 Web Search disabled-state copy is active in `codex/ux-web-search-disabled-state`: missing Web Search optional dependencies should render as a real disabled action with recovery copy, not a clickable-looking no-op.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, Phase 6 capability-state presentation beyond Speech/STTS where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond Web Search, Phase 6 capability-state presentation beyond Speech/STTS and Web Search where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -293,7 +294,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, and #162. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, and compact main-navigation labels expose explanatory tooltips.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, and #163. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, and Speech/STTS exposes local dependency capability states.
 
 ### Files
 
@@ -319,6 +320,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 - [x] Rename top-level navigation jargon while preserving route IDs: `CCP` -> `Library`, `LLM` -> `Models`, and `S/TT/S` -> `Speech`.
 - [x] Align command-palette tab navigation with current top-level labels while preserving route IDs.
 - [x] Add main-navigation tooltips that explain compact destination labels without changing route IDs.
+- [x] Render missing Web Search dependencies as a disabled nav action with tooltip and pane recovery copy.
 - [ ] Add tooltips or short descriptions where compact labels remain necessary outside top navigation.
 
 ### Acceptance Criteria
@@ -333,7 +335,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 
 Purpose: make first-run diagnostics truthful and actionable without hiding real failures.
 
-Branch state: partially completed in `codex/ux-startup-log-polish`, with the Speech/STTS capability-state slice active in `codex/ux-speech-capability-state`. Splash import regressions, optional OpenAI TTS mapping fallback logging, and NLTK download-result logging are covered by focused tests. Broader optional dependency capability-state presentation remains open.
+Branch state: partially completed in `codex/ux-startup-log-polish`, with Speech/STTS capability-state merged through PR #163 and the Web Search disabled-state slice active in `codex/ux-web-search-disabled-state`. Splash import regressions, optional OpenAI TTS mapping fallback logging, and NLTK download-result logging are covered by focused tests. Broader optional dependency capability-state presentation remains open.
 
 ### Files
 
@@ -351,6 +353,7 @@ Branch state: partially completed in `codex/ux-startup-log-polish`, with the Spe
 - [x] Add tests that missing optional OpenAI TTS mapping uses defaults without error-level startup noise.
 - [x] Make NLTK download logging truthful: no success message when download fails.
 - [x] Expose local Speech/STTS TTS and STT dependency gaps as an inline capability state before failed actions.
+- [x] Expose missing Web Search optional dependencies as disabled-state and pane recovery copy.
 - [ ] Present optional dependency gaps as capability states when user-relevant, not stack traces.
 - [ ] Keep real crashes/error states visible.
 
@@ -360,6 +363,7 @@ Branch state: partially completed in `codex/ux-startup-log-polish`, with the Spe
 - [x] Missing optional TTS mapping falls back quietly.
 - [x] Failed NLTK download is not logged as success.
 - [x] Speech/STTS tells users when local Text-to-Speech or Speech Recognition dependencies are unavailable and how to recover.
+- [x] Search tells users when Web Search dependencies are unavailable and how to recover.
 - [ ] Optional dependency gaps tell users what capability is unavailable and how to recover.
 
 ## Phase 7: End-To-End Audit Replay And Closeout
@@ -416,4 +420,4 @@ Current-dev state: not started. The smoke/replay artifacts need to be regenerate
 
 ## Next Step
 
-After this Speech capability-state slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage and the remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this Web Search disabled-state slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage and the remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
