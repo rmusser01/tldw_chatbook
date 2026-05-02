@@ -259,7 +259,7 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         if self.scope_service is None:
             self._set_create_controls_disabled(True)
             self.query_one("#source-detail", Static).update("Media source service is unavailable.")
-            self._set_source_action_state(disabled=True, tooltip="Media source service is unavailable.")
+            self._set_source_action_state(disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_SERVICE_UNAVAILABLE)
             return
 
         sources = await self._maybe_await(self.scope_service.list_ingestion_sources(mode="server"))
