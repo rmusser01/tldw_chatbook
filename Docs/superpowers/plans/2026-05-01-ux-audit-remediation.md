@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after intern handoff merge
-Branch context: current `dev` / `origin/dev` at `61cd555d`
+Status: Current-dev rebaseline after UX remediation PRs #146-#150
+Branch context: current `dev` / `origin/dev` at `0f59a8e9`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,25 +29,21 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `61cd555d`:
+Verified on current `dev` at `0f59a8e9`:
 
-- The intern landed the main `Use in Chat` implementation path: `ChatHandoffPayload`, app-owned `pending_chat_handoff`, fresh ephemeral Chat tabs with `conversation_id=None`, staged context cards, draft prefill, first-send context injection, source-specific Notes/Workspace/Media/RAG/Web Search handoffs, and persistence coverage.
-- Focused handoff verification passed: `47 passed, 1 warning` across Chat handoff core, source handoffs, state persistence, and tab container tests.
-- Existing non-handoff focused tests passed: `49 passed, 8 warnings` across Chatbooks server actions, screen navigation, Ingest, Study scope service, and Search/RAG. These tests do not yet cover every UX-audit failure listed below.
-- Ingest source creation now uses `local_directory`, `archive_snapshot`, and `git_repository`, matching `ALLOWED_SERVER_CREATE_SOURCE_TYPES`; keep a direct regression so this does not drift.
+- Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
+- Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
+- Phase 3 clear/dismiss is merged: staged Chat context can be cleared before send, sent context cards are retained, and source handoff focused tests remain in place.
+- Phase 6 startup-log polish is partially merged: splash import, optional OpenAI TTS mapping fallback, and NLTK falsy-download logging regressions are covered.
 
 Still open by current source inspection:
 
-- `ChatbooksScreen` still extends raw `Screen`, not `BaseAppScreen`, so the global-navigation trap remains open until a routed-shell regression proves otherwise.
-- `Tests/UI/test_ux_audit_smoke.py` does not exist yet.
-- `tldw_chatbook/Chat/provider_readiness.py` does not exist yet, so Chat first-run readiness remains open.
-- `QuizScopeService.list_quizzes()` still uses `list((records or {}).get("items") or records or [])`, so an empty mapping payload can still fall through to mapping keys instead of an empty item list.
-- `ChatScreen._extract_and_save_messages()` still defines `log_selectors` only inside the fallback path, so the unbound save-state bug remains open when the direct chat-log lookup succeeds.
-- `SearchRAGWindow._refresh_collections_list()` is still a `thread=True` worker that queries and mutates Textual widgets from the worker.
-- Visible IA labels still include `LLM` and `S/TT/S`.
-- Splash modules still reference `Dict` without importing it, and NLTK download logging can still report success after a falsy download result.
+- Phase 4 still needs disabled-state/recovery consistency for blocked source handoffs and live smoke replay.
+- Phase 5 still needs cross-surface empty/disabled-state language cleanup. Current branch `codex/ux-ia-language-labels` addresses top-level `CCP`/`LLM`/`S/TT/S` navigation labels while preserving route IDs.
+- Phase 6 still needs optional dependency gaps represented as user-facing capability states where relevant.
+- Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: Phases 3 and most of 4 are no longer greenfield implementation work. They become current-dev verification, hardening, and UX closeout. Phases 0, 1, 2, 5, 6, and 7 remain active.
+Planning consequence: remaining implementation should target Phase 4 disabled/recovery states, Phase 5 empty-state/IA language, Phase 6 capability-state presentation, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -170,7 +166,7 @@ Branch state: completed in `codex/ux-audit-phase0-phase1`. Ingest has direct def
 
 Purpose: make Chat understandable and runnable before handoffs start landing users there.
 
-Current-dev state: still open. Handoffs now send users into Chat, but provider readiness and first-run orientation have not landed.
+Branch state: completed in `codex/ux-chat-readiness-orientation`.
 
 ### Files
 
@@ -182,25 +178,25 @@ Current-dev state: still open. Handoffs now send users into Chat, but provider r
 
 ### Steps
 
-- [ ] Add provider readiness unit tests for key-required and keyless/local providers.
-- [ ] Implement a side-effect-free `ProviderReadiness` helper that checks config and environment values.
-- [ ] Reuse the helper for send-time missing-key handling so pre-send and post-send messages stay consistent.
-- [ ] Add a compact Chat empty-state orientation strip: what Chat is for, current provider readiness, source/context entry points, and `Ctrl+P`.
-- [ ] Keep power-user controls available; collapse or summarize only the most advanced first-run-only noise.
-- [ ] Add a regression that Chat first-run exposes provider readiness before the first failed send.
+- [x] Add provider readiness unit tests for key-required and keyless/local providers.
+- [x] Implement a side-effect-free `ProviderReadiness` helper that checks config and environment values.
+- [x] Reuse the helper for send-time missing-key handling so pre-send and post-send messages stay consistent.
+- [x] Add a compact Chat empty-state orientation strip: what Chat is for, current provider readiness, source/context entry points, and `Ctrl+P`.
+- [x] Keep power-user controls available; collapse or summarize only the most advanced first-run-only noise.
+- [x] Add a regression that Chat first-run exposes provider readiness before the first failed send.
 
 ### Acceptance Criteria
 
-- [ ] Chat shows whether the selected provider is ready before Send.
-- [ ] Missing API-key send-time error remains actionable.
-- [ ] Chat explains that Notes, Media, Search, Workspaces, Study, and personas can feed context into Chat.
-- [ ] No modal onboarding is introduced.
+- [x] Chat shows whether the selected provider is ready before Send.
+- [x] Missing API-key send-time error remains actionable.
+- [x] Chat explains that Notes, Media, Search, Workspaces, Study, and personas can feed context into Chat.
+- [x] No modal onboarding is introduced.
 
 ## Phase 3: Chat Handoff Core Closeout
 
 Purpose: verify and harden the destination-side contract that has now landed in current `dev`.
 
-Current-dev state: mostly landed and covered by focused tests. Remaining work is UX closeout: add a visible clear/dismiss path before send, replay in the smoke harness, and make disabled/recovery states consistent with Phase 5.
+Branch state: clear/dismiss behavior completed in `codex/ux-chat-handoff-clear-context`. Remaining work is live smoke replay and shared disabled/recovery language.
 
 ### Files
 
@@ -226,7 +222,7 @@ Current-dev state: mostly landed and covered by focused tests. Remaining work is
 - [x] Render a visible `Context staged` handoff card.
 - [x] Prefill the draft prompt but do not auto-send.
 - [x] Inject staged context into the first user send in an auditable way.
-- [ ] Add clear/undo behavior for staged context before send.
+- [x] Add clear/undo behavior for staged context before send.
 - [x] Fail closed when chat tabs are explicitly disabled.
 - [ ] Replay handoff creation and first send in the Phase 0/7 smoke harness.
 
@@ -237,7 +233,7 @@ Current-dev state: mostly landed and covered by focused tests. Remaining work is
 - [x] The first user send includes staged source content in focused tests.
 - [x] Large bodies are capped and truthfully marked truncated.
 - [x] Local/server/workspace state remains visible and source-honest in payload/card tests.
-- [ ] Users can clear or dismiss staged context before Send.
+- [x] Users can clear or dismiss staged context before Send.
 - [ ] The behavior passes live Textual smoke replay, not only unit/widget tests.
 
 ## Phase 4: Source Handoff Surfaces Closeout
@@ -284,7 +280,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Current-dev state: still open. The main navigation now says `Library` for CCP, but visible `LLM` and `S/TT/S` jargon remain and the cross-surface disabled/empty-state pattern is not yet standardized.
+Branch state: in progress in `codex/ux-ia-language-labels`. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs. Broader empty/disabled-state language remains open.
 
 ### Files
 
@@ -307,7 +303,7 @@ Current-dev state: still open. The main navigation now says `Library` for CCP, b
 - [ ] Notes empty states clarify local/server/workspace scope and creation/import routes.
 - [ ] CCP/Library empty states explain personas, characters, prompts, dictionaries, and how they relate to Chat.
 - [ ] Chatbooks empty state keeps portable knowledge-pack explanation and retains escape navigation.
-- [ ] Rename visible jargon while preserving route IDs: `S/TT/S` -> `Speech`; consider `LLM` -> `Models`; keep `Library` for CCP/persona surfaces.
+- [x] Rename top-level navigation jargon while preserving route IDs: `CCP` -> `Library`, `LLM` -> `Models`, and `S/TT/S` -> `Speech`.
 - [ ] Add tooltips or short descriptions where compact labels remain necessary.
 
 ### Acceptance Criteria

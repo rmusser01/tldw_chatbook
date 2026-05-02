@@ -15,12 +15,7 @@ from textual.message import Message
 if TYPE_CHECKING:
     from ..app import TldwCli
 
-from ..Constants import (
-    TAB_CCP, TAB_TOOLS_SETTINGS, TAB_INGEST, TAB_LLM, TAB_EVALS, 
-    TAB_CODING, TAB_STTS, TAB_STUDY, TAB_CHATBOOKS, TAB_CHAT,
-    TAB_NOTES, TAB_MEDIA, TAB_SEARCH, TAB_LOGS, TAB_STATS,
-    TAB_SUBSCRIPTIONS
-)
+from ..Constants import get_tab_display_label
 #
 #######################################################################################################################
 #
@@ -52,27 +47,7 @@ class TabDropdown(Container):
         Convert tab ID to user-friendly label.
         Mirrors the logic from TabBar for consistency.
         """
-        label_map = {
-            TAB_CHAT: "Chat",
-            TAB_CCP: "CCP",
-            TAB_NOTES: "Notes",
-            TAB_MEDIA: "Media",
-            TAB_SEARCH: "Search",
-            TAB_TOOLS_SETTINGS: "Settings",
-            TAB_INGEST: "Ingest Content",
-            TAB_LLM: "LLM Management",
-            TAB_EVALS: "Evals",
-            TAB_CODING: "Coding",
-            TAB_STTS: "S/TT/S",
-            TAB_STUDY: "Study",
-            TAB_CHATBOOKS: "Chatbooks",
-            TAB_LOGS: "Logs",
-            TAB_STATS: "Stats",
-            TAB_SUBSCRIPTIONS: "Subscriptions"
-        }
-        
-        # Return mapped label or format the ID if not in map
-        return label_map.get(tab_id, tab_id.replace('_', ' ').title())
+        return get_tab_display_label(tab_id)
 
     def compose(self) -> ComposeResult:
         """Compose the dropdown widget"""

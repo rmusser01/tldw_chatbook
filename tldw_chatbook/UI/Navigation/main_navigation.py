@@ -34,7 +34,7 @@ class MainNavigationBar(Container):
         ("Workspace", [("chat", "Chat"), ("chatbooks", "Chatbooks")]),
         ("Content", [("notes", "Notes"), ("media", "Media"), ("ingest", "Ingest"), ("search", "Search"), ("subscriptions", "Subscriptions")]),
         ("Characters", [("ccp", "Library"), ("study", "Study")]),
-        ("AI Config", [("llm", "LLM"), ("stts", "S/TT/S"), ("evals", "Evals")]),
+        ("AI Config", [("llm", "Models"), ("stts", "Speech"), ("evals", "Evals")]),
         ("System", [("tools_settings", "Settings"), ("customize", "Customize"), ("logs", "Logs"), ("stats", "Stats"), ("coding", "Coding")]),
     ]
 
