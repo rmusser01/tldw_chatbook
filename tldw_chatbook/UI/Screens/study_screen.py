@@ -49,6 +49,16 @@ class StudyScreen(BaseAppScreen):
         "guides": "study_guide",
         "learning_map": "learning_map",
     }
+    _SECTION_TOOLTIPS = {
+        "dashboard": "Review due cards, recent decks, quizzes, and resume study sessions.",
+        "paths": "Build or follow structured learning paths.",
+        "flashcards": "Review decks and spaced-repetition cards.",
+        "quizzes": "Create, start, and review quizzes.",
+        "guides": "Generate or open study guides from your material.",
+        "mindmaps": "Explore topics as visual knowledge maps.",
+        "course": "Create course outlines and study sequences.",
+        "learning_map": "Open the learning map for relationships across study material.",
+    }
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "study", **kwargs)
@@ -79,14 +89,35 @@ class StudyScreen(BaseAppScreen):
 
         with Vertical(id="study-shell"):
             with Horizontal(id="study-section-bar"):
-                yield Button("Dashboard", id="view-dashboard-btn", variant="primary")
-                yield Button("Paths", id="view-structured-btn")
-                yield Button("Flashcards", id="view-flashcards-btn")
-                yield Button("Quizzes", id="view-quizzes-btn")
-                yield Button("Guides", id="view-study-guide-btn")
-                yield Button("Mindmaps", id="view-mindmaps-btn")
-                yield Button("Course", id="view-course-btn")
-                yield Button("Map", id="view-learning-map-btn")
+                yield Button(
+                    "Dashboard",
+                    id="view-dashboard-btn",
+                    variant="primary",
+                    tooltip=self._SECTION_TOOLTIPS["dashboard"],
+                )
+                yield Button("Paths", id="view-structured-btn", tooltip=self._SECTION_TOOLTIPS["paths"])
+                yield Button(
+                    "Flashcards",
+                    id="view-flashcards-btn",
+                    tooltip=self._SECTION_TOOLTIPS["flashcards"],
+                )
+                yield Button("Quizzes", id="view-quizzes-btn", tooltip=self._SECTION_TOOLTIPS["quizzes"])
+                yield Button(
+                    "Guides",
+                    id="view-study-guide-btn",
+                    tooltip=self._SECTION_TOOLTIPS["guides"],
+                )
+                yield Button(
+                    "Mindmaps",
+                    id="view-mindmaps-btn",
+                    tooltip=self._SECTION_TOOLTIPS["mindmaps"],
+                )
+                yield Button("Course", id="view-course-btn", tooltip=self._SECTION_TOOLTIPS["course"])
+                yield Button(
+                    "Map",
+                    id="view-learning-map-btn",
+                    tooltip=self._SECTION_TOOLTIPS["learning_map"],
+                )
             yield self.study_dashboard
             yield self.quiz_session_widget
             yield self.study_window_widget

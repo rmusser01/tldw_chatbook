@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#186, plus active Study quiz Review in Chat slice
-Branch context: current `dev` / `origin/dev` at `6f1f39fc`; active branch `codex/ux-quiz-review-chat-handoff`
+Status: Current-dev rebaseline after UX remediation PRs #146-#187, plus active Study section label-tooltip slice
+Branch context: current `dev` / `origin/dev` at `f3ccf246`; active branch `codex/ux-study-section-tooltips`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `6f1f39fc`:
+Verified on current `dev` at `f3ccf246`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -74,11 +74,12 @@ Current source state plus this branch:
 - Phase 6 Search/RAG dependency action-state is merged through PR #184: missing embeddings/RAG dependencies disable the primary Search action and expose install recovery copy.
 - Phase 5 Study dashboard resume-tooltip is merged through PR #185: the disabled Resume action explains that no study session exists and points users to flashcards/quizzes.
 - Phase 5 Study quiz start-tooltip is merged through PR #186: the shell-level Start quiz action explains no-quiz, select-quiz, unavailable-scope, active-attempt, and start-ready states.
-- Phase 5 Study quiz Review in Chat is active in `codex/ux-quiz-review-chat-handoff`: the shell-level Review in chat action fails closed until a selected quiz and Chat handoff seam exist, then stages quiz context into Chat.
+- Phase 5 Study quiz Review in Chat is merged through PR #187: the shell-level Review in chat action fails closed until a selected quiz and Chat handoff seam exist, then stages quiz context into Chat.
+- Phase 5 Study section label tooltips are active in `codex/ux-study-section-tooltips`: compact Study section labels keep fast navigation while explaining Dashboard, Paths, Flashcards, Quizzes, Guides, Mindmaps, Course, and Map.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target broader live source-handoff replay cases, any non-handoff source actions where policy state can still block a visible action, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond the already-covered Web Search, Media Source, Study Quiz, Study Flashcard, Study dashboard resume, Study quiz start, Study quiz Review in Chat, Media Viewer, Media Analysis, Media Highlight, Media Analysis navigation, Search/RAG saved-search actions, Media list pagination, and Media multi-item review actions, Phase 6 capability-state presentation beyond Speech/STTS, Web Search, and Search/RAG embeddings where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target broader live source-handoff replay cases, any non-handoff source actions where policy state can still block a visible action, any remaining compact-label/descriptive copy outside top navigation, command-palette tab navigation, and the Study section bar, disabled-state consistency beyond the already-covered Web Search, Media Source, Study Quiz, Study Flashcard, Study dashboard resume, Study quiz start, Study quiz Review in Chat, Media Viewer, Media Analysis, Media Highlight, Media Analysis navigation, Search/RAG saved-search actions, Media list pagination, and Media multi-item review actions, Phase 6 capability-state presentation beyond Speech/STTS, Web Search, and Search/RAG embeddings where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -324,7 +325,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, #171, #172, #173, #174, #185, and #186. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Study dashboard Resume action recovery is merged through PR #185, Study quiz Start action recovery is merged through PR #186, Study quiz Review in Chat recovery/handoff is active in `codex/ux-quiz-review-chat-handoff`, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, Media Highlight actions expose selected-highlight tooltips, Media Analysis navigation actions expose saved-version boundary tooltips, Search/RAG saved-search actions expose selection/reuse recovery, Media list pagination exposes result-page boundary tooltips, and Media multi-item review actions expose generation/cancellation state tooltips.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, #171, #172, #173, #174, #185, #186, and #187. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Study dashboard Resume action recovery is merged through PR #185, Study quiz Start action recovery is merged through PR #186, Study quiz Review in Chat recovery/handoff is merged through PR #187, Study section-bar compact label tooltips are active in `codex/ux-study-section-tooltips`, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, Media Highlight actions expose selected-highlight tooltips, Media Analysis navigation actions expose saved-version boundary tooltips, Search/RAG saved-search actions expose selection/reuse recovery, Media list pagination exposes result-page boundary tooltips, and Media multi-item review actions expose generation/cancellation state tooltips.
 
 ### Files
 
@@ -364,6 +365,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 - [x] Add Study dashboard Resume action tooltip copy for no-session and resumable-session states.
 - [x] Add Study quiz Start action tooltip copy for no-quiz, select-quiz, scope-unavailable, active-attempt, and ready states.
 - [x] Add Study quiz Review in Chat recovery copy and selected-quiz handoff through the app-owned Chat seam.
+- [x] Add Study section-bar tooltips for compact labels while preserving fast direct navigation.
 - [ ] Add tooltips or short descriptions where compact labels remain necessary outside top navigation.
 
 ### Acceptance Criteria
@@ -465,4 +467,4 @@ Current-dev state: partially started. A mounted handoff first-send smoke test no
 
 ## Next Step
 
-After this Study quiz Review in Chat slice, remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. The remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this Study section label-tooltip slice, remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. The remaining Phase 5 work is any remaining compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
