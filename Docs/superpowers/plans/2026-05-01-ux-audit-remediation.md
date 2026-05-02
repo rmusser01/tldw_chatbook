@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#167, plus active Media Viewer action-tooltip slice
-Branch context: current `dev` / `origin/dev` at `5445f1d8`; active branch `codex/ux-media-viewer-action-tooltips`
+Status: Current-dev rebaseline after UX remediation PRs #146-#168, plus active Media Analysis action-tooltip slice
+Branch context: current `dev` / `origin/dev` at `47080550`; active branch `codex/ux-media-analysis-action-tooltips`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `5445f1d8`:
+Verified on current `dev` at `47080550`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -55,11 +55,12 @@ Current source state plus this branch:
 - Phase 5 Media Source disabled-action copy is merged through PR #165: disabled source sync/save/upload actions expose mode, selection, or archive-support recovery reasons.
 - Phase 5 Study Quiz disabled-action copy is merged through PR #166: disabled quiz edit/start/load/submit actions expose scope or active-attempt recovery reasons.
 - Phase 5 Study Flashcards disabled-action copy is merged through PR #167: disabled flashcard create/start/move/delete actions expose scope, selection, target deck, or server-mode recovery reasons.
-- Phase 5 Media Viewer action-tooltip copy is active in `codex/ux-media-viewer-action-tooltips`: Media Viewer `Use in Chat` and `Save for Later` actions should expose selection/capability recovery reasons.
+- Phase 5 Media Viewer action-tooltip copy is merged through PR #168: Media Viewer `Use in Chat` and `Save for Later` actions expose selection/capability recovery reasons.
+- Phase 5 Media Analysis action-tooltip copy is active in `codex/ux-media-analysis-action-tooltips`: Media analysis save/note/edit/overwrite/delete actions should expose generated-analysis and saved-version recovery reasons.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond Web Search, Media Source, Study Quiz, Study Flashcard, and Media Viewer actions, Phase 6 capability-state presentation beyond Speech/STTS and Web Search where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target remaining Phase 4 source-authority and broader live smoke cases, any remaining compact-label/descriptive copy outside top navigation and command-palette tab navigation, disabled-state consistency beyond Web Search, Media Source, Study Quiz, Study Flashcard, Media Viewer, and Media Analysis actions, Phase 6 capability-state presentation beyond Speech/STTS and Web Search where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -298,7 +299,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, and #167. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, and Study Flashcards disabled actions expose recovery tooltips.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, and #168. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, and Media Viewer actions expose selection/capability tooltips.
 
 ### Files
 
@@ -329,6 +330,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 - [x] Add disabled-action recovery tooltips for Study Quiz editing and attempt actions when scope is unavailable or an attempt is active.
 - [x] Add disabled-action recovery tooltips for Study Flashcards create/start/move/delete actions when scope, deck, card, target deck, or server-mode deletion support is missing.
 - [x] Add Media Viewer action tooltips for `Use in Chat` and `Save for Later` when selection or read-it-later capability is missing.
+- [x] Add Media Analysis action tooltips for save, note, edit, overwrite, and delete states when generated analysis or saved versions are missing.
 - [ ] Add tooltips or short descriptions where compact labels remain necessary outside top navigation.
 
 ### Acceptance Criteria
@@ -428,4 +430,4 @@ Current-dev state: not started. The smoke/replay artifacts need to be regenerate
 
 ## Next Step
 
-After this Media Viewer action-tooltip slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage and the remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this Media Analysis action-tooltip slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage and the remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.

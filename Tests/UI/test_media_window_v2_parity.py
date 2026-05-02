@@ -904,3 +904,54 @@ def test_media_viewer_load_analysis_versions_resets_button_state_when_empty():
     assert panel.current_analysis is None
     assert panel.has_existing_analysis is False
     panel._update_analysis_button_states.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_media_viewer_analysis_actions_explain_disabled_and_available_states():
+    class TestMediaViewerPanel(MediaViewerPanel):
+        def populate_providers(self) -> None:
+            pass
+
+    class MediaViewerPanelApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield TestMediaViewerPanel(SimpleNamespace())
+
+    app = MediaViewerPanelApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one(MediaViewerPanel)
+        panel._update_analysis_button_states()
+        await pilot.pause()
+
+        save_button = panel.query_one("#save-analysis-btn", Button)
+        save_as_note_button = panel.query_one("#save-as-note-btn", Button)
+        edit_button = panel.query_one("#edit-analysis-btn", Button)
+        overwrite_button = panel.query_one("#overwrite-analysis-btn", Button)
+        delete_button = panel.query_one("#delete-analysis-btn", Button)
+
+        assert save_button.disabled is True
+        assert "Generate an analysis before saving it" in str(save_button.tooltip)
+        assert save_as_note_button.disabled is True
+        assert "Generate an analysis before saving it as a note" in str(save_as_note_button.tooltip)
+        assert edit_button.disabled is True
+        assert "Generate or select an analysis before editing it" in str(edit_button.tooltip)
+        assert overwrite_button.disabled is True
+        assert "Save an analysis before overwriting it" in str(overwrite_button.tooltip)
+        assert delete_button.disabled is True
+        assert "Select a saved analysis version before deleting it" in str(delete_button.tooltip)
+
+        panel.current_analysis = "Generated analysis"
+        panel.has_existing_analysis = False
+        panel.all_analyses = []
+        panel._update_analysis_button_states()
+        await pilot.pause()
+
+        assert save_button.disabled is False
+        assert "Save this generated analysis" in str(save_button.tooltip)
+        assert save_as_note_button.disabled is False
+        assert "Save this analysis as a note" in str(save_as_note_button.tooltip)
+        assert edit_button.disabled is False
+        assert "Edit this analysis" in str(edit_button.tooltip)
+        assert overwrite_button.disabled is True
+        assert "Save an analysis before overwriting it" in str(overwrite_button.tooltip)
+        assert delete_button.disabled is True
+        assert "Select a saved analysis version before deleting it" in str(delete_button.tooltip)
