@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#177, plus active backend-contract card-copy slice
-Branch context: current `dev` / `origin/dev` at `308c2d4f`; active branch `codex/ux-handoff-contract-card-copy`
+Status: Current-dev rebaseline after UX remediation PRs #146-#178, plus active source capability-contract smoke slice
+Branch context: current `dev` / `origin/dev` at `b6694dd7`; active branch `codex/ux-source-capability-contract-smoke`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `308c2d4f`:
+Verified on current `dev` at `b6694dd7`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -65,7 +65,8 @@ Current source state plus this branch:
 - Phase 4/7 handoff first-send smoke coverage is merged through PR #175: a mounted Textual test stages a handoff into a real Chat tab and verifies the first-send path applies staged context before marking the payload sent.
 - Phase 4 invalid-selection smoke coverage is merged through PR #176: mounted Textual tests press empty Notes, workspace source/artifact, and Media handoff actions and verify they expose recovery copy without staging Chat.
 - Phase 4 source-handoff replay smoke coverage is merged through PR #177: mounted Textual tests replay selected Notes, workspace details/note/source/artifact, Media, RAG Search, and Web Search handoffs into the app-owned Chat seam.
-- Phase 4 backend-contract card copy is active in `codex/ux-handoff-contract-card-copy`: staged Chat context cards surface dry-run sync diagnostics and unsupported-action recovery messages without implying write sync.
+- Phase 4 backend-contract card copy is merged through PR #178: staged Chat context cards surface dry-run sync diagnostics and unsupported-action recovery messages without implying write sync.
+- Phase 4 source capability-contract smoke coverage is active in `codex/ux-source-capability-contract-smoke`: Notes/Workspace handoff buttons consume runtime-policy denial state and expose recovery copy without staging Chat.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
@@ -266,7 +267,7 @@ Branch state: clear/dismiss behavior completed in `codex/ux-chat-handoff-clear-c
 
 Purpose: verify and harden the source-side handoff surfaces that have now landed in current `dev`.
 
-Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG Search, and dedicated Web Search handoffs are implemented and covered by focused tests. Notes, workspace source/artifact, and Media invalid-selection states now have shared-harness smoke coverage. Valid source handoffs from mounted source surfaces replay into the app-owned Chat seam. The active branch makes backend-provided dry-run and unsupported-action messages visible on staged Chat context cards. Remaining work is to close source-action capability edge cases in the shared UX smoke pass.
+Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG Search, and dedicated Web Search handoffs are implemented and covered by focused tests. Notes, workspace source/artifact, and Media invalid-selection states now have shared-harness smoke coverage. Valid source handoffs from mounted source surfaces replay into the app-owned Chat seam. Backend-provided dry-run and unsupported-action messages are visible on staged Chat context cards. The active branch adds runtime-policy-denied Notes/Workspace handoff smoke coverage. Remaining work is to close remaining source-action capability edge cases in the shared UX smoke pass.
 
 ### Files
 
@@ -296,6 +297,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 - [x] Replay each source handoff in the Phase 0/7 smoke harness.
 - [x] Replay invalid-selection handoff states for Notes, workspace source/artifact, and Media in the Phase 0/7 smoke harness.
 - [x] Surface backend dry-run sync and unsupported-action messages on staged Chat context cards without implying write sync.
+- [x] Add mounted smoke coverage for runtime-policy-blocked Notes/Workspace handoff actions with recovery copy and no Chat staging.
 
 ### Acceptance Criteria
 
@@ -446,4 +448,4 @@ Current-dev state: partially started. A mounted handoff first-send smoke test no
 
 ## Next Step
 
-After this backend-contract card-copy slice, the remaining Phase 4 work is source-action backend/capability-contract smoke coverage. The remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this source capability-contract smoke slice, the remaining Phase 4 work is extending source-action backend/capability-contract recovery to other source surfaces where policy state can block a visible action. The remaining Phase 5 work is any compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
