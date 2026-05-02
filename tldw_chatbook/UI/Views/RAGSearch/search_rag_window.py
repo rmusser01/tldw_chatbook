@@ -36,6 +36,7 @@ from .constants import (
     MAX_CONCURRENT_SEARCHES, SEARCH_MODES, PARENT_STRATEGIES
 )
 
+from ....Chat.chat_handoff_messages import USE_IN_CHAT_UNAVAILABLE_RECOVERY
 from ....Utils.optional_deps import DEPENDENCIES_AVAILABLE
 from ....DB.search_history_db import SearchHistoryDB
 from ....Utils.paths import get_user_data_dir
@@ -506,7 +507,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         payload = self._build_search_chat_handoff_payload(event.result)
         open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
         if not callable(open_chat):
-            self.app_instance.notify("Use in Chat is not available.", severity="warning")
+            self.app_instance.notify(USE_IN_CHAT_UNAVAILABLE_RECOVERY, severity="warning")
             return
         open_chat(payload)
     

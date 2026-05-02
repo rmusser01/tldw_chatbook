@@ -45,6 +45,7 @@ from ..Event_Handlers.media_events import (
     MediaReadingHighlightUpdateEvent,
     MediaReadingHighlightDeleteEvent,
 )
+from ..Chat.chat_handoff_messages import USE_IN_CHAT_UNAVAILABLE_RECOVERY
 from ..Chat.chat_handoff_models import ChatHandoffPayload
 
 if TYPE_CHECKING:
@@ -990,7 +991,7 @@ class MediaWindow(Container):
             return
         open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
         if not callable(open_chat):
-            self.app_instance.notify("Use in Chat is not available.", severity="warning")
+            self.app_instance.notify(USE_IN_CHAT_UNAVAILABLE_RECOVERY, severity="warning")
             return
         open_chat(payload)
     

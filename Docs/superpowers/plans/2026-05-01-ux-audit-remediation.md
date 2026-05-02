@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#157, plus active Chatbooks empty-state slice
-Branch context: current `dev` / `origin/dev` at `3ed276eb`; active branch `codex/ux-chatbooks-empty-states`
+Status: Current-dev rebaseline after UX remediation PRs #146-#158, plus active handoff recovery slice
+Branch context: current `dev` / `origin/dev` at `67fe89e1`; active branch `codex/ux-handoff-recovery-copy`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `3ed276eb`:
+Verified on current `dev` at `67fe89e1`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -45,11 +45,12 @@ Current source state plus this branch:
 - Phase 5 Search empty-state cleanup is merged: initial and zero-result panes now provide visible guidance for plain search, RAG collections, and Chat handoff flow.
 - Phase 5 Notes empty-state cleanup is merged: local, server, and workspace scopes now provide visible creation/import routes.
 - Phase 5 CCP/Library empty-state cleanup is merged: conversations, characters, personas, prompts, dictionaries, and world/lore books now explain creation/import routes and their relationship to Chat.
-- Phase 5 Chatbooks empty-state cleanup is implemented in `codex/ux-chatbooks-empty-states`: empty Chatbooks explains portable context packs, import/create recovery, Chat reuse, and shared-navigation escape.
+- Phase 5 Chatbooks empty-state cleanup is merged: empty Chatbooks explains portable context packs, import/create recovery, Chat reuse, and shared-navigation escape.
+- Phase 4 handoff recovery copy is implemented in `codex/ux-handoff-recovery-copy`: Notes, Media, RAG Search, and Web Search explain how to recover when the Chat handoff surface is unavailable.
 - Phase 6 still needs optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
-Planning consequence: remaining implementation should target Phase 4 disabled/recovery states, remaining compact-label/tooltips work in Phase 5, Phase 6 capability-state presentation, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: remaining implementation should target remaining Phase 4 invalid-selection/source-authority smoke cases, remaining compact-label/tooltips work in Phase 5, Phase 6 capability-state presentation, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -286,7 +287,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, and #157. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, and the current `codex/ux-chatbooks-empty-states` slice clarifies Chatbooks as portable context packs.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, and #158. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, and the current `codex/ux-handoff-recovery-copy` slice clarifies blocked handoff recovery.
 
 ### Files
 
@@ -404,4 +405,4 @@ Current-dev state: not started. The smoke/replay artifacts need to be regenerate
 
 ## Next Step
 
-After this Chatbooks empty-state slice, the remaining Phase 5 work is compact-label descriptions and disabled primary-action consistency. Phase 4 disabled/recovery state hardening and Phase 7 live replay remain the higher-risk workflow-completion follow-ups.
+After this handoff recovery slice, the remaining Phase 4 work is invalid-selection/source-authority smoke coverage and the remaining Phase 5 work is compact-label descriptions plus broader disabled primary-action consistency. Phase 7 live replay remains the higher-risk workflow-completion follow-up.

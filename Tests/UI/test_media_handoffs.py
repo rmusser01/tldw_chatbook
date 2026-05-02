@@ -114,3 +114,23 @@ def test_media_window_use_in_chat_handler_routes_event_to_app():
     assert payload.source == "media"
     assert payload.source_id == "media-1"
     assert payload.body == "Transcript"
+
+
+def test_media_window_use_in_chat_unavailable_explains_recovery():
+    app = _media_app()
+    app.open_chat_with_handoff = None
+    window = MediaWindow(app)
+    window.runtime_state = app.media_runtime_state
+    window.viewer_panel = Mock()
+    window.viewer_panel.media_data = None
+    event = MediaViewerPanel.UseInChatRequested(
+        {"id": "media-1", "title": "Lecture", "content": "Transcript"}
+    )
+
+    window.handle_media_use_in_chat(event)
+
+    message = app.notify.call_args.args[0]
+    assert "Use in Chat is unavailable" in message
+    assert "Open Chat" in message
+    assert "try again" in message
+    assert app.notify.call_args.kwargs["severity"] == "warning"

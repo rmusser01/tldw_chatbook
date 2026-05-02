@@ -19,6 +19,7 @@ from textual.reactive import reactive
 from textual.timer import Timer
 from textual.widgets import Button, Input, Label, ListView, Select, Switch, TextArea
 
+from ...Chat.chat_handoff_messages import USE_IN_CHAT_UNAVAILABLE_RECOVERY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Event_Handlers.Audio_Events.dictation_integration_events import InsertDictationTextEvent
 from ...Third_Party.textual_fspicker import FileSave
@@ -2300,7 +2301,7 @@ class NotesScreen(BaseAppScreen):
             return
         open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
         if not callable(open_chat):
-            self._notify("Use in Chat is not available.", severity="warning")
+            self._notify(USE_IN_CHAT_UNAVAILABLE_RECOVERY, severity="warning")
             return
         open_chat(payload)
 

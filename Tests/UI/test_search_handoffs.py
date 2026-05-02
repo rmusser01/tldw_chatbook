@@ -99,6 +99,28 @@ def test_search_rag_window_use_in_chat_handler_routes_to_app(tmp_path):
     assert payload.body == "Retrieved text"
 
 
+def test_search_rag_window_use_in_chat_unavailable_explains_recovery(tmp_path):
+    app = _search_app(runtime_backend="local")
+    app.open_chat_with_handoff = None
+    with patch(
+        "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+        return_value=tmp_path,
+    ):
+        window = SearchRAGWindow(app_instance=app)
+    event = SearchResult.UseInChatRequested(
+        0,
+        {"title": "Chunk", "content": "Retrieved text", "source": "notes"},
+    )
+
+    window.handle_search_result_use_in_chat(event)
+
+    message = app.notify.call_args.args[0]
+    assert "Use in Chat is unavailable" in message
+    assert "Open Chat" in message
+    assert "try again" in message
+    assert app.notify.call_args.kwargs["severity"] == "warning"
+
+
 @pytest.mark.asyncio
 async def test_search_rag_window_web_search_runs_bing_call_in_thread(tmp_path):
     app = _search_app(runtime_backend="local")
@@ -175,3 +197,26 @@ def test_search_window_dedicated_web_result_handoff_routes_to_app():
     payload = app.open_chat_with_handoff.call_args.args[0]
     assert payload.source == "search-web"
     assert payload.metadata["url"] == "https://example.com"
+
+
+def test_search_window_dedicated_web_result_unavailable_explains_recovery():
+    app = _search_app(runtime_backend="local")
+    app.open_chat_with_handoff = None
+    window = SearchWindow(app_instance=app)
+    event = SearchResult.UseInChatRequested(
+        0,
+        {
+            "title": "Article",
+            "content": "Snippet",
+            "source": "web",
+            "metadata": {"url": "https://example.com"},
+        },
+    )
+
+    window.handle_search_result_use_in_chat(event)
+
+    message = app.notify.call_args.args[0]
+    assert "Use in Chat is unavailable" in message
+    assert "Open Chat" in message
+    assert "try again" in message
+    assert app.notify.call_args.kwargs["severity"] == "warning"
