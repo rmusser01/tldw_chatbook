@@ -18,7 +18,12 @@ from loguru import logger
 # Local imports
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.input_validation import validate_text_input
-from tldw_chatbook.UI.Study_Modules import StudyFlashcardsController, StudyQuizzesController
+from tldw_chatbook.UI.Study_Modules import (
+    FLASHCARD_DELETE_DECK_SERVER_TOOLTIP,
+    FLASHCARD_SCOPE_UNAVAILABLE_TOOLTIP,
+    StudyFlashcardsController,
+    StudyQuizzesController,
+)
 from .Screens.study_scope_models import StudyScopeType
 # StudyDB import removed - using ChaChaNotes_DB instead
 
@@ -920,7 +925,7 @@ class StudyWindow(Container):
         if callable(scope_checker):
             scope_enabled = bool(scope_checker())
 
-        delete_deck_button.disabled = server_mode or not scope_enabled
+        delete_deck_note.display = server_mode
         delete_deck_note.display = server_mode
 
     def _schedule_flashcards_refresh(self) -> None:

@@ -385,6 +385,7 @@ async def test_server_mode_keeps_delete_deck_visible_but_disabled():
         assert delete_note.display is True
         assert "server" in _text(delete_note).lower()
         assert "delete" in _text(delete_note).lower()
+        assert "Server mode does not support deck deletion" in str(delete_deck_button.tooltip)
 
 
 @pytest.mark.asyncio
@@ -434,6 +435,8 @@ async def test_flashcards_lifecycle_controls_disable_without_selected_card_or_ta
 
         assert delete_selected_button.disabled is True
         assert move_selected_button.disabled is True
+        assert "Select a flashcard before deleting it" in str(delete_selected_button.tooltip)
+        assert "Select a flashcard and a different target deck" in str(move_selected_button.tooltip)
 
 
 @pytest.mark.asyncio
@@ -814,6 +817,15 @@ async def test_workspace_flashcards_local_mode_fail_closed_ui_state():
         assert move_selected_button.disabled is True
         assert delete_selected_button.disabled is True
         assert delete_deck_button.disabled is True
+        for button in (
+            create_deck_button,
+            create_card_button,
+            start_review_button,
+            move_selected_button,
+            delete_selected_button,
+            delete_deck_button,
+        ):
+            assert "Workspace Flashcards require server mode" in str(button.tooltip)
 
 
 @pytest.mark.asyncio

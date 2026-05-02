@@ -14,6 +14,18 @@ if TYPE_CHECKING:
     from ..Study_Window import StudyWindow
 
 
+FLASHCARD_SCOPE_UNAVAILABLE_TOOLTIP = (
+    "Workspace Flashcards require server mode. Switch to server mode or use Global Study to edit flashcards."
+)
+FLASHCARD_SELECT_DECK_TOOLTIP = "Select or create a deck before adding cards or starting review."
+FLASHCARD_SELECT_CARD_DELETE_TOOLTIP = "Select a flashcard before deleting it."
+FLASHCARD_SELECT_CARD_MOVE_TOOLTIP = "Select a flashcard and a different target deck before moving it."
+FLASHCARD_SELECT_DECK_DELETE_TOOLTIP = "Select a deck before deleting it."
+FLASHCARD_DELETE_DECK_SERVER_TOOLTIP = (
+    "Server mode does not support deck deletion. Delete cards individually or switch to local mode."
+)
+
+
 class StudyFlashcardsController:
     """Own flashcards deck/card/review interactions inside the Study screen."""
 
@@ -336,6 +348,15 @@ class StudyFlashcardsController:
         start_review_button.disabled = not scope_enabled or selected_deck is None
 
         if not scope_enabled:
+            for button in (
+                create_deck_button,
+                create_card_button,
+                start_review_button,
+                delete_selected_button,
+                move_selected_button,
+                delete_deck_button,
+            ):
+                button.tooltip = FLASHCARD_SCOPE_UNAVAILABLE_TOOLTIP
             delete_selected_button.disabled = True
             move_selected_button.disabled = True
             delete_deck_button.disabled = True
@@ -344,6 +365,17 @@ class StudyFlashcardsController:
         delete_selected_button.disabled = selected_card is None
         move_selected_button.disabled = selected_card is None or selected_target_deck is None
         delete_deck_button.disabled = self._current_mode() == "server" or selected_deck is None
+        create_deck_button.tooltip = None
+        create_card_button.tooltip = FLASHCARD_SELECT_DECK_TOOLTIP if selected_deck is None else None
+        start_review_button.tooltip = FLASHCARD_SELECT_DECK_TOOLTIP if selected_deck is None else None
+        delete_selected_button.tooltip = FLASHCARD_SELECT_CARD_DELETE_TOOLTIP if selected_card is None else None
+        move_selected_button.tooltip = (
+            FLASHCARD_SELECT_CARD_MOVE_TOOLTIP if selected_card is None or selected_target_deck is None else None
+        )
+        if self._current_mode() == "server":
+            delete_deck_button.tooltip = FLASHCARD_DELETE_DECK_SERVER_TOOLTIP
+        else:
+            delete_deck_button.tooltip = FLASHCARD_SELECT_DECK_DELETE_TOOLTIP if selected_deck is None else None
 
     def _parse_tags(self, text: str) -> list[str]:
         return [item for item in str(text or "").split() if item.strip()]
