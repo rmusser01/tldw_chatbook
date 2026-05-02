@@ -518,9 +518,10 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         if not action_id:
             return ""
 
-        runtime_state = getattr(getattr(self.app_instance, "runtime_policy", None), "state", None)
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        runtime_state = getattr(runtime_policy, "state", None) if runtime_policy else None
         policy_engine = getattr(self.app_instance, "ui_policy_engine", None)
-        evaluate = getattr(policy_engine, "evaluate", None)
+        evaluate = getattr(policy_engine, "evaluate", None) if policy_engine else None
         if not isinstance(runtime_state, RuntimeSourceState) or not callable(evaluate):
             return ""
 
