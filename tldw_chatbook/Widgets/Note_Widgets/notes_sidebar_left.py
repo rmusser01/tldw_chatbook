@@ -130,7 +130,12 @@ class NotesSidebarLeft(VerticalScroll):
         title_label.update(f"{title_prefix} ({len(normalized_items)})")
 
         if not normalized_items:
-            await list_view.append(ListItem(Label(empty_message)))
+            list_item = ListItem(Label(empty_message))
+            if item_kind == "server":
+                setattr(list_item, "note_id", None)
+                setattr(list_item, "note_version", None)
+                setattr(list_item, "note_scope", item_kind)
+            await list_view.append(list_item)
             return
 
         for item in normalized_items:

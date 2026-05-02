@@ -2407,11 +2407,17 @@ class NotesScreen(BaseAppScreen):
     @on(ListView.Selected, "#server-notes-list-view")
     async def handle_server_list_selection(self, event: ListView.Selected) -> None:
         if event.item and hasattr(event.item, "note_id"):
-            navigation = await self._load_server_note(event.item.note_id)
+            note_id = event.item.note_id
+            if note_id is None:
+                navigation = self.request_scope_transition(ScopeType.SERVER_NOTE)
+                if navigation.requires_confirmation:
+                    self._notify("Unsaved changes require confirmation before switching notes.", severity="warning")
+                return
+            navigation = await self._load_server_note(note_id)
             if navigation is not None and navigation.requires_confirmation:
                 return
             if navigation is not None:
-                self.post_message(NoteSelected(event.item.note_id, {"title": self.state.selected_note_title}))
+                self.post_message(NoteSelected(note_id, {"title": self.state.selected_note_title}))
 
     @on(ListView.Selected, "#workspaces-list-view")
     async def handle_workspace_list_selection(self, event: ListView.Selected) -> None:
@@ -2421,6 +2427,17 @@ class NotesScreen(BaseAppScreen):
     @on(ListView.Selected, "#workspace-notes-list")
     async def handle_workspace_note_selection(self, event: ListView.Selected) -> None:
         if event.item and hasattr(event.item, "note_id"):
+            if event.item.note_id is None:
+                if self.state.selected_workspace_id:
+                    await self._select_workspace(self.state.selected_workspace_id, subview=WorkspaceSubview.NOTES)
+                else:
+                    navigation = self.request_scope_transition(
+                        ScopeType.WORKSPACE,
+                        workspace_subview=WorkspaceSubview.NOTES,
+                    )
+                    if navigation.requires_confirmation:
+                        self._notify("Unsaved changes require confirmation before switching notes.", severity="warning")
+                return
             navigation = await self._select_workspace_subview_item(
                 subview=WorkspaceSubview.NOTES,
                 item_id=event.item.note_id,

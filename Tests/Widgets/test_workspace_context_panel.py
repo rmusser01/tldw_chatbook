@@ -175,6 +175,21 @@ async def test_notes_sidebar_left_empty_states_explain_scope_and_creation_routes
 
 
 @pytest.mark.asyncio
+async def test_notes_sidebar_left_server_empty_state_exposes_scope_transition_marker():
+    sidebar = NotesSidebarLeft()
+    app = PanelTestApp(sidebar)
+
+    async with app.run_test() as pilot:
+        await sidebar.populate_server_notes_list([])
+
+        server_item = sidebar.query_one("#server-notes-list-view", ListView).children[0]
+
+        assert hasattr(server_item, "note_id")
+        assert server_item.note_id is None
+        assert server_item.note_scope == "server"
+
+
+@pytest.mark.asyncio
 async def test_workspace_context_panel_empty_states_explain_workspace_resource_routes():
     panel = WorkspaceContextPanel()
     app = PanelTestApp(panel)
@@ -196,6 +211,21 @@ async def test_workspace_context_panel_empty_states_explain_workspace_resource_r
         assert "No workspace artifacts yet." in artifacts_text
         assert "Create Artifact" in artifacts_text
         assert "outputs" in artifacts_text
+
+
+@pytest.mark.asyncio
+async def test_workspace_context_panel_empty_note_state_exposes_subview_transition_marker():
+    panel = WorkspaceContextPanel()
+    app = PanelTestApp(panel)
+
+    async with app.run_test() as pilot:
+        await panel.populate_workspace_notes([])
+
+        notes_item = panel.query_one("#workspace-notes-list", ListView).children[0]
+
+        assert hasattr(notes_item, "note_id")
+        assert notes_item.note_id is None
+        assert notes_item.item_version is None
 
 
 @pytest.mark.asyncio

@@ -201,7 +201,10 @@ class WorkspaceContextPanel(VerticalScroll):
         await list_view.clear()
         normalized = list(items)
         if not normalized:
-            await list_view.append(ListItem(Label(empty_message)))
+            list_item = ListItem(Label(empty_message))
+            setattr(list_item, item_attr, None)
+            setattr(list_item, "item_version", None)
+            await list_view.append(list_item)
             return
         for item in normalized:
             title = (

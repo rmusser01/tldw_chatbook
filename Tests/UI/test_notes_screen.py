@@ -5,6 +5,7 @@ Focused tests for the scope-aware NotesScreen state and routing hooks.
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -1206,6 +1207,43 @@ class TestNotesScreenMethods:
         await screen.handle_server_list_selection(event)
 
         screen.post_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_server_empty_state_selection_switches_scope_without_loading_note(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen._load_server_note = AsyncMock()  # type: ignore[attr-defined]
+        screen.post_message = Mock()
+        event = SimpleNamespace(item=SimpleNamespace(note_id=None))
+
+        await screen.handle_server_list_selection(event)
+
+        screen._load_server_note.assert_not_awaited()
+        screen.post_message.assert_not_called()
+        assert screen.state.scope_type == ScopeType.SERVER_NOTE
+        assert screen.state.selected_server_note_id is None
+
+    @pytest.mark.asyncio
+    async def test_handle_workspace_empty_note_selection_opens_notes_subview_without_resource(self, mock_app_instance):
+        screen = NotesScreen(mock_app_instance)
+        screen.state = NotesScreenState(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.DETAILS,
+            selected_workspace_id="ws-1",
+        )
+        screen._select_workspace = AsyncMock(  # type: ignore[attr-defined]
+            return_value=PendingNavigation(
+                target_scope=ScopeType.WORKSPACE,
+                target_workspace_id="ws-1",
+                target_workspace_subview=WorkspaceSubview.NOTES,
+            )
+        )
+        screen._select_workspace_subview_item = AsyncMock()  # type: ignore[attr-defined]
+        event = SimpleNamespace(item=SimpleNamespace(note_id=None))
+
+        await screen.handle_workspace_note_selection(event)
+
+        screen._select_workspace.assert_awaited_once_with("ws-1", subview=WorkspaceSubview.NOTES)
+        screen._select_workspace_subview_item.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_scope_context_updates_sync_and_editor_visibility(self, mock_app_instance):

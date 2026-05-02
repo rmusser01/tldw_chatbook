@@ -43,7 +43,7 @@ Still open by current source inspection:
 - Phase 5 Media empty-state copy is merged: Media now points users toward Ingest and selected-item requirements for analysis/save/export.
 - Phase 5 Study empty-state cleanup is merged: flashcards and quizzes now separate no-content guidance for global/local vs workspace scopes while preserving backend-unavailable states.
 - Phase 5 Search empty-state cleanup is merged: initial and zero-result panes now provide visible guidance for plain search, RAG collections, and Chat handoff flow.
-- Phase 5 Notes empty-state cleanup is in progress on `codex/ux-notes-empty-states`: local, server, and workspace scopes need visible creation/import routes.
+- Phase 5 Notes empty-state cleanup is merged: local, server, and workspace scopes now provide visible creation/import routes.
 - Phase 6 still needs optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
@@ -284,7 +284,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, and #155. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, and Search/RAG empty states explain search modes, collections, and Chat handoffs. Current slice `codex/ux-notes-empty-states` covers Notes scope empty states.
+Branch state: partially merged through PRs #152, #153, #154, and #155. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, and Notes empty states clarify local/server/workspace scope and creation/import routes.
 
 ### Files
 
