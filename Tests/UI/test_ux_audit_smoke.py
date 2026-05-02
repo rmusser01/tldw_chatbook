@@ -698,13 +698,25 @@ async def test_valid_web_search_handoff_replays_from_mounted_window_to_app_seam(
 
 
 @pytest.mark.asyncio
-async def test_contract_blocked_web_search_handoff_explains_recovery_without_staging(monkeypatch):
-    monkeypatch.setattr("tldw_chatbook.UI.SearchWindow.WEB_SEARCH_AVAILABLE", True)
-    app = WebSearchResultHandoffSmokeApp()
-    app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
-    app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+async def test_contract_blocked_web_search_handoff_explains_recovery_without_staging(monkeypatch, tmp_path):
+    with (
+        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+    ):
+        monkeypatch.setattr("tldw_chatbook.UI.SearchWindow.WEB_SEARCH_AVAILABLE", True)
+        app = WebSearchResultHandoffSmokeApp()
+        app.app_instance.get_authoritative_runtime_source = Mock(return_value="server")
+        app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+        app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
 
-    async with app.run_test(size=(160, 40)) as pilot:
+        async with app.run_test(size=(160, 40)) as pilot:
         await pilot.pause(0.1)
         app.window.web_search_results = [
             {
