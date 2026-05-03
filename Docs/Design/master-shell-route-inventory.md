@@ -11,17 +11,17 @@ This inventory maps current routes and UI surfaces onto the approved master shel
 | Master destination | Legacy routes | Existing screen/wrapper | Current user-facing label | Compatibility requirement |
 | --- | --- | --- | --- | --- |
 | Home | `home` | new | Home | New default for first-run users |
-| Console | `chat` | `ChatScreen` | Chat | User-facing label becomes Console; route remains `chat` |
-| Library | `notes`, `media`, `ingest`, `search`, `conversation`, conversation browsing | multiple | Notes/Media/Ingest/Search | New wrapper links to source routes; `conversation` means saved conversation browsing/source access |
-| Artifacts | `chatbooks` | `ChatbooksScreen` | Chatbooks | New wrapper owns Chatbooks and generated/portable outputs |
-| Personas | `ccp`, character/persona/prompt/lore subviews | `ConversationScreen` | Library | User-facing label becomes Personas for behavior and identity management |
-| Watchlists+Collections | `subscriptions` plus collections services | `SubscriptionScreen` | Subscriptions | New wrapper has Watchlists and Collections sections |
-| Schedules | schedule surfaces | existing scheduler surfaces | mixed | New wrapper owns when-runs |
-| Workflows | workflow surfaces | future/existing workflow code | mixed | New wrapper owns what-runs |
-| MCP | `tools_settings`, tools/MCP settings | `ToolsSettingsScreen` and MCP panels | legacy Settings/tools label | New wrapper owns MCP/tool capability control; `tools_settings` becomes an MCP alias |
-| ACP | ACP surfaces | new | ACP | New wrapper with honest unavailable state if needed |
-| Skills | skills services | new | Skills | New wrapper around local/server skills |
-| Settings | `settings`, `customize` | existing screens | Settings/Customize | Settings owns global app preferences only; do not route global preferences through `tools_settings` |
+| Console | `chat` | `ChatScreen` | Console | Route remains `chat`; live work stores `pending_console_launch` and opens Console |
+| Library | `notes`, `media`, `ingest`, `search`, `conversation`, conversation browsing | `LibraryScreen` plus legacy screens | Library | Wrapper links to source routes; staged source context uses Chat handoff payloads |
+| Artifacts | `chatbooks` | `ArtifactsScreen` plus `ChatbooksScreen` | Artifacts | Wrapper owns Chatbooks and generated/portable outputs; staged artifacts use Chat handoff payloads |
+| Personas | `ccp`, character/persona/prompt/lore subviews | `PersonasScreen` plus `ConversationScreen` | Personas | Personas owns behavior and identity management; staged persona context uses Chat handoff payloads |
+| Watchlists+Collections | `subscriptions` plus collections services | `WatchlistsCollectionsScreen` plus `SubscriptionScreen` | Watchlists+Collections | Wrapper separates Watchlists from Collections and can follow live work in Console |
+| Schedules | schedule surfaces | `SchedulesScreen` | Schedules | Wrapper owns when-runs and can follow timing/recovery work in Console |
+| Workflows | workflow surfaces | `WorkflowsScreen` | Workflows | Wrapper owns what-runs and can launch live work in Console |
+| MCP | `tools_settings`, tools/MCP settings | `MCPScreen` | MCP | Wrapper owns MCP tool/server capability control; `tools_settings` is an MCP alias, not global Settings |
+| ACP | ACP surfaces | `ACPScreen` | ACP | Wrapper shows honest ACP runtime-unconfigured state and can follow agent work in Console |
+| Skills | skills services | `SkillsScreen` | Skills | Wrapper exposes Agent Skills pack boundaries, `SKILL.md`, local skills dir, and staged skill context |
+| Settings | `settings`, `customize` | `SettingsScreen` plus `CustomizeScreen` | Settings | Settings owns global preferences, appearance, accounts/auth, storage, and app behavior |
 
 ## Shortcut And Command Palette Inventory
 
@@ -47,6 +47,9 @@ Destination context, source authority, readiness, and recovery belong inside des
 
 Status labels, source authority, approvals, staged source roles, recovery callouts, and shortcuts use the agentic terminal design-system contract.
 
-## Open Questions For Implementation
+## Deferred Surfaces
 
-- None. Add only implementation-time discoveries here.
+- ACP launch remains an honest unavailable/capability state until an ACP runtime is configured.
+- Workflow runtime execution is not implemented in the shell wrapper; the wrapper exposes ownership and Console launch boundaries only.
+- Rich MCP management still lives in the existing Unified MCP panel/service surface; the top-level MCP wrapper prevents `tools_settings` from acting as global Settings.
+- Library sub-surfaces remain linked to legacy Notes, Media, Ingest, Search/RAG, and conversation screens until those screens are split into Library-native views.

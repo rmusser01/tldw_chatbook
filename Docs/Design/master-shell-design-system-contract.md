@@ -44,6 +44,14 @@ All new shell surfaces must support `.density-compact` and `.density-comfortable
 - Assert stable IDs or classes for primary actions, status badges, source authority, source roles, approval cards, shortcut bars, next-best actions, and open/follow-in-Console controls.
 - Assert readable status text. Do not assert raw color values.
 - Assert destination context appears inside page headers, not the global top navigation.
+- Treat `#console-pending-launch-card`, `*-follow-in-console`, `*-launch-in-console`, and `*-attach-to-console` IDs as behavioral testing hooks, not styling hooks.
+
+## Implementation Status
+
+- Home and all primary destination wrappers use `.ds-destination-header` and `.ds-panel`.
+- Console renders pending live-work launch context with `.ds-panel` and a readable source/title label.
+- Static source/artifact/persona/skill actions stage `ChatHandoffPayload` context; live work from Watchlists+Collections, Schedules, Workflows, and ACP uses `open_console_for_live_work()`.
+- `tools_settings` resolves to MCP; global preferences are owned by Settings.
 
 ## Stop Conditions
 

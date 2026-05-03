@@ -5,6 +5,10 @@ Status: Current-dev rebaseline after UX remediation PRs #146-#202, plus active t
 Branch context: current `origin/dev` at `d24268ae`; active branch `codex/ux-tag-action-tooltips`
 Previous audit baseline: `e2576cae`
 
+## Follow-On Master Shell Work
+
+The tooltip/remediation stream led into the master shell UX spec and implementation plan: `Docs/superpowers/specs/2026-05-02-new-user-first-run-shell-ux-design.md` and `Docs/superpowers/plans/2026-05-03-master-shell-ux-implementation.md`. That follow-on work reframes user-facing Chat as Console, adds Home as the dashboard/status front door, and creates destination wrappers for Library, Artifacts, Personas, Watchlists+Collections, Schedules, Workflows, MCP, ACP, Skills, and Settings while preserving legacy route IDs.
+
 ## Goal
 
 Fix every UX failure identified during the live application audit while preserving the Textual/TUI product model, power-user speed, and the chat-first direction.
