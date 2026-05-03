@@ -46,6 +46,9 @@ class HomeConsoleLaunch:
     source: str
     title: str
     payload: Mapping[str, Any] | None = None
+    status: str | None = None
+    recovery: str | None = None
+    action_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -188,6 +191,24 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     target_route=target_route or "subscriptions",
                     target_id=target_id,
                 )
+        if action is HomeControlAction.OPEN_IN_CONSOLE and _is_local_watchlist_run_id(target_id):
+            run = self._local_watchlist_run_by_id(str(target_id))
+            if run is not None:
+                title = self._watchlist_run_title(run)
+                return HomeControlResult(
+                    action=action,
+                    status=HomeControlResultStatus.HANDLED,
+                    message=f"Opening Console for {title}.",
+                    target_id=target_id,
+                    console_launch=HomeConsoleLaunch(
+                        source="W+C",
+                        title=title,
+                        payload=self._watchlist_console_payload(run, str(target_id)),
+                        status=str(_mapping_value(run, "status") or "pending"),
+                        recovery="Review the W+C run details or retry from W+C.",
+                        action_label="Open W+C run",
+                    ),
+                )
         return super().handle_control(
             action,
             target_id=target_id,
@@ -237,7 +258,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     source="W+C",
                     status=status,
                     detail_route="subscriptions",
-                    console_available=False,
+                    console_available=True,
                 )
             )
         return items
@@ -262,6 +283,15 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             _mapping_value(run, "id")
             or (f"local:watchlist_run:{run_id}" if run_id is not None else "")
         )
+
+    @staticmethod
+    def _watchlist_console_payload(run: Any, target_id: str) -> Mapping[str, Any]:
+        payload: dict[str, Any] = {"target_id": target_id}
+        for key in ("run_id", "job_id", "source_id"):
+            value = _mapping_value(run, key)
+            if value is not None:
+                payload[key] = value
+        return payload
 
     @staticmethod
     def _watchlist_run_title(run: Any) -> str:

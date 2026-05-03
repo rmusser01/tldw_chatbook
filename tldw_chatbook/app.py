@@ -1769,11 +1769,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             target_route=target_route,
         )
         if result.status is HomeControlResultStatus.HANDLED and result.console_launch is not None:
-            self.open_console_for_live_work(
-                source=result.console_launch.source,
-                title=result.console_launch.title,
-                payload=dict(result.console_launch.payload or {}),
-            )
+            launch_kwargs = {
+                "source": result.console_launch.source,
+                "title": result.console_launch.title,
+                "payload": dict(result.console_launch.payload or {}),
+            }
+            for key in ("status", "recovery", "action_label"):
+                value = getattr(result.console_launch, key)
+                if value is not None:
+                    launch_kwargs[key] = value
+            self.open_console_for_live_work(**launch_kwargs)
         return result
 
     def _wire_character_persona_services(self) -> None:

@@ -16,6 +16,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PHASE3_STATUS_CARD_EVIDENCE = (
     REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-live-work-status-card-seam.md"
 )
+PHASE3_HOME_WC_CONSOLE_EVIDENCE = (
+    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-home-wc-active-work-console-launch.md"
+)
 
 
 def _load_console_live_work_contract():
@@ -176,6 +179,24 @@ def test_phase3_status_card_tracking_evidence_links_task_and_roadmap():
     assert "Phase 3.2: Add Console live-work status card seam - `TASK-3.2`" in roadmap
     assert "`TASK-3`, `TASK-3.1`, `TASK-3.2`" in roadmap
     assert "ConsoleLiveWorkStatusCardState" in task
+
+
+def test_phase3_home_wc_console_launch_tracking_evidence_links_task_and_roadmap():
+    evidence = PHASE3_HOME_WC_CONSOLE_EVIDENCE.read_text()
+    readme = (REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/README.md").read_text()
+    roadmap = (REPO_ROOT / "Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text()
+    task = (
+        REPO_ROOT
+        / "backlog/tasks/task-3.3 - Phase-3.3-Open-Home-WC-active-work-in-Console.md"
+    ).read_text()
+
+    assert "TASK-3.3" in evidence
+    assert "Home W+C active-work" in evidence
+    assert "ConsoleLiveWorkLaunch" in evidence
+    assert "2026-05-03-home-wc-active-work-console-launch.md" in readme
+    assert "Phase 3.3: Open Home W+C active work in Console - `TASK-3.3`" in roadmap
+    assert "`TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`" in roadmap
+    assert "ConsoleLiveWorkLaunch" in task
 
 
 @pytest.mark.parametrize(
