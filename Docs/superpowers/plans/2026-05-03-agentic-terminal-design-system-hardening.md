@@ -630,7 +630,7 @@ git commit -m "Align command palette shell vocabulary"
 - Modify: `tldw_chatbook/Widgets/AppFooterStatus.py`
 - Test: `Tests/UI/test_app_footer_shortcut_context.py`
 
-- [ ] **Step 1: Write failing footer context tests**
+- [x] **Step 1: Write failing footer context tests**
 
 Create `Tests/UI/test_app_footer_shortcut_context.py`.
 
@@ -686,7 +686,7 @@ async def test_footer_replaces_stale_context_shortcuts():
         assert "Ctrl+Enter send" not in footer.shortcut_text
 ```
 
-- [ ] **Step 2: Run failing footer tests**
+- [x] **Step 2: Run failing footer tests**
 
 Run:
 
@@ -698,7 +698,7 @@ Expected:
 
 - Fails because `shortcut_context.py`, `ShortcutAction`, `ShortcutContext`, `set_shortcut_context()`, and `shortcut_text` do not exist.
 
-- [ ] **Step 3: Add a small typed context model**
+- [x] **Step 3: Add a small typed context model**
 
 Create `tldw_chatbook/UI/Navigation/shortcut_context.py`.
 
@@ -731,7 +731,7 @@ class ShortcutContext:
         return " | ".join(visible)
 ```
 
-- [ ] **Step 4: Update footer without breaking existing status updates**
+- [x] **Step 4: Update footer without breaking existing status updates**
 
 In `AppFooterStatus`, replace the hard-coded `_key_quit` responsibility with a shortcut display while preserving IDs expected by CSS where practical.
 
@@ -763,7 +763,7 @@ class AppFooterStatus(Widget):
 
 Keep the existing `#footer-key-quit` id so `_widgets.tcss` continues to style the footer shortcut area. Only edit `_widgets.tcss` and regenerate `tldw_cli_modular.tcss` if this id-preserving approach fails in focused tests. Do not remove word count, token count, or DB status behavior.
 
-- [ ] **Step 5: Verify focused footer tests**
+- [x] **Step 5: Verify focused footer tests**
 
 Run:
 
@@ -773,7 +773,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 6: Verify existing footer update users still work syntactically**
+- [x] **Step 6: Verify existing footer update users still work syntactically**
 
 Run:
 
@@ -786,7 +786,7 @@ Expected:
 - Design-system contract still passes.
 - Chat window tests do not fail because footer update methods changed.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add tldw_chatbook/UI/Navigation/shortcut_context.py tldw_chatbook/Widgets/AppFooterStatus.py Tests/UI/test_app_footer_shortcut_context.py
