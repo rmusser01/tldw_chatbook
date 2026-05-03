@@ -911,7 +911,7 @@ git commit -m "Harden agentic terminal token contract"
 - Modify only if needed: `tldw_chatbook/UI/Navigation/base_app_screen.py`
 - Modify only if needed: `tldw_chatbook/app.py`
 
-- [ ] **Step 1: Write guardrail tests for duplicate nav and local context leakage**
+- [x] **Step 1: Write guardrail tests for duplicate nav and local context leakage**
 
 Create `Tests/UI/test_shell_chrome_contract.py`.
 
@@ -955,7 +955,7 @@ def test_navigation_contract_keeps_context_out_of_top_nav():
 
 This test intentionally uses a minimal host app instead of `TldwCli()` so it does not touch local SQLite user data.
 
-- [ ] **Step 2: Run guardrail tests**
+- [x] **Step 2: Run guardrail tests**
 
 Run:
 
@@ -969,7 +969,7 @@ Expected:
 - If it fails because test setup is invalid, fix only the test harness.
 - If it fails because duplicate nav is real, stop and inspect before changing runtime code.
 
-- [ ] **Step 3: Avoid shell-owned chrome migration unless tests prove a defect**
+- [x] **Step 3: Avoid shell-owned chrome migration unless tests prove a defect**
 
 If duplicate navigation is not present, do not move nav ownership in this PR. Document that larger app-owned shell chrome remains a later migration.
 
@@ -979,7 +979,9 @@ If duplicate navigation is present:
 - Do not rewrite all screens.
 - Add a follow-up Backlog task or design note for full app-owned chrome migration.
 
-- [ ] **Step 4: Commit**
+The guardrail tests pass after fixing the test harness to query the active screen DOM, so no runtime shell chrome migration is included in this PR.
+
+- [x] **Step 4: Commit**
 
 ```bash
 git add Tests/UI/test_shell_chrome_contract.py tldw_chatbook/UI/Navigation/base_app_screen.py tldw_chatbook/app.py
