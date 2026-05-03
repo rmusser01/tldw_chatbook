@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#196, plus active Embedding Wizard selector tooltip slice
-Branch context: current `origin/dev` at `27465af1`; active branch `codex/ux-embedding-wizard-selector-tooltips`
+Status: Current-dev rebaseline after UX remediation PRs #146-#197, plus active bulk-selection tooltip slice
+Branch context: current `origin/dev` at `40b6f2ac`; active branch `codex/ux-bulk-selection-tooltips`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `6c0d2469`:
+Rebaselined on current `dev` at `40b6f2ac`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -83,11 +83,12 @@ Current source state plus this branch:
 - Phase 5 SmartContentTree compact-control tooltips are merged through PR #193: Chatbook content selection filter and bulk-selection controls explain what visible content they affect.
 - Phase 5 Media Details content-search tooltips are merged through PR #194: compact search and match-navigation buttons explain their action inside selected media content.
 - Phase 5 Embeddings batch-control tooltips are merged through PR #196: repeated model/collection selection and deletion controls explain which scope they affect.
-- Phase 5 Embedding Wizard selector tooltips are active in `codex/ux-embedding-wizard-selector-tooltips`: source-content Select All, Clear All, and Invert actions explain their visible-item scope.
+- Phase 5 Embedding Wizard selector tooltips are merged through PR #197: source-content Select All, Clear All, and Invert actions explain their visible-item scope.
+- Phase 5 bulk-selection control tooltips are active in `codex/ux-bulk-selection-tooltips`: Evals, Notes, tags, multi-item review, and Mindmap source selection explain what each select/clear action affects.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 clean-home audit replay was captured at `6c0d2469` under `/private/tmp/tldw-chatbook-ux-remediation-verify/` before merging PRs #192 and #193; live external API/server paths remain documented uncertainty.
 
-Planning consequence: remaining implementation should target broader live source-handoff replay cases, any non-handoff source actions where policy state can still block a visible action, any remaining compact-label/descriptive copy outside top navigation, command-palette tab navigation, the Study section bar, Chatbooks view toggles, Mindmap controls, SmartContentTree bulk controls, Media Details content search, Embeddings batch controls, and Embedding Wizard content selection, disabled-state consistency beyond the already-covered Web Search, Media Source, Study Quiz, Study Flashcard, Study dashboard resume, Study quiz start, Study quiz Review in Chat, Media Viewer, Media Analysis, Media Highlight, Media Analysis navigation, Search/RAG saved-search actions, Media list pagination, and Media multi-item review actions, Phase 6 capability-state presentation beyond Speech/STTS, Web Search, and Search/RAG embeddings where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: after this bulk-selection slice, continue the approved sequential cleanup with browse/import/file-picker controls, then LLM/runtime browse controls. Remaining implementation should otherwise target broader live source-handoff replay cases, any non-handoff source actions where policy state can still block a visible action, any remaining compact-label/descriptive copy outside top navigation, Phase 6 capability-state presentation beyond Speech/STTS, Web Search, and Search/RAG embeddings where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -333,7 +334,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, #171, #172, #173, #174, #185, #186, #187, #188, #189, #191, #192, #193, #194, and #196, with Embedding Wizard selector tooltip cleanup active in `codex/ux-embedding-wizard-selector-tooltips`. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Study dashboard Resume action recovery is merged through PR #185, Study quiz Start action recovery is merged through PR #186, Study quiz Review in Chat recovery/handoff is merged through PR #187, Study section-bar compact label tooltips are merged through PR #188, Chatbooks view-toggle compact label tooltips are merged through PR #189, Mindmap compact-control tooltips are merged through PR #192, SmartContentTree compact-control tooltips are merged through PR #193, Media Details content-search tooltips are merged through PR #194, Embeddings batch-control tooltips are merged through PR #196, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, Media Highlight actions expose selected-highlight tooltips, Media Analysis navigation actions expose saved-version boundary tooltips, Search/RAG saved-search actions expose selection/reuse recovery, Media list pagination exposes result-page boundary tooltips, and Media multi-item review actions expose generation/cancellation state tooltips.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, #171, #172, #173, #174, #185, #186, #187, #188, #189, #191, #192, #193, #194, #196, and #197, with bulk-selection tooltip cleanup active in `codex/ux-bulk-selection-tooltips`. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Study dashboard Resume action recovery is merged through PR #185, Study quiz Start action recovery is merged through PR #186, Study quiz Review in Chat recovery/handoff is merged through PR #187, Study section-bar compact label tooltips are merged through PR #188, Chatbooks view-toggle compact label tooltips are merged through PR #189, Mindmap compact-control tooltips are merged through PR #192, SmartContentTree compact-control tooltips are merged through PR #193, Media Details content-search tooltips are merged through PR #194, Embeddings batch-control tooltips are merged through PR #196, Embedding Wizard selector tooltips are merged through PR #197, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, Media Highlight actions expose selected-highlight tooltips, Media Analysis navigation actions expose saved-version boundary tooltips, Search/RAG saved-search actions expose selection/reuse recovery, Media list pagination exposes result-page boundary tooltips, and Media multi-item review actions expose generation/cancellation state tooltips.
 
 ### Files
 
@@ -380,6 +381,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 - [x] Add Media Details content-search tooltips for compact search and match-navigation controls.
 - [x] Add Embeddings batch-control tooltips for model and collection selection/deletion scopes.
 - [x] Add Embedding Wizard content selector tooltips for visible source-item bulk actions.
+- [x] Add bulk-selection control tooltips for Evals, Notes, tags, multi-item review, and Mindmap source selection.
 - [ ] Add tooltips or short descriptions where compact labels remain necessary outside top navigation.
 
 ### Acceptance Criteria
@@ -482,4 +484,4 @@ Current-dev state: complete on local `dev` at `6c0d2469`. A clean-home Textual r
 
 ## Next Step
 
-After this Embedding Wizard selector tooltip slice, remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. The remaining Phase 5 work is any remaining compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this bulk-selection tooltip slice, continue the approved sequential cleanup with batch B for browse/import/file-picker controls, then batch C for LLM/runtime browse controls. Remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.

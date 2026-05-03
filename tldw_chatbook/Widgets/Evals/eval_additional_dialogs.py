@@ -329,8 +329,16 @@ class RunSelectionDialog(ModalScreen):
             yield Label("Selected: 0 runs", id="selection-count")
             
             with Horizontal(classes="dialog-buttons"):
-                yield Button("Select All", id="select-all-button")
-                yield Button("Clear All", id="clear-all-button")
+                yield Button(
+                    "Select All",
+                    id="select-all-button",
+                    tooltip="Select every available evaluation run.",
+                )
+                yield Button(
+                    "Clear All",
+                    id="clear-all-button",
+                    tooltip="Clear every selected evaluation run.",
+                )
                 yield Button("Cancel", id="cancel-button", variant="error")
                 yield Button("Compare", id="compare-button", variant="primary")
     
