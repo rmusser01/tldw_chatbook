@@ -152,8 +152,7 @@ class ChatScreen(BaseAppScreen):
             return self._pending_console_launch_context
 
         pending_launch = getattr(self.app_instance, "pending_console_launch", None)
-        normalized_launch = ConsoleLiveWorkLaunch.from_pending(pending_launch)
-        if normalized_launch is not None:
+        if (normalized_launch := ConsoleLiveWorkLaunch.from_pending(pending_launch)) is not None:
             self._pending_console_launch_context = normalized_launch
             self.app_instance.pending_console_launch = None
         return self._pending_console_launch_context
