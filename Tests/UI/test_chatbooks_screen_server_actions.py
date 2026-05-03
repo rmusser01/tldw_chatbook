@@ -81,6 +81,27 @@ async def test_improved_window_exposes_server_action_cards(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_chatbooks_view_toggles_explain_grid_and_list_modes(monkeypatch):
+    async def no_refresh(self):
+        self.chatbooks = []
+
+    monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
+
+    class ChatbooksWindowApp(App):
+        def compose(self) -> ComposeResult:
+            yield ChatbooksWindowImproved(self)
+
+    app = ChatbooksWindowApp()
+    async with app.run_test() as pilot:
+        window = app.query_one(ChatbooksWindowImproved)
+        grid_button = window.query_one("#view-grid", Button)
+        list_button = window.query_one("#view-list", Button)
+
+        assert str(grid_button.tooltip) == "Show chatbooks as visual cards."
+        assert str(list_button.tooltip) == "Show chatbooks as a dense text list."
+
+
+@pytest.mark.asyncio
 async def test_server_create_action_uses_server_mode(monkeypatch):
     async def no_refresh(self):
         self.chatbooks = []
