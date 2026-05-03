@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, Mapping, Protocol, runtime_checkable
 
@@ -141,23 +141,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             providers_models=providers_models,
             has_recent_work=has_recent_work,
         )
-        return HomeDashboardInput(
-            model_ready=dashboard_input.model_ready,
-            mcp_ready=dashboard_input.mcp_ready,
-            acp_ready=dashboard_input.acp_ready,
-            rag_ready=dashboard_input.rag_ready,
-            pending_approval_count=dashboard_input.pending_approval_count,
-            active_run_count=dashboard_input.active_run_count,
-            running_run_count=dashboard_input.running_run_count,
-            paused_run_count=dashboard_input.paused_run_count,
-            failed_run_count=dashboard_input.failed_run_count,
-            failed_schedule_count=dashboard_input.failed_schedule_count,
-            notification_count=self._unread_notification_count(),
-            has_library_content=dashboard_input.has_library_content,
-            has_recent_work=dashboard_input.has_recent_work,
-            active_detail_route=dashboard_input.active_detail_route,
-            active_work_items=dashboard_input.active_work_items,
-        )
+        return replace(dashboard_input, notification_count=self._unread_notification_count())
 
     def _unread_notification_count(self) -> int:
         if self.notification_service is None:
