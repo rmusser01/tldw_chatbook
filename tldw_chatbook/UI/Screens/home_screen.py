@@ -37,15 +37,17 @@ class HomeScreen(BaseAppScreen):
             return test_override
 
         providers = getattr(self.app_instance, "providers_models", {}) or {}
-        model_ready = bool(providers)
+        has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
+        adapter = getattr(self.app_instance, "home_active_work_adapter", None)
+        if adapter is not None and hasattr(adapter, "build_dashboard_input"):
+            return adapter.build_dashboard_input(
+                providers_models=providers,
+                has_recent_work=has_recent_work,
+            )
+
         return HomeDashboardInput(
-            model_ready=model_ready,
-            pending_approval_count=0,
-            active_run_count=0,
-            running_run_count=0,
-            has_library_content=False,
-            has_recent_work=bool(getattr(self.app_instance, "_screen_states", {})),
-            active_detail_route="chat",
+            model_ready=bool(providers),
+            has_recent_work=has_recent_work,
         )
 
     def compose_content(self) -> ComposeResult:

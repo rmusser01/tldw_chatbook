@@ -94,6 +94,11 @@ from tldw_chatbook.Chat import (
     ServerChatConversationService,
 )
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
+from tldw_chatbook.Home.active_work_adapter import (
+    HomeControlAction,
+    HomeControlResult,
+    UnavailableHomeActiveWorkAdapter,
+)
 from tldw_chatbook.Logging_Config import RichLogHandler
 from tldw_chatbook.Prompt_Management import (
     LocalPromptService,
@@ -1361,6 +1366,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.pending_console_launch: Optional[Dict[str, Any]] = None
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
+        self.home_active_work_adapter = UnavailableHomeActiveWorkAdapter()
         self.loguru_logger = loguru_logger
         self.loguru_logger.info(f"Loaded app_config - strip_thinking_tags: {self.app_config.get('chat_defaults', {}).get('strip_thinking_tags', 'NOT SET')}") # Make loguru_logger an instance variable for handlers
         self.client_id = CLI_APP_CLIENT_ID
@@ -1638,31 +1644,31 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         }
         self.post_message(NavigateToScreen(TAB_CHAT))
 
-    def _notify_home_control_unavailable(self, action_label: str) -> None:
-        self.notify(
-            f"{action_label} is not connected to an active run service yet. Open details or Console to inspect the work.",
-            severity="warning",
-        )
+    def _handle_home_control_action(self, action: HomeControlAction) -> HomeControlResult:
+        adapter = getattr(self, "home_active_work_adapter", UnavailableHomeActiveWorkAdapter())
+        result = adapter.handle_control(action)
+        self.notify(result.message, severity=result.severity)
+        return result
 
-    def approve_active_home_item(self) -> None:
-        """Placeholder hook for Home approval controls until run services are wired."""
-        self._notify_home_control_unavailable("Approve")
+    def approve_active_home_item(self) -> HomeControlResult:
+        """Approve the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.APPROVE)
 
-    def reject_active_home_item(self) -> None:
-        """Placeholder hook for Home approval controls until run services are wired."""
-        self._notify_home_control_unavailable("Reject")
+    def reject_active_home_item(self) -> HomeControlResult:
+        """Reject the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.REJECT)
 
-    def pause_active_home_item(self) -> None:
-        """Placeholder hook for Home run controls until run services are wired."""
-        self._notify_home_control_unavailable("Pause")
+    def pause_active_home_item(self) -> HomeControlResult:
+        """Pause the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.PAUSE)
 
-    def resume_active_home_item(self) -> None:
-        """Placeholder hook for Home run controls until run services are wired."""
-        self._notify_home_control_unavailable("Resume")
+    def resume_active_home_item(self) -> HomeControlResult:
+        """Resume the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.RESUME)
 
-    def retry_active_home_item(self) -> None:
-        """Placeholder hook for Home recovery controls until run services are wired."""
-        self._notify_home_control_unavailable("Retry")
+    def retry_active_home_item(self) -> HomeControlResult:
+        """Retry the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.RETRY)
 
     def _wire_character_persona_services(self) -> None:
         self.server_character_persona_service = ServerCharacterPersonaService.from_server_context_provider(
