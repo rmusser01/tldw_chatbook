@@ -25,13 +25,21 @@ class PersonasScreen(BaseAppScreen):
                 classes="destination-purpose",
             )
             with Vertical(id="personas-sections", classes="ds-panel"):
-                yield Button("Open Personas", id="personas-open-profiles")
+                yield Button(
+                    "Open Personas",
+                    id="personas-open-profiles",
+                    tooltip="Open character, prompt, dictionary, and lore management.",
+                )
                 yield Static(
                     "Characters, prompts, dictionaries, and lore stay here; Library owns saved conversation browsing.",
                     id="personas-boundary",
                     classes="destination-purpose",
                 )
-                yield Button("Attach to Console", id="personas-attach-to-console")
+                yield Button(
+                    "Attach to Console",
+                    id="personas-attach-to-console",
+                    tooltip="Stage persona context in Console.",
+                )
 
     @on(Button.Pressed, "#personas-open-profiles")
     def open_profiles(self) -> None:

@@ -25,12 +25,24 @@ class LibraryScreen(BaseAppScreen):
                 classes="destination-purpose",
             )
             with Vertical(id="library-sections", classes="ds-panel"):
-                yield Button("Open Notes", id="library-open-notes")
-                yield Button("Open Media", id="library-open-media")
-                yield Button("Open Conversations", id="library-open-conversations")
-                yield Button("Import/Export Sources", id="library-open-import-export")
-                yield Button("Search/RAG", id="library-open-search")
-                yield Button("Use in Console", id="library-use-in-console")
+                yield Button("Open Notes", id="library-open-notes", tooltip="Open saved notes and workspaces.")
+                yield Button("Open Media", id="library-open-media", tooltip="Open ingested media and transcripts.")
+                yield Button(
+                    "Open Conversations",
+                    id="library-open-conversations",
+                    tooltip="Open saved conversation browsing inside Library.",
+                )
+                yield Button(
+                    "Import/Export Sources",
+                    id="library-open-import-export",
+                    tooltip="Open source import and export tools.",
+                )
+                yield Button("Search/RAG", id="library-open-search", tooltip="Search or ask over indexed sources.")
+                yield Button(
+                    "Use in Console",
+                    id="library-use-in-console",
+                    tooltip="Stage Library context in Console.",
+                )
 
     @on(Button.Pressed, "#library-open-notes")
     def open_notes(self) -> None:

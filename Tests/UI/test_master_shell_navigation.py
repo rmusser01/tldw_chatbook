@@ -26,7 +26,7 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-library", "Library"),
         ("nav-artifacts", "Artifacts"),
         ("nav-personas", "Personas"),
-        ("nav-watchlists_collections", "Watchlists+Collections"),
+        ("nav-watchlists_collections", "W+C"),
         ("nav-schedules", "Schedules"),
         ("nav-workflows", "Workflows"),
         ("nav-mcp", "MCP"),

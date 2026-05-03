@@ -15,7 +15,7 @@ This inventory maps current routes and UI surfaces onto the approved master shel
 | Library | `notes`, `media`, `ingest`, `search`, `conversation`, conversation browsing | `LibraryScreen` plus legacy screens | Library | Wrapper links to source routes; staged source context uses Chat handoff payloads |
 | Artifacts | `chatbooks` | `ArtifactsScreen` plus `ChatbooksScreen` | Artifacts | Wrapper owns Chatbooks and generated/portable outputs; staged artifacts use Chat handoff payloads |
 | Personas | `ccp`, character/persona/prompt/lore subviews | `PersonasScreen` plus `ConversationScreen` | Personas | Personas owns behavior and identity management; staged persona context uses Chat handoff payloads |
-| Watchlists+Collections | `subscriptions` plus collections services | `WatchlistsCollectionsScreen` plus `SubscriptionScreen` | Watchlists+Collections | Wrapper separates Watchlists from Collections and can follow live work in Console |
+| W+C | `subscriptions` plus collections services | `WatchlistsCollectionsScreen` plus `SubscriptionScreen` | W+C | Wrapper separates Watchlists from Collections and can follow live work in Console |
 | Schedules | schedule surfaces | `SchedulesScreen` | Schedules | Wrapper owns when-runs and can follow timing/recovery work in Console |
 | Workflows | workflow surfaces | `WorkflowsScreen` | Workflows | Wrapper owns what-runs and can launch live work in Console |
 | MCP | `tools_settings`, tools/MCP settings | `MCPScreen` | MCP | Wrapper owns MCP tool/server capability control; `tools_settings` is an MCP alias, not global Settings |
@@ -31,7 +31,7 @@ This inventory maps current routes and UI surfaces onto the approved master shel
 | Chat route | `chat` | Console | Keep route ID; change user-facing label to Console |
 | Tools/settings route | `tools_settings` | MCP | Keep as legacy MCP alias, not global Settings |
 | Models shortcut | `llm` alias and `llm_management` tab ID | Legacy direct command | Keep alias to `TAB_LLM` until a later Models/MCP decision |
-| Subscription route | `subscription`, `subscriptions` | Watchlists+Collections | Keep both aliases |
+| Subscription route | `subscription`, `subscriptions` | W+C | Keep both aliases |
 
 ## Import/Export Boundary
 

@@ -40,8 +40,17 @@ class SkillsScreen(BaseAppScreen):
                     "Skill import is not wired in this shell yet.",
                     id="skills-import-unavailable",
                 )
-                yield Button("Import Skill", id="skills-import-skill", disabled=True)
-                yield Button("Attach to Console", id="skills-attach-to-console")
+                yield Button(
+                    "Import Skill",
+                    id="skills-import-skill",
+                    disabled=True,
+                    tooltip="Unavailable until skill import is wired in this shell.",
+                )
+                yield Button(
+                    "Attach to Console",
+                    id="skills-attach-to-console",
+                    tooltip="Stage Agent Skills context in Console.",
+                )
 
     @on(Button.Pressed, "#skills-attach-to-console")
     def attach_to_console(self) -> None:

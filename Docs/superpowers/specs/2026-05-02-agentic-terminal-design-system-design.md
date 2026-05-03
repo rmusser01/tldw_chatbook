@@ -16,7 +16,7 @@ The system is two-layered:
 1. Product/UI grammar: principles, layout rules, status language, density, component behavior, and validation expectations.
 2. Textual/TCSS mapping: semantic tokens, reusable classes, state classes, component hooks, and migration constraints that fit the existing Textual app.
 
-This is not a theme-only refresh. It is the visual and interaction grammar for the approved master shell: `Home`, `Console`, `Library`, `Artifacts`, `Personas`, `Watchlists+Collections`, `Schedules`, `Workflows`, `MCP`, `ACP`, `Skills`, and `Settings`.
+This is not a theme-only refresh. It is the visual and interaction grammar for the approved master shell: `Home`, `Console`, `Library`, `Artifacts`, `Personas`, `W+C`, `Schedules`, `Workflows`, `MCP`, `ACP`, `Skills`, and `Settings`.
 
 ## Source Material
 
@@ -343,7 +343,7 @@ Source role chips label how a source or artifact will be used:
 
 Rules:
 
-- Role chips must appear in Console staged context, Library staging, Workflows, Artifacts reuse, and Watchlists+Collections send-to-Console flows.
+- Role chips must appear in Console staged context, Library staging, Workflows, Artifacts reuse, and W+C send-to-Console flows.
 - Role changes must be visible before launch/send.
 - Editable-target role must expose approval implications.
 
@@ -444,7 +444,7 @@ Recommended composition:
 - optional local inspector
 - one primary action
 
-Use for Library, Artifacts, Personas, Watchlists+Collections, MCP, ACP, Skills, and Settings where appropriate.
+Use for Library, Artifacts, Personas, W+C, MCP, ACP, Skills, and Settings where appropriate.
 
 ### Builder Or Wizard
 
@@ -492,7 +492,7 @@ Recommended composition:
 - authority badges
 - clear/edit/send-to-Console controls
 
-Use in Library, Artifacts, Workflows, Watchlists+Collections, and Console staged context.
+Use in Library, Artifacts, Workflows, W+C, and Console staged context.
 
 ### Layout Rules
 
@@ -633,7 +633,7 @@ Components must show readiness, active state, blockers, approvals, and source au
 
 ### Match Between System And Real World
 
-Labels must align with the approved master shell vocabulary: Home, Console, Library, Artifacts, Personas, Watchlists+Collections, Schedules, Workflows, MCP, ACP, Skills, and Settings.
+Labels must align with the approved master shell vocabulary: Home, Console, Library, Artifacts, Personas, W+C, Schedules, Workflows, MCP, ACP, Skills, and Settings.
 
 ### User Control And Freedom
 
@@ -693,7 +693,7 @@ Destination empty states and Home next-best actions should teach enough to compl
 
 - Adopt shared headers, panels, inspectors, tables, status badges, recovery callouts, and shortcut bars destination by destination.
 - Start with Home and Console because the master shell spec depends on them.
-- Continue through Library, Artifacts, Personas, Watchlists+Collections, Schedules, Workflows, MCP, ACP, Skills, and Settings.
+- Continue through Library, Artifacts, Personas, W+C, Schedules, Workflows, MCP, ACP, Skills, and Settings.
 
 ### Phase 5: Audit Replay
 

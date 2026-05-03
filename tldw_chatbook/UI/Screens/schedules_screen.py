@@ -29,7 +29,11 @@ class SchedulesScreen(BaseAppScreen):
                 yield Static("Failed", classes="destination-section")
                 yield Static("Retry", classes="destination-section")
                 yield Static("Open in Console", classes="destination-section")
-                yield Button("Follow in Console", id="schedules-follow-in-console")
+                yield Button(
+                    "Follow in Console",
+                    id="schedules-follow-in-console",
+                    tooltip="Open Console to inspect schedule timing and recovery work.",
+                )
 
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_in_console(self) -> None:
