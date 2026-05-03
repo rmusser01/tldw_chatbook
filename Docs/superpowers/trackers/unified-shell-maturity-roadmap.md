@@ -1,8 +1,8 @@
 # Unified Shell Maturity Roadmap
 
 Date: 2026-05-03
-Status: Phase 1 in progress
-Source Branch: `origin/dev` at `6a2ef7f8` plus `codex/unified-shell-phase1-false-affordances`
+Status: Phase 1 verified
+Source Branch: `origin/dev` at `8acf1ed4` plus `codex/unified-shell-phase1-closeout-replay`
 
 ## Purpose
 
@@ -78,13 +78,14 @@ Initial child tasks:
 - Phase 1.1: Create shell QA walkthrough harness and evidence template - `TASK-2.1`
 - Phase 1.2: Audit destination action functionality beyond render/click tests - `TASK-2.2`
 - Phase 1.3: Remove false Console-launch affordances from skeletal destinations - `TASK-2.3`
+- Phase 1.4: Replay shell contract and close Phase 1 - `TASK-2.4`
 
 ## QA Evidence Index
 
 | Phase | Evidence Path | Status |
 | --- | --- | --- |
 | Phase 0 | `Docs/superpowers/qa/unified-shell/phase-0/` | verified |
-| Phase 1 | `Docs/superpowers/qa/unified-shell/phase-1/` | in-progress |
+| Phase 1 | `Docs/superpowers/qa/unified-shell/phase-1/` | verified |
 | Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | not-started |
 | Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | not-started |
 | Phase 4 | `Docs/superpowers/qa/unified-shell/phase-4/` | not-started |
@@ -96,7 +97,7 @@ Initial child tasks:
 | Phase | Goal | Status | Backlog Tasks | QA Evidence | Residual Risk |
 | --- | --- | --- | --- | --- | --- |
 | Phase 0: Canonical Tracking | Make remaining work trackable. | verified | `TASK-1`, `TASK-1.1`, `TASK-1.2` | `phase-0/` | Product UI workflows are out of scope for Phase 0. |
-| Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | qa-needed | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3` | `phase-1/` | Final shell-contract replay remains before Phase 1 can be marked verified. |
+| Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | verified | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3`, `TASK-2.4` | `phase-1/` | Live service workflows remain intentionally deferred to Phases 2-6. |
 | Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | not-started | `TASK-4` | `phase-2/` | Home action adapters still need design and implementation. |
 | Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | not-started | `TASK-3` | `phase-3/` | Live work event sources need explicit contracts. |
 | Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | not-started | `TASK-5` | `phase-4/` | Service coverage varies by destination. |
@@ -124,6 +125,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-2.3` resolves the Phase 1.2 false Console-launch finding by turning skeletal Console follow/launch actions into disabled unavailable states with recovery copy:
 
 - `Docs/superpowers/qa/unified-shell/phase-1/2026-05-03-phase-1-3-false-affordance-fix.md`
+
+## Phase 1.4 Shell Contract Closeout Evidence
+
+`TASK-2.4` replays the Phase 1 shell contract and closes the phase as verified:
+
+- `Docs/superpowers/qa/unified-shell/phase-1/2026-05-03-phase-1-shell-contract-closeout.md`
 
 ## Phase 0: Canonical Tracking
 
