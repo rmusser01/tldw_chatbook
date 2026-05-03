@@ -14,6 +14,12 @@ class ShellDestination:
     purpose: str
     tooltip: str
     legacy_routes: tuple[str, ...] = ()
+    full_label: str | None = None
+    navigation_priority: int = 50
+
+    @property
+    def accessible_label(self) -> str:
+        return self.full_label or self.label
 
 
 @dataclass(frozen=True)
@@ -30,6 +36,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "home",
         "Dashboard, notifications, status, and next actions.",
         "Open dashboard, notifications, and active work.",
+        navigation_priority=10,
     ),
     ShellDestination(
         "console",
@@ -38,6 +45,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Live agent conversations, approvals, tools, RAG, and runs.",
         "Open the live agent Console.",
         ("chat",),
+        navigation_priority=20,
     ),
     ShellDestination(
         "library",
@@ -46,6 +54,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Workspaces, source material, imports, notes, media, conversations, and Search/RAG.",
         "Browse Workspaces, imports, notes, media, search, and source material.",
         ("notes", "media", "ingest", "search", "conversation"),
+        navigation_priority=30,
     ),
     ShellDestination(
         "artifacts",
@@ -68,8 +77,10 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "W+C",
         "watchlists_collections",
         "Monitored sources and curated reading/content collections.",
-        "Monitor feeds and curate collections.",
+        "Open Watchlists+Collections for monitored sources and curated collections.",
         ("subscriptions", "subscription"),
+        full_label="Watchlists+Collections",
+        navigation_priority=40,
     ),
     ShellDestination(
         "schedules",

@@ -339,7 +339,7 @@ git commit -m "Harden shell product visibility"
 - Modify: `tldw_chatbook/UI/Navigation/main_navigation.py`
 - Test: `Tests/UI/test_master_shell_navigation.py`
 
-- [ ] **Step 1: Write metadata tests for full labels and priority**
+- [x] **Step 1: Write metadata tests for full labels and priority**
 
 Add tests that fail until destination metadata exposes both compact and full meaning.
 
@@ -376,7 +376,7 @@ async def test_home_and_console_remain_first_primary_destinations():
     ]
 ```
 
-- [ ] **Step 2: Run the failing navigation tests**
+- [x] **Step 2: Run the failing navigation tests**
 
 Run:
 
@@ -388,7 +388,7 @@ Expected:
 
 - Fails because `ShellDestination.full_label` and `navigation_priority` do not exist.
 
-- [ ] **Step 3: Add minimal destination metadata**
+- [x] **Step 3: Add minimal destination metadata**
 
 Update `ShellDestination` with explicit optional metadata while preserving current constructor compatibility.
 
@@ -432,7 +432,7 @@ Use lower priority numbers for the most essential destinations:
 - Watchlists+Collections: `40`
 - Everything else: default `50` unless the test needs a documented distinction.
 
-- [ ] **Step 4: Render tooltip/help from accessible label**
+- [x] **Step 4: Render tooltip/help from accessible label**
 
 In `MainNavigationBar.compose()`, keep the visible label unchanged but ensure compact labels expose full meaning.
 
@@ -448,7 +448,7 @@ button.tooltip = destination.tooltip
 
 Do not add additional overflow behavior in this task. Task 0 owns the minimal explicit `More: Ctrl+P` overflow hint; this task only locks compact-label metadata.
 
-- [ ] **Step 5: Rerun focused navigation tests**
+- [x] **Step 5: Rerun focused navigation tests**
 
 Run:
 
@@ -458,7 +458,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tldw_chatbook/UI/Navigation/shell_destinations.py tldw_chatbook/UI/Navigation/main_navigation.py Tests/UI/test_master_shell_navigation.py
