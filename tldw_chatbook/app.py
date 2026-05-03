@@ -1746,8 +1746,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             target_route=target_route,
         )
         if result.status is HomeControlResultStatus.HANDLED and result.target_route:
+            if result.target_route == "subscriptions":
+                self._stage_subscription_watchlist_run_context(result.target_id or target_id)
             self.post_message(NavigateToScreen(result.target_route))
         return result
+
+    def _stage_subscription_watchlist_run_context(self, target_id: str | None) -> None:
+        if target_id and ":watchlist_run:" in str(target_id):
+            self.pending_subscription_initial_tab = "watchlist-runs"
+            self.pending_subscription_watchlist_run_id = str(target_id)
 
     def open_active_home_item_in_console(
         self,
