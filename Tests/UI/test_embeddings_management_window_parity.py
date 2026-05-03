@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Static, TextArea
+from textual.widgets import Button, Static, TextArea
 
 from tldw_chatbook.UI.Embeddings_Management_Window import EmbeddingsManagementWindow
 
@@ -112,6 +112,27 @@ async def test_embeddings_window_loads_local_collections_from_scope_service():
 
         assert [record["name"] for record in app.window.collections] == ["notes_embeddings"]
         assert scope.calls == [("list_collections", "local")]
+
+
+@pytest.mark.asyncio
+async def test_embeddings_batch_controls_have_scope_specific_tooltips():
+    app = _EmbeddingsManagementTestApp(runtime_backend="local", scope_service=FakeScopeService())
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        expected_tooltips = {
+            "select-all-models": "Select every visible embedding model.",
+            "select-none-models": "Clear every selected embedding model.",
+            "delete-selected-models": "Delete the selected embedding models.",
+            "select-all-collections": "Select every visible vector collection.",
+            "select-none-collections": "Clear every selected vector collection.",
+            "delete-selected-collections": "Delete the selected vector collections.",
+        }
+
+        for button_id, expected_tooltip in expected_tooltips.items():
+            button = app.window.query_one(f"#{button_id}", Button)
+            assert str(button.tooltip) == expected_tooltip
 
 
 @pytest.mark.asyncio
