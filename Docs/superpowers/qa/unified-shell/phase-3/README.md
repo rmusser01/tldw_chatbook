@@ -1,5 +1,11 @@
 # Phase 3 QA Evidence
 
-Status: not-started
+Status: in-progress
 
-This directory will contain durable QA summaries for this phase. Do not mark the phase verified until running-app walkthrough evidence exists here.
+This directory contains durable QA summaries for Phase 3 Console live-work hub slices.
+
+## Evidence
+
+- `2026-05-03-console-live-work-launch-contract.md` - `TASK-3.1` typed Console live-work launch contract and pending-launch card rendering.
+
+Do not mark Phase 3 verified until launch, follow, status, and recovery flows are verified in the running app against workflows, schedules, ACP, MCP, RAG, artifacts, and active-work source adapters.
