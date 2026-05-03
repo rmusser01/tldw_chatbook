@@ -141,15 +141,47 @@ class EmbeddingsManagementWindow(Widget):
                     
                     # Batch selection buttons for models (hidden by default)
                     with Horizontal(id="batch-model-controls", classes="batch-controls hidden"):
-                        yield Button("Select All", id="select-all-models", classes="batch-button")
-                        yield Button("Select None", id="select-none-models", classes="batch-button")
-                        yield Button("Delete Selected", id="delete-selected-models", classes="batch-button", variant="error")
+                        yield Button(
+                            "Select All",
+                            id="select-all-models",
+                            classes="batch-button",
+                            tooltip="Select every visible embedding model.",
+                        )
+                        yield Button(
+                            "Select None",
+                            id="select-none-models",
+                            classes="batch-button",
+                            tooltip="Clear every selected embedding model.",
+                        )
+                        yield Button(
+                            "Delete Selected",
+                            id="delete-selected-models",
+                            classes="batch-button",
+                            variant="error",
+                            tooltip="Delete the selected embedding models.",
+                        )
                     
                     # Batch selection buttons for collections (hidden by default)
                     with Horizontal(id="batch-collection-controls", classes="batch-controls hidden"):
-                        yield Button("Select All", id="select-all-collections", classes="batch-button")
-                        yield Button("Select None", id="select-none-collections", classes="batch-button")
-                        yield Button("Delete Selected", id="delete-selected-collections", classes="batch-button", variant="error")
+                        yield Button(
+                            "Select All",
+                            id="select-all-collections",
+                            classes="batch-button",
+                            tooltip="Select every visible vector collection.",
+                        )
+                        yield Button(
+                            "Select None",
+                            id="select-none-collections",
+                            classes="batch-button",
+                            tooltip="Clear every selected vector collection.",
+                        )
+                        yield Button(
+                            "Delete Selected",
+                            id="delete-selected-collections",
+                            classes="batch-button",
+                            variant="error",
+                            tooltip="Delete the selected vector collections.",
+                        )
                     
                     # Refresh button
                     yield Button(
