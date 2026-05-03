@@ -1,6 +1,7 @@
 from typing import get_type_hints
 
 from tldw_chatbook.Home.active_work_adapter import (
+    HomeConsoleLaunch,
     HomeControlAction,
     HomeControlResult,
     HomeControlResultStatus,
@@ -33,6 +34,54 @@ def test_unavailable_home_adapter_returns_honest_recovery_result():
     assert result.severity == "warning"
     assert "Approve is not connected" in result.message
     assert result.recovery_route == "chat"
+
+
+def test_unavailable_home_adapter_keeps_detail_and_console_actions_recoverable():
+    adapter = UnavailableHomeActiveWorkAdapter()
+
+    detail_result = adapter.handle_control(
+        HomeControlAction.OPEN_DETAILS,
+        target_route="workflows",
+    )
+    console_result = adapter.handle_control(
+        HomeControlAction.OPEN_IN_CONSOLE,
+        target_route="chat",
+    )
+
+    assert detail_result.status is HomeControlResultStatus.UNAVAILABLE
+    assert detail_result.target_route is None
+    assert detail_result.recovery_route == "workflows"
+    assert "Open details is not connected" in detail_result.message
+
+    assert console_result.status is HomeControlResultStatus.UNAVAILABLE
+    assert console_result.console_launch is None
+    assert console_result.recovery_route == "chat"
+    assert "Open in Console is not connected" in console_result.message
+
+
+def test_home_control_result_can_carry_route_and_console_launch_payload():
+    launch = HomeConsoleLaunch(
+        source="workflows",
+        title="Daily digest",
+        payload={"run_id": "run-1"},
+    )
+
+    detail_result = HomeControlResult(
+        action=HomeControlAction.OPEN_DETAILS,
+        status=HomeControlResultStatus.HANDLED,
+        message="Opening workflow details.",
+        target_route="workflows",
+    )
+    console_result = HomeControlResult(
+        action=HomeControlAction.OPEN_IN_CONSOLE,
+        status=HomeControlResultStatus.HANDLED,
+        message="Opening Console for Daily digest.",
+        console_launch=launch,
+    )
+
+    assert detail_result.target_route == "workflows"
+    assert console_result.console_launch is launch
+    assert console_result.console_launch.payload == {"run_id": "run-1"}
 
 
 def test_home_control_result_status_contract_uses_enum_only():

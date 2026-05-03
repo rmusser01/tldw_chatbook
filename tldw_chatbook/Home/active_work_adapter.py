@@ -15,11 +15,20 @@ class HomeControlAction(StrEnum):
     PAUSE = "pause"
     RESUME = "resume"
     RETRY = "retry"
+    OPEN_DETAILS = "open_details"
+    OPEN_IN_CONSOLE = "open_in_console"
 
 
 class HomeControlResultStatus(StrEnum):
     HANDLED = "handled"
     UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class HomeConsoleLaunch:
+    source: str
+    title: str
+    payload: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -29,6 +38,8 @@ class HomeControlResult:
     message: str
     severity: str = "information"
     recovery_route: str = "chat"
+    target_route: str | None = None
+    console_launch: HomeConsoleLaunch | None = None
 
 
 @runtime_checkable
@@ -44,7 +55,12 @@ class HomeActiveWorkAdapter(Protocol):
         """Return dashboard input from the current active-work backend."""
         ...
 
-    def handle_control(self, action: HomeControlAction) -> HomeControlResult:
+    def handle_control(
+        self,
+        action: HomeControlAction,
+        *,
+        target_route: str | None = None,
+    ) -> HomeControlResult:
         """Handle a lightweight Home control action."""
         ...
 
@@ -58,6 +74,8 @@ class UnavailableHomeActiveWorkAdapter(HomeActiveWorkAdapter):
         HomeControlAction.PAUSE: "Pause",
         HomeControlAction.RESUME: "Resume",
         HomeControlAction.RETRY: "Retry",
+        HomeControlAction.OPEN_DETAILS: "Open details",
+        HomeControlAction.OPEN_IN_CONSOLE: "Open in Console",
     }
 
     def build_dashboard_input(
@@ -79,8 +97,14 @@ class UnavailableHomeActiveWorkAdapter(HomeActiveWorkAdapter):
             active_detail_route="chat",
         )
 
-    def handle_control(self, action: HomeControlAction) -> HomeControlResult:
+    def handle_control(
+        self,
+        action: HomeControlAction,
+        *,
+        target_route: str | None = None,
+    ) -> HomeControlResult:
         label = self._ACTION_LABELS[action]
+        recovery_route = target_route or "chat"
         return HomeControlResult(
             action=action,
             status=HomeControlResultStatus.UNAVAILABLE,
@@ -89,5 +113,5 @@ class UnavailableHomeActiveWorkAdapter(HomeActiveWorkAdapter):
                 "Open details or Console to inspect the work."
             ),
             severity="warning",
-            recovery_route="chat",
+            recovery_route=recovery_route,
         )
