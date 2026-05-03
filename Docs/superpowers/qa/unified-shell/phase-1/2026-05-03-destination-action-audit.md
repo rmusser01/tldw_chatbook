@@ -23,7 +23,7 @@ Focused checks were run against Textual `App.run_test(...)` harnesses that mount
 
 - Red test first: python -m pytest Tests/UI/test_unified_shell_destination_action_audit.py -q
 - Expected red result before this document existed: `4 failed`
-- Mounted shell walkthrough set: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_master_shell_navigation.py Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_home_screen.py Tests/UI/test_shell_destinations.py -q`
+- Mounted shell walkthrough set: python -m pytest Tests/UI/test_master_shell_navigation.py Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_home_screen.py Tests/UI/test_shell_destinations.py -q
 - Mounted shell walkthrough result: `61 passed, 3 warnings`
 - Warning boundary: dependency/version warnings and splash string syntax warnings were unrelated to shell behavior.
 
