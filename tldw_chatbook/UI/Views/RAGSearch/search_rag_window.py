@@ -36,9 +36,11 @@ from .constants import (
     MAX_CONCURRENT_SEARCHES, SEARCH_MODES, PARENT_STRATEGIES
 )
 
-from ....Chat.chat_handoff_messages import USE_IN_CHAT_UNAVAILABLE_RECOVERY
+from ....Chat.chat_handoff_messages import (
+    USE_IN_CHAT_UNAVAILABLE_RECOVERY,
+    build_handoff_policy_blocking_message,
+)
 from ....Chat.chat_handoff_models import ChatHandoffPayload
-from ....runtime_policy.types import RuntimeSourceState
 from ....Utils.optional_deps import DEPENDENCIES_AVAILABLE
 from ....DB.search_history_db import SearchHistoryDB
 from ....Utils.paths import get_user_data_dir
@@ -131,7 +133,6 @@ if TYPE_CHECKING:
     from ....app import TldwCli
 
 logger = logger.bind(module="SearchRAGWindow")
-RAG_HANDOFF_POLICY_RECOVERY = "Switch source, sign in, or reconnect the server before using this result in Chat."
 
 # Import event handler mixin
 from .search_event_handlers import SearchEventHandlersMixin
@@ -523,22 +524,11 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
 
     def _rag_handoff_policy_blocking_message(self, payload: ChatHandoffPayload) -> str:
         action_id = self._rag_handoff_runtime_action_id(payload)
-        if not action_id:
-            return ""
-
-        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
-        runtime_state = getattr(runtime_policy, "state", None) if runtime_policy else None
-        policy_engine = getattr(self.app_instance, "ui_policy_engine", None)
-        evaluate = getattr(policy_engine, "evaluate", None) if policy_engine else None
-        if not isinstance(runtime_state, RuntimeSourceState) or not callable(evaluate):
-            return ""
-
-        decision = evaluate(action_id=action_id, state=runtime_state)
-        if getattr(decision, "allowed", True):
-            return ""
-
-        message = str(getattr(decision, "user_message", None) or "This RAG search action is blocked by runtime policy.")
-        return f"{message} {RAG_HANDOFF_POLICY_RECOVERY}"
+        return build_handoff_policy_blocking_message(
+            self.app_instance,
+            action_id=action_id,
+            fallback_message="This RAG search action is blocked by runtime policy.",
+        )
 
     @on(SearchResult.UseInChatRequested)
     def handle_search_result_use_in_chat(self, event: SearchResult.UseInChatRequested) -> None:

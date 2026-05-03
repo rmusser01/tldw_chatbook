@@ -19,10 +19,12 @@ from textual.reactive import reactive
 from textual.timer import Timer
 from textual.widgets import Button, Input, Label, ListView, Select, Switch, TextArea
 
-from ...Chat.chat_handoff_messages import USE_IN_CHAT_UNAVAILABLE_RECOVERY
+from ...Chat.chat_handoff_messages import (
+    USE_IN_CHAT_UNAVAILABLE_RECOVERY,
+    build_handoff_policy_blocking_message,
+)
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Event_Handlers.Audio_Events.dictation_integration_events import InsertDictationTextEvent
-from ...runtime_policy.types import RuntimeSourceState
 from ...Third_Party.textual_fspicker import FileSave
 from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
 from ...Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
@@ -34,8 +36,6 @@ from ...Widgets.emoji_picker import EmojiPickerScreen, EmojiSelected
 from ..Navigation.base_app_screen import BaseAppScreen
 from .notes_scope_models import NotesScreenState, PendingNavigation, ScopeType, WorkspaceSubview
 from .study_scope_models import StudyScopeContext, StudyScopeType
-
-HANDOFF_POLICY_RECOVERY = "Sign in, reconnect the server, or switch source before using this item in Chat."
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -293,18 +293,11 @@ class NotesScreen(BaseAppScreen):
 
     def _handoff_policy_blocking_message(self, action_id: str | None) -> str:
         runtime_action_id = self._handoff_runtime_action_id(action_id)
-        if not runtime_action_id:
-            return ""
-        runtime_state = getattr(getattr(self.app_instance, "runtime_policy", None), "state", None)
-        policy_engine = getattr(self.app_instance, "ui_policy_engine", None)
-        evaluate = getattr(policy_engine, "evaluate", None)
-        if not isinstance(runtime_state, RuntimeSourceState) or not callable(evaluate):
-            return ""
-        decision = evaluate(action_id=runtime_action_id, state=runtime_state)
-        if getattr(decision, "allowed", True):
-            return ""
-        message = str(getattr(decision, "user_message", None) or "This source action is blocked by runtime policy.")
-        return f"{message} {HANDOFF_POLICY_RECOVERY}"
+        return build_handoff_policy_blocking_message(
+            self.app_instance,
+            action_id=runtime_action_id,
+            fallback_message="This source action is blocked by runtime policy.",
+        )
 
     def _update_use_in_chat_action_states(self) -> None:
         if not self.is_mounted:
