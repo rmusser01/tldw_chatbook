@@ -45,9 +45,11 @@ from ..Event_Handlers.media_events import (
     MediaReadingHighlightUpdateEvent,
     MediaReadingHighlightDeleteEvent,
 )
-from ..Chat.chat_handoff_messages import USE_IN_CHAT_UNAVAILABLE_RECOVERY
+from ..Chat.chat_handoff_messages import (
+    USE_IN_CHAT_UNAVAILABLE_RECOVERY,
+    build_handoff_policy_blocking_message,
+)
 from ..Chat.chat_handoff_models import ChatHandoffPayload
-from ..runtime_policy.types import RuntimeSourceState
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -58,9 +60,6 @@ MEDIA_EMPTY_STATE_COPY = (
     "Use Ingest to add files, URLs, archives, or transcripts. Select a media item here.\n"
     "Details, analysis, save/export, and Use in Chat actions appear after a media item is selected."
 )
-MEDIA_HANDOFF_POLICY_RECOVERY = "Switch source, sign in, or reconnect the server before using this media item in Chat."
-
-
 class MediaWindow(Container):
     """
     Orchestrator for the Media Tab components.
@@ -426,22 +425,11 @@ class MediaWindow(Container):
 
     def _media_handoff_policy_blocking_message(self, payload: ChatHandoffPayload) -> str:
         action_id = self._media_handoff_runtime_action_id(payload.runtime_backend)
-        if not action_id:
-            return ""
-
-        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
-        runtime_state = getattr(runtime_policy, "state", None) if runtime_policy else None
-        policy_engine = getattr(self.app_instance, "ui_policy_engine", None)
-        evaluate = getattr(policy_engine, "evaluate", None) if policy_engine else None
-        if not isinstance(runtime_state, RuntimeSourceState) or not callable(evaluate):
-            return ""
-
-        decision = evaluate(action_id=action_id, state=runtime_state)
-        if getattr(decision, "allowed", True):
-            return ""
-
-        message = str(getattr(decision, "user_message", None) or "This media source action is blocked by runtime policy.")
-        return f"{message} {MEDIA_HANDOFF_POLICY_RECOVERY}"
+        return build_handoff_policy_blocking_message(
+            self.app_instance,
+            action_id=action_id,
+            fallback_message="This media source action is blocked by runtime policy.",
+        )
 
     def _show_viewer(self) -> None:
         """Hide the empty state and display the viewer panel."""

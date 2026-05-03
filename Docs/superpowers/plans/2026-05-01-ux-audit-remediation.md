@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#189, plus active UX smoke collection repair slice
-Branch context: current `dev` / `origin/dev` at `39c39cb0`; active branch `codex/ux-smoke-indent-fix`
+Status: Current-dev rebaseline after UX remediation PRs #146-#190, plus active source-authority handoff recovery slice
+Branch context: current `dev` / `origin/dev` at `a3f8a536`; active branch `codex/ux-handoff-policy-recovery-detail`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `39c39cb0`:
+Verified on current `dev` at `a3f8a536`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -77,7 +77,8 @@ Current source state plus this branch:
 - Phase 5 Study quiz Review in Chat is merged through PR #187: the shell-level Review in chat action fails closed until a selected quiz and Chat handoff seam exist, then stages quiz context into Chat.
 - Phase 5 Study section label tooltips are merged through PR #188: compact Study section labels keep fast navigation while explaining Dashboard, Paths, Flashcards, Quizzes, Guides, Mindmaps, Course, and Map.
 - Phase 5 Chatbooks view-toggle tooltips are merged through PR #189: the compact `▦ Grid` and `☰ List` labels explain whether Chatbooks render as visual cards or a dense text list.
-- Phase 7 UX smoke collection repair is active in `codex/ux-smoke-indent-fix`: `Tests/UI/test_ux_audit_smoke.py` had a malformed `async with` block in the Web Search handoff policy smoke test, blocking collection of the Phase 7 shell/navigation smoke target.
+- Phase 7 UX smoke collection repair is merged through PR #190: `Tests/UI/test_ux_audit_smoke.py` collection is restored after the malformed Web Search handoff policy smoke block.
+- Phase 4 source-authority handoff recovery copy is active in `codex/ux-handoff-policy-recovery-detail`: runtime-policy-blocked Notes/Workspace, Media, RAG, and Web Search handoffs include source authority, UX interop active source, server reachability/auth state, and concrete recovery instructions.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 still needs end-to-end audit replay on a clean home/config.
 
@@ -302,8 +303,8 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 - [x] Wire RAG result card `Use in Chat` through a Textual message.
 - [x] Cardify dedicated Web Search results enough to support `Use in Chat`.
 - [x] Disable Notes and workspace item `Use in Chat` actions until a valid selected item exists, with tooltip recovery copy.
-- [ ] Disable or explain source actions when server/auth/capability contracts block them.
-- [ ] Consume backend-owned `UX_Interop` and `runtime_policy` contracts consistently; do not rebuild source authority from raw config.
+- [x] Disable or explain source actions when server/auth/capability contracts block them.
+- [x] Consume backend-owned `UX_Interop` and `runtime_policy` contracts consistently; do not rebuild source authority from raw config.
 - [ ] Keep dry-run sync reports diagnostic only; do not imply mirroring or write sync in source screens.
 - [x] Replay each source handoff in the Phase 0/7 smoke harness.
 - [x] Replay invalid-selection handoff states for Notes, workspace source/artifact, and Media in the Phase 0/7 smoke harness.
@@ -319,7 +320,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 - [x] Notes, Workspaces, Media, RAG Search, and Web Search can each stage one selected item into Chat in focused tests.
 - [x] Notes and workspace item invalid-selection actions are disabled with recovery copy in mounted Textual tests.
 - [x] No invalid selection navigates to Chat in live smoke coverage.
-- [ ] Disabled handoff actions have a reason and a recovery path.
+- [x] Disabled handoff actions have a reason and a recovery path.
 - [x] Workspace handoffs preserve `workspace_id` and isolation metadata in focused tests.
 - [x] Web Search is in scope and not silently omitted.
 
@@ -420,7 +421,7 @@ Branch state: partially completed in `codex/ux-startup-log-polish`, with Speech/
 
 Purpose: prove the plan actually fixes the observed UX failures.
 
-Current-dev state: partially started. A mounted handoff first-send smoke test now covers Chat staging and send-time context application; the broader replay artifacts still need to be regenerated after Phases 0, 1, 2, 5, and 6 land, then rerun against each source workflow. Current `dev` at `39c39cb0` has a collection-blocking indentation regression in `Tests/UI/test_ux_audit_smoke.py`; this branch repairs that before broader replay.
+Current-dev state: partially started. A mounted handoff first-send smoke test now covers Chat staging and send-time context application; the broader replay artifacts still need to be regenerated after Phases 0, 1, 2, 5, and 6 land, then rerun against each source workflow. Current `dev` at `a3f8a536` has the UX smoke collection repair merged; this branch strengthens the policy-blocked handoff assertions before broader replay.
 
 ### Files
 
@@ -471,4 +472,4 @@ Current-dev state: partially started. A mounted handoff first-send smoke test no
 
 ## Next Step
 
-After this UX smoke collection repair slice, remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. The remaining Phase 5 work is any remaining compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this source-authority handoff recovery slice, remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. The remaining Phase 5 work is any remaining compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.

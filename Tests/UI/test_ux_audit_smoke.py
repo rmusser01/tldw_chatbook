@@ -268,6 +268,9 @@ async def test_contract_blocked_workspace_handoff_explains_recovery_without_stag
         assert workspace_button.disabled is True
         tooltip = str(workspace_button.tooltip)
         assert "notes.workspace.detail.server requires server authentication" in tooltip
+        assert "source authority: runtime_policy/server" in tooltip.lower()
+        assert "ux interop: active source server" in tooltip.lower()
+        assert "server auth auth_required" in tooltip.lower()
         assert "Sign in" in tooltip
 
         workspace_button.press()
@@ -305,7 +308,9 @@ async def test_contract_blocked_local_note_handoff_explains_recovery_without_sta
         assert note_button.disabled is True
         tooltip = str(note_button.tooltip)
         assert "notes.detail.local requires local mode" in tooltip
-        assert "switch source" in tooltip
+        assert "source authority: runtime_policy/local" in tooltip.lower()
+        assert "ux interop: active source server" in tooltip.lower()
+        assert "switch source to local" in tooltip.lower()
 
         note_button.press()
         await pilot.pause(0.05)
@@ -550,7 +555,9 @@ async def test_contract_blocked_media_handoff_explains_recovery_without_staging(
         app.app_instance.open_chat_with_handoff.assert_not_called()
         message = app.app_instance.notify.call_args.args[0]
         assert "media.items.detail.server requires server mode" in message
-        assert "switch source" in message.lower()
+        assert "source authority: runtime_policy/server" in message.lower()
+        assert "ux interop: active source local" in message.lower()
+        assert "switch source to server" in message.lower()
 
 
 class SearchRAGHandoffSmokeApp(App[None]):
@@ -649,7 +656,9 @@ async def test_contract_blocked_rag_search_handoff_explains_recovery_without_sta
             app.app_instance.open_chat_with_handoff.assert_not_called()
             message = app.app_instance.notify.call_args.args[0]
             assert "rag.media_embeddings.search.server requires server mode" in message
-            assert "switch source" in message.lower()
+            assert "source authority: runtime_policy/server" in message.lower()
+            assert "ux interop: active source local" in message.lower()
+            assert "switch source to server" in message.lower()
 
 
 class WebSearchResultHandoffSmokeApp(App[None]):
@@ -736,4 +745,6 @@ async def test_contract_blocked_web_search_handoff_explains_recovery_without_sta
             app.app_instance.open_chat_with_handoff.assert_not_called()
             message = app.app_instance.notify.call_args.args[0]
             assert "research.search.providers.launch.server requires server mode" in message
-            assert "switch source" in message.lower()
+            assert "source authority: runtime_policy/server" in message.lower()
+            assert "ux interop: active source local" in message.lower()
+            assert "switch source to server" in message.lower()
