@@ -90,8 +90,13 @@ class HomeScreen(BaseAppScreen):
         method_name = HOME_CONTROL_METHODS.get(control.control_id)
         method = getattr(self.app_instance, method_name, None) if method_name else None
         if callable(method):
+            kwargs = {}
+            if control.target_id is not None:
+                kwargs["target_id"] = control.target_id
             if control.control_id in HOME_CONTROL_METHODS_WITH_TARGET_ROUTE:
-                method(target_route=control.target_route)
+                kwargs["target_route"] = control.target_route
+            if kwargs:
+                method(**kwargs)
             else:
                 method()
         else:

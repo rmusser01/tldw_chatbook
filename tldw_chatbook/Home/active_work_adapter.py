@@ -38,6 +38,7 @@ class HomeControlResult:
     message: str
     severity: str = "information"
     recovery_route: str = "chat"
+    target_id: str | None = None
     target_route: str | None = None
     console_launch: HomeConsoleLaunch | None = None
 
@@ -59,6 +60,7 @@ class HomeActiveWorkAdapter(Protocol):
         self,
         action: HomeControlAction,
         *,
+        target_id: str | None = None,
         target_route: str | None = None,
     ) -> HomeControlResult:
         """Handle a lightweight Home control action."""
@@ -101,6 +103,7 @@ class UnavailableHomeActiveWorkAdapter(HomeActiveWorkAdapter):
         self,
         action: HomeControlAction,
         *,
+        target_id: str | None = None,
         target_route: str | None = None,
     ) -> HomeControlResult:
         label = self._ACTION_LABELS[action]
@@ -114,4 +117,5 @@ class UnavailableHomeActiveWorkAdapter(HomeActiveWorkAdapter):
             ),
             severity="warning",
             recovery_route=recovery_route,
+            target_id=target_id,
         )
