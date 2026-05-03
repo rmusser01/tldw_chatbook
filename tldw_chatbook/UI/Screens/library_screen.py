@@ -5,6 +5,7 @@ from textual import on
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
+from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -29,6 +30,7 @@ class LibraryScreen(BaseAppScreen):
                 yield Button("Open Conversations", id="library-open-conversations")
                 yield Button("Import/Export Sources", id="library-open-import-export")
                 yield Button("Search/RAG", id="library-open-search")
+                yield Button("Use in Console", id="library-use-in-console")
 
     @on(Button.Pressed, "#library-open-notes")
     def open_notes(self) -> None:
@@ -49,3 +51,14 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-open-search")
     def open_search(self) -> None:
         self.post_message(NavigateToScreen("search"))
+
+    @on(Button.Pressed, "#library-use-in-console")
+    def use_in_console(self) -> None:
+        self.app_instance.open_chat_with_handoff(
+            ChatHandoffPayload(
+                source="library",
+                item_type="library-context",
+                title="Library context",
+                body="Stage Library source material, notes, media, conversations, imports/exports, or Search/RAG results.",
+            )
+        )

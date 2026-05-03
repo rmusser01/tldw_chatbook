@@ -1,9 +1,11 @@
 """Skills destination shell for Agent Skills packs."""
 
 from textual.app import ComposeResult
+from textual import on
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
+from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ..Navigation.base_app_screen import BaseAppScreen
 
 
@@ -35,3 +37,15 @@ class SkillsScreen(BaseAppScreen):
                 yield Static("Attachments", classes="destination-section")
                 yield Static(f"Local skills directory: {skills_dir_label}", id="skills-local-directory")
                 yield Button("Import Skill", id="skills-import-skill")
+                yield Button("Attach to Console", id="skills-attach-to-console")
+
+    @on(Button.Pressed, "#skills-attach-to-console")
+    def attach_to_console(self) -> None:
+        self.app_instance.open_chat_with_handoff(
+            ChatHandoffPayload(
+                source="skills",
+                item_type="skill-context",
+                title="Skills context",
+                body="Stage installed skills, SKILL.md instructions, scripts, references, assets, or attachments for Console.",
+            )
+        )

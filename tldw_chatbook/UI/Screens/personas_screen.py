@@ -5,6 +5,7 @@ from textual import on
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
+from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -30,7 +31,19 @@ class PersonasScreen(BaseAppScreen):
                     id="personas-boundary",
                     classes="destination-purpose",
                 )
+                yield Button("Attach to Console", id="personas-attach-to-console")
 
     @on(Button.Pressed, "#personas-open-profiles")
     def open_profiles(self) -> None:
         self.post_message(NavigateToScreen("ccp"))
+
+    @on(Button.Pressed, "#personas-attach-to-console")
+    def attach_to_console(self) -> None:
+        self.app_instance.open_chat_with_handoff(
+            ChatHandoffPayload(
+                source="personas",
+                item_type="persona-context",
+                title="Persona context",
+                body="Stage characters, prompts, dictionaries, lore, or behavior profiles for Console.",
+            )
+        )

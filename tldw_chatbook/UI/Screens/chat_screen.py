@@ -10,7 +10,7 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.widgets import Button, TextArea, Select, Collapsible, Input
+from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 from textual.events import Key
 from textual import on
 from textual.reactive import reactive
@@ -146,6 +146,14 @@ class ChatScreen(BaseAppScreen):
         
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
+        pending_launch = getattr(self.app_instance, "pending_console_launch", None)
+        if pending_launch:
+            source = str(pending_launch.get("source") or "unknown")
+            title = str(pending_launch.get("title") or "Untitled")
+            with Container(id="console-pending-launch-card", classes="ds-panel"):
+                yield Static("Pending Console launch", classes="ds-status-badge")
+                yield Static(f"Source: {source}", classes="destination-section")
+                yield Static(f"Title: {title}", classes="destination-section")
         # Create and yield the chat window container
         self.chat_window = ChatWindowEnhanced(self.app_instance, id="chat-window", classes="window")
         yield self.chat_window

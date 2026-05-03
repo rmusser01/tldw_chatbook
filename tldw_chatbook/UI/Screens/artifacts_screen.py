@@ -5,6 +5,7 @@ from textual import on
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
+from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -30,7 +31,19 @@ class ArtifactsScreen(BaseAppScreen):
                     id="artifacts-output-status",
                     classes="destination-purpose",
                 )
+                yield Button("Use in Console", id="artifacts-use-in-console")
 
     @on(Button.Pressed, "#artifacts-open-chatbooks")
     def open_chatbooks(self) -> None:
         self.post_message(NavigateToScreen("chatbooks"))
+
+    @on(Button.Pressed, "#artifacts-use-in-console")
+    def use_in_console(self) -> None:
+        self.app_instance.open_chat_with_handoff(
+            ChatHandoffPayload(
+                source="artifacts",
+                item_type="artifact-context",
+                title="Artifact context",
+                body="Stage generated outputs, reports, datasets, exports, or Chatbook context.",
+            )
+        )

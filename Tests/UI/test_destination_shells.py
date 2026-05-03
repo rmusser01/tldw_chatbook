@@ -109,8 +109,6 @@ async def test_library_exposes_source_sections_and_import_export_boundary():
         ("artifacts", "#artifacts-open-chatbooks", "chatbooks"),
         ("personas", "#personas-open-profiles", "ccp"),
         ("watchlists_collections", "#wc-open-watchlists", "subscriptions"),
-        ("schedules", "#schedules-open-console", "chat"),
-        ("workflows", "#workflows-launch-console", "chat"),
     ],
 )
 @pytest.mark.asyncio

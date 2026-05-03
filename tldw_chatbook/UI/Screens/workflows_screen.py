@@ -6,7 +6,6 @@ from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
-from ..Navigation.main_navigation import NavigateToScreen
 
 
 class WorkflowsScreen(BaseAppScreen):
@@ -32,8 +31,11 @@ class WorkflowsScreen(BaseAppScreen):
                 yield Static("Outputs", classes="destination-section")
                 yield Static("Launch in Console", classes="destination-section")
                 yield Static("No workflow service is wired yet.", id="workflows-empty-state")
-                yield Button("Launch in Console", id="workflows-launch-console")
+                yield Button("Launch in Console", id="workflows-launch-in-console")
 
-    @on(Button.Pressed, "#workflows-launch-console")
+    @on(Button.Pressed, "#workflows-launch-in-console")
     def launch_in_console(self) -> None:
-        self.post_message(NavigateToScreen("chat"))
+        self.app_instance.open_console_for_live_work(
+            source="workflows",
+            title="Workflows",
+        )

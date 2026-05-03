@@ -37,7 +37,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     "Reading/content items, highlights, saved searches, archive state, note links, templates, feeds, import/export."
                 )
                 yield Button("Open current Watchlists", id="wc-open-watchlists")
+                yield Button("Follow in Console", id="watchlists-follow-in-console")
 
     @on(Button.Pressed, "#wc-open-watchlists")
     def open_watchlists(self) -> None:
         self.post_message(NavigateToScreen("subscriptions"))
+
+    @on(Button.Pressed, "#watchlists-follow-in-console")
+    def follow_in_console(self) -> None:
+        self.app_instance.open_console_for_live_work(
+            source="watchlists_collections",
+            title="Watchlists+Collections",
+        )

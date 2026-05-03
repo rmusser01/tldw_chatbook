@@ -1365,6 +1365,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
         self.pending_chat_handoff: Optional[ChatHandoffPayload] = None
+        self.pending_console_launch: Optional[Dict[str, Any]] = None
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
         self.loguru_logger = loguru_logger
@@ -1633,6 +1634,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             return
 
         self.pending_chat_handoff = payload
+        self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def open_console_for_live_work(self, *, source: str, title: str, payload: dict | None = None) -> None:
+        """Open Console for live work launched from another destination."""
+        self.pending_console_launch = {
+            "source": source,
+            "title": title,
+            "payload": payload or {},
+        }
         self.post_message(NavigateToScreen(TAB_CHAT))
 
     def _wire_character_persona_services(self) -> None:

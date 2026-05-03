@@ -6,7 +6,6 @@ from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
-from ..Navigation.main_navigation import NavigateToScreen
 
 
 class SchedulesScreen(BaseAppScreen):
@@ -30,8 +29,11 @@ class SchedulesScreen(BaseAppScreen):
                 yield Static("Failed", classes="destination-section")
                 yield Static("Retry", classes="destination-section")
                 yield Static("Open in Console", classes="destination-section")
-                yield Button("Open in Console", id="schedules-open-console")
+                yield Button("Follow in Console", id="schedules-follow-in-console")
 
-    @on(Button.Pressed, "#schedules-open-console")
-    def open_console(self) -> None:
-        self.post_message(NavigateToScreen("chat"))
+    @on(Button.Pressed, "#schedules-follow-in-console")
+    def follow_in_console(self) -> None:
+        self.app_instance.open_console_for_live_work(
+            source="schedules",
+            title="Schedules",
+        )
