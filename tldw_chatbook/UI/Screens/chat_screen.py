@@ -21,7 +21,7 @@ from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResum
 from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
-from ...Chat.console_live_work import ConsoleLiveWorkLaunch
+from ...Chat.console_live_work import ConsoleLiveWorkLaunch, ConsoleLiveWorkStatusCardState
 from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
@@ -156,20 +156,24 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context = normalized_launch
             self.app_instance.pending_console_launch = None
         return self._pending_console_launch_context
+
+    def _render_console_live_work_status_card(self, launch: ConsoleLiveWorkLaunch) -> ComposeResult:
+        """Render a reusable live-work status card for Console launch context."""
+        card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
+        with Container(id=card_state.container_id, classes=card_state.container_classes):
+            yield Static(
+                card_state.badge_text,
+                id=card_state.badge_id,
+                classes=card_state.badge_classes,
+            )
+            for row in card_state.rows:
+                yield Static(row.text, id=row.widget_id, classes=row.classes)
         
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
         pending_launch = self._consume_pending_console_launch()
         if pending_launch:
-            with Container(id="console-pending-launch-card", classes="ds-panel"):
-                yield Static("Pending Console launch", classes="ds-status-badge")
-                yield Static(f"Source: {pending_launch.source}", classes="destination-section")
-                yield Static(f"Title: {pending_launch.title}", classes="destination-section")
-                yield Static(f"Status: {pending_launch.status}", classes="destination-section")
-                yield Static(f"Recovery: {pending_launch.recovery}", classes="destination-section")
-                yield Static(f"Action: {pending_launch.action_label}", classes="destination-section")
-                for key, value in pending_launch.payload_display_items():
-                    yield Static(f"{key}: {value}", classes="destination-section")
+            yield from self._render_console_live_work_status_card(pending_launch)
         # Create and yield the chat window container
         self.chat_window = ChatWindowEnhanced(self.app_instance, id="chat-window", classes="window")
         yield self.chat_window
