@@ -1,482 +1,877 @@
-# New-User First-Run Shell UX Design
+# Master Shell UX Design
 
 Date: 2026-05-02
-Status: Approved for spec review
-Scope: First-run orientation, top-level information architecture, navigation clarity, capability-aware onboarding, and core screen framing
-Primary Persona: New user
+Last Updated: 2026-05-02
+Status: User-approved design, pending spec review and implementation planning
+Primary Repo: `tldw_chatbook`
+Scope: Master shell UX, first-run dashboard, top-level information architecture, Console-centered live work, local parity destinations, and migration constraints
+Primary Persona: Power user with beginner-safe orientation
 Primary Interaction Bias: Keyboard-first, mouse-safe, compact TUI
 Platform Constraint: Stay within the current Textual/TUI product model
 
 ## Summary
 
-`tldw_chatbook` already has substantial capability, but it does not currently present a clear front door for new users. The main UX problem is not lack of features or styling quality. It is orientation debt.
+`tldw_chatbook` should present itself as a local-first agentic knowledge console, not as a flat collection of unrelated utility tabs.
 
-The current product appears to expose too much of its internal structure too early, relies on several labels that assume prior context, and asks new users to infer which path matters before they have completed a meaningful action. This creates hesitation, failed setup attempts, and avoidable first-run drop-off.
+The app already contains substantial capability: chat, notes, media, RAG/search, personas, chatbooks, study tools, MCP, server parity, watchlists, collections, schedules, workflows, and skill-like extension points. The UX problem is that these capabilities are not organized into a clear product model. New users lack a strong front door, while power users still pay too much re-orientation cost when moving between modules.
 
-The recommended direction is a `state-aware onboarding shell` built around:
+The approved direction is a master shell organized around:
 
-- a skippable `Home` screen as the default first-run landing surface
-- a simplified top-level information architecture that distinguishes core workflows from expert tooling
-- capability-aware guidance so the app recommends only actions the current installation can complete
-- a consistent page frame and empty-state model across primary screens
+- `Home` as the default first-run page and always-available dashboard.
+- `Console` as the only live agent conversation/run surface.
+- clear top-level destinations for source material, outputs, personas, monitoring, scheduling, workflows, protocols, skills, and settings.
+- local parity with the corresponding `tldw_server2` domains where applicable.
+- capability-aware status, recovery, and next-best actions before users hit dead ends.
 
-This is not a cosmetic refresh. It is a product-structure and workflow-priority redesign for new-user comprehension.
+This is not a cosmetic refresh. It is a product-structure and workflow-completion redesign.
 
 ## Problem Statement
 
-The current shell and screen system appears to create first-run confusion in these ways:
+The existing UI has been progressively remediated through many small PRs, but the larger product model remains under-specified.
 
-1. There is no clear beginner entry point that explains what the product is and what to do first.
-2. The app presents too many areas at equal visual importance, including advanced and diagnostic workflows.
-3. Several user-facing labels reflect implementation history or expert shorthand more than beginner mental models.
-4. Setup prerequisites for providers and optional capabilities are not surfaced early enough in the journey.
-5. Empty states are likely too passive in a product where value depends on setup, import, or prior content.
-6. The shell currently risks competing navigation patterns or duplicated chrome in transitional areas of the codebase.
+Current user-facing risks:
 
-For a new user, this does not read as “powerful.” It reads as “large, dense, and unclear.”
+- The app still exposes too many implementation-era surfaces at equal weight.
+- `Chat` undersells the intended role of the main agentic control surface.
+- Home/onboarding work is useful but too narrow if treated as only a first-run feature.
+- RAG/search, imports, notes, media, conversations, and artifacts need clearer boundaries.
+- MCP, ACP, and Skills are distinct concepts but can easily blur without explicit ownership rules.
+- Watchlists and Collections should mirror server-side local parity domains rather than become a generic bucket.
+- Schedules and Workflows can blur unless the app clearly separates "when it runs" from "what procedure runs."
+- Live agent work can fragment unless every launch/follow path converges on Console.
+
+For a new user, this creates uncertainty about where to start. For a power user, it creates avoidable friction and state ambiguity.
 
 ## Goals
 
-- Help a new user understand what the product does within the first minute.
-- Help a new user choose the right next step without needing to inspect Settings first.
-- Preserve product breadth while reducing first-run cognitive load.
-- Separate core workflows from expert or low-frequency tooling.
-- Make setup state and capability gaps visible before they cause dead-end interactions.
-- Keep `Characters/Personas` as a top-level destination because they are a first-class product concept.
+- Make `Home` useful both as first-run orientation and as an ongoing dashboard.
+- Rename the user-facing `Chat` concept to `Console`.
+- Make `Console` the single live agent conversation/run surface.
+- Preserve feature breadth while reducing first-run and cross-module cognitive load.
+- Define a stable top-level IA that can absorb the concept-screen direction without copying it 1:1.
+- Keep local/server/workspace source authority visible.
+- Preserve power-user speed, keyboard shortcuts, command palette access, and dense TUI workflows.
+- Keep every destination's role clear enough to guide implementation and test coverage.
+- Align Watchlists and Collections with the local versions of their `tldw_server2` functionality.
+- Treat Skills as Agent Skills spec-compatible capability packs with discovery/import and attachment points.
 
 ## Non-Goals
 
-- Rebuild every screen in this slice.
-- Remove advanced features from the product.
-- Force onboarding completion before users can use the app.
-- Convert the app into a web-style dashboard with large card-heavy layouts.
-- Change stable backend capabilities or feature ownership.
+- Do not implement the concept images as literal 1:1 screen requirements.
+- Do not rebuild every screen in one slice.
+- Do not remove advanced features.
+- Do not force users to complete onboarding before using the app.
+- Do not convert the TUI into a web-style card dashboard.
+- Do not collapse all configuration into Console.
+- Do not duplicate live run surfaces across destination screens.
+- Do not change stable internal route IDs unless a later implementation plan proves it is necessary.
 
 ## Design Principles
 
-- One clear front door
-- Recognition before recall
-- Core workflows first, expert workflows second
-- Status before failure
-- Compact, keyboard-first orientation
-- Progressive disclosure over full upfront exposure
-- Stable navigation labels
-- One primary navigation system per screen
+- One product shell, not a bundle of unrelated tabs.
+- Home explains and controls the system at a glance.
+- Console is where live agent work happens.
+- Configuration surfaces launch or prepare work; they do not become alternate live-run surfaces.
+- Recognition before recall.
+- Core workflows first, expert depth one step away.
+- Status before failure.
+- Source authority must remain visible: local, server, workspace, remote-only, and dry-run states cannot be blended.
+- Short labels are acceptable only when the destination purpose is taught by copy, tooltip, status line, or command palette.
+- Keyboard speed and mouse safety are both required.
 
-## Recommended Approach
+## Approved Top-Level Information Architecture
 
-### Option A: Navigation cleanup only
-
-Improve labels, grouping, and empty states but keep the current landing behavior.
-
-Why not recommended:
-
-- does not solve the missing front door problem
-- still asks users to infer the right next step from the shell alone
-
-### Option B: Guided home plus simplified IA
-
-Add a compact, skippable, state-aware `Home` screen and reduce first-run prominence of advanced workflows.
-
-Why recommended:
-
-- addresses the biggest orientation problem directly
-- creates a coherent beginner model without removing expert depth
-- fits TUI constraints if kept compact and task-led
-
-### Option C: Full task-based app re-architecture
-
-Reorganize the entire app around end-user goals in one larger rewrite.
-
-Why not recommended now:
-
-- higher implementation risk
-- mixes shell repair with deeper architectural migration
-- unnecessary before validating a clearer first-run shell
-
-**Chosen approach:** Option B, guided home plus simplified IA.
-
-## Top-Level Information Architecture
-
-The top-level shell should prioritize user goals over implementation history.
-
-### Recommended Top-Level Destinations
+The top-level shell should expose these destinations:
 
 - `Home`
-- `Chat`
-- `Content`
-- `Import`
-- `Search`
-- `Characters`
-- `Models`
-- `Advanced`
+- `Console`
+- `Library`
+- `Artifacts`
+- `Personas`
+- `Watchlists+Collections`
+- `Schedules`
+- `Workflows`
+- `MCP`
+- `ACP`
+- `Skills`
 - `Settings`
 
-### Destination Roles
+### Home
 
-- `Home`: orientation, state-aware next steps, setup status, and recent work
-- `Chat`: direct interaction with LLMs and conversation runtime
-- `Content`: saved material such as notes, media, conversations, and chatbooks
-- `Import`: ingestion entry point for files, URLs, media, and source material
-- `Search`: retrieval across imported and saved material
-- `Characters`: personas, reusable behavior, prompts, and related identity shaping workflows
-- `Models`: provider setup, model availability, and “AI is ready/not ready” status
-- `Advanced`: evals, coding, STTS, subscriptions, logs, stats, and other expert tooling
-- `Settings`: application-level preferences and configuration not required for a first successful task
+Home is the default landing page for new users and an always-available dashboard for experienced users.
 
-### `Models` Versus `Settings` Boundary
+Home owns:
 
-This boundary must be explicit in both labels and behavior.
+- global readiness and status
+- notifications across modules
+- active work overview
+- schedule and workflow health
+- next-best actions
+- pending approvals
+- lightweight approve, pause, resume, retry, and open-details controls
+- recent work and re-entry
 
-- `Models` owns anything required to make AI functionality work, including provider setup, model availability, and “ready/not ready” runtime status.
-- `Settings` owns application preferences, customization, and lower-priority configuration that should not block a first useful task.
+Home should answer:
 
-New users should not have to guess whether “make chat work” lives under `Models` or `Settings`. It should live under `Models`.
+1. What is ready?
+2. What needs attention?
+3. What is currently running?
+4. What should I do next?
+5. Where do I resume?
 
-### Why `Content` Instead Of `Library`
+Home must stay compact and actionable. It is not a decorative dashboard.
 
-`Library` risks sounding too abstract given the current object mix. `Content` is plainer, more direct, and easier to connect to notes, media, conversations, and imported material.
+### Console
 
-### Why `Characters` Stays Top-Level
+Console replaces `Chat` as the user-facing label. The current internal `chat` route and code paths may remain during migration.
 
-`Characters/Personas` are a core part of product identity rather than a hidden secondary feature. They should remain directly accessible at the shell level, but their page framing should explain the concept clearly to beginners.
+Console is the primary live surface for:
 
-## Route Compatibility And Migration Map
+- direct chat
+- agentic programming and control
+- RAG-backed answers
+- staged source context
+- plans and task progress
+- tool calls and observations
+- approvals
+- MCP tool use
+- ACP agent sessions
+- diffs and shell/terminal interaction
+- run logs and recovery
+- artifact creation
 
-This design introduces a simpler top-level model, but implementation must remain compatible with the current screen inventory.
+Any destination can prepare or launch work, but live execution opens or follows in Console.
 
-### New-To-Current Mapping
+### Library
 
-| New destination | Current routes/screens it wraps, renames, or groups |
-|---|---|
+Library owns source material and knowledge access.
+
+Library includes:
+
+- Notes
+- Media
+- Conversations
+- Import/Export
+- Search/RAG
+- source browsing and metadata
+
+Search/RAG must exist in both Library and Console:
+
+- Library Search/RAG supports deliberate retrieval and explicit RAG query workflows.
+- Console RAG supports conversational answers that retrieve from Library/RAG as part of the agent response.
+
+Both paths must expose sources, citations or evidence where available, and source authority.
+
+### Artifacts
+
+Artifacts owns generated, portable, or reusable outputs.
+
+Artifacts includes:
+
+- reports
+- datasets
+- workflow outputs
+- exported/imported bundles
+- drafts
+- saved deliverables
+- Chatbooks
+
+Artifacts should not become a second Library. Its focus is outputs and reusable packages, not raw source browsing.
+
+### Personas
+
+Personas owns behavior and identity.
+
+Personas includes:
+
+- characters
+- personas
+- assistant profiles
+- prompts
+- dictionaries
+- lore/world books
+- persona-scoped defaults
+
+Personas can be attached to Console sessions, Workflows, ACP agents, and Skills.
+
+### Watchlists+Collections
+
+Watchlists+Collections is one top-level destination with two primary internal tabs: `Watchlists` and `Collections`.
+
+This destination represents local versions of the corresponding `tldw_server2` functionality.
+
+Watchlists owns monitored-source workflows:
+
+- sources
+- groups
+- tags
+- filters
+- jobs
+- runs
+- scraped items
+- outputs
+- templates
+- alerts
+- telemetry/status
+- retry and backoff state
+
+Collections owns curated reading/content workflows:
+
+- reading/content items
+- highlights
+- saved searches
+- archive state
+- lightweight annotations
+- note links
+- output templates
+- feeds/subscriptions where available
+- import/export
+
+Watchlists+Collections can feed Library, Schedules, Workflows, Artifacts, and Console, but it should not be reduced to any one of them.
+
+### Schedules
+
+Schedules owns when things run.
+
+Schedules includes:
+
+- time-based schedules
+- event-based triggers
+- next and last run state
+- missed-run recovery
+- paused state
+- retry policy
+- schedule health
+- links to affected workflows, watchlists, sources, or Console runs
+
+Schedules must not duplicate workflow-builder complexity.
+
+### Workflows
+
+Workflows owns what procedure runs.
+
+Workflows includes:
+
+- recipes
+- builders
+- inputs
+- steps
+- required tools
+- required skills
+- required personas
+- dry-run preview
+- outputs
+- approvals
+- versions
+
+Starting or following a workflow run opens Console.
+
+### MCP
+
+MCP owns tool and server capability plumbing.
+
+MCP includes:
+
+- MCP servers
+- connectors
+- tools
+- tool permissions
+- auth
+- availability
+- risk and approval rules
+- audit logs
+- test actions
+- recovery for blocked tools
+
+MCP should answer: what can agents use, what is blocked, and how do I fix it?
+
+### ACP
+
+ACP owns Agent Client Protocol interoperability.
+
+ACP includes:
+
+- available and installed ACP agents
+- local and remote agent runtimes
+- coding-agent client sessions
+- session resume
+- diff review
+- terminal/shell integration
+- agent runtime status
+- compatibility and installation state
+- discovery and launch
+
+ACP launches or resumes live work in Console. It does not become a second Console.
+
+### Skills
+
+Skills owns Agent Skills spec-compatible capability packs.
+
+Skills includes:
+
+- installed local skills
+- discovery/import from external skill registries
+- `SKILL.md` inspection
+- metadata validation
+- `scripts/`, `references/`, and `assets/` management
+- compatibility and allowed-tool review
+- attachment to Console sessions, Personas, ACP agents, and Workflows
+
+The Skill model follows the Agent Skills structure:
+
+```text
+skill-name/
+├── SKILL.md
+├── scripts/
+├── references/
+├── assets/
+└── ...
+```
+
+Skills are user-facing reusable instructions and capability packs, not low-level MCP tool configuration.
+
+### Settings
+
+Settings owns app-level preferences and global configuration.
+
+Settings includes:
+
+- appearance
+- storage
+- accounts
+- global preferences
+- default behavior
+- non-task-specific configuration
+
+Settings should not be the place a new user must discover to make AI work. Runtime readiness belongs in Home, Console, MCP, ACP, and Skills as appropriate.
+
+## Route Compatibility And Migration Rules
+
+The user-facing IA may change before internal route IDs do.
+
+### Route Mapping
+
+| New destination | Current or likely route mapping |
+| --- | --- |
 | `Home` | new screen |
-| `Chat` | `chat` |
-| `Content` | grouped access to `notes`, `media`, `chatbooks`, and conversation-oriented browsing currently surfaced through `ccp` |
-| `Import` | `ingest` |
-| `Search` | `search` |
-| `Characters` | character/persona/prompt workflows currently surfaced through `ccp` |
-| `Models` | `llm` plus any provider/model setup currently buried in settings flows |
-| `Advanced` | `coding`, `stts`, `evals`, `subscriptions`, `logs`, `stats` |
-| `Settings` | `tools_settings`, `customize` |
+| `Console` | current `chat` route |
+| `Library` | wraps or groups `notes`, `media`, `search`, `ingest`, conversation browsing |
+| `Artifacts` | wraps Chatbooks and output/bundle surfaces |
+| `Personas` | character/persona/prompt/dictionary/lore portions of current `ccp` |
+| `Watchlists+Collections` | local watchlists and collections parity surfaces |
+| `Schedules` | schedule and trigger surfaces |
+| `Workflows` | workflow definitions, builders, templates, dry-runs |
+| `MCP` | MCP/tool configuration and audit surfaces |
+| `ACP` | ACP agent/session/runtimes surface |
+| `Skills` | Agent Skills management and discovery surface |
+| `Settings` | current settings/customize/global preferences |
 
-### Migration Rules
+### Migration Constraints
 
-- Current route IDs may remain stable internally during the first implementation slice.
-- The shell may relabel, regroup, or wrap existing screens without requiring an immediate backend or route rewrite.
-- `ccp` is not a usable new-user label and must not remain a primary shell label.
-- If `Content` or `Characters` temporarily launch into existing composite screens, the entry state must land the user in the relevant subsection rather than a generic legacy overview.
-- The implementation plan must explicitly separate `presentation relabeling` from `deeper screen decomposition`.
+- Keep stable internal route IDs where practical.
+- Rename user-facing `Chat` to `Console` without breaking existing chat internals.
+- Split or wrap legacy composite screens only when needed for the new destination role.
+- Do not expose `ccp` as a user-facing label.
+- Do not mount competing global navigation systems.
+- Each top-level screen must have one primary shell nav.
+- Destination wrappers are acceptable during migration if they provide clear labels, state, and subsection entry.
+- Implementation must separate presentation relabeling from deeper screen decomposition.
 
-## First-Run Entry Rules
+## Home Design
 
-### Default Landing Rule
+Home is both first-run entry and ongoing control center.
 
-New users should land on `Home`, not `Chat`.
+### Required Sections
 
-### Exit Rule
+#### Status
 
-`Home` must always be skippable.
+Show compact readiness across:
 
-### Persistence Rule
+- model/provider readiness
+- server/local state
+- MCP availability
+- ACP agent availability
+- RAG/index readiness
+- sync/dry-run status
+- storage health
+- optional dependency gaps
 
-`Home` should not permanently own app entry once the user has completed a meaningful action. After the user completes a first successful task, the default reopen behavior should prefer:
+#### Attention
 
-1. last active screen, or
-2. explicit user preference
+Show items requiring action:
 
-`Home` remains available as an always-accessible dashboard and orientation layer.
+- notifications
+- failed jobs
+- blocked tools
+- auth gaps
+- stale schedules
+- pending approvals
+- missing dependencies
+- import failures
+- watchlist/collection alerts
 
-### Upgrade Behavior Rule
+#### Active Work
 
-Existing users must not be treated as first-run users by default.
+Show running and resumable work:
 
-A user should bypass default-first-run `Home` behavior if any strong evidence of prior meaningful use exists, such as:
+- Console sessions
+- ACP agent sessions
+- workflow runs
+- watchlist runs
+- scheduled jobs
+- resumable tasks
 
-- existing saved conversations
-- existing notes or media
-- existing characters/personas
-- existing chatbooks
-- prior successful provider/model configuration
+Each item should provide `Open in Console` when live inspection is needed.
+
+#### Next Best Action
+
+Show exactly one dominant recommendation at a time.
+
+Priority order:
+
+1. Fix critical blockers.
+2. Approve pending work.
+3. Resume active work.
+4. Set up required model, agent, or tools.
+5. Import or search Library content.
+6. Start a Console task.
+7. Explore Personas, Workflows, Skills, or Watchlists+Collections.
+
+The recommendation must be derived from deterministic state, not ad hoc UI checks.
+
+#### Quick Controls
+
+Allow lightweight action without leaving Home:
+
+- approve
+- reject
+- pause
+- resume
+- retry
+- open details
+- open in Console
+
+Complex inspection should move to Console or the owning destination.
+
+#### Recent Work
+
+Show compact re-entry:
+
+- recent Console sessions
+- recent Library items
+- recent Artifacts
+- recent Workflows
+- recent Watchlists/Collections activity
+- recently used Personas
+- recently used Skills
+
+### First-Run And Returning-User Behavior
+
+New users should land on Home.
+
+Existing users should not be forcibly interrupted if strong prior-use evidence exists:
+
+- saved conversations
+- notes or media
+- personas
+- artifacts or chatbooks
+- configured providers or tools
+- prior successful Console session
 - stored last-active-screen state
 
-For those users, default reopen behavior should remain:
+For returning users, default reopen behavior should prefer:
 
-1. last active screen when available
-2. prior default destination behavior if no last-active-screen state exists
+1. explicit user preference
+2. last active screen
+3. Home
 
-`Home` may still be introduced to existing users as:
+Home remains visible and useful even when it is not the reopen target.
 
-- a one-time dismissible “new home available” entry point, or
-- a visible primary destination in navigation
+## Console Design
 
-but it should not forcibly interrupt established workflows.
+Console is the only live agent conversation/run surface.
 
-### Meaningful Action Definition
+### Console Responsibilities
 
-Any of the following should count as first-use completion:
+Console must support:
 
-- successfully starting a chat
-- successfully configuring a working model/provider
-- successfully importing content
-- successfully opening and using an existing content area with saved data
+- normal chat
+- RAG-backed questions
+- staged source context
+- source roles: context, evidence, editable target, output seed
+- ACP session launch and resume
+- MCP tool calls
+- plans
+- observations
+- approvals
+- diffs
+- terminal/shell interactions
+- run logs
+- recovery guidance
+- artifact creation and links
 
-## Home Screen Design
+### Handoff Rules
 
-`Home` should be treated as a compact decision surface, not a decorative dashboard.
+- Handoffs from Library, Artifacts, Personas, Watchlists+Collections, Schedules, Workflows, MCP, ACP, and Skills should open or follow in Console when live work begins.
+- Staged source/context must be visible before send/run.
+- Nothing should auto-send without explicit user action.
+- The user must be able to edit, remove, or change role before sending.
+- Source authority and scope must remain visible.
 
-### Purpose
+### RAG Rules
 
-The Home screen should answer four questions immediately:
+RAG appears in two places:
 
-1. What is this app for?
-2. What is ready right now?
-3. What should I do next?
-4. Where do I go for the most common workflows?
+- Library for explicit search and RAG query workflows.
+- Console for conversational RAG-backed answering.
 
-### Required Home Sections
+Both flows must show:
 
-#### 1. Product Summary
+- source set
+- retrieval status
+- citations or evidence when available
+- local/server/workspace authority
+- recovery when the index, model, or dependency is unavailable
 
-One short sentence in plain language explaining the product.
+## Destination Screen Contract
 
-Example direction:
+Every top-level destination should use the same compact page grammar:
 
-“Use AI chat, saved content, search, and personas in one terminal workspace.”
-
-This must stay brief. It is orientation copy, not marketing copy.
-
-#### 2. Primary Recommended Action
-
-One dominant CTA based on current app state.
-
-Examples:
-
-- `Set up a model`
-- `Start your first chat`
-- `Import content`
-- `Search your knowledge`
-
-There must be only one visually dominant primary action at a time.
-
-The implementation must derive this action from a deterministic priority order rather than ad hoc conditions.
-
-#### 3. Guided Paths
-
-Show 3 to 4 compact paths that explain the main things the product can do.
-
-Recommended paths:
-
-- `Talk to a model`
-- `Import files or media`
-- `Search saved content`
-- `Use characters/personas`
-
-Each path should include a one-line explanation and a direct jump.
-
-#### 4. Setup Status
-
-Show compact readiness indicators for the parts of the app most likely to block success.
-
-Examples:
-
-- Models: ready / not configured
-- Import capabilities: basic / enhanced / unavailable
-- Search: ready / limited until content exists
-- Personas: available / no saved characters yet
-
-#### 5. Recent Work
-
-If the user has meaningful existing activity, Home should shift from onboarding to re-entry.
-
-Show small recent items such as:
-
-- recent conversations
-- recent notes
-- recent media/import activity
-
-This section should stay compact and should not displace the primary recommended action.
-
-## Home Behavior Rules
-
-- Home must be useful in both empty and partially configured states.
-- Home must never recommend an action that the current installation cannot complete.
-- Home should adapt as soon as setup state changes.
-- Home should remain compact enough to fit comfortably in a normal terminal viewport.
-- Home should not require scrolling on standard terminal sizes unless recent work becomes unusually long.
-- Home should support both keyboard navigation and mouse click selection.
-
-## Capability-Aware Guidance
-
-The onboarding layer must be capability-aware.
-
-### Capability Inputs
-
-The shell should derive recommendations from:
-
-- configured provider/model availability
-- optional dependency availability
-- presence or absence of imported content
-- presence or absence of saved characters/personas
-- presence or absence of prior user work
-
-### Recommendation Rules
-
-- If no model is configured, `Set up a model` should win over all other CTAs.
-- If a model is ready but no content exists, recommend either `Start your first chat` or `Import content`.
-- If content exists but no search history or search setup is evident, recommend `Search your knowledge`.
-- If characters exist, Home may surface them as a guided path but should not make them the first CTA unless they are the user’s main recent workflow.
-
-`Search` should remain visible in global navigation even on first run, but it should not be promoted as the primary recommended action until searchable content exists.
-
-### CTA Decision Matrix
-
-The `Home` primary CTA should be chosen by this priority order:
-
-1. `Set up a model`
-Condition:
-No working provider/model is available for chat.
-
-2. `Start your first chat`
-Condition:
-Model is ready and the user has no successful chat history.
-
-3. `Import content`
-Condition:
-Model is ready, chat is possible, but no meaningful saved/imported content exists.
-
-4. `Search your knowledge`
-Condition:
-Searchable content exists and search can provide useful results.
-
-5. `Resume recent work`
-Condition:
-The user has clear recent activity and no more urgent setup blockers exist.
-
-Tie-break rules:
-
-- unresolved setup blockers outrank content-based suggestions
-- first successful core action outranks exploratory features
-- recent-work resume outranks generic discovery only after the user is clearly beyond first run
-- characters/personas may be surfaced as a guided path without taking over the primary CTA unless recent workflow evidence strongly supports it
-
-### Failure Prevention
-
-If a screen depends on unavailable capability, the user should see a clear readiness message before attempting the task, not after a failed action.
-
-## Primary Navigation Rules
-
-- There must be one clear primary navigation system on each screen.
-- Core destinations should appear before advanced destinations.
-- Advanced destinations should be contained under `Advanced`, not displayed as equal-weight first-run peers.
-- Active location must always be visually obvious.
-- Abbreviations and implementation shorthand should not be primary user-facing labels.
-
-## Screen Contract For Core Destinations
-
-Every primary destination should follow one compact page grammar.
-
-### Required Page Frame
-
-Each major screen should contain:
-
-1. page title
+1. title
 2. one-line purpose statement
-3. one primary action
-4. optional status/help line
+3. scope/status line
+4. one primary action
 5. main work area
+6. optional inspector or status panel
 
-This frame should reduce relearning cost across the app.
+This contract reduces relearning cost and makes UI audits repeatable.
 
-### Empty-State Rules
+### Library Contract
 
-Empty states should not simply report absence. They should route users forward.
+Library must make source type and action clear.
 
-#### Chat
+Required sections or subsections:
 
-- explain how to choose or confirm a model
-- provide a clear action to start chatting
-- keep advanced settings collapsed by default for new users
+- Notes
+- Media
+- Conversations
+- Import/Export
+- Search/RAG
 
-#### Content
+Empty states should route users forward:
 
-- explain what kinds of items live there
-- provide links to import content or open recent items
+- no notes -> create/import note
+- no media -> import media
+- no searchable content -> import or add source
+- no conversations -> start Console
 
-### `Content` Internal Structure
+### Artifacts Contract
 
-`Content` must not be implemented as a vague bucket label.
+Artifacts must distinguish outputs from sources.
 
-In the first implementation slice, `Content` should behave as a container screen with a local section switcher for:
+Required capabilities:
 
-- `Notes`
-- `Media`
-- `Conversations`
-- `Chatbooks`
+- browse generated outputs
+- browse Chatbooks
+- inspect reports/datasets/bundles
+- export/import bundles
+- reuse artifact in Console
+- attach artifact to Workflow
 
-Rules:
+### Personas Contract
 
-- one subsection should be selected by default based on recent activity, or `Conversations` if no better signal exists
-- each subsection may initially wrap an existing screen or legacy subsection
-- the user must be able to tell which content type they are browsing at all times
-- if deeper screen decomposition is deferred, the shell still needs to provide a coherent `Content` landing frame above the wrapped legacy content
+Personas must explain behavior shaping in plain language.
 
-#### Import
+Required capabilities:
 
-- explain supported source types and expected output
-- show what happens after import completes
+- create/import persona or character
+- inspect behavior profile
+- attach persona to Console
+- attach persona to Workflow
+- attach persona to ACP agent
+- recommend compatible Skills
 
-#### Search
+### Watchlists+Collections Contract
 
-- explain what is searchable
-- explain why results may be empty on first run
-- point to import when no content exists
-- avoid presenting empty search as a broken feature
+Watchlists+Collections must expose two internal tabs:
 
-#### Characters
+- `Watchlists`
+- `Collections`
 
-- explain what a character/persona does in this product
-- provide a direct action such as create, import, or start chat with persona
+Watchlists sections:
 
-#### Models
+- Overview
+- Sources
+- Groups/Tags
+- Jobs
+- Runs
+- Items
+- Outputs
+- Templates
+- Settings/Status
 
-- act as the guided place to make AI functionality work
-- clearly distinguish ready, missing, and optional setup steps
+Collections sections:
 
-## Advanced Containment
+- Reading/content items
+- Highlights
+- Saved searches
+- Feeds/subscriptions
+- Archive state
+- Note links
+- Templates
+- Import/Export
 
-`Advanced` should not become a junk drawer. It should contain destinations that meet at least one of these tests:
+The screen must preserve the distinction between monitored streams and curated content.
 
-- expert-oriented
-- low-frequency
-- diagnostic
-- configuration-heavy
-- not required for first-run success
+### Schedules Contract
 
-Likely candidates:
+Schedules owns temporal control.
 
-- evals
-- coding
-- STTS
-- subscriptions
-- logs
-- stats
+Required capabilities:
 
-`Advanced` should still be easy to reach, but it should not dominate the first-run shell.
+- create/edit schedule
+- show next run
+- show last run
+- pause/resume
+- retry missed or failed run
+- inspect schedule health
+- open live run in Console
 
-### Advanced Discoverability Rules
+### Workflows Contract
 
-`Advanced` features must remain discoverable when contextually relevant.
+Workflows owns procedure definition.
 
-Rules:
+Required capabilities:
 
-- Core screens may link into specific advanced tools when the user’s current task logically leads there.
-- These links should be contextual and explicit, for example:
-  - Chat or Models linking to `Evals`
-  - Chat linking to `Coding`
-  - Models or Chat linking to `STTS`
-  - Content or Search linking to `Subscriptions` when monitoring sources is relevant
-- Contextual entry points should use plain-language helper copy and should not require users to guess that the feature lives under `Advanced`.
-- `Advanced` should act as containment, not concealment.
+- create/edit workflow
+- define inputs
+- define steps
+- attach Persona
+- attach Skills
+- attach MCP tools
+- preview with dry run
+- define outputs
+- define approval points
+- launch/follow in Console
+
+### MCP Contract
+
+MCP owns tool/server readiness and permissions.
+
+Required capabilities:
+
+- list servers
+- list tools
+- show connection/auth status
+- manage permissions
+- show risk and approval rules
+- test tool
+- inspect audit log
+- recover blocked tools
+
+### ACP Contract
+
+ACP owns agent protocol interoperability.
+
+Required capabilities:
+
+- discover/install ACP agents
+- inspect compatibility
+- configure local/remote runtime
+- launch session
+- resume session
+- inspect diffs
+- inspect terminal/shell integration
+- open or follow live session in Console
+
+### Skills Contract
+
+Skills owns Agent Skills.
+
+Required capabilities:
+
+- discover/import skills
+- list installed skills
+- inspect `SKILL.md`
+- validate frontmatter and directory structure
+- inspect scripts/references/assets
+- review compatibility and allowed tools
+- attach skill to Console, Personas, ACP agents, and Workflows
+
+### Settings Contract
+
+Settings owns global preferences only.
+
+Settings should not absorb task-specific setup that belongs in MCP, ACP, Skills, Console, or Home readiness.
+
+## Cross-Surface Flow Rules
+
+### Live Work
+
+Live work happens in Console.
+
+Destinations can:
+
+- configure
+- select
+- prepare
+- preview
+- schedule
+- launch
+- inspect historical output
+
+But the active run/conversation surface is Console.
+
+### Source Roles
+
+Source and artifact handoffs should use explicit roles:
+
+- `context`: background information
+- `evidence`: facts and citations
+- `editable target`: content the agent may modify after approval
+- `output seed`: input for generated output
+
+### Approvals
+
+Approvals should be visible in:
+
+- Home for lightweight action
+- Console for live context and full decision
+- owning destination for configuration/history
+
+### Error Recovery
+
+Errors must identify owner and recovery path:
+
+- model/provider
+- Library/RAG
+- MCP
+- ACP
+- Skills
+- schedule
+- workflow
+- permission
+- dependency
+- server/auth
+- storage
+
+Avoid generic errors when a concrete destination can fix the issue.
+
+### Source Authority
+
+Local, server, workspace, remote-only, and dry-run state must remain visible.
+
+Do not imply:
+
+- automatic write sync
+- queued mutation replay
+- completed local mirroring
+- local CRUD for remote-only domains
+
+unless the backend/local contract explicitly supports it.
+
+## Nielsen Norman Heuristic Alignment
+
+### Visibility Of System Status
+
+Home, Console, and each destination must show readiness, active state, blockers, and source authority close to the task.
+
+### Match Between System And Real World
+
+Labels should match user intent:
+
+- `Console` for active agent work
+- `Library` for source material
+- `Artifacts` for outputs
+- `Schedules` for when runs happen
+- `Workflows` for what procedure runs
+- `MCP` for tool/server plumbing
+- `ACP` for agent protocol interoperability
+- `Skills` for reusable capability packs
+
+### User Control And Freedom
+
+Users can skip Home, edit staged context, cancel/pause runs, reject approvals, and recover from failed schedules or agents.
+
+### Consistency And Standards
+
+Every destination uses the same page frame, status model, and Console handoff pattern.
+
+### Error Prevention
+
+Unavailable capabilities should be visible before action: missing model, missing index, blocked MCP tool, unavailable ACP runtime, invalid schedule, missing skill dependency.
+
+### Recognition Rather Than Recall
+
+Destinations expose purpose lines, primary actions, status lines, tooltips, and command palette labels.
+
+### Flexibility And Efficiency Of Use
+
+Keyboard shortcuts, command palette, and dense workflows remain available, but critical actions also remain discoverable.
+
+### Aesthetic And Minimalist Design
+
+Compact TUI density is acceptable; competing dominant regions and duplicated navigation are not.
+
+### Help Users Recognize, Diagnose, And Recover From Errors
+
+Recovery copy should name the failing owner and provide the next action.
+
+### Help And Documentation
+
+Home and destination empty states should teach enough to complete the next action without opening external docs.
+
+## Implementation Phases
+
+### Phase 1: Spec And Route Contract
+
+- Treat this file as the authoritative master shell UX spec.
+- Define final user-facing labels.
+- Define route compatibility.
+- Add tests for legacy route IDs if not already covered.
+- Do not change behavior beyond documentation alignment.
+
+### Phase 2: Navigation Model
+
+- Introduce the agreed top-level labels.
+- Preserve internal route IDs where practical.
+- Prevent duplicate global nav.
+- Keep command palette labels aligned with shell labels.
+
+### Phase 3: Home Dashboard
+
+- Build Home as first-run and always-available dashboard.
+- Add readiness, notifications, next-best action, active work, controls, and recent work.
+- Preserve returning-user last-screen behavior unless Home is explicitly selected or no meaningful prior use exists.
+
+### Phase 4: Console Reframing
+
+- Rename user-facing Chat to Console.
+- Preserve Chat internals during migration.
+- Make Console the only live-run surface.
+- Add staged sources, RAG mode, approvals, ACP session follow, MCP tool calls, diffs, run status, and artifact links incrementally.
+
+### Phase 5: Destination Containers
+
+- Create or refactor top-level shells for Library, Artifacts, Personas, Watchlists+Collections, Schedules, Workflows, MCP, ACP, Skills, and Settings.
+- Wrapping existing screens is acceptable if the new destination contract is visible.
+
+### Phase 6: Cross-Surface Flows
+
+- Wire source roles.
+- Wire RAG handoffs.
+- Wire artifact reuse.
+- Wire workflow launch/follow.
+- Wire schedule follow/open-in-Console.
+- Wire ACP launch/resume.
+- Wire skill attachment.
+- Wire Home approval controls.
+
+### Phase 7: Audit Replay
+
+- Run first-time user and power-user workflows against the new shell.
+- Validate against Nielsen Norman heuristics.
+- Capture screenshots or ASCII mockups only where they clarify a decision.
 
 ## Risks And Mitigations
 
@@ -484,128 +879,135 @@ Rules:
 
 Mitigation:
 
-- enforce one dominant CTA
-- limit guided paths
-- keep summary copy short
-- treat Home as a decision surface, not a showcase
+- one dominant next-best action
+- compact status
+- real notifications
+- active work controls
+- direct open-in-Console paths
 
-### Risk: `Advanced` becomes a catch-all mess
-
-Mitigation:
-
-- define qualification rules for advanced destinations
-- keep naming stable
-- audit items periodically against first-run value
-
-### Risk: `Content` remains too broad
+### Risk: Console becomes overloaded
 
 Mitigation:
 
-- use clear sub-areas inside Content
-- surface item types explicitly in screen copy and filters
+- Console owns live work only
+- configuration stays in MCP, ACP, Skills, Personas, Workflows, Schedules, and Settings
+- inspector/status panes should be optional and scoped
 
-### Risk: guidance becomes inaccurate when capabilities vary
-
-Mitigation:
-
-- derive recommendations from real runtime availability and saved state
-- never hardcode onboarding steps that assume optional dependencies
-
-### Risk: onboarding irritates returning users
+### Risk: Library becomes too broad
 
 Mitigation:
 
-- make Home skippable
-- switch to last-used-screen behavior after first successful task
-- allow user preference for reopen behavior later
+- explicit subsections
+- clear distinction between source material and outputs
+- Search/RAG has deliberate Library mode and conversational Console mode
+
+### Risk: Artifacts overlaps Library
+
+Mitigation:
+
+- Library owns sources
+- Artifacts owns generated/portable outputs and Chatbooks
+
+### Risk: Schedules and Workflows blur
+
+Mitigation:
+
+- Schedules owns when
+- Workflows owns what
+- Console owns live run
+
+### Risk: MCP, ACP, and Skills confuse users
+
+Mitigation:
+
+- MCP: tools and servers
+- ACP: agent protocol/session interoperability
+- Skills: reusable instruction/capability packs
+
+### Risk: Local parity drifts from server domains
+
+Mitigation:
+
+- Watchlists+Collections spec references server domain concepts
+- implementation should inspect `tldw_server2` schemas before building local parity
+
+### Risk: Existing users lose muscle memory
+
+Mitigation:
+
+- preserve route IDs
+- preserve command palette compatibility
+- introduce labels with transitional copy
+- keep shortcuts stable
+- avoid forcing Home for existing users with prior activity
 
 ## Success Metrics
 
-The redesign should be considered successful if it improves these outcomes:
+The redesign should improve:
 
-- time to first successful chat
-- time to first successful import
-- percent of users who reach a useful action without visiting Settings first
+- time to first useful action
+- time to first successful Console task
+- time to first successful import or Library search
+- time to recover from missing model/tool/agent setup
+- number of navigation hops before first successful task
+- percent of live runs followed in Console rather than scattered surfaces
 - blank-search rate on first run
-- number of navigation hops before the first successful task
-- qualitative ability of a new user to explain the product within the first minute
+- successful schedule/workflow recovery rate
+- qualitative ability of a new user to explain the product model within the first minute
 
 ## Measurement Plan
 
-The implementation plan should include a lightweight measurement pass tied to the success metrics.
+Use lightweight local counters or structured logs where full telemetry is not available.
 
-### Baseline Requirements
-
-Before shipping the redesigned shell, capture the current baseline where feasible for:
-
-- startup destination behavior
-- time to first successful chat
-- time to first successful import
-- empty search frequency
-- Settings-first navigation frequency
-
-### Suggested Event Sources
+Suggested events:
 
 - app launch and resolved landing destination
-- model/provider setup success
-- first successful chat send/response completion
-- first successful import completion
-- search submitted with zero available searchable content
-- navigation sequence before first successful task
+- Home next-best action shown
+- Home next-best action completed
+- first successful Console send/run
+- first successful import
+- first successful Library RAG query
+- Console RAG answer with sources
+- MCP blocked tool recovery
+- ACP session launched/resumed
+- Skill imported/validated/attached
+- schedule paused/resumed/retried
+- workflow dry-run and launch
+- watchlist run recovery
+- artifact created/reused
 
-### Measurement Constraints
-
-- If full telemetry is not available, use local metrics, structured logs, or deterministic event counters.
-- Measurement should be good enough to compare before/after behavior for the redesign slice.
-- Instrumentation work should stay minimal and should not block shell implementation unless no outcome verification is otherwise possible.
-
-## Implementation Phases
-
-### Phase 1: Shell foundation
-
-- define final top-level destination model
-- remove competing navigation chrome
-- standardize top-level labels
-
-### Phase 2: Home screen
-
-- add state-aware Home
-- implement setup status and CTA logic
-- wire first-run entry rules
-
-### Phase 3: Core screen framing
-
-- apply the page frame pattern to Chat, Content, Import, Search, Characters, and Models
-- improve empty states and primary actions
-
-### Phase 4: Advanced containment
-
-- move expert workflows behind `Advanced`
-- verify discoverability without first-run overload
-
-### Phase 5: Optimization
-
-- tune reopen behavior
-- refine recommendation logic
-- measure first-run success metrics
+Measurement must not block the shell migration unless no other verification is possible.
 
 ## Acceptance Tests For The Design
 
-- A brand-new user can identify a sensible first action from Home without opening Settings.
-- A user with no model configured is guided toward model setup before hitting a failed chat or search path.
-- A user with configured models but no content sees chat and import as the primary options.
-- A user with existing content but no recent usage can re-enter through recent work or search guidance.
-- `Characters/Personas` remain visible as a top-level destination and are explained clearly for new users.
-- Advanced workflows are still available, but they are no longer presented as equal first-run priorities.
+- A new user lands on Home and can identify one sensible next action without opening Settings.
+- Home shows global status, notifications, active work, and lightweight controls.
+- A returning user with prior work can resume from last active screen or Home without forced onboarding.
+- User-facing `Chat` is reframed as `Console` while preserving internal route compatibility.
+- Live agent work from Workflows, Schedules, ACP, Personas, Library, Skills, and Watchlists+Collections opens or follows in Console.
+- Library includes Search/RAG and Import/Export, while Console can also answer using RAG.
+- Artifacts is separate from Library and contains Chatbooks plus generated/portable outputs.
+- Watchlists+Collections is one destination with `Watchlists` and `Collections` internal tabs.
+- Schedules and Workflows remain separate top-level destinations with clear ownership.
+- MCP, ACP, and Skills have distinct, testable boundaries.
+- Source authority and runtime capability states remain visible.
+- Power-user shortcuts remain available.
 
 ## Final Recommendation
 
-Proceed with a shell-first UX slice centered on:
+Proceed with the master shell redesign using this IA:
 
-- `Home` as a compact, state-aware first-run landing surface
-- a simplified top-level IA that preserves `Characters` as first-class
-- capability-aware recommendations
-- a shared screen contract for core workflows
-- reduced first-run prominence for expert tooling
+- `Home`
+- `Console`
+- `Library`
+- `Artifacts`
+- `Personas`
+- `Watchlists+Collections`
+- `Schedules`
+- `Workflows`
+- `MCP`
+- `ACP`
+- `Skills`
+- `Settings`
 
-This gives `tldw_chatbook` a coherent front door without flattening the depth that makes the product valuable.
+This gives `tldw_chatbook` a coherent front door, a single live agent surface, and a scalable product model for local parity with the broader `tldw_server2` ecosystem.
