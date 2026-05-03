@@ -22,6 +22,9 @@ PHASE3_HOME_WC_CONSOLE_EVIDENCE = (
 PHASE3_CONSOLE_WC_ACTION_EVIDENCE = (
     REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-wc-action-routing.md"
 )
+PHASE3_CONSOLE_SOURCE_READINESS_EVIDENCE = (
+    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-live-work-source-readiness.md"
+)
 
 
 def _load_console_live_work_contract():
@@ -38,6 +41,14 @@ def _load_console_live_work_status_card_state():
     except ImportError:
         pytest.fail("Console live-work status card state is missing")
     return ConsoleLiveWorkStatusCardState
+
+
+def _load_console_live_work_source_readiness_state():
+    try:
+        from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkSourceReadinessState
+    except ImportError:
+        pytest.fail("Console live-work source readiness state is missing")
+    return ConsoleLiveWorkSourceReadinessState
 
 
 class ConsoleHarness(App):
@@ -205,6 +216,30 @@ def test_console_live_work_status_card_state_keeps_unsupported_payloads_non_acti
     assert card_state.primary_action is None
 
 
+def test_console_live_work_source_readiness_marks_wc_connected_and_future_sources_unavailable():
+    ConsoleLiveWorkSourceReadinessState = _load_console_live_work_source_readiness_state()
+
+    state = ConsoleLiveWorkSourceReadinessState.default()
+
+    assert state.container_id == "console-live-work-source-readiness"
+    assert "console-live-work-source-readiness" in state.container_classes
+    rows_by_id = {row.widget_id: row for row in state.rows}
+    assert rows_by_id["console-live-work-source-wc"].text == (
+        "W+C: Connected - Home W+C active work can open and route run details in Console."
+    )
+    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-wc"].classes
+    for source_id in (
+        "console-live-work-source-workflows",
+        "console-live-work-source-schedules",
+        "console-live-work-source-acp",
+        "console-live-work-source-mcp",
+        "console-live-work-source-rag",
+        "console-live-work-source-artifacts",
+    ):
+        assert "Not wired" in rows_by_id[source_id].text
+        assert "console-live-work-source-unavailable" in rows_by_id[source_id].classes
+
+
 def test_app_console_live_work_primary_action_routes_wc_run_details():
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
@@ -280,6 +315,23 @@ def test_phase3_console_wc_action_tracking_evidence_links_task_and_roadmap():
     assert "Phase 3.4: Route Console W+C live-work actions - `TASK-3.4`" in roadmap
     assert "`TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`" in roadmap
     assert "console-live-work-primary-action" in task
+
+
+def test_phase3_console_source_readiness_tracking_evidence_links_task_and_roadmap():
+    evidence = PHASE3_CONSOLE_SOURCE_READINESS_EVIDENCE.read_text()
+    readme = (REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/README.md").read_text()
+    roadmap = (REPO_ROOT / "Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text()
+    task = (
+        REPO_ROOT
+        / "backlog/tasks/task-3.5 - Phase-3.5-Show-Console-live-work-source-readiness.md"
+    ).read_text()
+
+    assert "TASK-3.5" in evidence
+    assert "ConsoleLiveWorkSourceReadinessState" in evidence
+    assert "2026-05-03-console-live-work-source-readiness.md" in readme
+    assert "Phase 3.5: Show Console live-work source readiness - `TASK-3.5`" in roadmap
+    assert "`TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, `TASK-3.5`" in roadmap
+    assert "ConsoleLiveWorkSourceReadinessState" in task
 
 
 @pytest.mark.parametrize(
@@ -377,6 +429,7 @@ async def test_console_renders_pending_launch_context():
         screen = _active_console_screen(host)
 
         assert screen.query_one("#console-pending-launch-card")
+        assert len(screen.query("#console-live-work-source-readiness")) == 0
         assert screen.query_one("#console-live-work-source").renderable == "Source: workflows"
         assert screen.query_one("#console-live-work-title").renderable == "Title: Daily digest"
         assert screen.query_one("#console-live-work-status").renderable == "Status: running"
@@ -394,6 +447,29 @@ async def test_console_renders_pending_launch_context():
         assert "run_id: run-1" in text
         assert isinstance(screen._pending_console_launch_context, ConsoleLiveWorkLaunch)
         assert app.pending_console_launch is None
+
+
+@pytest.mark.asyncio
+async def test_console_renders_source_readiness_summary_without_pending_launch():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+
+        assert len(screen.query("#console-pending-launch-card")) == 0
+        assert screen.query_one("#console-live-work-source-readiness")
+        assert screen.query_one("#console-live-work-source-readiness-title").renderable == "Live work sources"
+        assert screen.query_one("#console-live-work-source-wc").renderable == (
+            "W+C: Connected - Home W+C active work can open and route run details in Console."
+        )
+        assert "Workflows: Not wired" in str(screen.query_one("#console-live-work-source-workflows").renderable)
+        assert "Schedules: Not wired" in str(screen.query_one("#console-live-work-source-schedules").renderable)
+        assert "ACP: Not wired" in str(screen.query_one("#console-live-work-source-acp").renderable)
+        assert "MCP: Not wired" in str(screen.query_one("#console-live-work-source-mcp").renderable)
+        assert "RAG: Not wired" in str(screen.query_one("#console-live-work-source-rag").renderable)
+        assert "Artifacts: Not wired" in str(screen.query_one("#console-live-work-source-artifacts").renderable)
 
 
 @pytest.mark.asyncio

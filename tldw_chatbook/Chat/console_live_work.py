@@ -12,6 +12,7 @@ DEFAULT_ACTION_LABEL = "Open in Console"
 PENDING_LAUNCH_CARD_ID = "console-pending-launch-card"
 LIVE_WORK_CARD_CLASS = "console-live-work-status-card"
 PRIMARY_ACTION_BUTTON_ID = "console-live-work-primary-action"
+SOURCE_READINESS_CARD_ID = "console-live-work-source-readiness"
 
 
 def _clean_text(value: Any, fallback: str) -> str:
@@ -193,4 +194,89 @@ class ConsoleLiveWorkStatusCardState:
             badge_text="Pending Console launch",
             rows=tuple(rows),
             primary_action=resolve_console_live_work_primary_action(launch),
+        )
+
+
+@dataclass(frozen=True)
+class ConsoleLiveWorkSourceReadinessRow:
+    """One row in the Console live-work source readiness summary."""
+
+    widget_id: str
+    label: str
+    status: str
+    recovery: str
+    classes: str
+
+    @property
+    def text(self) -> str:
+        return f"{self.label}: {self.status} - {self.recovery}"
+
+
+@dataclass(frozen=True)
+class ConsoleLiveWorkSourceReadinessState:
+    """Compact source support summary for Console live-work integrations."""
+
+    rows: tuple[ConsoleLiveWorkSourceReadinessRow, ...]
+    title: str = "Live work sources"
+    container_id: str = SOURCE_READINESS_CARD_ID
+    container_classes: str = "ds-panel console-live-work-source-readiness"
+    title_id: str = "console-live-work-source-readiness-title"
+    title_classes: str = "ds-status-badge console-live-work-source-readiness-title"
+
+    @classmethod
+    def default(cls) -> "ConsoleLiveWorkSourceReadinessState":
+        connected = "destination-section console-live-work-source-row console-live-work-source-connected"
+        unavailable = "destination-section console-live-work-source-row console-live-work-source-unavailable"
+        return cls(
+            rows=(
+                ConsoleLiveWorkSourceReadinessRow(
+                    widget_id="console-live-work-source-wc",
+                    label="W+C",
+                    status="Connected",
+                    recovery="Home W+C active work can open and route run details in Console.",
+                    classes=connected,
+                ),
+                ConsoleLiveWorkSourceReadinessRow(
+                    widget_id="console-live-work-source-workflows",
+                    label="Workflows",
+                    status="Not wired",
+                    recovery="Workflow execution payloads are not wired yet.",
+                    classes=unavailable,
+                ),
+                ConsoleLiveWorkSourceReadinessRow(
+                    widget_id="console-live-work-source-schedules",
+                    label="Schedules",
+                    status="Not wired",
+                    recovery="Schedule run payloads are not wired yet.",
+                    classes=unavailable,
+                ),
+                ConsoleLiveWorkSourceReadinessRow(
+                    widget_id="console-live-work-source-acp",
+                    label="ACP",
+                    status="Not wired",
+                    recovery="ACP session payloads require an ACP-compatible runtime.",
+                    classes=unavailable,
+                ),
+                ConsoleLiveWorkSourceReadinessRow(
+                    widget_id="console-live-work-source-mcp",
+                    label="MCP",
+                    status="Not wired",
+                    recovery="MCP management is not embedded in Console yet.",
+                    classes=unavailable,
+                ),
+                ConsoleLiveWorkSourceReadinessRow(
+                    widget_id="console-live-work-source-rag",
+                    label="RAG",
+                    status="Not wired",
+                    recovery="RAG live-run payloads are not wired yet; use Search/RAG handoff for context.",
+                    classes=unavailable,
+                ),
+                ConsoleLiveWorkSourceReadinessRow(
+                    widget_id="console-live-work-source-artifacts",
+                    label="Artifacts",
+                    status="Not wired",
+                    recovery="Artifact live-work payloads are not wired yet; use artifact handoff for context.",
+                    classes=unavailable,
+                ),
+            )
         )
