@@ -79,6 +79,7 @@ from tldw_chatbook.Companion_Interop import CompanionScopeService, ServerCompani
 from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
 from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
 from tldw_chatbook.Feedback_Interop import FeedbackScopeService, LocalFeedbackService, ServerFeedbackService
+from tldw_chatbook.Home.active_work_adapter import LocalNotificationHomeActiveWorkAdapter
 from tldw_chatbook.Kanban_Interop import KanbanScopeService, LocalKanbanService, ServerKanbanService
 from tldw_chatbook.LLM_Provider_Catalog import (
     LLMProviderCatalogScopeService,
@@ -345,6 +346,8 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.server_notifications_service, ServerNotificationsService)
     assert isinstance(app.notifications_scope_service, NotificationsScopeService)
     assert app.notifications_scope_service.local_service is app.client_notifications_service
+    assert isinstance(app.home_active_work_adapter, LocalNotificationHomeActiveWorkAdapter)
+    assert app.home_active_work_adapter.notification_service is app.client_notifications_service
     assert isinstance(app.server_outputs_service, ServerOutputsService)
     assert isinstance(app.outputs_scope_service, OutputsScopeService)
     assert isinstance(app.local_research_service, LocalResearchService)

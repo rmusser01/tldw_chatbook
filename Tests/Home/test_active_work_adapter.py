@@ -5,6 +5,7 @@ from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
     HomeControlResultStatus,
+    LocalNotificationHomeActiveWorkAdapter,
     UnavailableHomeActiveWorkAdapter,
 )
 
@@ -22,6 +23,61 @@ def test_unavailable_home_adapter_builds_dashboard_input_from_runtime_context():
     assert dashboard_input.pending_approval_count == 0
     assert dashboard_input.active_run_count == 0
     assert dashboard_input.active_detail_route == "chat"
+
+
+def test_local_notification_adapter_counts_unread_local_notifications():
+    class FakeNotificationsService:
+        def __init__(self):
+            self.calls = []
+
+        def list_queue(self, *, limit=100, include_dismissed=False, category=None):
+            self.calls.append(
+                {
+                    "limit": limit,
+                    "include_dismissed": include_dismissed,
+                    "category": category,
+                }
+            )
+            return [
+                {"id": "read", "is_read": True},
+                {"id": "unread-1", "is_read": False},
+                {"id": "unread-2", "is_read": False},
+            ]
+
+    service = FakeNotificationsService()
+    adapter = LocalNotificationHomeActiveWorkAdapter(notification_service=service)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=True,
+    )
+
+    assert dashboard_input.model_ready is True
+    assert dashboard_input.has_recent_work is True
+    assert dashboard_input.notification_count == 2
+    assert dashboard_input.pending_approval_count == 0
+    assert dashboard_input.active_run_count == 0
+    assert service.calls == [{"limit": 100, "include_dismissed": False, "category": None}]
+
+
+def test_local_notification_adapter_fails_closed_when_snapshot_unavailable():
+    class BrokenNotificationsService:
+        def list_queue(self, *, limit=100, include_dismissed=False, category=None):
+            raise RuntimeError("notification store unavailable")
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        notification_service=BrokenNotificationsService()
+    )
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.model_ready is False
+    assert dashboard_input.notification_count == 0
+    assert dashboard_input.pending_approval_count == 0
+    assert dashboard_input.active_run_count == 0
 
 
 def test_unavailable_home_adapter_returns_honest_recovery_result():

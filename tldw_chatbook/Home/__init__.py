@@ -13,6 +13,7 @@ from .active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
     HomeControlResultStatus,
+    LocalNotificationHomeActiveWorkAdapter,
     UnavailableHomeActiveWorkAdapter,
 )
 
@@ -26,6 +27,7 @@ __all__ = [
     "HomeSection",
     "HomeControlResult",
     "HomeControlResultStatus",
+    "LocalNotificationHomeActiveWorkAdapter",
     "UnavailableHomeActiveWorkAdapter",
     "build_home_controls",
     "choose_next_best_action",

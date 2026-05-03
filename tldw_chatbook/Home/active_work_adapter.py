@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, Mapping, Protocol, runtime_checkable
 
@@ -119,3 +119,45 @@ class UnavailableHomeActiveWorkAdapter(HomeActiveWorkAdapter):
             recovery_route=recovery_route,
             target_id=target_id,
         )
+
+
+class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
+    """Home adapter that exposes local notification queue state.
+
+    Active run controls remain unavailable until workflow/run services expose a
+    safe synchronous Home contract.
+    """
+
+    def __init__(self, *, notification_service: Any | None = None):
+        self.notification_service = notification_service
+
+    def build_dashboard_input(
+        self,
+        *,
+        providers_models: Mapping[str, Any],
+        has_recent_work: bool,
+    ) -> HomeDashboardInput:
+        dashboard_input = super().build_dashboard_input(
+            providers_models=providers_models,
+            has_recent_work=has_recent_work,
+        )
+        return replace(dashboard_input, notification_count=self._unread_notification_count())
+
+    def _unread_notification_count(self) -> int:
+        if self.notification_service is None:
+            return 0
+        try:
+            notifications = self.notification_service.list_queue(
+                limit=100,
+                include_dismissed=False,
+                category=None,
+            )
+        except Exception:
+            return 0
+        return sum(1 for notification in notifications if _notification_is_unread(notification))
+
+
+def _notification_is_unread(notification: Any) -> bool:
+    if isinstance(notification, Mapping):
+        return not bool(notification.get("is_read"))
+    return not bool(getattr(notification, "is_read", False))

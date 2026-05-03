@@ -34,6 +34,33 @@ def test_next_best_action_prioritizes_pending_approval_after_readiness():
     assert action.target_route == "chat"
 
 
+def test_next_best_action_surfaces_notifications_after_live_work_blockers():
+    state = HomeDashboardInput(
+        model_ready=True,
+        notification_count=3,
+        has_library_content=True,
+    )
+
+    action = choose_next_best_action(state)
+
+    assert action.action_id == "review_notifications"
+    assert action.label == "Review notifications"
+    assert action.target_route == "home"
+
+
+def test_pending_approval_still_outranks_unread_notifications():
+    state = HomeDashboardInput(
+        model_ready=True,
+        pending_approval_count=1,
+        notification_count=3,
+        has_library_content=True,
+    )
+
+    action = choose_next_best_action(state)
+
+    assert action.action_id == "review_approvals"
+
+
 def test_dashboard_summary_exposes_required_sections():
     dashboard = summarize_home_dashboard(
         HomeDashboardInput(
@@ -51,6 +78,23 @@ def test_dashboard_summary_exposes_required_sections():
         "next_best_action",
         "recent_work",
     ]
+
+
+def test_dashboard_summary_exposes_notifications_without_live_work_controls():
+    dashboard = summarize_home_dashboard(
+        HomeDashboardInput(
+            model_ready=True,
+            notification_count=3,
+            has_library_content=True,
+        )
+    )
+
+    attention_section = next(
+        section for section in dashboard.sections if section.section_id == "attention"
+    )
+    assert "Unread notifications: 3" in attention_section.lines
+    assert dashboard.next_action.action_id == "review_notifications"
+    assert dashboard.controls == ()
 
 
 def test_dashboard_summary_exposes_lightweight_control_ids_for_core_states():

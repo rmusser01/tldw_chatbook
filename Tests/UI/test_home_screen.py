@@ -136,6 +136,28 @@ async def test_home_screen_shows_lightweight_agent_and_schedule_controls():
 
 
 @pytest.mark.asyncio
+async def test_home_screen_renders_unread_notification_snapshot_without_controls():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        notification_count=2,
+        has_library_content=True,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        home = _active_home_screen(host)
+
+        assert "Unread notifications: 2" in str(
+            home.query_one("#home-attention-body").renderable
+        )
+        assert len(home.query("#home-approve")) == 0
+        assert len(home.query("#home-pause")) == 0
+        assert len(home.query("#home-open-in-console")) == 0
+
+
+@pytest.mark.asyncio
 async def test_home_control_clicks_call_available_runtime_hooks():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
