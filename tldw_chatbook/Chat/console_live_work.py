@@ -229,8 +229,9 @@ class ConsoleLiveWorkSourceReadinessState:
 
         Returns:
             ConsoleLiveWorkSourceReadinessState: Readiness state that marks W+C
-                as connected and planned future Console live-work sources as
-                unavailable until their payload producers are wired.
+                and Schedules as connected while planned future Console
+                live-work sources stay unavailable until their payload
+                producers are wired.
         """
         connected = "destination-section console-live-work-source-row console-live-work-source-connected"
         unavailable = "destination-section console-live-work-source-row console-live-work-source-unavailable"
@@ -253,9 +254,9 @@ class ConsoleLiveWorkSourceReadinessState:
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-schedules",
                     label="Schedules",
-                    status="Not wired",
-                    recovery="Schedule run payloads are not wired yet.",
-                    classes=unavailable,
+                    status="Connected",
+                    recovery="Schedules active work can open Console when adapter context exists.",
+                    classes=connected,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-acp",

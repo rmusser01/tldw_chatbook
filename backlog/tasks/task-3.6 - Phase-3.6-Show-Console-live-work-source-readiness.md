@@ -21,12 +21,12 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Show a compact Console live-work source readiness summary so users can see W+C is connected while Workflows, Schedules, ACP, MCP, RAG, and Artifacts remain honest unavailable states until source-specific payloads exist.
+Show a compact Console live-work source readiness summary so users can see W+C and Schedules are connected while Workflows, ACP, MCP, RAG, and Artifacts remain honest unavailable states until source-specific payloads exist.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Console source readiness state marks W+C as connected and remaining planned sources as explicitly unavailable or not wired with recovery copy.
+- [x] #1 Console source readiness state marks W+C and Schedules as connected and remaining planned sources as explicitly unavailable or not wired with recovery copy.
 - [x] #2 ChatScreen renders the source readiness summary when no pending live-work launch is staged and keeps pending launch cards focused when a launch exists.
 - [x] #3 The readiness summary exposes stable IDs/classes for source-specific follow-up tests without creating fake source actions.
 - [x] #4 Focused Console tests and Phase 3 QA evidence verify source readiness state, mounted Console rendering, and roadmap/task updates.
@@ -45,5 +45,5 @@ Show a compact Console live-work source readiness summary so users can see W+C i
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Added `ConsoleLiveWorkSourceReadinessState` with stable source row IDs/classes, marking W+C connected and future live-work source families as informational `Not wired` rows with recovery copy. `ChatScreen` now renders the readiness summary only when no pending Console live-work launch is staged, preserving the focused pending launch card when a launch exists. Added regression coverage for the display model, mounted Console rendering, pending-card suppression, and Phase 3.6 evidence/roadmap/task tracking.
+Added `ConsoleLiveWorkSourceReadinessState` with stable source row IDs/classes, marking W+C and Schedules connected and future live-work source families as informational `Not wired` rows with recovery copy. `ChatScreen` now renders the readiness summary only when no pending Console live-work launch is staged, preserving the focused pending launch card when a launch exists. Added regression coverage for the display model, mounted Console rendering, pending-card suppression, and Phase 3.6 evidence/roadmap/task tracking.
 <!-- SECTION:NOTES:END -->

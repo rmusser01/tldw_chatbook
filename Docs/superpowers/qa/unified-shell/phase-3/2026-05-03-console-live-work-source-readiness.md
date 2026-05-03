@@ -13,7 +13,8 @@ Continue Phase 3 by making Console source readiness visible when no live-work it
 
 - Added `ConsoleLiveWorkSourceReadinessState` and source readiness rows.
 - Marked W+C as connected because Home W+C active work can now launch and route run details through Console.
-- Marked Workflows, Schedules, ACP, MCP, RAG, and Artifacts as `Not wired` with explicit recovery copy.
+- Marked Schedules as connected because Schedules can now follow active schedule-run context into Console when adapter context exists.
+- Marked Workflows, ACP, MCP, RAG, and Artifacts as `Not wired` with explicit recovery copy.
 - Updated `ChatScreen` to render the source readiness summary only when no pending Console live-work launch is staged.
 - Preserved pending launch focus by suppressing the readiness summary while a live-work card is visible.
 
@@ -34,13 +35,13 @@ Warning boundary: warnings are existing dependency/import warnings and are not C
 
 ## UX Result
 
-- First-time users can see that W+C is the first connected live-work source.
+- First-time users can see that W+C and Schedules are connected live-work sources.
 - Power users can quickly distinguish supported Console follow-through from future source integrations.
 - Planned sources remain visible without false affordances because unavailable rows are informational only.
 
 ## Residual Risk
 
 - This is a source-readiness visibility slice, not full Phase 3 completion.
-- Workflows, Schedules, ACP, MCP, RAG, and Artifacts still need source-specific payload producers.
+- Workflows, ACP, MCP, RAG, and Artifacts still need source-specific payload producers.
 - Console still does not subscribe to real live event streams.
 - Full Phase 3 cannot be verified until all relevant launch, follow, status, and recovery flows are exercised in the running app.
