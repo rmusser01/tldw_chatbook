@@ -25,6 +25,14 @@ from ..Widgets.enhanced_file_picker import EnhancedFileSave as FileSave
 from ..Third_Party.textual_fspicker import Filters
 
 
+TRANSCRIPTION_COPY_DISABLED_TOOLTIP = "Select a transcription entry before copying text."
+TRANSCRIPTION_EXPORT_DISABLED_TOOLTIP = "Select a transcription entry before exporting it."
+TRANSCRIPTION_DELETE_DISABLED_TOOLTIP = "Select a transcription entry before deleting it."
+TRANSCRIPTION_COPY_ENABLED_TOOLTIP = "Copy the selected transcription text."
+TRANSCRIPTION_EXPORT_ENABLED_TOOLTIP = "Export the selected transcription entry."
+TRANSCRIPTION_DELETE_ENABLED_TOOLTIP = "Delete the selected transcription entry."
+
+
 class TranscriptionHistoryViewer(Widget):
     """
     Widget for viewing and managing transcription history.
@@ -117,9 +125,8 @@ class TranscriptionHistoryViewer(Widget):
     }
     
     .encryption-status {
-        padding: 0.5 1;
+        padding: 1;
         margin-bottom: 1;
-        border-radius: 3;
     }
     
     .encryption-status.encrypted {
@@ -229,9 +236,25 @@ class TranscriptionHistoryViewer(Widget):
                     
                     # Action buttons
                     with Horizontal(classes="action-buttons"):
-                        yield Button("📋 Copy", id="copy-btn", disabled=True)
-                        yield Button("💾 Export", id="export-btn", disabled=True)
-                        yield Button("🗑️ Delete", id="delete-btn", disabled=True, variant="error")
+                        yield Button(
+                            "📋 Copy",
+                            id="copy-btn",
+                            disabled=True,
+                            tooltip=TRANSCRIPTION_COPY_DISABLED_TOOLTIP,
+                        )
+                        yield Button(
+                            "💾 Export",
+                            id="export-btn",
+                            disabled=True,
+                            tooltip=TRANSCRIPTION_EXPORT_DISABLED_TOOLTIP,
+                        )
+                        yield Button(
+                            "🗑️ Delete",
+                            id="delete-btn",
+                            disabled=True,
+                            variant="error",
+                            tooltip=TRANSCRIPTION_DELETE_DISABLED_TOOLTIP,
+                        )
     
     def on_mount(self):
         """Initialize on mount."""
@@ -388,10 +411,28 @@ class TranscriptionHistoryViewer(Widget):
         text_area = self.query_one("#transcript-text", TextArea)
         text_area.load_text(entry.transcript)
         
-        # Enable action buttons
-        self.query_one("#copy-btn", Button).disabled = False
-        self.query_one("#export-btn", Button).disabled = False
-        self.query_one("#delete-btn", Button).disabled = False
+        self._update_action_button_state(has_selection=True)
+
+    def _update_action_button_state(self, *, has_selection: bool) -> None:
+        """Keep disabled controls explanatory instead of silent."""
+        button_states = {
+            "#copy-btn": (
+                TRANSCRIPTION_COPY_ENABLED_TOOLTIP,
+                TRANSCRIPTION_COPY_DISABLED_TOOLTIP,
+            ),
+            "#export-btn": (
+                TRANSCRIPTION_EXPORT_ENABLED_TOOLTIP,
+                TRANSCRIPTION_EXPORT_DISABLED_TOOLTIP,
+            ),
+            "#delete-btn": (
+                TRANSCRIPTION_DELETE_ENABLED_TOOLTIP,
+                TRANSCRIPTION_DELETE_DISABLED_TOOLTIP,
+            ),
+        }
+        for selector, (enabled_tooltip, disabled_tooltip) in button_states.items():
+            button = self.query_one(selector, Button)
+            button.disabled = not has_selection
+            button.tooltip = enabled_tooltip if has_selection else disabled_tooltip
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
@@ -485,6 +526,7 @@ class TranscriptionHistoryViewer(Widget):
             self.app.notify("Entry deleted")
             self.selected_entry = None
             self.selected_entry_id = None
+            self._update_action_button_state(has_selection=False)
             self.run_worker(self._refresh_entries())
         else:
             self.app.notify("Failed to delete entry", severity="error")

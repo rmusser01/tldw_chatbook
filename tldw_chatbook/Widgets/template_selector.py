@@ -23,6 +23,15 @@ from textual.widgets import (
 )
 from loguru import logger
 
+
+TEMPLATE_CREATE_DISABLED_TOOLTIP = "Select an evaluation template before creating a task."
+TEMPLATE_EXPORT_DISABLED_TOOLTIP = "Select an evaluation template before exporting it."
+TEMPLATE_CREATE_ENABLED_TOOLTIP = "Create an evaluation task from this template."
+TEMPLATE_EXPORT_ENABLED_TOOLTIP = "Export this evaluation template."
+TEMPLATE_SELECT_DISABLED_TOOLTIP = "Select an evaluation template before continuing."
+TEMPLATE_SELECT_ENABLED_TOOLTIP = "Use the selected evaluation template."
+
+
 class TemplatePreviewWidget(Container):
     """Widget for displaying template preview information."""
     
@@ -38,8 +47,19 @@ class TemplatePreviewWidget(Container):
             yield Static("", id="config-display", classes="config-display")
         
         with Horizontal(classes="preview-actions"):
-            yield Button("Create Task", id="create-task-btn", variant="primary", disabled=True)
-            yield Button("Export Template", id="export-template-btn", disabled=True)
+            yield Button(
+                "Create Task",
+                id="create-task-btn",
+                variant="primary",
+                disabled=True,
+                tooltip=TEMPLATE_CREATE_DISABLED_TOOLTIP,
+            )
+            yield Button(
+                "Export Template",
+                id="export-template-btn",
+                disabled=True,
+                tooltip=TEMPLATE_EXPORT_DISABLED_TOOLTIP,
+            )
     
     def update_preview(self, template: Dict[str, Any]):
         """Update the preview with template information."""
@@ -66,8 +86,7 @@ class TemplatePreviewWidget(Container):
             config_widget.update(config_text)
             
             # Enable buttons
-            self.query_one("#create-task-btn").disabled = False
-            self.query_one("#export-template-btn").disabled = False
+            self._set_action_state(has_template=True)
             
         except Exception as e:
             logger.error(f"Error updating template preview: {e}")
@@ -79,10 +98,27 @@ class TemplatePreviewWidget(Container):
         try:
             self.query_one("#template-description").update("Select a template to see details")
             self.query_one("#config-display").update("")
-            self.query_one("#create-task-btn").disabled = True
-            self.query_one("#export-template-btn").disabled = True
+            self._set_action_state(has_template=False)
         except:
             pass
+
+    def _set_action_state(self, *, has_template: bool) -> None:
+        """Keep disabled preview actions paired with the required next step."""
+        create_button = self.query_one("#create-task-btn", Button)
+        create_button.disabled = not has_template
+        create_button.tooltip = (
+            TEMPLATE_CREATE_ENABLED_TOOLTIP
+            if has_template
+            else TEMPLATE_CREATE_DISABLED_TOOLTIP
+        )
+
+        export_button = self.query_one("#export-template-btn", Button)
+        export_button.disabled = not has_template
+        export_button.tooltip = (
+            TEMPLATE_EXPORT_ENABLED_TOOLTIP
+            if has_template
+            else TEMPLATE_EXPORT_DISABLED_TOOLTIP
+        )
 
 class TemplateListWidget(Container):
     """Widget for displaying template lists organized by category."""
@@ -223,7 +259,13 @@ class TemplateSelectorDialog(ModalScreen):
             
             with Horizontal(classes="dialog-buttons"):
                 yield Button("Cancel", id="cancel-button", variant="error")
-                yield Button("Select Template", id="select-button", variant="primary", disabled=True)
+                yield Button(
+                    "Select Template",
+                    id="select-button",
+                    variant="primary",
+                    disabled=True,
+                    tooltip=TEMPLATE_SELECT_DISABLED_TOOLTIP,
+                )
     
     def _on_template_selected(self, template: Dict[str, Any]):
         """Handle template selection."""
@@ -238,7 +280,9 @@ class TemplateSelectorDialog(ModalScreen):
         
         # Enable select button
         try:
-            self.query_one("#select-button").disabled = False
+            select_button = self.query_one("#select-button", Button)
+            select_button.disabled = False
+            select_button.tooltip = TEMPLATE_SELECT_ENABLED_TOOLTIP
         except:
             pass
     

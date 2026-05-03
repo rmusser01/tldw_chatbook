@@ -30,6 +30,18 @@ if TYPE_CHECKING:
     from ..app import TldwCli
 
 
+CHUNKING_EDIT_DISABLED_TOOLTIP = "Select a custom chunking template before editing."
+CHUNKING_DUPLICATE_DISABLED_TOOLTIP = "Select a chunking template before duplicating it."
+CHUNKING_DELETE_DISABLED_TOOLTIP = "Select a custom chunking template before deleting."
+CHUNKING_EXPORT_DISABLED_TOOLTIP = "Select a chunking template before exporting it."
+CHUNKING_EDIT_ENABLED_TOOLTIP = "Edit the selected custom chunking template."
+CHUNKING_DUPLICATE_ENABLED_TOOLTIP = "Duplicate the selected chunking template."
+CHUNKING_DELETE_ENABLED_TOOLTIP = "Delete the selected custom chunking template."
+CHUNKING_EXPORT_ENABLED_TOOLTIP = "Export the selected chunking template."
+CHUNKING_EDIT_BUILTIN_TOOLTIP = "Built-in chunking templates cannot be edited; duplicate it first."
+CHUNKING_DELETE_BUILTIN_TOOLTIP = "Built-in chunking templates cannot be deleted."
+
+
 class ChunkingTemplatesWidget(Container):
     """
     A widget for managing chunking templates with full CRUD operations.
@@ -114,11 +126,39 @@ class ChunkingTemplatesWidget(Container):
         # Action buttons
         with Horizontal(classes="templates-actions"):
             yield Button("➕ New Template", id="new-template-btn", variant="primary", classes="action-button")
-            yield Button("📝 Edit", id="edit-template-btn", variant="default", classes="action-button", disabled=True)
-            yield Button("📋 Duplicate", id="duplicate-template-btn", variant="default", classes="action-button", disabled=True)
-            yield Button("🗑️ Delete", id="delete-template-btn", variant="error", classes="action-button", disabled=True)
+            yield Button(
+                "📝 Edit",
+                id="edit-template-btn",
+                variant="default",
+                classes="action-button",
+                disabled=True,
+                tooltip=CHUNKING_EDIT_DISABLED_TOOLTIP,
+            )
+            yield Button(
+                "📋 Duplicate",
+                id="duplicate-template-btn",
+                variant="default",
+                classes="action-button",
+                disabled=True,
+                tooltip=CHUNKING_DUPLICATE_DISABLED_TOOLTIP,
+            )
+            yield Button(
+                "🗑️ Delete",
+                id="delete-template-btn",
+                variant="error",
+                classes="action-button",
+                disabled=True,
+                tooltip=CHUNKING_DELETE_DISABLED_TOOLTIP,
+            )
             yield Button("📥 Import", id="import-template-btn", variant="default", classes="action-button")
-            yield Button("📤 Export", id="export-template-btn", variant="default", classes="action-button", disabled=True)
+            yield Button(
+                "📤 Export",
+                id="export-template-btn",
+                variant="default",
+                classes="action-button",
+                disabled=True,
+                tooltip=CHUNKING_EXPORT_DISABLED_TOOLTIP,
+            )
         
         # Templates table
         with Container(classes="templates-table-container"):
@@ -226,9 +266,33 @@ class ChunkingTemplatesWidget(Container):
         self.query_one("#duplicate-template-btn", Button).disabled = not has_selection
         self.query_one("#delete-template-btn", Button).disabled = not has_selection or is_system
         self.query_one("#export-template-btn", Button).disabled = not has_selection
+        self._update_action_tooltips(has_selection=has_selection, is_system=is_system)
         
         # Update details display
         self._update_template_details()
+
+    def _update_action_tooltips(self, *, has_selection: bool, is_system: bool) -> None:
+        """Explain why template actions are unavailable and what enabled actions do."""
+        edit_button = self.query_one("#edit-template-btn", Button)
+        duplicate_button = self.query_one("#duplicate-template-btn", Button)
+        delete_button = self.query_one("#delete-template-btn", Button)
+        export_button = self.query_one("#export-template-btn", Button)
+
+        if not has_selection:
+            edit_button.tooltip = CHUNKING_EDIT_DISABLED_TOOLTIP
+            duplicate_button.tooltip = CHUNKING_DUPLICATE_DISABLED_TOOLTIP
+            delete_button.tooltip = CHUNKING_DELETE_DISABLED_TOOLTIP
+            export_button.tooltip = CHUNKING_EXPORT_DISABLED_TOOLTIP
+            return
+
+        edit_button.tooltip = (
+            CHUNKING_EDIT_BUILTIN_TOOLTIP if is_system else CHUNKING_EDIT_ENABLED_TOOLTIP
+        )
+        duplicate_button.tooltip = CHUNKING_DUPLICATE_ENABLED_TOOLTIP
+        delete_button.tooltip = (
+            CHUNKING_DELETE_BUILTIN_TOOLTIP if is_system else CHUNKING_DELETE_ENABLED_TOOLTIP
+        )
+        export_button.tooltip = CHUNKING_EXPORT_ENABLED_TOOLTIP
     
     def watch_filter_text(self, old_text: str, new_text: str) -> None:
         """React to filter text changes."""
