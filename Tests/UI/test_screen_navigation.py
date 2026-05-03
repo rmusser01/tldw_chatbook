@@ -348,6 +348,7 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert app.notifications_scope_service.local_service is app.client_notifications_service
     assert isinstance(app.home_active_work_adapter, LocalNotificationHomeActiveWorkAdapter)
     assert app.home_active_work_adapter.notification_service is app.client_notifications_service
+    assert app.home_active_work_adapter.watchlist_service is app.local_watchlists_service
     assert isinstance(app.server_outputs_service, ServerOutputsService)
     assert isinstance(app.outputs_scope_service, OutputsScopeService)
     assert isinstance(app.local_research_service, LocalResearchService)

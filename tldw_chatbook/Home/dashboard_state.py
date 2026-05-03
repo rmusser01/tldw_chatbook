@@ -93,6 +93,14 @@ def choose_next_best_action(state: HomeDashboardInput) -> HomeAction:
             "schedules",
             "Scheduled work needs recovery.",
         )
+    failed_item = _first_item_for_status(state, _FAILED_STATUSES)
+    if _failed_run_count(state):
+        return HomeAction(
+            "review_failed_work",
+            "Review failed work",
+            failed_item.detail_route if failed_item else state.active_detail_route,
+            "Failed work needs recovery.",
+        )
     if _active_run_count(state):
         return HomeAction(
             "resume_active_work",
@@ -130,7 +138,13 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
     running_item = _first_item_for_status(state, _RUNNING_STATUSES)
     paused_item = _first_item_for_status(state, _PAUSED_STATUSES)
     failed_item = _first_item_for_status(state, _FAILED_STATUSES)
-    detail_item = state.active_work_items[0] if state.active_work_items else None
+    detail_item = (
+        approval_item
+        or failed_item
+        or running_item
+        or paused_item
+        or (state.active_work_items[0] if state.active_work_items else None)
+    )
 
     if _pending_approval_count(state):
         controls.extend(
@@ -172,11 +186,12 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
             )
         )
     if _failed_run_count(state) or _failed_schedule_count(state):
+        failed_route = failed_item.detail_route if failed_item else "schedules"
         controls.append(
             HomeControl(
                 "home-retry",
                 "Retry",
-                "schedules",
+                failed_route,
                 "failed_work",
                 failed_item.item_id if failed_item else None,
             )

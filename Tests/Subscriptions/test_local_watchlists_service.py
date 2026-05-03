@@ -1,3 +1,5 @@
+from inspect import isawaitable
+
 import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -29,6 +31,46 @@ async def test_local_watchlists_service_persists_run_queue_state(tmp_path):
     assert fetched["source_id"] == source["source_id"]
     assert detail["stats"]["source_id"] == source["source_id"]
     assert cancelled["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_local_watchlists_service_exposes_sync_home_run_snapshot(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    queued_source = await service.create_source(
+        {
+            "name": "Queued Feed",
+            "url": "https://example.com/queued.xml",
+            "source_type": "rss",
+        }
+    )
+    failed_source = await service.create_source(
+        {
+            "name": "Failed Feed",
+            "url": "https://example.com/failed.xml",
+            "source_type": "rss",
+        }
+    )
+
+    queued = await service.launch_run(source_id=queued_source["source_id"])
+    failed = await service.launch_run(source_id=failed_source["source_id"])
+    await service.record_run_result(
+        failed["run_id"],
+        status="failed",
+        error_msg="boom",
+        dispatch_notifications=False,
+    )
+
+    snapshot = service.list_home_run_snapshot(limit=5)
+
+    assert not isawaitable(snapshot)
+    assert [run["run_id"] for run in snapshot[:2]] == [failed["run_id"], queued["run_id"]]
+    assert snapshot[0]["id"] == f"local:watchlist_run:{failed['run_id']}"
+    assert snapshot[0]["status"] == "failed"
+    assert snapshot[0]["source_title"] == "Failed Feed"
+    assert snapshot[0]["source_id"] == failed_source["source_id"]
+    assert snapshot[1]["status"] == "queued"
+    assert snapshot[1]["source_title"] == "Queued Feed"
 
 
 @pytest.mark.asyncio

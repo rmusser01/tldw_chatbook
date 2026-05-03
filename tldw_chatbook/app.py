@@ -1707,6 +1707,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Stage route-specific context before Home primary-action navigation."""
         if getattr(action, "action_id", None) == "review_notifications":
             self.pending_subscription_initial_tab = "notifications"
+        elif (
+            getattr(action, "action_id", None) == "review_failed_work"
+            and getattr(action, "target_route", None) == "subscriptions"
+        ):
+            self.pending_subscription_initial_tab = "watchlist-runs"
 
     def approve_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
         """Approve the active Home item through the configured adapter."""
@@ -2042,6 +2047,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
         self.home_active_work_adapter = LocalNotificationHomeActiveWorkAdapter(
             notification_service=self.client_notifications_service,
+            watchlist_service=self.local_watchlists_service,
         )
         self.notification_dispatch_service = NotificationDispatchService(
             store=self.client_notifications_db,
