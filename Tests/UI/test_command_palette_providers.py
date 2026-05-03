@@ -40,7 +40,8 @@ try:
         ALL_TABS,
         TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, 
         TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS, 
-        TAB_STATS, TAB_EVALS, TAB_CODING, TAB_STTS, get_tab_display_label
+        TAB_STATS, TAB_EVALS, TAB_CODING, TAB_STTS, TAB_MCP,
+        TAB_SETTINGS, get_tab_display_label
     )
     IMPORTS_AVAILABLE = True
 except ImportError as e:
@@ -78,6 +79,8 @@ except ImportError as e:
     TAB_EVALS = "evals"
     TAB_CODING = "coding"
     TAB_STTS = "stts"
+    TAB_MCP = "mcp"
+    TAB_SETTINGS = "settings"
     ALL_TABS = [
         TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
         TAB_INGEST, TAB_EVALS, TAB_LLM, TAB_STTS,
@@ -259,25 +262,22 @@ class TestTabNavigationProvider:
         
         assert len(hits) == 6  # Popular tabs defined in discover method
         tab_names = [hit.text for hit in hits]
-        assert any("Chat" in name for name in tab_names)
-        assert any("Chatbooks" in name for name in tab_names)
-        assert any("Notes" in name for name in tab_names)
-        assert any("Media" in name for name in tab_names)
-        assert any("Search" in name for name in tab_names)
+        assert any("Console" in name for name in tab_names)
+        assert any("Library" in name for name in tab_names)
+        assert any("Artifacts" in name for name in tab_names)
+        assert any("MCP" in name for name in tab_names)
         assert any("Settings" in name for name in tab_names)
     
     @pytest.mark.asyncio
-    async def test_search_shows_all_tabs(self, tab_provider):
-        """Test that search shows all available tabs."""
+    async def test_search_shows_shell_and_legacy_direct_commands(self, tab_provider):
+        """Test that search shows shell and legacy direct commands."""
         hits = []
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
         
-        assert len(hits) == len(ALL_TABS)
-        
-        # Check that all major tabs are present
+        assert len(hits) == len(TabNavigationProvider.command_palette_tab_ids())
         tab_texts = [hit.text for hit in hits]
-        assert any("Chat" in text for text in tab_texts)
+        assert any("Console" in text for text in tab_texts)
         assert any("Library" in text for text in tab_texts)
         assert any("Settings" in text for text in tab_texts)
         assert any("Models" in text for text in tab_texts)
@@ -293,11 +293,12 @@ class TestTabNavigationProvider:
 
         by_text = {hit.text: hit for hit in hits}
 
-        for tab_id in (TAB_CCP, TAB_LLM, TAB_STTS, TAB_TOOLS_SETTINGS):
+        for tab_id in (TAB_CHAT, TAB_CCP, TAB_LLM, TAB_STTS, TAB_MCP, TAB_SETTINGS):
             expected_text = f"Tab Navigation: Switch to {get_tab_display_label(tab_id)}"
             assert expected_text in by_text
 
         joined_text = "\n".join(by_text)
+        assert "Tab Navigation: Switch to Chat" not in by_text
         assert "Character Chat" not in joined_text
         assert "LLM Management" not in joined_text
         assert "Tools & Settings" not in joined_text
@@ -306,16 +307,15 @@ class TestTabNavigationProvider:
         """Test successful tab switching."""
         tab_provider.switch_tab(TAB_NOTES)
         
-        assert tab_provider.app.current_tab == TAB_NOTES
+        tab_provider.app.post_message.assert_called_once()
+        message = tab_provider.app.post_message.call_args.args[0]
+        assert message.screen_name == TabNavigationProvider.route_for_tab(TAB_NOTES)
         tab_provider.app.notify.assert_called_once()
-        call_args = tab_provider.app.notify.call_args[0]
-        assert "Switched to" in call_args[0]
-        assert "Notes" in call_args[0]
+        assert "Switched to" in tab_provider.app.notify.call_args.args[0]
     
     def test_switch_tab_failure(self, tab_provider):
         """Test tab switching with error handling."""
-        # Mock the current_tab property to raise an exception when set
-        type(tab_provider.app).current_tab = PropertyMock(side_effect=Exception("Tab error"))
+        tab_provider.app.post_message.side_effect = Exception("Tab error")
         
         tab_provider.switch_tab(TAB_CHAT)
         
@@ -326,15 +326,25 @@ class TestTabNavigationProvider:
         assert "Tab error" in call_args[0][0]  # The exception message is included
         assert call_args[1]['severity'] == "error"
     
+    def test_all_command_palette_tabs_are_navigable(self, tab_provider):
+        """Test that all command palette tabs can be routed."""
+        for tab_id in TabNavigationProvider.command_palette_tab_ids():
+            tab_provider.app.post_message.reset_mock()
+            tab_provider.app.notify.reset_mock()
+            tab_provider.switch_tab(tab_id)
+            message = tab_provider.app.post_message.call_args.args[0]
+            assert message.screen_name == TabNavigationProvider.route_for_tab(tab_id)
+
     @pytest.mark.parametrize("tab_id", [
         TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
         TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS,
         TAB_STATS, TAB_EVALS, TAB_CODING
     ])
-    def test_all_tabs_switchable(self, tab_provider, tab_id):
-        """Test that all defined tabs can be switched to."""
+    def test_all_legacy_tabs_switchable(self, tab_provider, tab_id):
+        """Test that legacy tabs remain switchable through route aliases."""
         tab_provider.switch_tab(tab_id)
-        assert tab_provider.app.current_tab == tab_id
+        message = tab_provider.app.post_message.call_args.args[0]
+        assert message.screen_name == TabNavigationProvider.route_for_tab(tab_id)
 
 
 #######################################################################################################################
@@ -649,8 +659,10 @@ class TestCommandPaletteIntegration:
             # Don't try to set provider.app as it's a read-only property
             
             # Mock app to raise exception based on the method being tested
-            if method_name == "switch_tab" or method_name == "execute_quick_action":
-                # These methods set current_tab
+            if method_name == "switch_tab":
+                provider.app.post_message.side_effect = Exception("Test error")
+            elif method_name == "execute_quick_action":
+                # This method sets current_tab
                 type(provider.app).current_tab = PropertyMock(side_effect=Exception("Test error"))
             elif method_name == "switch_theme":
                 # This method sets theme

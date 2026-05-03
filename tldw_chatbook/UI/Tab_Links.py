@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from ..app import TldwCli
 
 from ..Constants import (
-    TAB_CCP, TAB_GROUPS, get_tab_display_label,
+    TAB_CCP, TAB_GROUPS, TAB_MCP, TAB_TOOLS_SETTINGS, get_tab_display_label,
 )
 from ..UI.Navigation.main_navigation import NavigateToScreen
 #
@@ -109,6 +109,8 @@ class TabLinks(ScrollableContainer):
 
     def _update_active_link(self, new_tab_id: str) -> None:
         """Update the visual state of tab links."""
+        if new_tab_id == TAB_MCP and TAB_TOOLS_SETTINGS in self.tab_ids:
+            new_tab_id = TAB_TOOLS_SETTINGS
         for link in self.query(".tab-link"):
             link.remove_class("-active")
         try:

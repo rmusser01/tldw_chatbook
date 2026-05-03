@@ -57,7 +57,7 @@ TAB_GROUPS = {
 }
 
 TAB_DISPLAY_LABELS = {
-    TAB_CHAT: "Chat",
+    TAB_CHAT: "Console",
     TAB_CCP: "Library",
     TAB_NOTES: "Notes",
     TAB_MEDIA: "Media",
@@ -65,7 +65,7 @@ TAB_DISPLAY_LABELS = {
     TAB_INGEST: "Ingest",
     TAB_EVALS: "Evals",
     TAB_LLM: "Models",
-    TAB_TOOLS_SETTINGS: "Settings",
+    TAB_TOOLS_SETTINGS: "MCP",
     TAB_STATS: "Stats",
     TAB_LOGS: "Logs",
     TAB_CODING: "Coding",
@@ -76,6 +76,17 @@ TAB_DISPLAY_LABELS = {
     TAB_SUBSCRIPTIONS: "Subscriptions",
     TAB_CHATBOOKS: "Chatbooks",
     TAB_CUSTOMIZE: "Customize",
+    TAB_HOME: "Home",
+    TAB_LIBRARY: "Library",
+    TAB_ARTIFACTS: "Artifacts",
+    TAB_PERSONAS: "Personas",
+    TAB_WATCHLISTS_COLLECTIONS: "Watchlists+Collections",
+    TAB_SCHEDULES: "Schedules",
+    TAB_WORKFLOWS: "Workflows",
+    TAB_MCP: "MCP",
+    TAB_ACP: "ACP",
+    TAB_SKILLS: "Skills",
+    TAB_SETTINGS: "Settings",
 }
 
 

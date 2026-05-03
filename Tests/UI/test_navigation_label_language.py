@@ -2,10 +2,14 @@
 
 from tldw_chatbook.Constants import (
     TAB_CCP,
+    TAB_CHAT,
     TAB_DISPLAY_LABELS,
     TAB_INGEST,
     TAB_LLM,
+    TAB_MCP,
+    TAB_SETTINGS,
     TAB_STTS,
+    TAB_TOOLS_SETTINGS,
     get_tab_display_label,
 )
 from tldw_chatbook.UI.Tab_Bar import _get_tab_label as get_tab_bar_label
@@ -47,3 +51,14 @@ def test_dropdown_uses_plain_language_without_changing_values() -> None:
     assert dropdown._get_tab_label(TAB_LLM) == "Models"
     assert dropdown._get_tab_label(TAB_STTS) == "Speech"
     assert dropdown.tab_ids == [TAB_CCP, TAB_INGEST, TAB_LLM, TAB_STTS]
+
+
+def test_legacy_chat_route_uses_console_user_label() -> None:
+    assert TAB_CHAT == "chat"
+    assert get_tab_display_label(TAB_CHAT) == "Console"
+
+
+def test_tools_settings_label_is_mcp_not_global_settings() -> None:
+    assert get_tab_display_label(TAB_MCP) == "MCP"
+    assert get_tab_display_label(TAB_TOOLS_SETTINGS) == "MCP"
+    assert get_tab_display_label(TAB_SETTINGS) == "Settings"

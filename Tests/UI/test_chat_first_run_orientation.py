@@ -116,6 +116,8 @@ async def test_chat_first_run_exposes_readiness_and_context_sources(first_run_se
         empty_state = pilot.app.query_one("#chat-empty-state", Static)
         text = _text(empty_state)
 
+        assert "Console" in text
+        assert "Chat is the" not in text
         assert "agentic control surface" in text
         assert "OpenAI is not ready" in text
         assert "OPENAI_API_KEY" in text
@@ -134,6 +136,8 @@ async def test_chat_tab_first_run_exposes_readiness_and_context_sources(first_ru
         await pilot.pause(0.1)
         text = "\n".join(_text(widget) for widget in pilot.app.query(Static))
 
+        assert "Console" in text
+        assert "Chat is the" not in text
         assert "agentic control surface" in text
         assert "OpenAI is not ready" in text
         assert "OPENAI_API_KEY" in text

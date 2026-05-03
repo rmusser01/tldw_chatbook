@@ -75,7 +75,8 @@ from .config import (
 )
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
-    TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
+    TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, TAB_LIBRARY, TAB_ARTIFACTS, TAB_PERSONAS, TAB_WATCHLISTS_COLLECTIONS, \
+    TAB_SCHEDULES, TAB_WORKFLOWS, TAB_MCP, TAB_ACP, TAB_SKILLS, TAB_SETTINGS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
     get_tab_display_label
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
@@ -482,7 +483,18 @@ class TabNavigationProvider(Provider):
     """Provider for tab navigation commands."""
 
     TAB_HELP_TEXT = {
-        TAB_CHAT: "Switch to the main chat interface",
+        TAB_HOME: "Open Home for notifications, status, and next-best actions",
+        TAB_CHAT: "Open Console for live agent work, approvals, tools, and RAG",
+        TAB_LIBRARY: "Open Library for source material, imports, notes, media, conversations, and Search/RAG",
+        TAB_ARTIFACTS: "Open Artifacts for generated outputs, reports, datasets, and Chatbooks",
+        TAB_PERSONAS: "Open Personas for characters, prompts, dictionaries, and behavior profiles",
+        TAB_WATCHLISTS_COLLECTIONS: "Open Watchlists+Collections for monitored sources and curated collections",
+        TAB_SCHEDULES: "Open Schedules for run timing, triggers, pauses, retries, and recovery",
+        TAB_WORKFLOWS: "Open Workflows for reusable procedures, dry-runs, and outputs",
+        TAB_MCP: "Open MCP for servers, tools, permissions, auth, and audit",
+        TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
+        TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
+        TAB_SETTINGS: "Open global preferences, appearance, accounts, storage, and app behavior",
         TAB_CCP: "Switch to Library for conversations, characters, personas, prompts, dictionaries, and world books",
         TAB_NOTES: "Switch to notes management",
         TAB_MEDIA: "Switch to media library",
@@ -496,25 +508,58 @@ class TabNavigationProvider(Provider):
         TAB_RESEARCH: "Switch to research workflows",
         TAB_SUBSCRIPTIONS: "Switch to subscriptions and watchlists",
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
-        TAB_TOOLS_SETTINGS: "Switch to settings and configuration",
+        TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
         TAB_LOGS: "Switch to application logs",
         TAB_CODING: "Switch to coding assistant",
         TAB_STATS: "Switch to statistics view",
         TAB_CUSTOMIZE: "Switch to appearance customization",
     }
 
-    POPULAR_TABS = (
+    NAVIGATION_TABS = (
+        TAB_HOME,
         TAB_CHAT,
-        TAB_CHATBOOKS,
-        TAB_NOTES,
-        TAB_MEDIA,
-        TAB_SEARCH,
-        TAB_TOOLS_SETTINGS,
+        TAB_LIBRARY,
+        TAB_ARTIFACTS,
+        TAB_PERSONAS,
+        TAB_WATCHLISTS_COLLECTIONS,
+        TAB_SCHEDULES,
+        TAB_WORKFLOWS,
+        TAB_MCP,
+        TAB_ACP,
+        TAB_SKILLS,
+        TAB_SETTINGS,
+    )
+
+    POPULAR_TABS = (
+        TAB_HOME,
+        TAB_CHAT,
+        TAB_LIBRARY,
+        TAB_ARTIFACTS,
+        TAB_MCP,
+        TAB_SETTINGS,
     )
     
     def __init__(self, screen, *args, **kwargs):
         """Initialize the TabNavigationProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
+
+    @classmethod
+    def navigation_tab_ids(cls) -> tuple[str, ...]:
+        return cls.NAVIGATION_TABS
+
+    @classmethod
+    def command_palette_tab_ids(cls) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(cls.NAVIGATION_TABS + tuple(ALL_TABS)))
+
+    @staticmethod
+    def route_for_tab(tab_id: str) -> str:
+        route_aliases = {
+            "llm": TAB_LLM,
+            TAB_TOOLS_SETTINGS: TAB_MCP,
+            TAB_MCP: TAB_MCP,
+            TAB_SETTINGS: TAB_SETTINGS,
+        }
+        return route_aliases.get(tab_id, tab_id)
 
     def _tab_command(self, tab_id: str) -> tuple[str, str, str]:
         label = get_tab_display_label(tab_id)
@@ -524,7 +569,7 @@ class TabNavigationProvider(Provider):
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
         
-        tab_commands = [self._tab_command(tab_id) for tab_id in ALL_TABS]
+        tab_commands = [self._tab_command(tab_id) for tab_id in self.command_palette_tab_ids()]
         
         for command_text, tab_id, help_text in tab_commands:
             score = matcher.match(command_text)
@@ -550,8 +595,9 @@ class TabNavigationProvider(Provider):
     def switch_tab(self, tab_id: str) -> None:
         """Switch to the specified tab."""
         try:
-            self.app.current_tab = tab_id
-            self.app.notify(f"Switched to {tab_id.replace('_', ' ').title()} tab", severity="information")
+            route = self.route_for_tab(tab_id)
+            self.app.post_message(NavigateToScreen(route))
+            self.app.notify(f"Switched to {get_tab_display_label(tab_id)}", severity="information")
         except Exception as e:
             self.app.notify(f"Failed to switch tab: {e}", severity="error")
 
