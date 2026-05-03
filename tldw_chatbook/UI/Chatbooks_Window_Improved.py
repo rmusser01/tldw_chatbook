@@ -176,6 +176,9 @@ class EmptyStateWidget(Container):
 
 class ChatbooksWindowImproved(Screen):
     """Enhanced Chatbooks management interface."""
+
+    GRID_VIEW_TOOLTIP = "Show chatbooks as visual cards."
+    LIST_VIEW_TOOLTIP = "Show chatbooks as a dense text list."
     
     BINDINGS = [
         ("c", "create_chatbook", "Create"),
@@ -381,8 +384,19 @@ class ChatbooksWindowImproved(Screen):
                 
                 # View mode toggles
                 with Container(classes="view-toggles"):
-                    yield Button("▦ Grid", id="view-grid", classes="view-toggle", variant="primary")
-                    yield Button("☰ List", id="view-list", classes="view-toggle")
+                    yield Button(
+                        "▦ Grid",
+                        id="view-grid",
+                        classes="view-toggle",
+                        variant="primary",
+                        tooltip=self.GRID_VIEW_TOOLTIP,
+                    )
+                    yield Button(
+                        "☰ List",
+                        id="view-list",
+                        classes="view-toggle",
+                        tooltip=self.LIST_VIEW_TOOLTIP,
+                    )
             
             # Content container (will be populated based on chatbooks)
             yield Container(id="chatbooks-container")
