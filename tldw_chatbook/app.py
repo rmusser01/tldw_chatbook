@@ -190,23 +190,33 @@ from .UI.Logs_Window import LogsWindow
 from .UI.Stats_Window import StatsWindow
 from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
 from .UI.Navigation.main_navigation import NavigateToScreen
+from .UI.Screens.acp_screen import ACPScreen
+from .UI.Screens.artifacts_screen import ArtifactsScreen
 from .UI.Screens.chat_screen import ChatScreen
 from .UI.Screens.home_screen import HomeScreen
+from .UI.Screens.library_conversations_screen import LibraryConversationsScreen
+from .UI.Screens.library_screen import LibraryScreen
+from .UI.Screens.mcp_screen import MCPScreen
 from .UI.Screens.media_ingest_screen import MediaIngestScreen
 from .UI.Screens.coding_screen import CodingScreen
 from .UI.Screens.conversation_screen import ConversationScreen
 from .UI.Screens.media_screen import MediaScreen
 from .UI.Screens.notes_screen import NotesScreen
+from .UI.Screens.personas_screen import PersonasScreen
+from .UI.Screens.schedules_screen import SchedulesScreen
 from .UI.Screens.notes_scope_models import WorkspaceSubview
 from .UI.Screens.search_screen import SearchScreen
 from .UI.Screens.evals_screen import EvalsScreen
-from .UI.Screens.tools_settings_screen import ToolsSettingsScreen
+from .UI.Screens.settings_screen import SettingsScreen
+from .UI.Screens.skills_screen import SkillsScreen
 from .UI.Screens.llm_screen import LLMScreen
 from .UI.Screens.customize_screen import CustomizeScreen
 from .UI.Screens.logs_screen import LogsScreen
 from .UI.Screens.stats_screen import StatsScreen
 from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
+from .UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
+from .UI.Screens.workflows_screen import WorkflowsScreen
 from .UI.Screens.writing_screen import WritingScreen
 from .UI.Screens.research_screen import ResearchScreen
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
@@ -2876,7 +2886,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         screen_aliases = {
             TAB_CCP: "ccp",
-            "conversation": "ccp",
             TAB_LLM: "llm",
             "subscription": "subscriptions",
         }
@@ -2884,27 +2893,38 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         tab_aliases = {
             "ccp": TAB_CCP,
-            "conversation": TAB_CCP,
+            "conversation": "conversation",
             TAB_CCP: TAB_CCP,
             "llm": TAB_LLM,
             TAB_LLM: TAB_LLM,
             "subscription": TAB_SUBSCRIPTIONS,
             "subscriptions": TAB_SUBSCRIPTIONS,
+            "tools_settings": "mcp",
         }
         canonical_tab = tab_aliases.get(target, tab_aliases.get(canonical_screen, canonical_screen))
 
         screen_map = {
             "home": HomeScreen,
             "chat": ChatScreen,
+            "library": LibraryScreen,
+            "artifacts": ArtifactsScreen,
+            "personas": PersonasScreen,
+            "watchlists_collections": WatchlistsCollectionsScreen,
+            "schedules": SchedulesScreen,
+            "workflows": WorkflowsScreen,
+            "mcp": MCPScreen,
+            "acp": ACPScreen,
+            "skills": SkillsScreen,
+            "settings": SettingsScreen,
             "ingest": MediaIngestScreen,
             "coding": CodingScreen,
-            "conversation": ConversationScreen,
+            "conversation": LibraryConversationsScreen,
             "ccp": ConversationScreen,
             "media": MediaScreen,
             "notes": NotesScreen,
             "search": SearchScreen,
             "evals": EvalsScreen,
-            "tools_settings": ToolsSettingsScreen,
+            "tools_settings": MCPScreen,
             "llm": LLMScreen,
             "customize": CustomizeScreen,
             "logs": LogsScreen,
