@@ -15,6 +15,7 @@ Make the W+C destination produce a real Console follow action when an actionable
 - `watchlists-follow-in-console` stays disabled with recovery copy when no active W+C run is available.
 - When a Console-capable W+C run exists, `watchlists-follow-in-console` becomes enabled and identifies the latest run by title and status.
 - Clicking the enabled W+C Console follow action routes through `open_active_home_item_in_console`, preserving the existing Home adapter and Console launch contracts.
+- PR review hardening now logs active-work adapter failures, keeps the click target pinned to the item shown in the button label, and renders run title/status through markup-safe Rich text.
 
 ## Functional QA Evidence
 
@@ -23,7 +24,10 @@ Focused checks were run against W+C destination fallback state, W+C destination 
 - Red test: `python -m pytest Tests/UI/test_console_live_work_handoffs.py::test_watchlists_destination_keeps_console_follow_disabled_without_active_run Tests/UI/test_console_live_work_handoffs.py::test_watchlists_destination_routes_latest_active_run_to_console Tests/UI/test_console_live_work_handoffs.py::test_phase3_wc_destination_console_tracking_evidence_links_task_and_roadmap -q`
 - Red result: `3 failed`; failures covered stale disabled copy, always-disabled Console follow, and missing Phase 3.5 evidence.
 - Green targeted result: `3 passed, 1 warning in 4.70s`.
-- Final focused Phase 3.5 suite: `154 passed, 8 warnings in 70.35s` for `Tests/UI/test_console_live_work_handoffs.py`, `Tests/UI/test_destination_shells.py`, `Tests/UI/test_home_screen.py`, `Tests/Home/test_active_work_adapter.py`, `Tests/UI/test_subscription_window_watchlists.py`, `Tests/UI/test_screen_navigation.py`, and `Tests/UI/test_unified_shell_phase2_home_adapter.py`.
+- PR review red test: `python -m pytest Tests/UI/test_console_live_work_handoffs.py::test_watchlists_destination_logs_adapter_failure_and_disables_follow Tests/UI/test_console_live_work_handoffs.py::test_watchlists_destination_click_uses_item_promised_by_button_label Tests/UI/test_console_live_work_handoffs.py::test_watchlists_destination_escapes_console_follow_markup_labels -q`
+- PR review red result: `3 failed`; failures covered silent adapter errors, label/target drift, and markup-interpreted run titles.
+- PR review green targeted result: `3 passed, 1 warning in 5.39s`.
+- Final focused Phase 3.5 suite: `157 passed, 8 warnings in 78.88s` for `Tests/UI/test_console_live_work_handoffs.py`, `Tests/UI/test_destination_shells.py`, `Tests/UI/test_home_screen.py`, `Tests/Home/test_active_work_adapter.py`, `Tests/UI/test_subscription_window_watchlists.py`, `Tests/UI/test_screen_navigation.py`, and `Tests/UI/test_unified_shell_phase2_home_adapter.py`.
 
 Warning boundary: warnings are existing dependency/import warnings and are not W+C destination Console follow failures.
 

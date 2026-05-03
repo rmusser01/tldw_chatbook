@@ -79,6 +79,22 @@ class StaticHomeActiveWorkAdapter:
         raise AssertionError(f"Unexpected direct control call: {action} {target_id} {target_route}")
 
 
+class RaisingHomeActiveWorkAdapter:
+    def build_dashboard_input(self, *, providers_models, has_recent_work):
+        raise RuntimeError("adapter unavailable")
+
+
+class RotatingHomeActiveWorkAdapter:
+    def __init__(self, *snapshots):
+        self.snapshots = tuple(tuple(snapshot) for snapshot in snapshots)
+        self.build_calls = 0
+
+    def build_dashboard_input(self, *, providers_models, has_recent_work):
+        snapshot_index = min(self.build_calls, len(self.snapshots) - 1)
+        self.build_calls += 1
+        return HomeDashboardInput(active_work_items=self.snapshots[snapshot_index])
+
+
 def test_app_exposes_open_console_for_live_work_helper():
     app = _build_test_app()
 
@@ -426,6 +442,105 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
         target_id="local:watchlist_run:5",
         target_route="chat",
     )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(monkeypatch):
+    from tldw_chatbook.UI.Screens import watchlists_collections_screen
+
+    app = _build_test_app()
+    app.home_active_work_adapter = RaisingHomeActiveWorkAdapter()
+    app.open_active_home_item_in_console = Mock()
+    logger = Mock()
+    monkeypatch.setattr(watchlists_collections_screen, "logger", logger, raising=False)
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#watchlists-follow-in-console")
+
+        assert button.disabled is True
+        assert "No active W+C run is available for Console follow." in _screen_static_text(screen)
+
+    logger.warning.assert_called_once()
+    assert "W+C Console follow" in logger.warning.call_args.args[0]
+    assert logger.warning.call_args.kwargs["exc_info"] is True
+    app.open_active_home_item_in_console.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_watchlists_destination_click_uses_item_promised_by_button_label():
+    app = _build_test_app()
+    app.home_active_work_adapter = RotatingHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:5",
+                title="First visible run",
+                source="W+C",
+                status="failed",
+                detail_route="subscriptions",
+                console_available=True,
+            ),
+        ),
+        (
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:7",
+                title="Newer unseen run",
+                source="W+C",
+                status="running",
+                detail_route="subscriptions",
+                console_available=True,
+            ),
+        ),
+    )
+    app.open_active_home_item_in_console = Mock()
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#watchlists-follow-in-console")
+
+        assert "First visible run" in str(button.label)
+        assert "Newer unseen run" not in str(button.label)
+
+        await pilot.click("#watchlists-follow-in-console")
+        await pilot.pause(0.1)
+
+    app.open_active_home_item_in_console.assert_called_once_with(
+        target_id="local:watchlist_run:5",
+        target_route="chat",
+    )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_destination_escapes_console_follow_markup_labels():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:5",
+                title="[red]Daily[/red] feed",
+                source="W+C",
+                status="[bold]failed[/bold]",
+                detail_route="subscriptions",
+                console_available=True,
+            ),
+        )
+    )
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#watchlists-follow-in-console")
+        static_text = _screen_static_text(screen)
+
+        assert "[red]Daily[/red] feed" in str(button.label)
+        assert getattr(button.label, "spans", []) == []
+        assert "[red]Daily[/red] feed" in static_text
+        assert "[bold]failed[/bold]" in static_text
 
 
 @pytest.mark.parametrize(

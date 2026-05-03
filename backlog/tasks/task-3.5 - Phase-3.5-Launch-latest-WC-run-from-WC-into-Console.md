@@ -42,5 +42,5 @@ Make the W+C destination expose a real Console follow action when the existing a
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Updated the W+C destination to reuse the existing Home active-work adapter for latest Console-capable W+C run discovery. The `watchlists-follow-in-console` action now stays disabled with explicit recovery copy when no active run exists, becomes enabled when adapter context exists, and routes clicks through `open_active_home_item_in_console` so Home and W+C share the same Console launch path. Added focused destination/Console regressions plus Phase 3.5 QA evidence and roadmap tracking.
+Updated the W+C destination to reuse the existing Home active-work adapter for latest Console-capable W+C run discovery. The `watchlists-follow-in-console` action now stays disabled with explicit recovery copy when no active run exists, becomes enabled when adapter context exists, and routes clicks through `open_active_home_item_in_console` so Home and W+C share the same Console launch path. PR review hardening added contextual adapter-failure logging, pinned click routing to the item shown in the rendered button label, and escaped markup-sensitive run title/status labels. Added focused destination/Console regressions plus Phase 3.5 QA evidence and roadmap tracking.
 <!-- SECTION:NOTES:END -->
