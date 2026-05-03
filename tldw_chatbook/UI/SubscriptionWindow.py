@@ -206,6 +206,7 @@ class SubscriptionWindow(Container):
         super().__init__(*args, **kwargs)
         self.app_instance = app_instance  # Changed from self.app to self.app_instance
         self.initial_tab = self._consume_initial_tab(app_instance)
+        pending_watchlist_run_id = self._consume_pending_watchlist_run_id(app_instance)
         self.client_id = "cli"
         self.db: Optional[SubscriptionsDB] = None
         self.scheduler_worker: Optional[SubscriptionSchedulerWorker] = None
@@ -232,7 +233,8 @@ class SubscriptionWindow(Container):
         self.selected_items: List[int] = []
         self._selected_watch_item: Optional[Dict[str, Any]] = None
         self._selected_watchlist_job_id: Optional[str] = None
-        self._selected_watchlist_run_id: Optional[str] = None
+        self._selected_watchlist_run_id: Optional[str] = pending_watchlist_run_id
+        self._pending_watchlist_run_detail_id: Optional[str] = pending_watchlist_run_id
         self._selected_watchlist_alert_rule_id: Optional[str] = None
         self._selected_server_reminder_id: Optional[str] = None
         self._selected_server_notification_id: Optional[str] = None
@@ -290,6 +292,13 @@ class SubscriptionWindow(Container):
         if initial_tab in SUBSCRIPTION_INITIAL_TABS:
             return str(initial_tab)
         return "subscriptions"
+
+    @staticmethod
+    def _consume_pending_watchlist_run_id(app_instance: Any) -> Optional[str]:
+        run_id = getattr(app_instance, "pending_subscription_watchlist_run_id", None)
+        if hasattr(app_instance, "pending_subscription_watchlist_run_id"):
+            delattr(app_instance, "pending_subscription_watchlist_run_id")
+        return str(run_id) if run_id not in (None, "") else None
     
     def _compose_subscriptions_tab(self) -> ComposeResult:
         """Compose subscriptions management tab."""
@@ -1015,6 +1024,19 @@ class SubscriptionWindow(Container):
             fallback_key="run_id",
             entity_kind="watchlist_run",
         )
+
+    async def _load_pending_watchlist_run_detail(self) -> None:
+        run_id = self._pending_watchlist_run_detail_id
+        if not run_id:
+            return
+        self._pending_watchlist_run_detail_id = None
+        try:
+            detail = await self.backend_controller.get_watchlist_run_detail(run_id)
+        except Exception as exc:
+            logger.warning(f"Failed to load pending watchlist run detail: {exc}")
+            self.notify(f"Unable to load watchlist run details: {exc}", severity="warning")
+            return
+        self._load_text_area("#watchlist-run-detail", json.dumps(detail, indent=2, sort_keys=True, default=str))
 
     async def _render_watchlist_alert_rules(self, items: List[Dict[str, Any]]) -> None:
         await self._render_watchlist_record_list(

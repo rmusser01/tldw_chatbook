@@ -85,6 +85,7 @@ def build_window(
     runtime_backend: str,
     policy_allowed: bool = True,
     pending_initial_tab: str | None = None,
+    pending_watchlist_run_id: str | None = None,
 ) -> SubscriptionWindow:
     notifications_store = ClientNotificationsDB(
         db_path=tmp_path / f"notifications-{runtime_backend}.sqlite3",
@@ -103,6 +104,8 @@ def build_window(
     )
     if pending_initial_tab is not None:
         app.pending_subscription_initial_tab = pending_initial_tab
+    if pending_watchlist_run_id is not None:
+        app.pending_subscription_watchlist_run_id = pending_watchlist_run_id
     app.watchlist_scope_service.list_watch_items = AsyncMock(
         return_value=[_normalized_watch_row(runtime_backend)]
     )
@@ -142,17 +145,17 @@ def build_window(
         return_value={"id": "server:watchlist_job:31", "job_id": 31, "title": "Daily Briefing"}
     )
     app.watchlist_scope_service.trigger_job = AsyncMock(
-        return_value={"id": "server:watchlist_run:91", "run_id": 91, "job_id": 31, "status": "queued"}
+        return_value={"id": f"{runtime_backend}:watchlist_run:91", "run_id": 91, "job_id": 31, "status": "queued"}
     )
     app.watchlist_scope_service.list_runs = AsyncMock(
         return_value={
-            "items": [{"id": "server:watchlist_run:91", "run_id": 91, "job_id": 31, "status": "running"}],
+            "items": [{"id": f"{runtime_backend}:watchlist_run:91", "run_id": 91, "job_id": 31, "status": "running"}],
             "total": 1,
         }
     )
     app.watchlist_scope_service.get_run_detail = AsyncMock(
         return_value={
-            "id": "server:watchlist_run:91",
+            "id": f"{runtime_backend}:watchlist_run:91",
             "run_id": 91,
             "job_id": 31,
             "status": "running",
@@ -301,6 +304,20 @@ def test_subscription_window_consumes_pending_notifications_initial_tab(tmp_path
 
     assert window.initial_tab == "notifications"
     assert not hasattr(window.app_instance, "pending_subscription_initial_tab")
+
+
+def test_subscription_window_consumes_pending_watchlist_run_detail_context(tmp_path: Path):
+    window = build_window(
+        tmp_path=tmp_path,
+        runtime_backend="local",
+        pending_initial_tab="watchlist-runs",
+        pending_watchlist_run_id="local:watchlist_run:91",
+    )
+
+    assert window.initial_tab == "watchlist-runs"
+    assert window._selected_watchlist_run_id == "local:watchlist_run:91"
+    assert not hasattr(window.app_instance, "pending_subscription_initial_tab")
+    assert not hasattr(window.app_instance, "pending_subscription_watchlist_run_id")
 
 
 @pytest.mark.asyncio
@@ -525,12 +542,34 @@ async def test_local_mode_shows_watchlist_control_plane_guidance(tmp_path: Path)
     await window.refresh_backend_view()
 
     assert window._test_widgets["#watchlist-jobs-local-state"].display is True
-    assert window._test_widgets["#watchlist-runs-local-state"].display is True
-    assert window._test_widgets["#watchlist-alert-rules-local-state"].display is True
+    assert window._test_widgets["#watchlist-runs-local-state"].display is False
+    assert window._test_widgets["#watchlist-alert-rules-local-state"].display is False
     assert "local subscriptions scheduler" in str(window._test_widgets["#watchlist-jobs-local-state"].updated[-1]).lower()
     window.app_instance.watchlist_scope_service.list_jobs.assert_not_called()
-    window.app_instance.watchlist_scope_service.list_runs.assert_not_called()
-    window.app_instance.watchlist_scope_service.list_alert_rules.assert_not_called()
+    window.app_instance.watchlist_scope_service.list_runs.assert_awaited_once_with(runtime_backend="local")
+    window.app_instance.watchlist_scope_service.list_alert_rules.assert_awaited_once_with(runtime_backend="local")
+
+
+@pytest.mark.asyncio
+async def test_local_mode_pending_watchlist_run_context_loads_run_detail(tmp_path: Path):
+    window = build_window(
+        tmp_path=tmp_path,
+        runtime_backend="local",
+        pending_initial_tab="watchlist-runs",
+        pending_watchlist_run_id="local:watchlist_run:91",
+    )
+
+    await window.refresh_backend_view()
+
+    list_view = window._test_widgets["#watchlist-runs-list"]
+    assert list_view.items[0].data["id"] == "local:watchlist_run:91"
+    assert list_view.highlighted_child is list_view.items[0]
+    assert list_view.index == 0
+    window.app_instance.watchlist_scope_service.get_run_detail.assert_awaited_once_with(
+        runtime_backend="local",
+        run_id="local:watchlist_run:91",
+    )
+    assert "started" in window.query_one("#watchlist-run-detail").text
 
 
 @pytest.mark.asyncio

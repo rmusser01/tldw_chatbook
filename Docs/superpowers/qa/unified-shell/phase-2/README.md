@@ -12,5 +12,6 @@ This directory contains durable QA summaries for Phase 2 Home operational-contro
 - `2026-05-03-home-local-notification-snapshot.md` - `TASK-4.4` local unread notification snapshot state for Home.
 - `2026-05-03-home-notification-review-routing.md` - `TASK-4.5` Home notification review CTA routing into the existing inbox.
 - `2026-05-03-home-local-watchlist-run-snapshot.md` - `TASK-4.6` local W+C watchlist run snapshot state for Home active work.
+- `2026-05-03-home-local-watchlist-run-details.md` - `TASK-4.7` Home local W+C watchlist run detail routing into the W+C runs surface.
 
 Do not mark Phase 2 verified until Home approve, reject, pause, resume, retry, and open-detail workflows are verified against real service-backed adapters or explicitly recoverable unavailable states.

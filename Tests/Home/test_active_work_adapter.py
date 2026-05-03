@@ -114,6 +114,44 @@ def test_local_notification_adapter_maps_local_watchlist_runs_to_active_work():
     assert dashboard_input.active_work_items[0].console_available is False
 
 
+def test_local_notification_adapter_opens_local_watchlist_run_details():
+    class FakeWatchlistsService:
+        def list_home_run_snapshot(self, *, limit=20):
+            return [
+                {
+                    "id": "local:watchlist_run:5",
+                    "run_id": 5,
+                    "source_id": 7,
+                    "status": "failed",
+                    "source_title": "Daily security feed",
+                    "backend": "local",
+                },
+            ]
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        watchlist_service=FakeWatchlistsService()
+    )
+
+    result = adapter.handle_control(
+        HomeControlAction.OPEN_DETAILS,
+        target_id="local:watchlist_run:5",
+        target_route="subscriptions",
+    )
+    missing_result = adapter.handle_control(
+        HomeControlAction.OPEN_DETAILS,
+        target_id="local:watchlist_run:404",
+        target_route="subscriptions",
+    )
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    assert result.target_id == "local:watchlist_run:5"
+    assert result.target_route == "subscriptions"
+    assert result.message == "Opening W+C run details for Daily security feed."
+
+    assert missing_result.status is HomeControlResultStatus.UNAVAILABLE
+    assert missing_result.target_id == "local:watchlist_run:404"
+
+
 def test_local_notification_adapter_fails_closed_when_watchlist_snapshot_unavailable():
     class BrokenWatchlistsService:
         def list_home_run_snapshot(self, *, limit=20):
