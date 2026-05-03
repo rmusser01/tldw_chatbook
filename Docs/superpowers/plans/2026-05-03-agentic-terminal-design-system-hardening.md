@@ -998,7 +998,7 @@ If no runtime files changed, omit them from `git add`.
 - Modify: `Docs/Design/master-shell-route-inventory.md`
 - Modify: `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md`
 
-- [ ] **Step 1: Update only verified contract sections**
+- [x] **Step 1: Update only verified contract sections**
 
 Document:
 
@@ -1009,7 +1009,7 @@ Document:
 - Shell chrome guardrail test coverage and the deferred full app-owned chrome migration.
 - Any verified runtime deviation from Phase 0 visual system rules.
 
-- [ ] **Step 2: Do not claim screen-level redesign completion**
+- [x] **Step 2: Do not claim screen-level redesign completion**
 
 Keep wording explicit:
 
@@ -1017,7 +1017,7 @@ Keep wording explicit:
 - Library, Workspaces, Personas, Flashcards, Quizzes, Search, Media, Notes, and Handoffs remain destination-level product model commitments unless separately verified.
 - Concept screenshots remain inspiration, not 1:1 implementation requirements.
 
-- [ ] **Step 3: Run docs/code whitespace check**
+- [x] **Step 3: Run docs/code whitespace check**
 
 Run:
 
@@ -1027,7 +1027,7 @@ git diff --check
 
 Expected: no whitespace errors.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add Docs/Design/master-shell-design-system-contract.md Docs/Design/agentic-terminal-visual-system.md Docs/Design/master-shell-route-inventory.md Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md

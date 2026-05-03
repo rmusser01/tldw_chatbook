@@ -1,7 +1,7 @@
 # Agentic Terminal Design System
 
 Date: 2026-05-02
-Status: User-approved design, pending implementation planning
+Status: User-approved design; foundation contracts partially implemented and verified
 Primary Repo: `tldw_chatbook`
 Scope: Design system for the master shell UX, default visual identity, reusable UI grammar, Textual/TCSS mapping, and validation rules
 Product Authority: `Docs/Design/master-shell-route-inventory.md`, `Docs/Design/master-shell-design-system-contract.md`
@@ -17,6 +17,15 @@ The system is two-layered:
 2. Textual/TCSS mapping: semantic tokens, reusable classes, state classes, component hooks, and migration constraints that fit the existing Textual app.
 
 This is not a theme-only refresh. It is the visual and interaction grammar for the approved master shell: `Home`, `Console`, `Library`, `Artifacts`, `Personas`, `W+C`, `Schedules`, `Workflows`, `MCP`, `ACP`, `Skills`, and `Settings`.
+
+### 2026-05-03 Verified Foundation Notes
+
+- Runtime destination metadata now supports compact visible labels plus full accessible/help labels through `ShellDestination.full_label` and `accessible_label`.
+- The command palette searches destination help text, so product terms such as Workspaces, Flashcards, Quizzes, and Watchlists+Collections remain discoverable even when the top bar is compact.
+- The footer shortcut display has a typed `ShortcutContext`/`ShortcutAction` source of truth and regression coverage for stale shortcut replacement.
+- TCSS contract tests reject dotted `$ds.*` variable references and verify required `$ds-*` semantic tokens in source TCSS, `agentic_terminal` theme variables, and generated modular CSS.
+- `BaseAppScreen` remains the current wrapper seam; guardrail tests verify exactly one primary navigation bar per screen while full app-owned shell chrome remains deferred.
+- These implementation notes do not claim full destination redesign. Home and Console shell contracts are hardened first; Library, Workspaces, Personas, Flashcards, Quizzes, Search, Media, Notes, Handoffs, and other destinations remain product-model commitments until separately verified.
 
 ## Source Material
 
@@ -418,7 +427,7 @@ Source-of-truth rules:
 - The active destination or focused workflow provides a `ShortcutContext`-style list of current actions, labels, and availability. The footer renders that context; it does not infer shortcuts by scraping widgets.
 - Footer status is limited to compact global or active-task facts, such as online/offline, unsaved, running, blocked, or selected count.
 - Detailed readiness, source authority, recovery, auth state, and workspace state belong in destination headers, panels, inspectors, or recovery callouts.
-- If no destination context is registered, the footer falls back to global commands only: command palette, help, and quit.
+- If no destination context is registered, the footer falls back to global commands only; the verified default is command palette and quit.
 - Footer tests should assert readable shortcut labels and stale-shortcut prevention, not raw key ordering.
 
 ## Composition Patterns
@@ -561,7 +570,8 @@ Avoid hard-coded color values in widgets and feature-specific CSS.
 Implementation-safe naming:
 
 - Concept tokens use dotted names in this document for readability, such as `status.warning`.
-- TCSS variables must use hyphenated names, such as `$ds-status-warning`, `$ds-authority-workspace`, `$ds-source-role-evidence`, `$ds-surface-panel`, and `$ds-focus-ring`.
+- TCSS variables must use hyphenated names, such as `$ds-status-warning`, `$ds-authority-workspace`, `$ds-source-role-evidence`, `$ds-surface-panel`, and `$ds-structure-focus-ring`.
+- Dotted `$ds.*` variable references are invalid in TCSS; dotted names are conceptual documentation shorthand only.
 - Textual `Theme` fields should carry the core palette: primary, secondary, accent, foreground, background, surface, panel, success, warning, and error.
 - Design-system-specific semantic values should live in `Theme.variables` and modular TCSS, not in scattered widget constants.
 - TCSS classes should consume semantic variables. Widgets should apply classes or state classes, not raw color values.
@@ -599,7 +609,7 @@ Keep `BaseAppScreen` as the current migration seam, but evolve the shell contrac
 Migration rules:
 
 - The final shell should mount global chrome once at the app/shell level, not separately inside every destination screen.
-- During migration, `BaseAppScreen` may remain the wrapper seam, but tests must detect duplicate primary nav, missing top nav, and destination context leaking into global nav.
+- During migration, `BaseAppScreen` may remain the wrapper seam. Current guardrail tests verify one `MainNavigationBar` in the active screen and destination context not leaking into global nav.
 - The content body should not rely on manual padding to compensate for duplicated docked chrome once shell-owned chrome is introduced.
 - Modal or full-screen exceptions must document why global nav is suppressed and how users escape.
 

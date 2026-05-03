@@ -50,6 +50,8 @@ All new shell surfaces must support `.density-compact` and `.density-comfortable
 - Top navigation is global primary destination navigation only.
 - `Home` and `Console` remain visible at all supported widths.
 - Compact labels such as `W+C` are allowed in the top bar only when tooltip, command palette, and destination header expose the full label.
+- Runtime destination metadata uses `ShellDestination.label` for the visible top-nav label and `ShellDestination.full_label`/`accessible_label` for full names exposed through help, tooltips, and command-palette search.
+- `Home` and `Console` are the first priority destinations; `Library` and `W+C` follow as primary product-model destinations rather than local page tabs.
 - Overflow must be discoverable and keyboard-reachable; destinations must not disappear silently at narrow widths.
 - Destination context, workspace, backend, readiness, and recovery state stay inside destination headers or local panels.
 
@@ -57,15 +59,18 @@ All new shell surfaces must support `.density-compact` and `.density-comfortable
 
 - The shell footer renders an explicit active shortcut context from the current destination or focused workflow.
 - The footer does not infer shortcuts by scraping widgets.
+- Runtime shortcut state is represented by `ShortcutContext` and `ShortcutAction` in `tldw_chatbook/UI/Navigation/shortcut_context.py`.
+- `AppFooterStatus.set_shortcut_context()` replaces the current footer shortcut display, and `clear_shortcut_context()` restores the global fallback.
 - Detailed readiness and recovery state belongs in page headers, panels, inspectors, and recovery callouts.
-- If no shortcut context is registered, the footer falls back to global command palette, help, and quit actions.
+- If no shortcut context is registered, the footer falls back to global actions; the verified default is command palette and quit.
 
 ## Token Mapping Contract
 
 - Design discussion may use dotted token names such as `status.warning`.
 - TCSS variables use hyphenated names such as `$ds-status-warning`, `$ds-authority-workspace`, and `$ds-source-role-evidence`.
+- Dotted `ds.*` token names must not appear in TCSS variable references; contract tests reject `$ds.*` syntax.
 - Core palette values belong in Textual `Theme` fields where possible.
-- Design-system-specific semantic values belong in `Theme.variables` and modular TCSS classes.
+- Design-system-specific semantic values belong in `Theme.variables` and modular TCSS classes; every required semantic token must appear in the `agentic_terminal` theme variables and generated modular stylesheet.
 - Widgets should apply shared classes and state classes rather than raw color values.
 - Font and glyph usage must provide plain-text or ASCII fallbacks.
 
@@ -80,14 +85,22 @@ All new shell surfaces must support `.density-compact` and `.density-comfortable
 - Assert destination context appears inside page headers, not the global top navigation.
 - Assert top navigation keeps `Home` and `Console` reachable and exposes full names through tooltips or command palette when compact labels are used.
 - Assert the footer renders current shortcut context and does not retain stale shortcuts after navigation.
+- Assert `BaseAppScreen` mounts exactly one `MainNavigationBar` while app-owned shell chrome remains deferred.
 - Treat `#console-pending-launch-card`, `*-follow-in-console`, `*-launch-in-console`, and `*-attach-to-console` IDs as behavioral testing hooks, not styling hooks.
 
 ## Implementation Status
 
 - Home and all primary destination wrappers use `.ds-destination-header` and `.ds-panel`.
 - Console renders pending live-work launch context with `.ds-panel` and a readable source/title label.
+- Top navigation metadata now separates compact visible labels from full accessible/help labels.
+- Command-palette tab navigation searches destination help text so hidden product-model terms such as Workspaces, flashcards, quizzes, and Watchlists+Collections remain discoverable.
+- Footer shortcut context has a typed source-of-truth API and stale-context regression coverage.
+- Semantic token contracts verify hyphenated TCSS names, theme-variable parity, and generated stylesheet coverage.
+- Shell chrome ownership is guarded by tests, but full app-owned chrome migration is deferred; `BaseAppScreen` remains the current wrapper seam.
 - Static source/artifact/persona/skill actions stage `ChatHandoffPayload` context; live work from W+C, Schedules, Workflows, and ACP uses `open_console_for_live_work()`.
 - `tools_settings` resolves to MCP; global preferences are owned by Settings.
+
+This status does not mean every destination screen has been redesigned. Home and Console shell contracts are hardened; Library, Workspaces, Personas, Flashcards, Quizzes, Search, Media, Notes, Handoffs, and the remaining primary destinations remain product-model commitments unless separately verified.
 
 ## Stop Conditions
 

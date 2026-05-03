@@ -32,6 +32,7 @@ This inventory maps current routes and UI surfaces onto the approved master shel
 | Tools/settings route | `tools_settings` | MCP | Keep as legacy MCP alias, not global Settings |
 | Models shortcut | `llm` alias and `llm_management` tab ID | Legacy direct command | Keep alias to `TAB_LLM` until a later Models/MCP decision |
 | Subscription route | `subscription`, `subscriptions` | W+C | Keep both aliases |
+| Study route | `study` | Legacy direct command | Keep Flashcards and Quizzes discoverable through command palette/help until a later Study destination decision |
 
 ## Import/Export Boundary
 
@@ -48,6 +49,10 @@ Destination context, source authority, readiness, and recovery belong inside des
 Status labels, source authority, approvals, staged source roles, recovery callouts, and shortcuts use the agentic terminal design-system contract.
 
 Top navigation may use compact labels where terminal width requires it, but `Home` and `Console` must remain visible, full destination names must remain available through tooltips and command palette, and overflow must be explicit rather than silently hiding destinations.
+
+Runtime label metadata separates compact visible labels from full accessible/help labels. `W+C` is the current compact top-nav label; `Watchlists+Collections` remains the full label for tooltips, command-palette text, and search. Direct legacy routes such as Study remain searchable by product terms, including Flashcards and Quizzes.
+
+Current runtime chrome ownership is still screen-wrapper based through `BaseAppScreen`. Guardrail tests verify that wrapper mounts one primary `MainNavigationBar` and that transient context terms do not leak into top navigation; full app-owned shell chrome remains a later migration.
 
 ## Deferred Surfaces
 
