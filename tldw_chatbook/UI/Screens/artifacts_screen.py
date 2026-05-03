@@ -1,10 +1,12 @@
 """Artifacts destination shell for generated outputs and Chatbooks."""
 
 from textual.app import ComposeResult
+from textual import on
 from textual.containers import Vertical
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
 
 
 class ArtifactsScreen(BaseAppScreen):
@@ -22,4 +24,13 @@ class ArtifactsScreen(BaseAppScreen):
                 classes="destination-purpose",
             )
             with Vertical(id="artifacts-sections", classes="ds-panel"):
-                yield Static("Chatbooks | Reports | Datasets | Exports")
+                yield Button("Open Chatbooks", id="artifacts-open-chatbooks")
+                yield Static(
+                    "Generated outputs from local and server output services will appear here.",
+                    id="artifacts-output-status",
+                    classes="destination-purpose",
+                )
+
+    @on(Button.Pressed, "#artifacts-open-chatbooks")
+    def open_chatbooks(self) -> None:
+        self.post_message(NavigateToScreen("chatbooks"))

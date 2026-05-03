@@ -1,10 +1,12 @@
 """Personas destination shell for behavior profiles and prompt context."""
 
 from textual.app import ComposeResult
+from textual import on
 from textual.containers import Vertical
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
 
 
 class PersonasScreen(BaseAppScreen):
@@ -22,4 +24,13 @@ class PersonasScreen(BaseAppScreen):
                 classes="destination-purpose",
             )
             with Vertical(id="personas-sections", classes="ds-panel"):
-                yield Static("Characters | Personas | Prompts | Dictionaries | Lore")
+                yield Button("Open Personas", id="personas-open-profiles")
+                yield Static(
+                    "Characters, prompts, dictionaries, and lore stay here; Library owns saved conversation browsing.",
+                    id="personas-boundary",
+                    classes="destination-purpose",
+                )
+
+    @on(Button.Pressed, "#personas-open-profiles")
+    def open_profiles(self) -> None:
+        self.post_message(NavigateToScreen("ccp"))
