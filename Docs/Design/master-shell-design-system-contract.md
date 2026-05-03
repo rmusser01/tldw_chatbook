@@ -11,6 +11,8 @@ This contract maps the agentic terminal design system onto the master-shell impl
 - `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md`
 - `Docs/Design/master-shell-route-inventory.md`
 
+The New_UI concept images are design references, not required runtime or review assets. If the image files are unavailable on a branch, the extracted visual rules in the design-system spec remain authoritative.
+
 ## Required Shared Classes
 
 | Class | Purpose | First master-shell use |
@@ -35,6 +37,30 @@ This contract maps the agentic terminal design system onto the master-shell impl
 
 All new shell surfaces must support `.density-compact` and `.density-comfortable` without separate widget implementations.
 
+## Top Navigation Contract
+
+- Top navigation is global primary destination navigation only.
+- `Home` and `Console` remain visible at all supported widths.
+- Compact labels such as `W+C` are allowed in the top bar only when tooltip, command palette, and destination header expose the full label.
+- Overflow must be discoverable and keyboard-reachable; destinations must not disappear silently at narrow widths.
+- Destination context, workspace, backend, readiness, and recovery state stay inside destination headers or local panels.
+
+## Shortcut Bar Contract
+
+- The shell footer renders an explicit active shortcut context from the current destination or focused workflow.
+- The footer does not infer shortcuts by scraping widgets.
+- Detailed readiness and recovery state belongs in page headers, panels, inspectors, and recovery callouts.
+- If no shortcut context is registered, the footer falls back to global command palette, help, and quit actions.
+
+## Token Mapping Contract
+
+- Design discussion may use dotted token names such as `status.warning`.
+- TCSS variables use hyphenated names such as `$ds-status-warning`, `$ds-authority-workspace`, and `$ds-source-role-evidence`.
+- Core palette values belong in Textual `Theme` fields where possible.
+- Design-system-specific semantic values belong in `Theme.variables` and modular TCSS classes.
+- Widgets should apply shared classes and state classes rather than raw color values.
+- Font and glyph usage must provide plain-text or ASCII fallbacks.
+
 ## Required Readable Status Labels
 
 `Ready`, `Running`, `Paused`, `Blocked`, `Unavailable`, `Approval required`, `Unsaved`, `Recovered`
@@ -44,6 +70,8 @@ All new shell surfaces must support `.density-compact` and `.density-comfortable
 - Assert stable IDs or classes for primary actions, status badges, source authority, source roles, approval cards, shortcut bars, next-best actions, and open/follow-in-Console controls.
 - Assert readable status text. Do not assert raw color values.
 - Assert destination context appears inside page headers, not the global top navigation.
+- Assert top navigation keeps `Home` and `Console` reachable and exposes full names through tooltips or command palette when compact labels are used.
+- Assert the footer renders current shortcut context and does not retain stale shortcuts after navigation.
 - Treat `#console-pending-launch-card`, `*-follow-in-console`, `*-launch-in-console`, and `*-attach-to-console` IDs as behavioral testing hooks, not styling hooks.
 
 ## Implementation Status

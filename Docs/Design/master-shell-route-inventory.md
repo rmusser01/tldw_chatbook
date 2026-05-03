@@ -47,6 +47,8 @@ Destination context, source authority, readiness, and recovery belong inside des
 
 Status labels, source authority, approvals, staged source roles, recovery callouts, and shortcuts use the agentic terminal design-system contract.
 
+Top navigation may use compact labels where terminal width requires it, but `Home` and `Console` must remain visible, full destination names must remain available through tooltips and command palette, and overflow must be explicit rather than silently hiding destinations.
+
 ## Deferred Surfaces
 
 - ACP launch remains an honest unavailable/capability state until an ACP runtime is configured.
