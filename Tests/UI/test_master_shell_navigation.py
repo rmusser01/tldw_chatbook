@@ -7,6 +7,17 @@ from textual.widgets import Button
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 
 
+def test_compact_navigation_labels_preserve_full_meaning():
+    from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
+
+    wc = get_shell_destination("watchlists_collections")
+
+    assert wc.label == "W+C"
+    assert wc.full_label == "Watchlists+Collections"
+    assert "Watchlists+Collections" in wc.tooltip
+    assert wc.navigation_priority < get_shell_destination("settings").navigation_priority
+
+
 @pytest.mark.asyncio
 async def test_master_shell_navigation_order_and_labels():
     class TestApp(App):
@@ -33,6 +44,24 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-acp", "ACP"),
         ("nav-skills", "Skills"),
         ("nav-settings", "Settings"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_home_and_console_remain_first_primary_destinations():
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="home")
+
+    app = TestApp()
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause(0.1)
+        buttons = list(app.query(".nav-button"))
+
+    assert [(button.id, str(button.label).strip()) for button in buttons[:2]] == [
+        ("nav-home", "Home"),
+        ("nav-console", "Console"),
     ]
 
 

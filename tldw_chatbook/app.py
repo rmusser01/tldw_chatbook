@@ -574,10 +574,35 @@ class TabNavigationProvider(Provider):
         }
         return route_aliases.get(tab_id, tab_id)
 
+    @classmethod
+    def _shell_destination_for_tab(cls, tab_id: str):
+        from .UI.Navigation.shell_destinations import get_shell_destination, resolve_shell_route
+
+        resolved = resolve_shell_route(cls.route_for_tab(tab_id))
+        try:
+            return get_shell_destination(resolved.destination_id)
+        except KeyError:
+            return None
+
+    @classmethod
+    def _shell_command_label(cls, tab_id: str, visible_label: str) -> str:
+        destination = cls._shell_destination_for_tab(tab_id)
+        if destination is None or destination.accessible_label == visible_label:
+            return visible_label
+        return f"{visible_label} ({destination.accessible_label})"
+
+    @classmethod
+    def _shell_help_text(cls, tab_id: str) -> str | None:
+        destination = cls._shell_destination_for_tab(tab_id)
+        if destination is None:
+            return None
+        return f"Open {destination.accessible_label} for {destination.purpose}"
+
     def _tab_command(self, tab_id: str) -> tuple[str, str, str]:
         label = get_tab_display_label(tab_id)
-        help_text = self.TAB_HELP_TEXT.get(tab_id, f"Switch to {label}")
-        return f"Tab Navigation: Switch to {label}", tab_id, help_text
+        command_label = self._shell_command_label(tab_id, label)
+        help_text = self._shell_help_text(tab_id) or self.TAB_HELP_TEXT.get(tab_id, f"Switch to {label}")
+        return f"Tab Navigation: Switch to {command_label}", tab_id, help_text
     
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
@@ -585,7 +610,7 @@ class TabNavigationProvider(Provider):
         tab_commands = [self._tab_command(tab_id) for tab_id in self.command_palette_tab_ids()]
         
         for command_text, tab_id, help_text in tab_commands:
-            score = matcher.match(command_text)
+            score = max(matcher.match(command_text), matcher.match(help_text))
             if score > 0:
                 yield Hit(
                     score,

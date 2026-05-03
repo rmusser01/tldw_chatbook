@@ -9,25 +9,44 @@ from textual.widget import Widget
 from textual.widgets import Static
 #
 # Local Imports
+from ..UI.Navigation.shortcut_context import ShortcutContext
 #
 ########################################################################################################################
 #
 # AppFooterStatus
 
 class AppFooterStatus(Widget):
+    DEFAULT_SHORTCUT_TEXT = "Ctrl+Q quit | Ctrl+P palette"
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._key_quit = Static("Ctrl+Q quit | Ctrl+P palette", id="footer-key-quit")
+        self._shortcut_text = self.DEFAULT_SHORTCUT_TEXT
+        self._shortcut_display = Static(self._shortcut_text, id="footer-key-quit")
         self._word_count_display: Static = Static("", id="footer-word-count")
         self._token_count_display: Static = Static("Tokens: -- | ", id="footer-token-count")
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
 
     def compose(self) -> ComposeResult:
-        yield self._key_quit
+        yield self._shortcut_display
         yield Static(id="footer-spacer") # This will push items to the right
         yield self._word_count_display # Word count display
         yield self._token_count_display # Token count display
         yield self._db_status_display # This is the existing DB size display
+
+    @property
+    def shortcut_text(self) -> str:
+        return self._shortcut_text
+
+    def _set_shortcut_text(self, text: str) -> None:
+        self._shortcut_text = text
+        self._shortcut_display.update(text)
+
+    def set_shortcut_context(self, context: ShortcutContext) -> None:
+        text = context.render() or self.DEFAULT_SHORTCUT_TEXT
+        self._set_shortcut_text(text)
+
+    def clear_shortcut_context(self) -> None:
+        self._set_shortcut_text(self.DEFAULT_SHORTCUT_TEXT)
 
     def update_db_sizes_display(self, status_string: str) -> None:
         try:
