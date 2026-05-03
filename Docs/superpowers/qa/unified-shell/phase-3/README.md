@@ -11,5 +11,6 @@ This directory contains durable QA summaries for Phase 3 Console live-work hub s
 - `2026-05-03-home-wc-active-work-console-launch.md` - `TASK-3.3` Home W+C active-work source launch into the Console status-card surface.
 - `2026-05-03-console-wc-action-routing.md` - `TASK-3.4` Console W+C live-work action routing into W+C run details.
 - `2026-05-03-wc-destination-console-launch.md` - `TASK-3.5` W+C destination Console follow producer for the latest active W+C run.
+- `2026-05-03-console-live-work-source-readiness.md` - `TASK-3.6` Console source-readiness summary showing W+C connected and future sources honestly unavailable.
 
 Do not mark Phase 3 verified until launch, follow, status, and recovery flows are verified in the running app against workflows, schedules, ACP, MCP, RAG, artifacts, and active-work source adapters.

@@ -21,7 +21,11 @@ from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResum
 from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
-from ...Chat.console_live_work import ConsoleLiveWorkLaunch, ConsoleLiveWorkStatusCardState
+from ...Chat.console_live_work import (
+    ConsoleLiveWorkLaunch,
+    ConsoleLiveWorkSourceReadinessState,
+    ConsoleLiveWorkStatusCardState,
+)
 from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
@@ -176,6 +180,18 @@ class ChatScreen(BaseAppScreen):
                     variant="primary",
                 )
 
+    def _render_console_live_work_source_readiness(self) -> ComposeResult:
+        """Render Console source readiness when no live-work item is staged."""
+        readiness = ConsoleLiveWorkSourceReadinessState.default()
+        with Container(id=readiness.container_id, classes=readiness.container_classes):
+            yield Static(
+                readiness.title,
+                id=readiness.title_id,
+                classes=readiness.title_classes,
+            )
+            for row in readiness.rows:
+                yield Static(row.text, id=row.widget_id, classes=row.classes)
+
     @on(Button.Pressed, "#console-live-work-primary-action")
     def handle_console_live_work_primary_action(self, event: Button.Pressed) -> None:
         """Route supported live-work card actions through the app-owned shell."""
@@ -196,6 +212,8 @@ class ChatScreen(BaseAppScreen):
         pending_launch = self._consume_pending_console_launch()
         if pending_launch:
             yield from self._render_console_live_work_status_card(pending_launch)
+        else:
+            yield from self._render_console_live_work_source_readiness()
         # Create and yield the chat window container
         self.chat_window = ChatWindowEnhanced(self.app_instance, id="chat-window", classes="window")
         yield self.chat_window
