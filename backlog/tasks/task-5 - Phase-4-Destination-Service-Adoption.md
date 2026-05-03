@@ -1,0 +1,30 @@
+---
+id: TASK-5
+title: 'Phase 4: Destination Service Adoption'
+status: To Do
+assignee: []
+created_date: '2026-05-03 14:47'
+labels:
+  - unified-shell
+  - phase-4
+  - destinations
+  - service-adoption
+dependencies: []
+documentation:
+  - Docs/Design/master-shell-route-inventory.md
+priority: high
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Turn top-level wrappers into useful product surfaces by adopting real services and meaningful list, detail, and action flows where services exist.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Each destination supports at least one meaningful end-to-end workflow or an honest recovery state.
+- [ ] #2 Skills, MCP, ACP, Library, Workflows, Schedules, Personas, Artifacts, W+C, and Settings ownership is explicit.
+- [ ] #3 Running-app QA verifies destination workflows rather than render-only behavior.
+- [ ] #4 Durable QA summaries exist under Docs/superpowers/qa/unified-shell/phase-4/.
+<!-- AC:END -->
