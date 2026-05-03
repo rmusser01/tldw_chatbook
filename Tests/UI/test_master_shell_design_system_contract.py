@@ -61,6 +61,19 @@ LOADED_TCSS = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
 BUILD_CSS_PY = Path("tldw_chatbook/css/build_css.py")
 APP_PY = Path("tldw_chatbook/app.py")
 THEMES_PY = Path("tldw_chatbook/css/Themes/themes.py")
+CONTRACT_DOC = Path("Docs/Design/master-shell-design-system-contract.md")
+
+
+def test_master_shell_design_system_class_contract_is_documented():
+    text = CONTRACT_DOC.read_text(encoding="utf-8")
+    for class_name in REQUIRED_DESIGN_SYSTEM_CLASSES | REQUIRED_STATE_CLASSES:
+        assert f".{class_name}" in text
+
+
+def test_master_shell_design_system_status_contract_is_documented():
+    text = CONTRACT_DOC.read_text(encoding="utf-8")
+    for label in READABLE_STATUS_LABELS:
+        assert label in text
 
 
 def test_agentic_terminal_design_system_spec_is_present():

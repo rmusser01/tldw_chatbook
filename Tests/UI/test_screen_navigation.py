@@ -128,6 +128,38 @@ PRIMARY_ROUTE_IDS = [
 ]
 
 
+def test_master_shell_route_inventory_has_known_legacy_routes():
+    expected_legacy_routes = {
+        "chat",
+        "notes",
+        "media",
+        "ingest",
+        "search",
+        "study",
+        "ccp",
+        "conversation",
+        "chatbooks",
+        "subscriptions",
+        "tools_settings",
+        "llm",
+        "stts",
+        "evals",
+        "logs",
+        "stats",
+        "coding",
+        "customize",
+    }
+
+    app = _build_test_app()
+    unresolved = []
+    for route in expected_legacy_routes:
+        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(route)
+        if screen_class is None:
+            unresolved.append(route)
+
+    assert unresolved == []
+
+
 def _build_test_app() -> TldwCli:
     user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-test-"))
 
