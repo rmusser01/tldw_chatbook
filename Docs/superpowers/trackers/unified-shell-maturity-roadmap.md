@@ -1,7 +1,7 @@
 # Unified Shell Maturity Roadmap
 
 Date: 2026-05-03
-Status: Phase 0 in progress
+Status: Phase 0 verified
 Source Branch: `origin/dev` at `534cf226` plus `codex/unified-shell-maturity-tracking`
 
 ## Purpose
@@ -17,11 +17,11 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 - `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md` defines the agentic terminal visual and interaction grammar.
 - `Docs/superpowers/specs/2026-05-03-unified-shell-maturity-tracking-design.md` defines this maturity-gate tracking model.
 
-## Known Tracking Gaps
+## Baseline Tracking Gaps Captured At Phase 0 Start
 
 - The detailed master-shell implementation plan exists locally in the stale root checkout but is not present on `origin/dev`.
 - The UX remediation plan is useful history but is no longer the canonical tracker for Unified Shell completion.
-- Backlog.md was not initialized before Phase 0.
+- Backlog.md was not initialized before Phase 0. Resolved by `TASK-1.1`.
 - Current shell wrappers expose some honest unavailable states rather than complete product workflows.
 - Phase-completion evidence was not centralized around manual QA walkthroughs.
 
@@ -81,7 +81,7 @@ Initial child tasks:
 
 | Phase | Evidence Path | Status |
 | --- | --- | --- |
-| Phase 0 | `Docs/superpowers/qa/unified-shell/phase-0/` | in-progress |
+| Phase 0 | `Docs/superpowers/qa/unified-shell/phase-0/` | verified |
 | Phase 1 | `Docs/superpowers/qa/unified-shell/phase-1/` | not-started |
 | Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | not-started |
 | Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | not-started |
@@ -93,7 +93,7 @@ Initial child tasks:
 
 | Phase | Goal | Status | Backlog Tasks | QA Evidence | Residual Risk |
 | --- | --- | --- | --- | --- | --- |
-| Phase 0: Canonical Tracking | Make remaining work trackable. | in-progress | `TASK-1`, `TASK-1.1`, `TASK-1.2` | `phase-0/` | Product UI workflows are out of scope for Phase 0. |
+| Phase 0: Canonical Tracking | Make remaining work trackable. | verified | `TASK-1`, `TASK-1.1`, `TASK-1.2` | `phase-0/` | Product UI workflows are out of scope for Phase 0. |
 | Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | not-started | `TASK-2`, `TASK-2.1`, `TASK-2.2` | `phase-1/` | App walkthrough harness not yet created. |
 | Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | not-started | `TASK-4` | `phase-2/` | Home action adapters still need design and implementation. |
 | Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | not-started | `TASK-3` | `phase-3/` | Live work event sources need explicit contracts. |
