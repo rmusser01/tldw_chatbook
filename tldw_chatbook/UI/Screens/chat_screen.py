@@ -204,7 +204,7 @@ class ChatScreen(BaseAppScreen):
                     
                     # Save tab order
                     if hasattr(tab_container, 'tab_bar') and tab_container.tab_bar:
-                        self.chat_state.tab_order = list(tab_container.tab_bar.tabs.keys())
+                        self.chat_state.tab_order = tab_container.tab_bar.get_tab_ids()
                     
                     # Also save messages for the active session
                     if tab_container.active_session_id:

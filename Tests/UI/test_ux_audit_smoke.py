@@ -9,10 +9,13 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, TextArea
+from textual.widgets import Button, Select, TextArea
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import apply_current_handoff_context
+from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+    apply_current_handoff_context,
+    handle_chat_send_button_pressed,
+)
 from tldw_chatbook.runtime_policy.engine import PolicyEngine
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -152,6 +155,73 @@ async def test_handoff_smoke_replays_chat_staging_and_first_send(monkeypatch):
         assert "[User prompt]\nSummarize the usability issue." in observed["wrapped_prompt"]
         assert session.session_data.handoff_payload.status == "sent"
         assert app.host._current_chat_handoff_payload is None
+
+
+@pytest.mark.asyncio
+async def test_tabbed_chat_send_reads_session_specific_input_and_log():
+    chat_container = SimpleNamespace(
+        is_mounted=True,
+        mount=AsyncMock(),
+        children=[],
+        query=Mock(return_value=[]),
+    )
+    selectors_seen: list[str] = []
+
+    def fake_widget(**attrs):
+        return SimpleNamespace(**attrs)
+
+    widgets = {
+        "#chat-input-tab-a": fake_widget(text="Hello from a tab", focus=Mock()),
+        "#chat-log-tab-a": chat_container,
+        "#chat-api-provider": fake_widget(value=Select.BLANK),
+        "#chat-api-model": fake_widget(value=Select.BLANK),
+        "#chat-system-prompt": fake_widget(text=""),
+        "#chat-temperature": fake_widget(value="0.7"),
+        "#chat-top-p": fake_widget(value="0.95"),
+        "#chat-min-p": fake_widget(value="0.05"),
+        "#chat-top-k": fake_widget(value="50"),
+        "#chat-llm-max-tokens": fake_widget(value="1024"),
+        "#chat-llm-seed": fake_widget(value=""),
+        "#chat-llm-stop": fake_widget(value=""),
+        "#chat-llm-response-format": fake_widget(value=Select.BLANK),
+        "#chat-llm-n": fake_widget(value="1"),
+        "#chat-llm-user-identifier": fake_widget(value=""),
+        "#chat-llm-logprobs": fake_widget(value=False),
+        "#chat-llm-top-logprobs": fake_widget(value="0"),
+        "#chat-llm-logit-bias": fake_widget(text="{}"),
+        "#chat-llm-presence-penalty": fake_widget(value="0.0"),
+        "#chat-llm-frequency-penalty": fake_widget(value="0.0"),
+        "#chat-llm-tools": fake_widget(text="[]"),
+        "#chat-llm-tool-choice": fake_widget(value="auto"),
+        "#chat-llm-fixed-tokens-kobold": fake_widget(value=False),
+        "#chat-strip-thinking-tags-checkbox": fake_widget(value=True),
+        "#chat-streaming-enabled-checkbox": fake_widget(value=False),
+    }
+
+    class FakeScreen:
+        def query_one(self, selector, _widget_type=None):
+            selectors_seen.append(selector)
+            if selector not in widgets:
+                raise AssertionError(f"Unexpected selector: {selector}")
+            return widgets[selector]
+
+    app = SimpleNamespace(
+        screen=FakeScreen(),
+        current_chat_worker=None,
+        _current_chat_tab_id="tab-a",
+        app_config={"api_settings": {}},
+        current_chat_active_character_data=None,
+        current_chat_conversation_id=None,
+        chachanotes_db=None,
+        API_IMPORTS_SUCCESSFUL=True,
+    )
+
+    await handle_chat_send_button_pressed(app, SimpleNamespace(button=SimpleNamespace(id="send-stop-chat-tab-a")))
+
+    assert selectors_seen[:2] == ["#chat-input-tab-a", "#chat-log-tab-a"]
+    assert "#chat-input" not in selectors_seen
+    assert "#chat-log" not in selectors_seen
+    chat_container.mount.assert_awaited_once()
 
 
 def _empty_notes_service() -> Mock:

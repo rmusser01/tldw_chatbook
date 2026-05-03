@@ -337,7 +337,7 @@ class ChatTabContainer(Container):
                 return
                 
             if tab_id not in self.sessions:
-                logger.warning(f"Attempted to switch to non-existent tab: {tab_id}")
+                logger.debug(f"Ignored stale tab switch for non-existent tab: {tab_id}")
                 return
             
             # If switching to the same tab, just ensure it's resumed
@@ -377,7 +377,7 @@ class ChatTabContainer(Container):
             # Update tab bar
             if self.tab_bar:
                 try:
-                    self.tab_bar.set_active_tab(tab_id)
+                    self.tab_bar.set_active_tab(tab_id, emit=False)
                 except Exception as e:
                     logger.warning(f"Error updating tab bar: {e}")
 

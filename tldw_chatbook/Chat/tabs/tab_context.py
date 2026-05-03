@@ -2,7 +2,7 @@
 # Description: Tab context management for widget resolution without monkey patching
 #
 # Imports
-from typing import TYPE_CHECKING, Optional, TypeVar, Type, Set
+from typing import TYPE_CHECKING, Callable, Optional, TypeVar, Type, Set
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -44,7 +44,14 @@ class TabContext:
         "#chat-system-prompt"
     }
     
-    def __init__(self, app: 'TldwCli', session_data: Optional['ChatSessionData'] = None):
+    def __init__(
+        self,
+        app: 'TldwCli',
+        session_data: Optional['ChatSessionData'] = None,
+        *,
+        query_one: Optional[Callable] = None,
+        query: Optional[Callable] = None,
+    ):
         """
         Initialize tab context.
         
@@ -54,6 +61,8 @@ class TabContext:
         """
         self.app = app
         self.session_data = session_data
+        self._query_one = query_one
+        self._query = query
         self._widget_cache = {}
         
     def _map_selector_to_tab(self, selector: str) -> str:
@@ -108,10 +117,11 @@ class TabContext:
             return self._widget_cache[cache_key]
         
         # Query the widget
+        query_one = self._query_one or self.app.query_one
         if widget_type:
-            widget = self.app.query_one(mapped_selector, widget_type)
+            widget = query_one(mapped_selector, widget_type)
         else:
-            widget = self.app.query_one(mapped_selector)
+            widget = query_one(mapped_selector)
             
         # Cache the result
         self._widget_cache[cache_key] = widget
@@ -130,10 +140,11 @@ class TabContext:
         """
         mapped_selector = self._map_selector_to_tab(selector)
         
+        query = self._query or self.app.query
         if widget_type:
-            return self.app.query(mapped_selector, widget_type)
+            return query(mapped_selector, widget_type)
         else:
-            return self.app.query(mapped_selector)
+            return query(mapped_selector)
     
     def try_query_one(self, selector: str, widget_type: Optional[Type[W]] = None) -> Optional[W]:
         """

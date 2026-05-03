@@ -6,6 +6,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import ListView, Static
 
+from tldw_chatbook.Character_Chat.Character_Chat_Lib import fetch_all_dictionaries, fetch_character_names
 from tldw_chatbook.Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
 from tldw_chatbook.UI.CCP_Modules import (
     CCPCharacterHandler,
@@ -16,6 +17,7 @@ from tldw_chatbook.UI.CCP_Modules import (
     PersonaMessage,
     ViewChangeMessage,
 )
+from tldw_chatbook.UI.CCP_Modules.ccp_character_handler import fetch_all_characters
 from tldw_chatbook.tldw_api import PersonaProfileCreate, PersonaProfileUpdate
 
 
@@ -87,6 +89,38 @@ def mock_window():
     window.query_one = Mock()
     window.call_from_thread = Mock()
     return window
+
+
+def test_legacy_ccp_character_list_wrapper_uses_current_db_api():
+    db = Mock()
+    db.list_character_cards.return_value = [
+        {"id": 2, "name": "Beta"},
+        {"id": 1, "name": "Alpha"},
+    ]
+
+    assert fetch_character_names(db) == [
+        {"id": 1, "name": "Alpha"},
+        {"id": 2, "name": "Beta"},
+    ]
+
+
+def test_ccp_fetch_all_characters_accepts_current_list_shape(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Character_Chat.Character_Chat_Lib.fetch_character_names",
+        Mock(return_value=[{"id": 3, "name": "Gamma"}]),
+    )
+
+    assert fetch_all_characters() == [{"id": "3", "name": "Gamma"}]
+
+
+def test_legacy_ccp_dictionary_list_wrapper_uses_current_db_api(monkeypatch):
+    db = Mock()
+    monkeypatch.setattr(
+        "tldw_chatbook.Character_Chat.Chat_Dictionary_Lib.list_chat_dictionaries",
+        Mock(return_value=[{"id": 4, "name": "Lore"}]),
+    )
+
+    assert fetch_all_dictionaries(db) == [{"id": 4, "name": "Lore"}]
 
 
 class TestCCPConversationHandler:

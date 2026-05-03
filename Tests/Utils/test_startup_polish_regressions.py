@@ -23,6 +23,50 @@ def test_splash_effect_modules_import_without_annotation_name_errors() -> None:
         importlib.import_module(module_name)
 
 
+def test_code_scroll_splash_effect_renders_without_missing_escape_constant() -> None:
+    """The first-run random splash card should not fail if code_scroll is selected."""
+    from tldw_chatbook.Utils.Splash_Screens.tech.code_scroll import CodeScrollEffect
+
+    frame = CodeScrollEffect(
+        parent_widget=object(),
+        width=40,
+        height=12,
+        title="tldw",
+        subtitle="Ready",
+    ).update()
+
+    assert isinstance(frame, str)
+    assert "tldw" in frame
+
+
+def test_random_splash_selection_skips_missing_active_card_definitions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default active cards can outpace implemented card definitions."""
+    from tldw_chatbook.Widgets import splash_screen
+
+    def fake_get_cli_setting(setting: str, default=None, *args, **kwargs):
+        if setting == "splash_screen":
+            return {
+                "card_selection": "random",
+                "active_cards": ["neon_sign", "default"],
+            }
+        return default
+
+    choices: list[list[str]] = []
+
+    def fake_choice(options):
+        choices.append(list(options))
+        assert "neon_sign" not in options
+        return options[0]
+
+    monkeypatch.setattr(splash_screen, "get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(splash_screen.random, "choice", fake_choice)
+
+    screen = splash_screen.SplashScreen(duration=0)
+
+    assert screen.card_name == "default"
+    assert choices == [["default"]]
+
+
 def test_nltk_download_false_is_not_logged_as_success(monkeypatch: pytest.MonkeyPatch) -> None:
     from tldw_chatbook.Chunking import Chunk_Lib
 
