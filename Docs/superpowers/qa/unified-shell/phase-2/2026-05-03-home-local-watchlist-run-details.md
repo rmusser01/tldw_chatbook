@@ -23,8 +23,10 @@ Focused checks were run against the Home adapter, app detail navigation hook, Su
 - Red test: `python -m pytest Tests/Home/test_active_work_adapter.py::test_local_notification_adapter_opens_local_watchlist_run_details Tests/UI/test_home_screen.py::test_app_detail_hook_stages_watchlist_runs_context_for_handled_watchlist_detail Tests/UI/test_subscription_window_watchlists.py::test_subscription_window_consumes_pending_watchlist_run_detail_context Tests/UI/test_subscription_window_watchlists.py::test_local_mode_shows_watchlist_control_plane_guidance Tests/UI/test_subscription_window_watchlists.py::test_local_mode_pending_watchlist_run_context_loads_run_detail -q`
 - Red result: `5 failed`; failures covered unavailable adapter detail handling, missing Home subscription context staging, missing pending run consumption, and local W+C runs hidden behind local-only state.
 - Green targeted result: `5 passed, 8 warnings`
+- PR review regression: `python -m pytest Tests/Home/test_active_work_adapter.py::test_local_notification_adapter_opens_local_watchlist_run_details_with_synthesized_id -q`
+- PR review regression result: red `1 failed`, then green `1 passed`; verifies synthesized `local:watchlist_run:{run_id}` detail IDs open correctly when snapshot rows do not include an explicit `id`.
 - Full focused Phase 2.7 suite: `python -m pytest Tests/Home/test_active_work_adapter.py Tests/UI/test_home_screen.py Tests/UI/test_subscription_window_watchlists.py Tests/UI/test_screen_navigation.py Tests/UI/test_unified_shell_phase2_home_adapter.py -q`
-- Full focused Phase 2.7 result: `93 passed, 8 warnings`
+- Full focused Phase 2.7 result: `94 passed, 8 warnings`
 
 Warning boundary: warnings are existing dependency/import warnings and are not Home watchlist-run detail failures.
 

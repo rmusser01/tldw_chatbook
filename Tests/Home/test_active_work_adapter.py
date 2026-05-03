@@ -152,6 +152,35 @@ def test_local_notification_adapter_opens_local_watchlist_run_details():
     assert missing_result.target_id == "local:watchlist_run:404"
 
 
+def test_local_notification_adapter_opens_local_watchlist_run_details_with_synthesized_id():
+    class FakeWatchlistsService:
+        def list_home_run_snapshot(self, *, limit=20):
+            return [
+                {
+                    "run_id": 6,
+                    "source_id": 8,
+                    "status": "running",
+                    "source_title": "Running release feed",
+                    "backend": "local",
+                },
+            ]
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        watchlist_service=FakeWatchlistsService()
+    )
+
+    result = adapter.handle_control(
+        HomeControlAction.OPEN_DETAILS,
+        target_id="local:watchlist_run:6",
+        target_route="subscriptions",
+    )
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    assert result.target_id == "local:watchlist_run:6"
+    assert result.target_route == "subscriptions"
+    assert result.message == "Opening W+C run details for Running release feed."
+
+
 def test_local_notification_adapter_fails_closed_when_watchlist_snapshot_unavailable():
     class BrokenWatchlistsService:
         def list_home_run_snapshot(self, *, limit=20):

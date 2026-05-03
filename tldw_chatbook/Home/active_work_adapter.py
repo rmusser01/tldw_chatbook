@@ -222,10 +222,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             if status not in _HOME_WATCHLIST_RUN_STATUSES:
                 continue
             run_id = _mapping_value(run, "run_id")
-            item_id = str(
-                _mapping_value(run, "id")
-                or (f"local:watchlist_run:{run_id}" if run_id is not None else "")
-            )
+            item_id = self._local_watchlist_run_item_id(run)
             if not item_id:
                 continue
             title = str(
@@ -253,7 +250,18 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         except Exception as e:
             logger.warning(f"Failed to fetch local watchlist run details for Home: {e}")
             return None
-        return next((run for run in runs if str(_mapping_value(run, "id")) == target_id), None)
+        return next(
+            (run for run in runs if self._local_watchlist_run_item_id(run) == target_id),
+            None,
+        )
+
+    @staticmethod
+    def _local_watchlist_run_item_id(run: Any) -> str:
+        run_id = _mapping_value(run, "run_id")
+        return str(
+            _mapping_value(run, "id")
+            or (f"local:watchlist_run:{run_id}" if run_id is not None else "")
+        )
 
     @staticmethod
     def _watchlist_run_title(run: Any) -> str:
