@@ -1,0 +1,198 @@
+/* ========================================
+ * COMPONENTS: Agentic Terminal Design System
+ * ========================================
+ * Shared shell primitives for Home, Console, destination wrappers, status,
+ * recovery, source authority, approvals, events, forms, toolbars, and shortcuts.
+ *
+ * Semantic token contract:
+ * ds-surface-panel, ds-text-primary, ds-action-focus,
+ * ds-status-ready, ds-status-running, ds-status-warning, ds-status-error,
+ * ds-status-paused, ds-status-blocked, ds-status-approval-required,
+ * ds-authority-local, ds-authority-server, ds-authority-workspace,
+ * ds-source-role-context, ds-source-role-evidence,
+ * ds-source-role-editable-target, ds-source-role-output-seed.
+ *
+ * Required readable status labels:
+ * Ready, Running, Paused, Blocked, Unavailable, Approval required, Unsaved, Recovered.
+ * ======================================== */
+
+.ds-destination-header {
+    height: auto;
+    min-height: 3;
+    padding: 1 2;
+    margin: 0 0 1 0;
+    border: tall $primary;
+    background: $panel;
+    color: $text;
+    text-style: bold;
+}
+
+.ds-panel {
+    height: auto;
+    min-height: 3;
+    padding: 1 2;
+    margin: 0 0 1 0;
+    border: round $surface-lighten-1;
+    background: $panel;
+    color: $text;
+}
+
+.ds-inspector {
+    height: auto;
+    min-width: 24;
+    padding: 1;
+    border: round $surface-lighten-2;
+    background: $surface;
+    color: $text;
+}
+
+.ds-status-badge {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+    color: $text;
+    background: $surface;
+}
+
+.ds-recovery-callout {
+    height: auto;
+    padding: 1 2;
+    border: round $warning;
+    background: $warning 10%;
+    color: $text;
+}
+
+.ds-source-role {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    border: round $accent;
+    color: $text;
+    background: $surface;
+}
+
+.ds-approval-card {
+    height: auto;
+    padding: 1 2;
+    border: thick $warning;
+    background: $warning 12%;
+    color: $text;
+}
+
+.ds-event-row {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    border-bottom: solid $surface-lighten-1;
+    color: $text;
+}
+
+.ds-field-row {
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+    layout: horizontal;
+}
+
+.ds-toolbar {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    background: $surface;
+    color: $text;
+}
+
+.ds-shortcut-bar {
+    dock: bottom;
+    height: 1;
+    padding: 0 1;
+    background: $primary-background-darken-1;
+    color: $text-muted;
+}
+
+.density-compact .ds-panel,
+.density-compact .ds-inspector,
+.density-compact .ds-approval-card,
+.density-compact .ds-recovery-callout {
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.density-compact .ds-destination-header {
+    min-height: 2;
+    padding: 0 1;
+}
+
+.density-comfortable .ds-panel,
+.density-comfortable .ds-inspector,
+.density-comfortable .ds-approval-card,
+.density-comfortable .ds-recovery-callout {
+    padding: 1 2;
+    margin: 1 1;
+}
+
+.density-comfortable .ds-destination-header {
+    min-height: 4;
+    padding: 1 2;
+}
+
+.is-active {
+    border: round $primary;
+    text-style: bold;
+}
+
+.is-disabled {
+    opacity: 0.55;
+}
+
+.is-blocked {
+    border: round $error;
+    background: $error 10%;
+}
+
+.is-running {
+    border: round $primary;
+}
+
+.is-paused {
+    border: round $warning;
+}
+
+.is-unsaved {
+    border: round $warning;
+}
+
+.is-stale {
+    color: $text-muted;
+}
+
+.is-conflict {
+    border: thick $error;
+}
+
+.needs-approval {
+    border: thick $warning;
+    background: $warning 12%;
+}
+
+.source-local {
+    border: round $success;
+}
+
+.source-server {
+    border: round $primary;
+}
+
+.source-workspace {
+    border: round $accent;
+}
+
+.source-remote-only {
+    border: round $warning;
+}
+
+.source-dry-run {
+    border: dashed $surface-lighten-2;
+    color: $text-muted;
+}
