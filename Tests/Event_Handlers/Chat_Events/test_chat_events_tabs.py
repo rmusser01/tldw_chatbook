@@ -171,7 +171,7 @@ class TestChatEventsTabsHandlers:
         query_calls = []
 
         class FakeTabContext:
-            def __init__(self, app, session):
+            def __init__(self, app, session, *, query_one=None, query=None):
                 self.query_one = Mock(side_effect=lambda selector, *args: query_one_calls.append(selector))
                 self.query = Mock(side_effect=lambda selector, *args: query_calls.append(selector))
 
@@ -180,6 +180,8 @@ class TestChatEventsTabsHandlers:
             async def tab_context(self, tab_id):
                 yield self
 
+            get_tab_state = AsyncMock(return_value=None)
+            create_tab_state = AsyncMock()
             update_tab_state = AsyncMock()
 
         fake_state_manager = FakeStateManager()
@@ -230,6 +232,8 @@ class TestChatEventsTabsHandlers:
             async def tab_context(self, tab_id):
                 yield self
 
+            get_tab_state = AsyncMock(return_value=None)
+            create_tab_state = AsyncMock()
             update_tab_state = AsyncMock()
 
         fake_state_manager = FakeStateManager()

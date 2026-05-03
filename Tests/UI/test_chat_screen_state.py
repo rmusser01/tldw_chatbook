@@ -6,6 +6,7 @@ from textual.widgets import Input, Select
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Chat.tabs import TabContext
 from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -220,6 +221,41 @@ class TestChatScreenStateSerialization:
         assert restored.workspace_id is None
 
 
+class TestChatScreenSave:
+    def test_save_state_uses_chat_tab_bar_public_tab_ids(self):
+        mock_app = Mock()
+        mock_app.get_current_screen_state = Mock(return_value={})
+        mock_app.chat_sidebar_collapsed = False
+        mock_app.chat_right_sidebar_collapsed = False
+
+        screen = ChatScreen(mock_app)
+        screen.chat_window = Mock()
+
+        session = Mock()
+        session.session_data = ChatSessionData(tab_id="tab-a", title="Tabbed Chat")
+        session.query_one.side_effect = LookupError("not mounted")
+
+        tab_bar = Mock()
+        tab_bar.get_tab_ids.return_value = ["tab-a"]
+
+        tab_container = Mock()
+        tab_container.sessions = {"tab-a": session}
+        tab_container.active_session_id = "tab-a"
+        tab_container.tab_bar = tab_bar
+
+        screen._get_tab_container = Mock(return_value=tab_container)
+        screen._extract_and_save_messages = Mock()
+        screen._save_direct_input_text = Mock()
+        screen._save_sidebar_settings = Mock()
+        screen._save_scroll_positions = Mock()
+        screen._save_attachments = Mock()
+
+        state = screen.save_state()
+
+        assert state["chat_state"]["tab_order"] == ["tab-a"]
+        tab_bar.get_tab_ids.assert_called_once_with()
+
+
 class TestTabStateManager:
     @pytest.mark.asyncio
     async def test_create_tab_state_uses_explicit_assistant_and_scope_fields(self):
@@ -248,6 +284,34 @@ class TestTabStateManager:
         assert state.workspace_id == "workspace-1"
         assert "unknown_flag" not in state.__dict__
         assert state.metadata["unknown_flag"] == "kept-in-metadata"
+
+
+def test_tab_context_uses_original_query_callable_after_monkey_patch(monkeypatch):
+    selectors_seen = []
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_cli_setting",
+        lambda section, key, default=None: True
+        if (section, key) == ("chat_defaults", "enable_tabs")
+        else default,
+    )
+
+    def original_query_one(selector, widget_type=None):
+        selectors_seen.append((selector, widget_type))
+        return f"resolved:{selector}"
+
+    def recursive_query_one(_selector, _widget_type=None):
+        raise AssertionError("patched app.query_one should not be called recursively")
+
+    app = Mock()
+    app.query_one = recursive_query_one
+    context = TabContext(
+        app,
+        ChatSessionData(tab_id="tab-a"),
+        query_one=original_query_one,
+    )
+
+    assert context.query_one("#chat-input") == "resolved:#chat-input-tab-a"
+    assert selectors_seen == [("#chat-input-tab-a", None)]
 
 
 class TestChatScreenRestore:

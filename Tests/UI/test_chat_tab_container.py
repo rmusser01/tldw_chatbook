@@ -106,6 +106,31 @@ class TestChatTabContainerShellSync:
         assert container.active_session_id == "bbbbbbbb"
 
     @pytest.mark.asyncio
+    async def test_switch_to_missing_tab_is_stale_event_noop(self, monkeypatch):
+        app = Mock()
+        app.notify = Mock()
+        app.call_later = Mock()
+
+        active_session = _make_session(
+            ChatSessionData(tab_id="aaaaaaaa", title="Active Session")
+        )
+        container = ChatTabContainer(app)
+        container.sessions = {"aaaaaaaa": active_session}
+        container.active_session_id = "aaaaaaaa"
+        container.post_message = Mock()
+        warning = Mock()
+        monkeypatch.setattr(
+            "tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.logger.warning",
+            warning,
+        )
+
+        await container.switch_to_tab_async("bbbbbbbb")
+
+        assert container.active_session_id == "aaaaaaaa"
+        warning.assert_not_called()
+        container.post_message.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_close_active_tab_publishes_next_active_session(self):
         app = Mock()
         app.notify = Mock()

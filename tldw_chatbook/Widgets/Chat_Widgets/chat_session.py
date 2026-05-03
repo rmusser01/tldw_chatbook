@@ -16,6 +16,7 @@ from textual.reactive import reactive
 # Local Imports
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_SEND, FALLBACK_SEND, EMOJI_STOP, FALLBACK_STOP
 from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
 #
@@ -65,6 +66,12 @@ class ChatSession(Container):
     def compose(self) -> ComposeResult:
         """Compose the chat session UI."""
         logger.debug(f"Composing ChatSession UI for tab: {self.session_data.tab_id}")
+
+        yield Static(
+            self._build_first_run_orientation_text(),
+            id=f"chat-empty-state-{self.session_data.tab_id}",
+            classes="chat-empty-state",
+        )
         
         # Chat log area
         yield VerticalScroll(id=f"chat-log-{self.session_data.tab_id}", classes="chat-log")
@@ -119,6 +126,23 @@ class ChatSession(Container):
         self._streaming_check_timer = self.set_interval(0.5, self._check_streaming_state)
         self._update_button_state()
         logger.debug(f"ChatSession mounted for tab: {self.session_data.tab_id}")
+
+    async def on_unmount(self) -> None:
+        """Stop periodic UI checks when Textual detaches this session."""
+        self._is_active = False
+        self._stop_streaming_check_timer()
+        logger.debug(f"ChatSession unmounted for tab: {self.session_data.tab_id}")
+
+    def _stop_streaming_check_timer(self) -> None:
+        """Stop and clear the periodic streaming-state timer."""
+        if self._streaming_check_timer:
+            try:
+                self._streaming_check_timer.stop()
+                logger.debug(f"Stopped streaming timer for tab: {self.session_data.tab_id}")
+            except Exception as e:
+                logger.warning(f"Error stopping timer for tab {self.session_data.tab_id}: {e}")
+            finally:
+                self._streaming_check_timer = None
     
     def _update_button_state(self) -> None:
         """Update the send/stop button based on streaming state."""
@@ -146,9 +170,32 @@ class ChatSession(Container):
     
     def _check_streaming_state(self) -> None:
         """Periodically check streaming state and update button."""
-        # Only update if this session is active
-        if self._is_active:
-            self._update_button_state()
+        if not self._is_active or not getattr(self, "is_mounted", True):
+            self._stop_streaming_check_timer()
+            return
+
+        self._update_button_state()
+
+    def _selected_provider_for_orientation(self) -> Optional[str]:
+        """Return the configured provider for first-run guidance."""
+        app_config = getattr(self.app_instance, "app_config", {})
+        defaults = app_config.get("chat_defaults", {}) if isinstance(app_config, dict) else {}
+        if isinstance(defaults, dict):
+            provider = defaults.get("provider")
+            if provider:
+                return str(provider)
+        return None
+
+    def _build_first_run_orientation_text(self) -> str:
+        """Build compact first-run guidance for a tabbed Chat session."""
+        app_config = getattr(self.app_instance, "app_config", {})
+        readiness = get_provider_readiness(self._selected_provider_for_orientation(), app_config)
+        return (
+            "Chat is the agentic control surface for programming, research, and workspace tasks.\n"
+            f"Provider readiness: {readiness.user_message}\n"
+            "Context: Notes, Media, Search/RAG, Workspaces, Study flashcards/quizzes, "
+            "personas, and Chatbooks. Ctrl+P opens commands."
+        )
     
     async def handle_send_stop_button(self, event):
         """Handle send/stop button press with debouncing."""
@@ -301,12 +348,7 @@ class ChatSession(Container):
             self._is_active = False
             
             # Stop the streaming check timer
-            if self._streaming_check_timer:
-                try:
-                    self._streaming_check_timer.stop()
-                    logger.debug(f"Stopped streaming timer for tab: {self.session_data.tab_id}")
-                except Exception as e:
-                    logger.warning(f"Error stopping timer for tab {self.session_data.tab_id}: {e}")
+            self._stop_streaming_check_timer()
             
             # Cancel any active workers
             if self.session_data.current_worker and self.session_data.current_worker.is_running:

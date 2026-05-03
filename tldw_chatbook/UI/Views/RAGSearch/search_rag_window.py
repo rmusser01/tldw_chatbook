@@ -276,6 +276,29 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                         classes="numeric-input",
                                         disabled=True
                                     )
+
+                            # Keep the primary action in the first viewport; advanced
+                            # controls can extend below it without hiding Search.
+                            with Horizontal(classes="search-buttons-enhanced"):
+                                yield Button(
+                                    "🔍 Search",
+                                    id="search-button",
+                                    variant="primary",
+                                    classes="search-button-primary"
+                                )
+                                yield Button(
+                                    "🗑️ Clear",
+                                    id="clear-search-button",
+                                    variant="default",
+                                    classes="search-button-secondary"
+                                )
+                                yield Button(
+                                    "💾 Save Search",
+                                    id="save-search-button",
+                                    variant="default",
+                                    classes="search-button-secondary",
+                                    disabled=True
+                                )
                             
                             # Advanced options
                             with Collapsible(title="Advanced Options", collapsed=True, id="advanced-options"):
@@ -333,28 +356,6 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                         value=False,
                                         classes="web-search-checkbox"
                                     )
-                        
-                        # Search buttons
-                        with Horizontal(classes="search-buttons-enhanced"):
-                            yield Button(
-                                "🔍 Search",
-                                id="search-button",
-                                variant="primary",
-                                classes="search-button-primary"
-                            )
-                            yield Button(
-                                "🗑️ Clear",
-                                id="clear-search-button",
-                                variant="default",
-                                classes="search-button-secondary"
-                            )
-                            yield Button(
-                                "💾 Save Search",
-                                id="save-search-button",
-                                variant="default",
-                                classes="search-button-secondary",
-                                disabled=True
-                            )
                         
                         # Search status and progress
                         with Container(id="search-status-container", classes="search-status-container hidden"):
