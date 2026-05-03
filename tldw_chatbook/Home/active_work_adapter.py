@@ -170,6 +170,30 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             active_work_items=tuple(self._local_watchlist_run_items()),
         )
 
+    def handle_control(
+        self,
+        action: HomeControlAction,
+        *,
+        target_id: str | None = None,
+        target_route: str | None = None,
+    ) -> HomeControlResult:
+        if action is HomeControlAction.OPEN_DETAILS and _is_local_watchlist_run_id(target_id):
+            run = self._local_watchlist_run_by_id(str(target_id))
+            if run is not None:
+                title = self._watchlist_run_title(run)
+                return HomeControlResult(
+                    action=action,
+                    status=HomeControlResultStatus.HANDLED,
+                    message=f"Opening W+C run details for {title}.",
+                    target_route=target_route or "subscriptions",
+                    target_id=target_id,
+                )
+        return super().handle_control(
+            action,
+            target_id=target_id,
+            target_route=target_route,
+        )
+
     def _unread_notification_count(self) -> int:
         if self.notification_service is None:
             return 0
@@ -198,10 +222,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             if status not in _HOME_WATCHLIST_RUN_STATUSES:
                 continue
             run_id = _mapping_value(run, "run_id")
-            item_id = str(
-                _mapping_value(run, "id")
-                or (f"local:watchlist_run:{run_id}" if run_id is not None else "")
-            )
+            item_id = self._local_watchlist_run_item_id(run)
             if not item_id:
                 continue
             title = str(
@@ -221,6 +242,36 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             )
         return items
 
+    def _local_watchlist_run_by_id(self, target_id: str) -> Any | None:
+        if self.watchlist_service is None:
+            return None
+        try:
+            runs = self.watchlist_service.list_home_run_snapshot(limit=20)
+        except Exception as e:
+            logger.warning(f"Failed to fetch local watchlist run details for Home: {e}")
+            return None
+        return next(
+            (run for run in runs if self._local_watchlist_run_item_id(run) == target_id),
+            None,
+        )
+
+    @staticmethod
+    def _local_watchlist_run_item_id(run: Any) -> str:
+        run_id = _mapping_value(run, "run_id")
+        return str(
+            _mapping_value(run, "id")
+            or (f"local:watchlist_run:{run_id}" if run_id is not None else "")
+        )
+
+    @staticmethod
+    def _watchlist_run_title(run: Any) -> str:
+        return str(
+            _mapping_value(run, "title")
+            or _mapping_value(run, "source_title")
+            or f"Watchlist run {_mapping_value(run, 'run_id') or ''}".strip()
+            or "Watchlist run"
+        )
+
 
 def _notification_is_unread(notification: Any) -> bool:
     if isinstance(notification, Mapping):
@@ -232,3 +283,7 @@ def _mapping_value(value: Any, key: str) -> Any:
     if isinstance(value, Mapping):
         return value.get(key)
     return getattr(value, key, None)
+
+
+def _is_local_watchlist_run_id(value: str | None) -> bool:
+    return bool(value and str(value).startswith("local:watchlist_run:"))

@@ -2,7 +2,7 @@
 
 Date: 2026-05-03
 Status: Phase 2 and Phase 3 in progress
-Source Branch: `origin/dev` at `09ca0200` plus `codex/unified-shell-phase3-console-status-card`
+Source Branch: `origin/dev` at `daf35dab` plus `codex/unified-shell-phase3-console-status-card`
 
 ## Purpose
 
@@ -27,7 +27,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 
 ## Known Product Gaps
 
-- Home active-work controls, detail routing, Console launch requests, item identity, local unread notification counts, notification review routing, and local W+C watchlist run snapshots now route through explicit adapter boundaries; schedule and agent-service adapters still need implementation.
+- Home active-work controls, detail routing, Console launch requests, item identity, local unread notification counts, notification review routing, local W+C watchlist run snapshots, and local W+C run detail routing now route through explicit adapter boundaries; schedule and agent-service adapters still need implementation.
 - Workflows has no wired workflow service in the shell wrapper.
 - W+C, Schedules, Workflows, and ACP now use honest unavailable Console states until actionable payloads exist.
 - Console now has a typed app-owned launch contract and reusable status-card display seam for staged live-work payloads; source-specific live event producers still need implementation.
@@ -86,6 +86,7 @@ Initial child tasks:
 - Phase 2.4: Wire Home to local notification snapshot adapter - `TASK-4.4`
 - Phase 2.5: Route Home notification review to the notifications inbox - `TASK-4.5`
 - Phase 2.6: Surface local watchlist runs in Home active work - `TASK-4.6`
+- Phase 2.7: Open Home local watchlist run details - `TASK-4.7`
 - Phase 3.1: Add Console live-work launch contract - `TASK-3.1`
 - Phase 3.2: Add Console live-work status card seam - `TASK-3.2`
 
@@ -107,7 +108,7 @@ Initial child tasks:
 | --- | --- | --- | --- | --- | --- |
 | Phase 0: Canonical Tracking | Make remaining work trackable. | verified | `TASK-1`, `TASK-1.1`, `TASK-1.2` | `phase-0/` | Product UI workflows are out of scope for Phase 0. |
 | Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | verified | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3`, `TASK-2.4` | `phase-1/` | Live service workflows remain intentionally deferred to Phases 2-6. |
-| Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | in-progress | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6` | `phase-2/` | Schedule and agent-service adapters still need implementation; local watchlist run controls remain recoverable rather than fully controllable. |
+| Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | in-progress | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6`, `TASK-4.7` | `phase-2/` | Schedule and agent-service adapters still need implementation; local watchlist retry/pause/resume remain recoverable rather than fully controllable. |
 | Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | in-progress | `TASK-3`, `TASK-3.1`, `TASK-3.2` | `phase-3/` | Source-specific live event producers and follow/status wiring still need implementation. |
 | Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | not-started | `TASK-5` | `phase-4/` | Service coverage varies by destination. |
 | Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | not-started | `TASK-6` | `phase-5/` | Shared taxonomy not yet extracted. |
@@ -176,6 +177,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-4.6` surfaces queued, running, and failed local W+C watchlist runs as Home active work:
 
 - `Docs/superpowers/qa/unified-shell/phase-2/2026-05-03-home-local-watchlist-run-snapshot.md`
+
+## Phase 2.7 Home Local Watchlist Run Details Evidence
+
+`TASK-4.7` makes Home local W+C watchlist run detail controls open the selected run in the W+C runs surface:
+
+- `Docs/superpowers/qa/unified-shell/phase-2/2026-05-03-home-local-watchlist-run-details.md`
 
 ## Phase 3.1 Console Live-Work Launch Contract Evidence
 

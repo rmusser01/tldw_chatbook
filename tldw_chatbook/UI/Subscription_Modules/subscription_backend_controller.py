@@ -155,16 +155,17 @@ class SubscriptionBackendController:
 
     async def _refresh_control_plane(self, *, runtime_backend: str) -> None:
         if runtime_backend != "server":
-            message = "Server watchlist jobs, runs, and alert rules are remote-only here. Use the local subscriptions scheduler, review queue, and notifications inbox for offline watchlist operations."
+            message = "Server watchlist jobs are remote-only here. Use the local subscriptions scheduler for offline watchlist operations."
             self.window._render_local_only_state(tab_id="watchlist-jobs", message=message)
-            self.window._render_local_only_state(tab_id="watchlist-runs", message=message)
-            self.window._render_local_only_state(tab_id="watchlist-alert-rules", message=message)
+            self.window._clear_local_only_state(tab_id="watchlist-runs")
+            self.window._clear_local_only_state(tab_id="watchlist-alert-rules")
             reminder_message = "Server reminders and notification feed are remote-only. Use the local Notifications inbox for offline client-owned notifications."
             self.window._render_local_only_state(tab_id="server-reminders", message=reminder_message)
             self.window._render_local_only_state(tab_id="server-feed", message=reminder_message)
             await self.window._render_watchlist_jobs([])
-            await self.window._render_watchlist_runs([])
-            await self.window._render_watchlist_alert_rules([])
+            await self.load_watchlist_runs()
+            await self.load_watchlist_alert_rules()
+            await self.window._load_pending_watchlist_run_detail()
             await self.window._render_server_reminders([])
             await self.window._render_server_feed([])
             return
@@ -177,6 +178,7 @@ class SubscriptionBackendController:
         await self.load_watchlist_jobs()
         await self.load_watchlist_runs()
         await self.load_watchlist_alert_rules()
+        await self.window._load_pending_watchlist_run_detail()
         await self.load_server_reminders()
         await self.load_server_feed()
 

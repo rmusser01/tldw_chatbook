@@ -399,6 +399,35 @@ def test_app_detail_hook_delegates_to_adapter_and_navigates_handled_route():
     assert app.post_message.call_args.args[0].screen_name == "workflows"
 
 
+def test_app_detail_hook_stages_watchlist_runs_context_for_handled_watchlist_detail():
+    app = _build_test_app()
+    adapter = RecordingHomeActiveWorkAdapter(
+        responses={
+            HomeControlAction.OPEN_DETAILS: HomeControlResult(
+                action=HomeControlAction.OPEN_DETAILS,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening W+C run details for Daily security feed.",
+                target_id="local:watchlist_run:5",
+                target_route="subscriptions",
+            ),
+        }
+    )
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    app.post_message = Mock()
+
+    result = app.open_active_home_item_details(
+        target_id="local:watchlist_run:5",
+        target_route="subscriptions",
+    )
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    assert app.pending_subscription_initial_tab == "watchlist-runs"
+    assert app.pending_subscription_watchlist_run_id == "local:watchlist_run:5"
+    app.post_message.assert_called_once()
+    assert app.post_message.call_args.args[0].screen_name == "subscriptions"
+
+
 def test_app_console_hook_requires_adapter_launch_payload():
     app = _build_test_app()
     adapter = RecordingHomeActiveWorkAdapter(
