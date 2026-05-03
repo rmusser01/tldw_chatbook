@@ -488,6 +488,46 @@ def test_app_console_hook_opens_console_with_adapter_launch_payload():
     )
 
 
+def test_app_console_hook_preserves_status_recovery_and_action_label():
+    app = _build_test_app()
+    launch = HomeConsoleLaunch(
+        source="W+C",
+        title="Daily security feed",
+        payload={"run_id": 5, "target_id": "local:watchlist_run:5"},
+        status="failed",
+        recovery="Review the W+C run details or retry from W+C.",
+        action_label="Open W+C run",
+    )
+    adapter = RecordingHomeActiveWorkAdapter(
+        responses={
+            HomeControlAction.OPEN_IN_CONSOLE: HomeControlResult(
+                action=HomeControlAction.OPEN_IN_CONSOLE,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening Console for Daily security feed.",
+                console_launch=launch,
+            ),
+        }
+    )
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    app.open_console_for_live_work = Mock()
+
+    result = app.open_active_home_item_in_console(
+        target_id="local:watchlist_run:5",
+        target_route="chat",
+    )
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    app.open_console_for_live_work.assert_called_once_with(
+        source="W+C",
+        title="Daily security feed",
+        payload={"run_id": 5, "target_id": "local:watchlist_run:5"},
+        status="failed",
+        recovery="Review the W+C run details or retry from W+C.",
+        action_label="Open W+C run",
+    )
+
+
 @pytest.mark.asyncio
 async def test_pending_chat_handoff_does_not_create_live_work_controls():
     app = _build_test_app()

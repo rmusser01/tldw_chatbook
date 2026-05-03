@@ -111,7 +111,7 @@ def test_local_notification_adapter_maps_local_watchlist_runs_to_active_work():
     assert dashboard_input.active_work_items[0].source == "W+C"
     assert dashboard_input.active_work_items[0].status == "failed"
     assert dashboard_input.active_work_items[0].detail_route == "subscriptions"
-    assert dashboard_input.active_work_items[0].console_available is False
+    assert dashboard_input.active_work_items[0].console_available is True
 
 
 def test_local_notification_adapter_opens_local_watchlist_run_details():
@@ -179,6 +179,58 @@ def test_local_notification_adapter_opens_local_watchlist_run_details_with_synth
     assert result.target_id == "local:watchlist_run:6"
     assert result.target_route == "subscriptions"
     assert result.message == "Opening W+C run details for Running release feed."
+
+
+def test_local_notification_adapter_opens_local_watchlist_run_in_console():
+    class FakeWatchlistsService:
+        def list_home_run_snapshot(self, *, limit=20):
+            return [
+                {
+                    "id": "local:watchlist_run:5",
+                    "run_id": 5,
+                    "job_id": 31,
+                    "source_id": 7,
+                    "status": "failed",
+                    "source_title": "Daily security feed",
+                    "backend": "local",
+                },
+            ]
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        watchlist_service=FakeWatchlistsService()
+    )
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+    result = adapter.handle_control(
+        HomeControlAction.OPEN_IN_CONSOLE,
+        target_id="local:watchlist_run:5",
+        target_route="chat",
+    )
+    missing_result = adapter.handle_control(
+        HomeControlAction.OPEN_IN_CONSOLE,
+        target_id="local:watchlist_run:404",
+        target_route="chat",
+    )
+
+    assert dashboard_input.active_work_items[0].console_available is True
+    assert result.status is HomeControlResultStatus.HANDLED
+    assert result.console_launch is not None
+    assert result.console_launch.source == "W+C"
+    assert result.console_launch.title == "Daily security feed"
+    assert result.console_launch.status == "failed"
+    assert result.console_launch.recovery == "Review the W+C run details or retry from W+C."
+    assert result.console_launch.action_label == "Open W+C run"
+    assert result.console_launch.payload == {
+        "run_id": 5,
+        "job_id": 31,
+        "source_id": 7,
+        "target_id": "local:watchlist_run:5",
+    }
+    assert missing_result.status is HomeControlResultStatus.UNAVAILABLE
+    assert missing_result.console_launch is None
 
 
 def test_local_notification_adapter_fails_closed_when_watchlist_snapshot_unavailable():
