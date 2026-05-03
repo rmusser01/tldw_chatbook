@@ -11,6 +11,7 @@ DEFAULT_RECOVERY = "Console has staged this live-work request."
 DEFAULT_ACTION_LABEL = "Open in Console"
 PENDING_LAUNCH_CARD_ID = "console-pending-launch-card"
 LIVE_WORK_CARD_CLASS = "console-live-work-status-card"
+PRIMARY_ACTION_BUTTON_ID = "console-live-work-primary-action"
 
 
 def _clean_text(value: Any, fallback: str) -> str:
@@ -110,11 +111,38 @@ class ConsoleLiveWorkStatusCardRow:
 
 
 @dataclass(frozen=True)
+class ConsoleLiveWorkPrimaryAction:
+    """Action metadata for a supported Console live-work follow-through."""
+
+    label: str
+    target_route: str
+    target_id: str
+    widget_id: str = PRIMARY_ACTION_BUTTON_ID
+    classes: str = "destination-action-button console-live-work-primary-action"
+
+
+def resolve_console_live_work_primary_action(
+    launch: ConsoleLiveWorkLaunch,
+) -> ConsoleLiveWorkPrimaryAction | None:
+    """Resolve launch payloads that can safely route to an existing detail surface."""
+    source = launch.source.strip().lower()
+    target_id = str(launch.payload.get("target_id") or "").strip()
+    if source in {"w+c", "watchlists", "watchlists+collections"} and ":watchlist_run:" in target_id:
+        return ConsoleLiveWorkPrimaryAction(
+            label=launch.action_label,
+            target_route="subscriptions",
+            target_id=target_id,
+        )
+    return None
+
+
+@dataclass(frozen=True)
 class ConsoleLiveWorkStatusCardState:
     """Reusable display contract for one Console live-work status card."""
 
     badge_text: str
     rows: tuple[ConsoleLiveWorkStatusCardRow, ...]
+    primary_action: ConsoleLiveWorkPrimaryAction | None = None
     container_id: str = PENDING_LAUNCH_CARD_ID
     container_classes: str = f"ds-panel {LIVE_WORK_CARD_CLASS}"
     badge_id: str = "console-live-work-status-badge"
@@ -164,4 +192,5 @@ class ConsoleLiveWorkStatusCardState:
         return cls(
             badge_text="Pending Console launch",
             rows=tuple(rows),
+            primary_action=resolve_console_live_work_primary_action(launch),
         )

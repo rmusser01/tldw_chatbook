@@ -82,7 +82,10 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_L
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
-from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_live_work import (
+    ConsoleLiveWorkLaunch,
+    resolve_console_live_work_primary_action,
+)
 from tldw_chatbook.Chat.chat_loop_scope_service import ServerChatLoopScopeService
 from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
 from tldw_chatbook.Chat.server_chat_loop_service import ServerChatLoopService
@@ -1683,6 +1686,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             action_label=action_label,
         )
         self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def open_console_live_work_primary_action(self, launch: Any) -> bool:
+        """Follow through on a supported Console live-work status-card action."""
+        normalized_launch = ConsoleLiveWorkLaunch.from_pending(launch)
+        if normalized_launch is None:
+            self.notify("Console action is unavailable for this live-work item.", severity="warning")
+            return False
+
+        action = resolve_console_live_work_primary_action(normalized_launch)
+        if action is None:
+            self.notify("Console action is unavailable for this live-work item.", severity="warning")
+            return False
+
+        if action.target_route == TAB_SUBSCRIPTIONS:
+            self._stage_subscription_watchlist_run_context(action.target_id)
+            self.post_message(NavigateToScreen(TAB_SUBSCRIPTIONS))
+            return True
+
+        self.notify("Console action route is not available yet.", severity="warning")
+        return False
 
     def _handle_home_control_action(
         self,

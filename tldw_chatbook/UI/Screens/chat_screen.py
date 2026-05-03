@@ -168,6 +168,28 @@ class ChatScreen(BaseAppScreen):
             )
             for row in card_state.rows:
                 yield Static(row.text, id=row.widget_id, classes=row.classes)
+            if card_state.primary_action is not None:
+                yield Button(
+                    card_state.primary_action.label,
+                    id=card_state.primary_action.widget_id,
+                    classes=card_state.primary_action.classes,
+                    variant="primary",
+                )
+
+    @on(Button.Pressed, "#console-live-work-primary-action")
+    def handle_console_live_work_primary_action(self, event: Button.Pressed) -> None:
+        """Route supported live-work card actions through the app-owned shell."""
+        event.stop()
+        launch = self._consume_pending_console_launch()
+        handler = getattr(self.app_instance, "open_console_live_work_primary_action", None)
+        if launch is not None and callable(handler):
+            handled = bool(handler(launch))
+            if handled:
+                return
+        self.app_instance.notify(
+            "Console action is unavailable for this live-work item.",
+            severity="warning",
+        )
         
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
