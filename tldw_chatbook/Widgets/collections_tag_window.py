@@ -18,6 +18,15 @@ if TYPE_CHECKING:
     from ..app import TldwCli
 
 
+RENAME_KEYWORD_DISABLED_TOOLTIP = "Select exactly one keyword or tag before renaming."
+MERGE_KEYWORDS_DISABLED_TOOLTIP = "Select at least two keywords or tags before merging."
+DELETE_KEYWORDS_DISABLED_TOOLTIP = "Select one or more keywords or tags before deleting."
+RENAME_KEYWORD_ENABLED_TOOLTIP = "Rename the selected keyword or tag."
+MERGE_KEYWORDS_ENABLED_TOOLTIP = "Merge the selected keywords or tags."
+DELETE_KEYWORD_ENABLED_TOOLTIP = "Delete the selected keyword or tag."
+DELETE_KEYWORDS_ENABLED_TOOLTIP = "Delete the selected keywords or tags."
+
+
 class KeywordRenameDialog(ModalScreen):
     """Modal dialog for renaming a keyword."""
     
@@ -149,9 +158,27 @@ class CollectionsTagWindow(Container):
                 
                 # Action buttons
                 with Container(classes="action-buttons-container"):
-                    yield Button("Rename", id="rename-keyword", disabled=True, variant="primary")
-                    yield Button("Merge Selected", id="merge-keywords", disabled=True, variant="primary")
-                    yield Button("Delete Selected", id="delete-keywords", disabled=True, variant="error")
+                    yield Button(
+                        "Rename",
+                        id="rename-keyword",
+                        disabled=True,
+                        variant="primary",
+                        tooltip=RENAME_KEYWORD_DISABLED_TOOLTIP,
+                    )
+                    yield Button(
+                        "Merge Selected",
+                        id="merge-keywords",
+                        disabled=True,
+                        variant="primary",
+                        tooltip=MERGE_KEYWORDS_DISABLED_TOOLTIP,
+                    )
+                    yield Button(
+                        "Delete Selected",
+                        id="delete-keywords",
+                        disabled=True,
+                        variant="error",
+                        tooltip=DELETE_KEYWORDS_DISABLED_TOOLTIP,
+                    )
                     
                 # Keyword details
                 yield Label("Keyword Details", classes="section-title")
@@ -283,10 +310,31 @@ class CollectionsTagWindow(Container):
     def update_action_buttons(self) -> None:
         """Enable/disable action buttons based on selection."""
         count = len(self.selected_keywords)
-        
-        self.query_one("#rename-keyword", Button).disabled = count != 1
-        self.query_one("#merge-keywords", Button).disabled = count < 2
-        self.query_one("#delete-keywords", Button).disabled = count == 0
+
+        rename_button = self.query_one("#rename-keyword", Button)
+        rename_button.disabled = count != 1
+        rename_button.tooltip = (
+            RENAME_KEYWORD_ENABLED_TOOLTIP
+            if count == 1
+            else RENAME_KEYWORD_DISABLED_TOOLTIP
+        )
+
+        merge_button = self.query_one("#merge-keywords", Button)
+        merge_button.disabled = count < 2
+        merge_button.tooltip = (
+            MERGE_KEYWORDS_ENABLED_TOOLTIP
+            if count >= 2
+            else MERGE_KEYWORDS_DISABLED_TOOLTIP
+        )
+
+        delete_button = self.query_one("#delete-keywords", Button)
+        delete_button.disabled = count == 0
+        if count == 0:
+            delete_button.tooltip = DELETE_KEYWORDS_DISABLED_TOOLTIP
+        elif count == 1:
+            delete_button.tooltip = DELETE_KEYWORD_ENABLED_TOOLTIP
+        else:
+            delete_button.tooltip = DELETE_KEYWORDS_ENABLED_TOOLTIP
         
     def update_keyword_details(self) -> None:
         """Update the keyword details display."""

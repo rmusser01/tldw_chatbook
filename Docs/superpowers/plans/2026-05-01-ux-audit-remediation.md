@@ -1,8 +1,8 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#201, plus active Chatbook action recovery tooltip slice
-Branch context: current `origin/dev` at `1017cfc2`; active branch `codex/ux-disabled-action-tooltips-followup`
+Status: Current-dev rebaseline after UX remediation PRs #146-#202, plus active tag-management action recovery tooltip slice
+Branch context: current `origin/dev` at `d24268ae`; active branch `codex/ux-tag-action-tooltips`
 Previous audit baseline: `e2576cae`
 
 ## Goal
@@ -29,7 +29,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Rebaselined on current `dev` at `1017cfc2`:
+Rebaselined on current `dev` at `d24268ae`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -88,7 +88,8 @@ Current source state plus this branch:
 - Phase 5 browse/import/file-picker tooltips are merged through PR #199: file selection and import controls explain what kind of files or folders they operate on.
 - Phase 5 LLM/runtime browse tooltips are merged through PR #200: runtime executable/model/path browse controls explain the expected artifact before opening a picker.
 - Phase 5 disabled-action recovery tooltips are merged through PR #201: transcription history, evaluation template preview/selection, and chunking template actions explain selection or built-in-template prerequisites.
-- Phase 5 Chatbook action recovery tooltips are active in `codex/ux-disabled-action-tooltips-followup`: Chatbook template selection, exported-pack toolbar actions, and server-job actions explain selection and job-state prerequisites.
+- Phase 5 Chatbook action recovery tooltips are merged through PR #202: Chatbook template selection, exported-pack toolbar actions, and server-job actions explain selection and job-state prerequisites.
+- Phase 5 tag-management action recovery tooltips are active in `codex/ux-tag-action-tooltips`: Library tag Rename, Merge, and Delete actions explain exact selection requirements and enabled actions.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
 - Phase 7 clean-home audit replay was captured at `6c0d2469` under `/private/tmp/tldw-chatbook-ux-remediation-verify/` before merging PRs #192 and #193; live external API/server paths remain documented uncertainty.
 
@@ -338,7 +339,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, #171, #172, #173, #174, #185, #186, #187, #188, #189, #191, #192, #193, #194, #196, #197, #198, #199, #200, and #201, with Chatbook action recovery cleanup active in `codex/ux-disabled-action-tooltips-followup`. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Study dashboard Resume action recovery is merged through PR #185, Study quiz Start action recovery is merged through PR #186, Study quiz Review in Chat recovery/handoff is merged through PR #187, Study section-bar compact label tooltips are merged through PR #188, Chatbooks view-toggle compact label tooltips are merged through PR #189, Mindmap compact-control tooltips are merged through PR #192, SmartContentTree compact-control tooltips are merged through PR #193, Media Details content-search tooltips are merged through PR #194, Embeddings batch-control tooltips are merged through PR #196, Embedding Wizard selector tooltips are merged through PR #197, bulk-selection control tooltips are merged through PR #198, browse/import/file-picker tooltips are merged through PR #199, LLM/runtime browse tooltips are merged through PR #200, transcription/template-management disabled action recovery is merged through PR #201, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, Media Highlight actions expose selected-highlight tooltips, Media Analysis navigation actions expose saved-version boundary tooltips, Search/RAG saved-search actions expose selection/reuse recovery, Media list pagination exposes result-page boundary tooltips, and Media multi-item review actions expose generation/cancellation state tooltips.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, #171, #172, #173, #174, #185, #186, #187, #188, #189, #191, #192, #193, #194, #196, #197, #198, #199, #200, #201, and #202, with tag-management action recovery cleanup active in `codex/ux-tag-action-tooltips`. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Study dashboard Resume action recovery is merged through PR #185, Study quiz Start action recovery is merged through PR #186, Study quiz Review in Chat recovery/handoff is merged through PR #187, Study section-bar compact label tooltips are merged through PR #188, Chatbooks view-toggle compact label tooltips are merged through PR #189, Mindmap compact-control tooltips are merged through PR #192, SmartContentTree compact-control tooltips are merged through PR #193, Media Details content-search tooltips are merged through PR #194, Embeddings batch-control tooltips are merged through PR #196, Embedding Wizard selector tooltips are merged through PR #197, bulk-selection control tooltips are merged through PR #198, browse/import/file-picker tooltips are merged through PR #199, LLM/runtime browse tooltips are merged through PR #200, transcription/template-management disabled action recovery is merged through PR #201, Chatbook action recovery is merged through PR #202, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, Media Highlight actions expose selected-highlight tooltips, Media Analysis navigation actions expose saved-version boundary tooltips, Search/RAG saved-search actions expose selection/reuse recovery, Media list pagination exposes result-page boundary tooltips, and Media multi-item review actions expose generation/cancellation state tooltips.
 
 ### Files
 
@@ -390,6 +391,7 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 - [x] Add LLM/runtime browse tooltips for executable, model, script, and path controls.
 - [x] Add disabled-action recovery tooltips for transcription history and template management selection states.
 - [x] Add disabled-action recovery tooltips for Chatbook template selection, exported-pack actions, and server-job states.
+- [x] Add disabled-action recovery tooltips for Library tag Rename, Merge, and Delete selection states.
 - [ ] Add tooltips or short descriptions where compact labels remain necessary outside top navigation.
 
 ### Acceptance Criteria
@@ -492,4 +494,4 @@ Current-dev state: complete on local `dev` at `6c0d2469`. A clean-home Textual r
 
 ## Next Step
 
-After this Chatbook action recovery tooltip slice, re-scan current `dev` for remaining visible disabled/no-op controls that still lack a reason or recovery path before starting broader work. Remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this tag-management action recovery tooltip slice, re-scan current `dev` for remaining visible disabled/no-op controls that still lack a reason or recovery path before starting broader work. Remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
