@@ -4,7 +4,7 @@
 
 **Goal:** Harden the current Unified Shell and agentic terminal design-system implementation so it remains usable, honest, and extensible as the app migrates from legacy tabs to Chat-first agentic workflows.
 
-**Architecture:** Keep the current Phase 1 shell rather than rewriting it. Add contract tests around the seams that are most likely to regress: primary top navigation, command-palette naming, footer shortcut state, semantic design tokens, and shell chrome ownership. Implement only small code changes behind those tests, then update the design docs to match verified behavior.
+**Architecture:** Keep the current Phase 1 shell rather than rewriting it. Add contract tests around the seams that are most likely to regress: primary top navigation, explicit overflow discoverability, command-palette naming, product-model visibility, footer shortcut state, semantic design tokens, and shell chrome ownership. Implement only small code changes behind those tests, then update the design docs to match verified behavior.
 
 **Tech Stack:** Python 3.11+, Textual, pytest, TCSS modules, `tldw_chatbook/css/build_css.py`, existing `TldwCli` command-palette providers.
 
@@ -19,13 +19,14 @@ The work hardens the existing shell contract:
 - Top bar remains the global primary destination navigation.
 - Home and Console stay first-class, always reachable destinations.
 - Compact destination labels, especially `W+C`, must expose full meaning through tooltip/help/palette text.
+- Workspaces, Personas, Flashcards, and Quizzes stay visible in the product model even if some remain legacy/direct routes.
 - The bottom bar becomes a context shortcut/status surface driven by an explicit source of truth, not by scraping arbitrary widgets.
 - Design-system tokens stay Textual-compatible and implementation-safe.
 - Shell chrome migration gets guardrails before larger screen rewrites.
 
 ## Non-Goals
 
-- Do not redesign screen content for Library, Personas, Workspaces, flashcards, or quizzes in this plan.
+- Do not redesign screen content for Library, Personas, Workspaces, flashcards, or quizzes in this plan; do verify they remain findable in labels, tooltips, docs, or command-palette help.
 - Do not remove legacy routes or `ALL_TABS`.
 - Do not replace the command palette.
 - Do not move every `BaseAppScreen` to app-owned chrome in one large patch.
@@ -65,6 +66,7 @@ Create:
 - `tldw_chatbook/UI/Navigation/shortcut_context.py` - small typed model for footer shortcut context, if the footer needs a reusable source-of-truth object.
 - `Tests/UI/test_app_footer_shortcut_context.py` - focused tests for footer shortcut context lifecycle.
 - `Tests/UI/test_shell_chrome_contract.py` - guardrail tests for shell chrome ownership and duplicate navigation.
+- `Tests/UI/test_shell_product_model_visibility.py` - guardrail tests for overflow hints and visible product-model vocabulary.
 
 Extend:
 
@@ -72,6 +74,127 @@ Extend:
 - `Tests/UI/test_command_palette_shell_routes.py` - command-palette full-label/help contract.
 - `Tests/UI/test_command_palette_providers.py` - renamed display-label regressions where relevant.
 - `Tests/UI/test_master_shell_design_system_contract.py` - semantic token and generated stylesheet contract tests.
+
+## Task 0: Verify Product-Model Visibility And Overflow Hints
+
+**Files:**
+- Create: `Tests/UI/test_shell_product_model_visibility.py`
+- Modify: `tldw_chatbook/UI/Navigation/shell_destinations.py`
+- Modify: `tldw_chatbook/UI/Navigation/main_navigation.py`
+- Modify: `Docs/Design/master-shell-route-inventory.md`
+
+- [ ] **Step 1: Write failing visibility and overflow tests**
+
+Create `Tests/UI/test_shell_product_model_visibility.py`.
+
+```python
+import pytest
+from textual.app import App
+from textual.widgets import Static
+
+from tldw_chatbook.Constants import TAB_STUDY
+from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
+from tldw_chatbook.app import TabNavigationProvider
+
+
+def test_library_destination_keeps_workspaces_visible():
+    library = get_shell_destination("library")
+
+    assert "Workspaces" in library.purpose
+    assert "Workspaces" in library.tooltip
+
+
+def test_study_modules_remain_discoverable_as_legacy_direct_route():
+    help_text = TabNavigationProvider.TAB_HELP_TEXT[TAB_STUDY].lower()
+
+    assert "flashcards" in help_text
+    assert "quizzes" in help_text
+
+
+@pytest.mark.asyncio
+async def test_navigation_exposes_explicit_overflow_hint():
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="home")
+
+    app = TestApp()
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause(0.1)
+        overflow = app.query_one("#nav-overflow-hint", Static)
+
+    assert "More" in str(overflow.renderable)
+    assert "Ctrl+P" in str(overflow.renderable)
+```
+
+- [ ] **Step 2: Run tests to verify they fail for the intended reasons**
+
+Run:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_shell_product_model_visibility.py --tb=short
+```
+
+Expected:
+
+- Fails because Library metadata does not mention Workspaces.
+- Fails because `#nav-overflow-hint` does not exist.
+
+- [ ] **Step 3: Add minimal product-model vocabulary**
+
+Update the Library destination metadata, not screen content:
+
+```python
+ShellDestination(
+    "library",
+    "Library",
+    "library",
+    "Workspaces, source material, imports, notes, media, conversations, and Search/RAG.",
+    "Browse Workspaces, imports, notes, media, search, and source material.",
+    ("notes", "media", "ingest", "search", "conversation"),
+)
+```
+
+Update `Docs/Design/master-shell-route-inventory.md` so Library compatibility explicitly includes Workspaces.
+
+- [ ] **Step 4: Add a non-invasive overflow hint**
+
+In `MainNavigationBar.compose()`, keep all existing nav buttons and add an explicit overflow/discovery hint after the primary nav row:
+
+```python
+yield Static("More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint")
+```
+
+In `MainNavigationBar.DEFAULT_CSS`, add styling that does not hide Home or Console:
+
+```css
+.nav-overflow-hint {
+    dock: right;
+    width: auto;
+    padding: 0 1;
+    color: $text-muted;
+}
+```
+
+Do not build a responsive overflow menu in this task. The purpose is to remove silent hidden navigation by making command-palette discovery explicit.
+
+- [ ] **Step 5: Verify focused tests**
+
+Run:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_shell_product_model_visibility.py Tests/UI/test_master_shell_navigation.py --tb=short
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add Tests/UI/test_shell_product_model_visibility.py tldw_chatbook/UI/Navigation/shell_destinations.py tldw_chatbook/UI/Navigation/main_navigation.py Docs/Design/master-shell-route-inventory.md
+git commit -m "Harden shell product visibility"
+```
 
 ## Task 1: Lock Navigation Metadata And Compact Label Semantics
 
@@ -187,7 +310,7 @@ button = Button(
 button.tooltip = destination.tooltip
 ```
 
-Do not add fake overflow behavior in this task. The current nav scrolls horizontally; this task only locks the metadata needed for a later explicit overflow affordance.
+Do not add additional overflow behavior in this task. Task 0 owns the minimal explicit `More: Ctrl+P` overflow hint; this task only locks compact-label metadata.
 
 - [ ] **Step 5: Rerun focused navigation tests**
 
@@ -216,13 +339,19 @@ git commit -m "Harden shell navigation metadata"
 - [ ] **Step 1: Write failing palette tests for compact labels**
 
 Add a test that verifies the palette can be found with the full `Watchlists+Collections` term even though the top nav label stays `W+C`.
+Add `TAB_WATCHLISTS_COLLECTIONS` to the imports in the test file that owns this assertion.
 
 ```python
-def test_tab_navigation_provider_exposes_full_label_for_compact_destinations():
-    assert "Watchlists+Collections" in TabNavigationProvider.TAB_HELP_TEXT[TAB_WATCHLISTS_COLLECTIONS]
+def test_tab_navigation_provider_exposes_full_label_for_compact_destinations(tab_provider):
+    command_text, tab_id, help_text = tab_provider._tab_command(TAB_WATCHLISTS_COLLECTIONS)
+
+    assert tab_id == TAB_WATCHLISTS_COLLECTIONS
+    assert "W+C" in command_text
+    assert "Watchlists+Collections" in command_text
+    assert "Watchlists+Collections" in help_text
 ```
 
-Extend the async provider test to search the full label:
+Extend the async provider tests to search the full label and help-keyword aliases:
 
 ```python
 @pytest.mark.asyncio
@@ -233,6 +362,22 @@ async def test_search_finds_watchlists_collections_by_full_label(tab_provider):
 
     assert any("Watchlists+Collections" in hit.text for hit in hits)
     assert any("Watchlists+Collections" in (hit.help or "") for hit in hits)
+
+
+@pytest.mark.asyncio
+async def test_search_matches_destination_help_keywords(tab_provider):
+    cases = [
+        ("Workspaces", "Library"),
+        ("flashcards", "Study"),
+        ("quizzes", "Study"),
+    ]
+
+    for query, expected_label in cases:
+        hits = []
+        async for hit in tab_provider.search(query):
+            hits.append(hit)
+
+        assert any(expected_label in hit.text for hit in hits), query
 ```
 
 - [ ] **Step 2: Run failing palette tests**
@@ -244,12 +389,13 @@ Run:
   Tests/UI/test_command_palette_shell_routes.py \
   Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_search_uses_current_display_labels_for_renamed_tabs \
   Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_search_finds_watchlists_collections_by_full_label \
+  Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_search_matches_destination_help_keywords \
   --tb=short
 ```
 
 Expected:
 
-- Fails until help/search text includes the full destination vocabulary.
+- Fails until help/search text includes the full destination vocabulary and provider search scores help text.
 
 - [ ] **Step 3: Generate palette labels/help from shell metadata where possible**
 
@@ -258,12 +404,14 @@ Keep the existing `TabNavigationProvider` structure, but stop duplicating shell 
 Add small helpers in `TabNavigationProvider`:
 
 ```python
-@staticmethod
-def _shell_destination_for_tab(tab_id: str):
-    from .UI.Navigation.shell_destinations import get_shell_destination
+@classmethod
+def _shell_destination_for_tab(cls, tab_id: str):
+    from .UI.Navigation.shell_destinations import get_shell_destination, resolve_shell_route
+
+    resolved = resolve_shell_route(cls.route_for_tab(tab_id))
 
     try:
-        return get_shell_destination(tab_id)
+        return get_shell_destination(resolved.destination_id)
     except KeyError:
         return None
 
@@ -292,7 +440,21 @@ def _tab_command(self, tab_id: str) -> tuple[str, str, str]:
     return f"Tab Navigation: Switch to {command_label}", tab_id, help_text
 ```
 
-If constants do not match destination IDs for every shell tab, map only the mismatches explicitly and leave legacy tab help untouched.
+This route-resolution step is required so `TAB_CHAT`/`chat` resolves to the `console` destination and legacy aliases such as `tools_settings` resolve to their shell owner. If a legacy direct route does not resolve to a shell destination, leave its existing direct-route help untouched.
+
+Update `search()` so power users can find routes by help text as well as command label:
+
+```python
+for command_text, tab_id, help_text in tab_commands:
+    score = max(matcher.match(command_text), matcher.match(help_text))
+    if score > 0:
+        yield Hit(
+            score,
+            matcher.highlight(command_text),
+            partial(self.switch_tab, tab_id),
+            help=help_text,
+        )
+```
 
 - [ ] **Step 4: Preserve legacy direct commands**
 
@@ -443,22 +605,27 @@ DEFAULT_SHORTCUT_TEXT = "Ctrl+Q quit | Ctrl+P palette"
 class AppFooterStatus(Widget):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._shortcut_display = Static(self.DEFAULT_SHORTCUT_TEXT, id="footer-shortcuts")
+        self._shortcut_text = self.DEFAULT_SHORTCUT_TEXT
+        self._shortcut_display = Static(self._shortcut_text, id="footer-key-quit")
         ...
 
     @property
     def shortcut_text(self) -> str:
-        return str(self._shortcut_display.renderable)
+        return self._shortcut_text
+
+    def _set_shortcut_text(self, text: str) -> None:
+        self._shortcut_text = text
+        self._shortcut_display.update(text)
 
     def set_shortcut_context(self, context: ShortcutContext) -> None:
         text = context.render() or self.DEFAULT_SHORTCUT_TEXT
-        self._shortcut_display.update(text)
+        self._set_shortcut_text(text)
 
     def clear_shortcut_context(self) -> None:
-        self._shortcut_display.update(self.DEFAULT_SHORTCUT_TEXT)
+        self._set_shortcut_text(self.DEFAULT_SHORTCUT_TEXT)
 ```
 
-If existing CSS targets `#footer-key-quit`, either keep that ID on the new shortcut widget or update `_widgets.tcss` and rebuilt CSS in the same task. Do not remove word count, token count, or DB status behavior.
+Keep the existing `#footer-key-quit` id so `_widgets.tcss` continues to style the footer shortcut area. Only edit `_widgets.tcss` and regenerate `tldw_cli_modular.tcss` if this id-preserving approach fails in focused tests. Do not remove word count, token count, or DB status behavior.
 
 - [ ] **Step 5: Verify focused footer tests**
 
@@ -521,6 +688,14 @@ def test_agentic_terminal_theme_variables_cover_required_tokens():
     themes_text = THEMES_PY.read_text(encoding="utf-8")
     for token_name in REQUIRED_SEMANTIC_TOKENS:
         assert f'"{token_name}"' in themes_text
+
+
+def test_generated_stylesheet_preserves_textual_safe_tokens():
+    loaded_text = LOADED_TCSS.read_text(encoding="utf-8")
+
+    assert "ds." not in loaded_text
+    for token_name in REQUIRED_SEMANTIC_TOKENS:
+        assert f"${token_name}" in loaded_text
 ```
 
 - [ ] **Step 2: Run failing contract tests**
@@ -722,6 +897,7 @@ Run from `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-age
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
   Tests/UI/test_master_shell_navigation.py \
+  Tests/UI/test_shell_product_model_visibility.py \
   Tests/UI/test_command_palette_shell_routes.py \
   Tests/UI/test_command_palette_providers.py \
   Tests/UI/test_app_footer_shortcut_context.py \
@@ -739,9 +915,26 @@ Expected:
 - `git diff --check` reports no whitespace errors.
 - Branch is ahead of `origin/dev` by the planned commits.
 
+Manual UX smoke, if the app can launch in the current environment:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m tldw_chatbook.app
+```
+
+Walk through:
+
+- Home is the first visible destination and Console is second.
+- Narrow the terminal enough that not every destination comfortably fits; confirm `More: Ctrl+P` or equivalent overflow guidance remains visible.
+- Open the command palette and verify `Watchlists+Collections`, `Workspaces`, `flashcards`, and `quizzes` are findable through labels or help text.
+- Navigate Home -> Console -> Library -> Personas -> W+C -> Settings using keyboard actions where practical.
+- Confirm footer shortcut text changes only when a screen/workflow supplies an explicit context and does not leave stale Console shortcuts after leaving Console.
+- Record any environment limitation separately from product behavior, especially local SQLite access failures.
+
 ## Review Checklist
 
 - [ ] Top navigation still renders Home and Console first.
+- [ ] Top navigation exposes explicit overflow/discovery guidance instead of silently relying on horizontal scroll.
+- [ ] Workspaces, Flashcards, and Quizzes remain discoverable through destination metadata, command-palette help, or route inventory.
 - [ ] `W+C` remains compact in the nav but exposes `Watchlists+Collections` through tooltip/help/palette text.
 - [ ] Command palette preserves all legacy direct routes.
 - [ ] Footer shortcuts update from an explicit context object and clear stale actions.
@@ -756,5 +949,5 @@ Expected:
 
 - Stop if focused `TldwCli()` tests fail before assertions due local SQLite sandbox access; treat that as an environment limitation and prefer smaller widget/provider tests for this plan.
 - Stop if implementing footer context requires changing event handlers across multiple feature screens; create a follow-up task instead.
-- Stop if explicit nav overflow requires a custom responsive widget larger than one PR; this plan only adds metadata and guardrails for a later overflow affordance.
+- Stop if explicit nav overflow requires a custom responsive widget larger than one PR; this plan only adds the minimal `More: Ctrl+P` discovery hint and guardrails for a later overflow affordance.
 - Stop if command-palette changes would remove legacy route discoverability.
