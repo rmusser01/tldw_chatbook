@@ -7,6 +7,7 @@ DETAIL_CONSOLE_EVIDENCE = PHASE_2_ROOT / "2026-05-03-home-detail-console-adapter
 ITEM_CONTEXT_EVIDENCE = PHASE_2_ROOT / "2026-05-03-home-active-work-item-context.md"
 LOCAL_NOTIFICATION_EVIDENCE = PHASE_2_ROOT / "2026-05-03-home-local-notification-snapshot.md"
 NOTIFICATION_REVIEW_EVIDENCE = PHASE_2_ROOT / "2026-05-03-home-notification-review-routing.md"
+WATCHLIST_RUN_EVIDENCE = PHASE_2_ROOT / "2026-05-03-home-local-watchlist-run-snapshot.md"
 README = PHASE_2_ROOT / "README.md"
 ROADMAP = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md")
 TASK_4_1 = Path("backlog/tasks/task-4.1 - Phase-2.1-Add-Home-active-work-adapter-contract.md")
@@ -19,6 +20,9 @@ TASK_4_4 = Path(
 )
 TASK_4_5 = Path(
     "backlog/tasks/task-4.5 - Phase-2.5-Route-Home-notification-review-to-the-notifications-inbox.md"
+)
+TASK_4_6 = Path(
+    "backlog/tasks/task-4.6 - Phase-2.6-Surface-local-watchlist-runs-in-Home-active-work.md"
 )
 
 
@@ -159,3 +163,32 @@ def test_phase_two_notification_review_routing_evidence_is_linked_from_index_roa
     assert "status: Done" in task_text
     assert "- [x] #1" in task_text
     assert "- [x] #5" in task_text
+
+
+def test_phase_two_local_watchlist_run_evidence_exists_and_records_verification():
+    assert WATCHLIST_RUN_EVIDENCE.exists()
+    text = WATCHLIST_RUN_EVIDENCE.read_text(encoding="utf-8")
+
+    assert "TASK-4.6" in text
+    assert "list_home_run_snapshot" in text
+    assert "HomeActiveWorkItem" in text
+    assert "review_failed_work" in text
+    assert "watchlist-runs" in text
+    assert "Tests/Subscriptions/test_local_watchlists_service.py" in text
+    assert "Tests/UI/test_home_screen.py" in text
+    assert "passed" in text
+
+
+def test_phase_two_local_watchlist_run_evidence_is_linked_from_index_roadmap_and_task():
+    evidence_name = WATCHLIST_RUN_EVIDENCE.name
+
+    assert evidence_name in README.read_text(encoding="utf-8")
+
+    roadmap_text = ROADMAP.read_text(encoding="utf-8")
+    assert "TASK-4.6" in roadmap_text
+    assert evidence_name in roadmap_text
+
+    task_text = TASK_4_6.read_text(encoding="utf-8")
+    assert "status: Done" in task_text
+    assert "- [x] #1" in task_text
+    assert "- [x] #6" in task_text

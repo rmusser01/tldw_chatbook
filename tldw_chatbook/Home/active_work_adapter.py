@@ -6,7 +6,22 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, Mapping, Protocol, runtime_checkable
 
-from .dashboard_state import HomeDashboardInput
+from .dashboard_state import HomeActiveWorkItem, HomeDashboardInput
+
+
+_HOME_WATCHLIST_RUN_STATUSES = frozenset(
+    {
+        "approval_required",
+        "pending_approval",
+        "pending",
+        "running",
+        "queued",
+        "active",
+        "paused",
+        "failed",
+        "error",
+    }
+)
 
 
 class HomeControlAction(StrEnum):
@@ -128,8 +143,14 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
     safe synchronous Home contract.
     """
 
-    def __init__(self, *, notification_service: Any | None = None):
+    def __init__(
+        self,
+        *,
+        notification_service: Any | None = None,
+        watchlist_service: Any | None = None,
+    ):
         self.notification_service = notification_service
+        self.watchlist_service = watchlist_service
 
     def build_dashboard_input(
         self,
@@ -141,7 +162,11 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             providers_models=providers_models,
             has_recent_work=has_recent_work,
         )
-        return replace(dashboard_input, notification_count=self._unread_notification_count())
+        return replace(
+            dashboard_input,
+            notification_count=self._unread_notification_count(),
+            active_work_items=tuple(self._local_watchlist_run_items()),
+        )
 
     def _unread_notification_count(self) -> int:
         if self.notification_service is None:
@@ -156,8 +181,51 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             return 0
         return sum(1 for notification in notifications if _notification_is_unread(notification))
 
+    def _local_watchlist_run_items(self) -> list[HomeActiveWorkItem]:
+        if self.watchlist_service is None:
+            return []
+        try:
+            runs = self.watchlist_service.list_home_run_snapshot(limit=20)
+        except Exception:
+            return []
+
+        items: list[HomeActiveWorkItem] = []
+        for run in runs:
+            status = str(_mapping_value(run, "status") or "unknown").strip().lower()
+            if status not in _HOME_WATCHLIST_RUN_STATUSES:
+                continue
+            run_id = _mapping_value(run, "run_id")
+            item_id = str(
+                _mapping_value(run, "id")
+                or (f"local:watchlist_run:{run_id}" if run_id is not None else "")
+            )
+            if not item_id:
+                continue
+            title = str(
+                _mapping_value(run, "title")
+                or _mapping_value(run, "source_title")
+                or (f"Watchlist run {run_id}" if run_id is not None else "Watchlist run")
+            )
+            items.append(
+                HomeActiveWorkItem(
+                    item_id=item_id,
+                    title=title,
+                    source="W+C",
+                    status=status,
+                    detail_route="subscriptions",
+                    console_available=False,
+                )
+            )
+        return items
+
 
 def _notification_is_unread(notification: Any) -> bool:
     if isinstance(notification, Mapping):
         return not bool(notification.get("is_read"))
     return not bool(getattr(notification, "is_read", False))
+
+
+def _mapping_value(value: Any, key: str) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(key)
+    return getattr(value, key, None)

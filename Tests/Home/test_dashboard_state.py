@@ -61,6 +61,62 @@ def test_pending_approval_still_outranks_unread_notifications():
     assert action.action_id == "review_approvals"
 
 
+def test_failed_active_work_item_prioritizes_recovery_before_resume():
+    dashboard = summarize_home_dashboard(
+        HomeDashboardInput(
+            model_ready=True,
+            has_library_content=True,
+            active_work_items=(
+                HomeActiveWorkItem(
+                    item_id="local:watchlist_run:5",
+                    title="Daily security feed",
+                    source="W+C",
+                    status="failed",
+                    detail_route="subscriptions",
+                ),
+            ),
+        )
+    )
+
+    assert dashboard.next_action.action_id == "review_failed_work"
+    assert dashboard.next_action.label == "Review failed work"
+    assert dashboard.next_action.target_route == "subscriptions"
+    controls_by_id = {control.control_id: control for control in dashboard.controls}
+    assert controls_by_id["home-retry"].target_route == "subscriptions"
+    assert controls_by_id["home-retry"].target_id == "local:watchlist_run:5"
+    assert controls_by_id["home-open-details"].target_route == "subscriptions"
+
+
+def test_failed_work_details_follow_failed_item_when_mixed_with_running_work():
+    dashboard = summarize_home_dashboard(
+        HomeDashboardInput(
+            model_ready=True,
+            has_library_content=True,
+            active_work_items=(
+                HomeActiveWorkItem(
+                    item_id="local:watchlist_run:6",
+                    title="Queued release feed",
+                    source="W+C",
+                    status="queued",
+                    detail_route="subscriptions",
+                ),
+                HomeActiveWorkItem(
+                    item_id="local:watchlist_run:5",
+                    title="Daily security feed",
+                    source="W+C",
+                    status="failed",
+                    detail_route="subscriptions",
+                ),
+            ),
+        )
+    )
+
+    controls_by_id = {control.control_id: control for control in dashboard.controls}
+    assert dashboard.next_action.action_id == "review_failed_work"
+    assert controls_by_id["home-open-details"].target_id == "local:watchlist_run:5"
+    assert controls_by_id["home-retry"].target_id == "local:watchlist_run:5"
+
+
 def test_dashboard_summary_exposes_required_sections():
     dashboard = summarize_home_dashboard(
         HomeDashboardInput(

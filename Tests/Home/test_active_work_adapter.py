@@ -60,6 +60,60 @@ def test_local_notification_adapter_counts_unread_local_notifications():
     assert service.calls == [{"limit": 100, "include_dismissed": False, "category": None}]
 
 
+def test_local_notification_adapter_maps_local_watchlist_runs_to_active_work():
+    class FakeWatchlistsService:
+        def __init__(self):
+            self.calls = []
+
+        def list_home_run_snapshot(self, *, limit=20):
+            self.calls.append({"limit": limit})
+            return [
+                {
+                    "id": "local:watchlist_run:5",
+                    "run_id": 5,
+                    "source_id": 7,
+                    "status": "failed",
+                    "source_title": "Daily security feed",
+                    "backend": "local",
+                },
+                {
+                    "id": "local:watchlist_run:4",
+                    "run_id": 4,
+                    "source_id": 7,
+                    "status": "completed",
+                    "source_title": "Completed feed",
+                    "backend": "local",
+                },
+                {
+                    "id": "local:watchlist_run:3",
+                    "run_id": 3,
+                    "source_id": 8,
+                    "status": "queued",
+                    "source_title": "Queued release feed",
+                    "backend": "local",
+                },
+            ]
+
+    service = FakeWatchlistsService()
+    adapter = LocalNotificationHomeActiveWorkAdapter(watchlist_service=service)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert service.calls == [{"limit": 20}]
+    assert [item.item_id for item in dashboard_input.active_work_items] == [
+        "local:watchlist_run:5",
+        "local:watchlist_run:3",
+    ]
+    assert dashboard_input.active_work_items[0].title == "Daily security feed"
+    assert dashboard_input.active_work_items[0].source == "W+C"
+    assert dashboard_input.active_work_items[0].status == "failed"
+    assert dashboard_input.active_work_items[0].detail_route == "subscriptions"
+    assert dashboard_input.active_work_items[0].console_available is False
+
+
 def test_local_notification_adapter_fails_closed_when_snapshot_unavailable():
     class BrokenNotificationsService:
         def list_queue(self, *, limit=100, include_dismissed=False, category=None):

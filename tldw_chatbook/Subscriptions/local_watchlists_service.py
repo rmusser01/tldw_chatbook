@@ -228,6 +228,23 @@ class LocalWatchlistsService:
         )
         return [normalize_watchlist_run("local", self._run_row_to_dict(row)) for row in cursor.fetchall()]
 
+    def list_home_run_snapshot(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Return recent local watchlist runs from a synchronous Home-safe path."""
+        db = self._db()
+        self._ensure_run_schema(db)
+        cursor = db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT local_watchlist_runs.*, subscriptions.name AS source_title
+            FROM local_watchlist_runs
+            LEFT JOIN subscriptions ON subscriptions.id = local_watchlist_runs.source_id
+            ORDER BY local_watchlist_runs.id DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        )
+        return [self._normalize_home_run_snapshot(row) for row in cursor.fetchall()]
+
     async def get_run(self, run_id: Any) -> dict[str, Any]:
         db = self._db()
         self._ensure_run_schema(db)
@@ -871,6 +888,15 @@ class LocalWatchlistsService:
             "created_at": payload.get("created_at"),
             "updated_at": payload.get("updated_at"),
         }
+
+    def _normalize_home_run_snapshot(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        normalized = normalize_watchlist_run("local", self._run_row_to_dict(payload))
+        source_title = payload.get("source_title")
+        if source_title:
+            normalized["source_title"] = source_title
+            normalized["title"] = source_title
+        return normalized
 
     @staticmethod
     def _alert_rule_row_to_dict(row: Mapping[str, Any]) -> dict[str, Any]:

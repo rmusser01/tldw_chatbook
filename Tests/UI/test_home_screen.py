@@ -178,6 +178,34 @@ async def test_home_notification_primary_action_opens_notifications_inbox_contex
 
 
 @pytest.mark.asyncio
+async def test_home_failed_watchlist_primary_action_opens_watchlist_runs_context():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:5",
+                title="Daily security feed",
+                source="W+C",
+                status="failed",
+                detail_route="subscriptions",
+            ),
+        ),
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#home-primary-action")
+        await pilot.pause(0.1)
+
+    assert seen[-1] == "subscriptions"
+    assert app.pending_subscription_initial_tab == "watchlist-runs"
+
+
+@pytest.mark.asyncio
 async def test_home_control_clicks_call_available_runtime_hooks():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
