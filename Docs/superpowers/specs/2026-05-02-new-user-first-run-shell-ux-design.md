@@ -141,6 +141,32 @@ New users should not have to guess whether “make chat work” lives under `Mod
 
 `Characters/Personas` are a core part of product identity rather than a hidden secondary feature. They should remain directly accessible at the shell level, but their page framing should explain the concept clearly to beginners.
 
+## Route Compatibility And Migration Map
+
+This design introduces a simpler top-level model, but implementation must remain compatible with the current screen inventory.
+
+### New-To-Current Mapping
+
+| New destination | Current routes/screens it wraps, renames, or groups |
+|---|---|
+| `Home` | new screen |
+| `Chat` | `chat` |
+| `Content` | grouped access to `notes`, `media`, `chatbooks`, and conversation-oriented browsing currently surfaced through `ccp` |
+| `Import` | `ingest` |
+| `Search` | `search` |
+| `Characters` | character/persona/prompt workflows currently surfaced through `ccp` |
+| `Models` | `llm` plus any provider/model setup currently buried in settings flows |
+| `Advanced` | `coding`, `stts`, `evals`, `subscriptions`, `logs`, `stats` |
+| `Settings` | `tools_settings`, `customize` |
+
+### Migration Rules
+
+- Current route IDs may remain stable internally during the first implementation slice.
+- The shell may relabel, regroup, or wrap existing screens without requiring an immediate backend or route rewrite.
+- `ccp` is not a usable new-user label and must not remain a primary shell label.
+- If `Content` or `Characters` temporarily launch into existing composite screens, the entry state must land the user in the relevant subsection rather than a generic legacy overview.
+- The implementation plan must explicitly separate `presentation relabeling` from `deeper screen decomposition`.
+
 ## First-Run Entry Rules
 
 ### Default Landing Rule
@@ -159,6 +185,31 @@ New users should land on `Home`, not `Chat`.
 2. explicit user preference
 
 `Home` remains available as an always-accessible dashboard and orientation layer.
+
+### Upgrade Behavior Rule
+
+Existing users must not be treated as first-run users by default.
+
+A user should bypass default-first-run `Home` behavior if any strong evidence of prior meaningful use exists, such as:
+
+- existing saved conversations
+- existing notes or media
+- existing characters/personas
+- existing chatbooks
+- prior successful provider/model configuration
+- stored last-active-screen state
+
+For those users, default reopen behavior should remain:
+
+1. last active screen when available
+2. prior default destination behavior if no last-active-screen state exists
+
+`Home` may still be introduced to existing users as:
+
+- a one-time dismissible “new home available” entry point, or
+- a visible primary destination in navigation
+
+but it should not forcibly interrupt established workflows.
 
 ### Meaningful Action Definition
 
@@ -206,6 +257,8 @@ Examples:
 - `Search your knowledge`
 
 There must be only one visually dominant primary action at a time.
+
+The implementation must derive this action from a deterministic priority order rather than ad hoc conditions.
 
 #### 3. Guided Paths
 
@@ -275,6 +328,37 @@ The shell should derive recommendations from:
 
 `Search` should remain visible in global navigation even on first run, but it should not be promoted as the primary recommended action until searchable content exists.
 
+### CTA Decision Matrix
+
+The `Home` primary CTA should be chosen by this priority order:
+
+1. `Set up a model`
+Condition:
+No working provider/model is available for chat.
+
+2. `Start your first chat`
+Condition:
+Model is ready and the user has no successful chat history.
+
+3. `Import content`
+Condition:
+Model is ready, chat is possible, but no meaningful saved/imported content exists.
+
+4. `Search your knowledge`
+Condition:
+Searchable content exists and search can provide useful results.
+
+5. `Resume recent work`
+Condition:
+The user has clear recent activity and no more urgent setup blockers exist.
+
+Tie-break rules:
+
+- unresolved setup blockers outrank content-based suggestions
+- first successful core action outranks exploratory features
+- recent-work resume outranks generic discovery only after the user is clearly beyond first run
+- characters/personas may be surfaced as a guided path without taking over the primary CTA unless recent workflow evidence strongly supports it
+
 ### Failure Prevention
 
 If a screen depends on unavailable capability, the user should see a clear readiness message before attempting the task, not after a failed action.
@@ -318,6 +402,24 @@ Empty states should not simply report absence. They should route users forward.
 - explain what kinds of items live there
 - provide links to import content or open recent items
 
+### `Content` Internal Structure
+
+`Content` must not be implemented as a vague bucket label.
+
+In the first implementation slice, `Content` should behave as a container screen with a local section switcher for:
+
+- `Notes`
+- `Media`
+- `Conversations`
+- `Chatbooks`
+
+Rules:
+
+- one subsection should be selected by default based on recent activity, or `Conversations` if no better signal exists
+- each subsection may initially wrap an existing screen or legacy subsection
+- the user must be able to tell which content type they are browsing at all times
+- if deeper screen decomposition is deferred, the shell still needs to provide a coherent `Content` landing frame above the wrapped legacy content
+
 #### Import
 
 - explain supported source types and expected output
@@ -360,6 +462,21 @@ Likely candidates:
 - stats
 
 `Advanced` should still be easy to reach, but it should not dominate the first-run shell.
+
+### Advanced Discoverability Rules
+
+`Advanced` features must remain discoverable when contextually relevant.
+
+Rules:
+
+- Core screens may link into specific advanced tools when the user’s current task logically leads there.
+- These links should be contextual and explicit, for example:
+  - Chat or Models linking to `Evals`
+  - Chat linking to `Coding`
+  - Models or Chat linking to `STTS`
+  - Content or Search linking to `Subscriptions` when monitoring sources is relevant
+- Contextual entry points should use plain-language helper copy and should not require users to guess that the feature lives under `Advanced`.
+- `Advanced` should act as containment, not concealment.
 
 ## Risks And Mitigations
 
@@ -412,6 +529,35 @@ The redesign should be considered successful if it improves these outcomes:
 - blank-search rate on first run
 - number of navigation hops before the first successful task
 - qualitative ability of a new user to explain the product within the first minute
+
+## Measurement Plan
+
+The implementation plan should include a lightweight measurement pass tied to the success metrics.
+
+### Baseline Requirements
+
+Before shipping the redesigned shell, capture the current baseline where feasible for:
+
+- startup destination behavior
+- time to first successful chat
+- time to first successful import
+- empty search frequency
+- Settings-first navigation frequency
+
+### Suggested Event Sources
+
+- app launch and resolved landing destination
+- model/provider setup success
+- first successful chat send/response completion
+- first successful import completion
+- search submitted with zero available searchable content
+- navigation sequence before first successful task
+
+### Measurement Constraints
+
+- If full telemetry is not available, use local metrics, structured logs, or deterministic event counters.
+- Measurement should be good enough to compare before/after behavior for the redesign slice.
+- Instrumentation work should stay minimal and should not block shell implementation unless no outcome verification is otherwise possible.
 
 ## Implementation Phases
 
