@@ -35,6 +35,7 @@
 @import "./components/_messages.tcss";
 @import "./components/_dialogs.tcss";
 @import "./components/_status.tcss";
+@import "./components/_agentic_terminal.tcss";
 @import "./components/_widgets.tcss";
 
 /* ========================================

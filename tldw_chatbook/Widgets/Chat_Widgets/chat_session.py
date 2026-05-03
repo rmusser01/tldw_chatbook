@@ -187,11 +187,11 @@ class ChatSession(Container):
         return None
 
     def _build_first_run_orientation_text(self) -> str:
-        """Build compact first-run guidance for a tabbed Chat session."""
+        """Build compact first-run guidance for a tabbed Console session."""
         app_config = getattr(self.app_instance, "app_config", {})
         readiness = get_provider_readiness(self._selected_provider_for_orientation(), app_config)
         return (
-            "Chat is the agentic control surface for programming, research, and workspace tasks.\n"
+            "Console is the agentic control surface for programming, research, and workspace tasks.\n"
             f"Provider readiness: {readiness.user_message}\n"
             "Context: Notes, Media, Search/RAG, Workspaces, Study flashcards/quizzes, "
             "personas, and Chatbooks. Ctrl+P opens commands."

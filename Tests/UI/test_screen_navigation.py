@@ -128,6 +128,136 @@ PRIMARY_ROUTE_IDS = [
 ]
 
 
+def test_master_shell_route_inventory_has_known_legacy_routes():
+    expected_legacy_routes = {
+        "chat",
+        "notes",
+        "media",
+        "ingest",
+        "search",
+        "study",
+        "ccp",
+        "conversation",
+        "chatbooks",
+        "subscriptions",
+        "tools_settings",
+        "llm",
+        "stts",
+        "evals",
+        "logs",
+        "stats",
+        "coding",
+        "customize",
+    }
+
+    app = _build_test_app()
+    unresolved = []
+    for route in expected_legacy_routes:
+        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(route)
+        if screen_class is None:
+            unresolved.append(route)
+
+    assert unresolved == []
+
+
+def test_home_route_resolves_to_home_screen():
+    app = _build_test_app()
+
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("home")
+
+    assert screen_name == "home"
+    assert current_tab == "home"
+    assert screen_class.__name__ == "HomeScreen"
+
+
+def test_first_run_initial_route_defaults_to_home():
+    app = _build_test_app()
+    app.app_config["_first_run"] = True
+    app._initial_tab_value = "chat"
+
+    assert app._resolve_initial_shell_route() == "home"
+
+
+@pytest.mark.asyncio
+async def test_deferred_initial_tab_uses_first_run_home_route():
+    app = _build_test_app()
+    app.app_config["_first_run"] = True
+    app._initial_tab_value = "chat"
+
+    await app._set_initial_tab()
+
+    assert app.current_tab == "home"
+
+
+@pytest.mark.parametrize("configured_route", ["home", "library", "settings", "notes"])
+def test_returning_user_initial_route_preserves_configured_default(configured_route):
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = configured_route
+
+    assert app._resolve_initial_shell_route() == configured_route
+
+
+def test_startup_route_validation_accepts_shell_and_legacy_defaults():
+    app = _build_test_app()
+
+    for route in ["home", "library", "settings", "notes"]:
+        assert app._normalize_initial_tab_from_config(route) == route
+
+
+def test_startup_route_validation_rejects_unknown_default():
+    app = _build_test_app()
+
+    assert app._normalize_initial_tab_from_config("definitely-not-a-route") == "chat"
+
+
+def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
+    app = _build_test_app()
+    expected_routes = {
+        "home",
+        "chat",
+        "library",
+        "conversation",
+        "artifacts",
+        "personas",
+        "watchlists_collections",
+        "schedules",
+        "workflows",
+        "mcp",
+        "acp",
+        "skills",
+        "settings",
+    }
+
+    unresolved = []
+    for route in expected_routes:
+        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(route)
+        if screen_class is None:
+            unresolved.append(route)
+
+    assert unresolved == []
+
+
+def test_conversation_route_uses_library_conversation_context():
+    app = _build_test_app()
+
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("conversation")
+
+    assert screen_name == "conversation"
+    assert current_tab == "conversation"
+    assert screen_class.__name__ == "LibraryConversationsScreen"
+
+
+def test_legacy_tools_settings_route_uses_mcp_context():
+    app = _build_test_app()
+
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("tools_settings")
+
+    assert screen_name == "tools_settings"
+    assert current_tab == "mcp"
+    assert screen_class.__name__ == "MCPScreen"
+
+
 def _build_test_app() -> TldwCli:
     user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-test-"))
 
@@ -392,6 +522,8 @@ async def test_tab_links_emit_navigation_messages():
 
 @pytest.mark.asyncio
 async def test_main_navigation_exposes_all_routed_primary_screens():
+    from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+
     class TestApp(App):
         def compose(self):
             yield MainNavigationBar(active="chat")
@@ -400,8 +532,8 @@ async def test_main_navigation_exposes_all_routed_primary_screens():
 
     async with app.run_test() as pilot:
         nav = pilot.app.query_one(MainNavigationBar)
-        for screen_id in ("study", "stts", "chatbooks", "subscriptions"):
-            assert nav.query_one(f"#nav-{screen_id}") is not None
+        for destination in SHELL_DESTINATION_ORDER:
+            assert nav.query_one(f"#nav-{destination.destination_id}") is not None
 
 
 def test_screen_state_preservation():
@@ -439,23 +571,18 @@ def test_screen_lifecycle_methods():
 @pytest.mark.asyncio
 async def test_main_navigation_copy_and_order():
     expected_button_order = [
-        ("nav-chat", "Chat"),
-        ("nav-chatbooks", "Chatbooks"),
-        ("nav-notes", "Notes"),
-        ("nav-media", "Media"),
-        ("nav-ingest", "Ingest"),
-        ("nav-search", "Search"),
-        ("nav-subscriptions", "Subscriptions"),
-        ("nav-ccp", "Library"),
-        ("nav-study", "Study"),
-        ("nav-llm", "Models"),
-        ("nav-stts", "Speech"),
-        ("nav-evals", "Evals"),
-        ("nav-tools_settings", "Settings"),
-        ("nav-customize", "Customize"),
-        ("nav-logs", "Logs"),
-        ("nav-stats", "Stats"),
-        ("nav-coding", "Coding"),
+        ("nav-home", "Home"),
+        ("nav-console", "Console"),
+        ("nav-library", "Library"),
+        ("nav-artifacts", "Artifacts"),
+        ("nav-personas", "Personas"),
+        ("nav-watchlists_collections", "Watchlists+Collections"),
+        ("nav-schedules", "Schedules"),
+        ("nav-workflows", "Workflows"),
+        ("nav-mcp", "MCP"),
+        ("nav-acp", "ACP"),
+        ("nav-skills", "Skills"),
+        ("nav-settings", "Settings"),
     ]
 
     class TestApp(App):
@@ -471,32 +598,19 @@ async def test_main_navigation_copy_and_order():
         actual_button_order = [(button.id, str(button.label).strip()) for button in nav_buttons]
 
         assert actual_button_order == expected_button_order
-        assert str(app.query_one("#nav-ccp", Button).label).strip() == "Library"
-        assert nav_buttons[0].id == "nav-chat"
-        assert nav_buttons[1].id == "nav-chatbooks"
-        assert nav_buttons[-1].id == "nav-coding"
+        assert str(app.query_one("#nav-console", Button).label).strip() == "Console"
+        assert nav_buttons[0].id == "nav-home"
+        assert nav_buttons[1].id == "nav-console"
+        assert nav_buttons[-1].id == "nav-settings"
 
 
 @pytest.mark.asyncio
 async def test_main_navigation_buttons_explain_compact_labels():
+    from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+
     expected_tooltips = {
-        "nav-chat": "Agentic chat and control surface.",
-        "nav-chatbooks": "Portable context packs for Chat.",
-        "nav-notes": "Capture notes and send selected context to Chat.",
-        "nav-media": "Browse saved media, transcripts, and analysis.",
-        "nav-ingest": "Import files, URLs, feeds, and media.",
-        "nav-search": "Search saved content and RAG collections.",
-        "nav-subscriptions": "Track feeds, watchlists, reminders, and alerts.",
-        "nav-ccp": "Manage conversations, characters, personas, prompts, dictionaries, and lore.",
-        "nav-study": "Practice with flashcards and quizzes.",
-        "nav-llm": "Configure providers and local model runtimes.",
-        "nav-stts": "Use speech-to-text, dictation, and text-to-speech.",
-        "nav-evals": "Run model, prompt, and task evaluations.",
-        "nav-tools_settings": "Configure app settings and tools.",
-        "nav-customize": "Adjust appearance, themes, and UI preferences.",
-        "nav-logs": "Inspect application logs and diagnostics.",
-        "nav-stats": "Review usage and database statistics.",
-        "nav-coding": "Use the code-focused chat workspace.",
+        f"nav-{destination.destination_id}": destination.tooltip
+        for destination in SHELL_DESTINATION_ORDER
     }
 
     class TestApp(App):
@@ -517,7 +631,9 @@ async def test_main_navigation_buttons_explain_compact_labels():
 
 
 @pytest.mark.asyncio
-async def test_main_navigation_route_ids_remain_intact():
+async def test_main_navigation_route_ids_match_shell_destinations():
+    from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+
     class TestApp(App):
         def compose(self):
             yield MainNavigationBar(active="chat")
@@ -527,48 +643,13 @@ async def test_main_navigation_route_ids_remain_intact():
     async with app.run_test(size=(160, 20)) as pilot:
         await pilot.pause(0.1)
 
-        expected_route_ids = {
-            "nav-chat",
-            "nav-chatbooks",
-            "nav-notes",
-            "nav-media",
-            "nav-ingest",
-            "nav-search",
-            "nav-subscriptions",
-            "nav-ccp",
-            "nav-study",
-            "nav-llm",
-            "nav-stts",
-            "nav-evals",
-            "nav-tools_settings",
-            "nav-customize",
-            "nav-logs",
-            "nav-stats",
-            "nav-coding",
-        }
-
         actual_route_ids = [button.id for button in app.query(".nav-button")]
-
-        assert actual_route_ids == [
-            "nav-chat",
-            "nav-chatbooks",
-            "nav-notes",
-            "nav-media",
-            "nav-ingest",
-            "nav-search",
-            "nav-subscriptions",
-            "nav-ccp",
-            "nav-study",
-            "nav-llm",
-            "nav-stts",
-            "nav-evals",
-            "nav-tools_settings",
-            "nav-customize",
-            "nav-logs",
-            "nav-stats",
-            "nav-coding",
+        expected_route_ids = [
+            f"nav-{destination.destination_id}"
+            for destination in SHELL_DESTINATION_ORDER
         ]
-        assert set(actual_route_ids) == expected_route_ids
+
+        assert actual_route_ids == expected_route_ids
 
 
 @pytest.mark.asyncio

@@ -51,8 +51,8 @@ async def test_chatbooks_screen_keeps_shared_navigation_escape(monkeypatch):
         await pilot.pause(0.1)
 
         assert app.screen.query_one(ChatbooksWindowImproved) is not None
-        assert app.screen.query_one("#nav-chat") is not None
-        assert app.screen.query_one("#nav-chatbooks") is not None
+        assert app.screen.query_one("#nav-console") is not None
+        assert app.screen.query_one("#nav-artifacts") is not None
 
 
 class _HandoffSmokeHost:

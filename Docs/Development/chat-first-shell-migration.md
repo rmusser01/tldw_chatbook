@@ -1,14 +1,19 @@
 # Chat-First Shell Migration
 
+## Master Shell Update
+
+The user-facing `Chat` destination is now `Console`. The internal `chat` route remains stable during migration. Live agent work should open or follow in Console; Library, Artifacts, Personas, Watchlists+Collections, Schedules, Workflows, MCP, ACP, Skills, and Settings prepare, configure, inspect, or preserve work.
+
+Home is now the dashboard/front door for notifications, status, next-best actions, and lightweight controls for active runs and schedules.
+
 ## New Top-Level IA
 
-The application is converging on a single screen shell where Chat is the default landing destination and the rest of the product is organized as destination shells rather than peer tabs.
+The application is converging on a single screen shell where Home is the dashboard landing destination, Console is the primary live-work surface, and the rest of the product is organized as destination shells rather than peer tabs.
 
-- `Chat` is the primary conversation surface for general assistance, agentic programming/control, inline approvals, and task continuity.
-- `Notes`, `Media`, `Ingest`, `Search`, and `Subscriptions` are content/workflow shells that feed context into Chat.
-- `Conversations, Characters & Prompts` (`ccp`) and `Study` are persona/learning shells that should preserve handoff context when they open or reuse Chat.
-- `LLM`, `STTS`, `Evals`, `Settings`, `Customize`, `Logs`, and `Stats` remain utility/configuration shells.
-- The legacy `coding` route remains available for compatibility while agentic programming workflows move into Chat.
+- `Console` is the primary conversation surface for general assistance, agentic programming/control, inline approvals, RAG, and task continuity.
+- `Library`, `Artifacts`, `Personas`, `Watchlists+Collections`, `Schedules`, `Workflows`, `MCP`, `ACP`, `Skills`, and `Settings` are destination shells with compatibility links into existing screens.
+- `Notes`, `Media`, `Ingest`, `Search`, `Subscriptions`, `ccp`, `chatbooks`, and other legacy routes remain valid while their user-facing ownership moves under the new shell destinations.
+- The legacy `coding` route remains available for compatibility while agentic programming workflows move into Console.
 
 ## Legacy Route Aliases
 

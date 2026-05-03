@@ -18,7 +18,7 @@ from tldw_chatbook.Constants import (
     TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
     TAB_INGEST, TAB_EVALS, TAB_LLM, TAB_TOOLS_SETTINGS,
     TAB_STATS, TAB_LOGS, TAB_CODING, TAB_STTS, TAB_STUDY,
-    TAB_CHATBOOKS, ALL_TABS, TAB_GROUPS
+    TAB_CHATBOOKS, TAB_MCP, ALL_TABS, TAB_GROUPS
 )
 
 
@@ -51,6 +51,8 @@ def _separator_counts() -> tuple[int, int]:
 
 def _expected_current_tab(tab_id: str) -> str:
     """Return the app-level current_tab value for a clicked tab link."""
+    if tab_id == TAB_TOOLS_SETTINGS:
+        return TAB_MCP
     return tab_id
 
 
@@ -138,15 +140,15 @@ class TestTabLinksNavigation:
     async def test_tab_labels_correct(self):
         """Test that each tab has the correct label text."""
         expected_labels = {
-            TAB_CHAT: "Chat",
-            TAB_CCP: "Library",
+            TAB_CHAT: "Console",
+            TAB_CCP: "Personas",
             TAB_NOTES: "Notes",
             TAB_MEDIA: "Media",
             TAB_SEARCH: "Search",
             TAB_INGEST: "Ingest",
             TAB_EVALS: "Evals",
             TAB_LLM: "Models",
-            TAB_TOOLS_SETTINGS: "Settings",
+            TAB_TOOLS_SETTINGS: "MCP",
             TAB_STATS: "Stats",
             TAB_LOGS: "Logs",
             TAB_CODING: "Coding",
@@ -168,7 +170,7 @@ class TestTabLinksNavigation:
                 
                 # Handle special cases where tab_id doesn't match expected labels
                 if tab_id == "conversations_characters_prompts":
-                    expected = "Library"
+                    expected = "Personas"
                 elif tab_id == "llm_management":
                     expected = "Models"
                 elif tab_id == "subscriptions":
