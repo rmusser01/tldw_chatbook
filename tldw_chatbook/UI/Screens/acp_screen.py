@@ -2,7 +2,7 @@
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
 
@@ -22,4 +22,13 @@ class ACPScreen(BaseAppScreen):
                 classes="destination-purpose",
             )
             with Vertical(id="acp-sections", classes="ds-panel"):
-                yield Static("No ACP runtime is configured yet. Sessions will appear here when available.")
+                yield Static("Installed agents", classes="destination-section")
+                yield Static("Sessions", classes="destination-section")
+                yield Static("Resume", classes="destination-section")
+                yield Static("Diffs", classes="destination-section")
+                yield Static("Terminal/Shell", classes="destination-section")
+                yield Static(
+                    "ACP runtime is not configured yet. Install or configure an ACP-compatible agent before launch.",
+                    id="acp-empty-state",
+                )
+                yield Button("Launch ACP Agent", id="acp-launch-agent", disabled=True)

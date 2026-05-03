@@ -2,7 +2,7 @@
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
 
@@ -17,9 +17,15 @@ class MCPScreen(BaseAppScreen):
         with Vertical(id="mcp-shell"):
             yield Static("MCP", id="mcp-title", classes="ds-destination-header")
             yield Static(
-                "MCP servers, tools, permissions, auth, and audit.",
+                "MCP owns tools and servers.",
                 id="mcp-purpose",
                 classes="destination-purpose",
             )
             with Vertical(id="mcp-sections", classes="ds-panel"):
-                yield Static("Servers | Tools | Permissions | Auth | Audit")
+                yield Static("Servers", classes="destination-section")
+                yield Static("Tools", classes="destination-section")
+                yield Static("Permissions", classes="destination-section")
+                yield Static("Auth", classes="destination-section")
+                yield Static("Audit", classes="destination-section")
+                yield Static("Test Tool", classes="destination-section")
+                yield Button("Open MCP Management", id="mcp-open-management")

@@ -2,7 +2,7 @@
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
 
@@ -14,12 +14,24 @@ class SkillsScreen(BaseAppScreen):
         super().__init__(app_instance, "skills", **kwargs)
 
     def compose_content(self) -> ComposeResult:
+        local_skills_service = getattr(self.app_instance, "local_skills_service", None)
+        skills_dir = getattr(local_skills_service, "skills_dir", None)
+        skills_dir_label = str(skills_dir) if skills_dir is not None else "Local skills directory unavailable."
+
         with Vertical(id="skills-shell"):
             yield Static("Skills", id="skills-title", classes="ds-destination-header")
             yield Static(
-                "Agent Skills packs, discovery, validation, and attachments.",
+                "Skills owns Agent Skills packs. Each skill is a directory with a required SKILL.md file.",
                 id="skills-purpose",
                 classes="destination-purpose",
             )
             with Vertical(id="skills-sections", classes="ds-panel"):
-                yield Static("Installed skills | Import | Validate | Attach to Console")
+                yield Static("Installed", classes="destination-section")
+                yield Static("Discover/Import", classes="destination-section")
+                yield Static("Validate", classes="destination-section")
+                yield Static("Scripts", classes="destination-section")
+                yield Static("References", classes="destination-section")
+                yield Static("Assets", classes="destination-section")
+                yield Static("Attachments", classes="destination-section")
+                yield Static(f"Local skills directory: {skills_dir_label}", id="skills-local-directory")
+                yield Button("Import Skill", id="skills-import-skill")

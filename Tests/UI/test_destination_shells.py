@@ -6,9 +6,13 @@ from textual.widgets import Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
+from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Screens.skills_screen import SkillsScreen
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 
@@ -20,6 +24,11 @@ SCREEN_BY_ROUTE = {
     "watchlists_collections": WatchlistsCollectionsScreen,
     "schedules": SchedulesScreen,
     "workflows": WorkflowsScreen,
+    "mcp": MCPScreen,
+    "tools_settings": MCPScreen,
+    "acp": ACPScreen,
+    "skills": SkillsScreen,
+    "settings": SettingsScreen,
 }
 
 
@@ -142,3 +151,53 @@ async def test_automation_destination_wrappers_explain_ownership(route, expected
         )
         for section in expected_sections:
             assert section in visible_text
+
+
+@pytest.mark.parametrize(
+    ("route", "expected_text"),
+    [
+        ("mcp", "tools and servers"),
+        ("acp", "Agent Client Protocol"),
+        ("skills", "SKILL.md"),
+        ("settings", "global preferences"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_protocol_and_settings_wrappers_have_distinct_boundaries(route, expected_text):
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+
+        visible_text = " ".join(
+            _static_text(widget)
+            for widget in screen.query(Static)
+            if hasattr(widget, "renderable")
+        )
+        assert expected_text in visible_text
+
+
+@pytest.mark.asyncio
+async def test_legacy_tools_settings_route_opens_mcp_not_global_settings():
+    app = _build_test_app()
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("tools_settings")
+
+    assert screen_name == "tools_settings"
+    assert current_tab == "mcp"
+    assert screen_class is MCPScreen
+
+    host = DestinationHarness(app, "tools_settings")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+
+        visible_text = " ".join(
+            _static_text(widget)
+            for widget in screen.query(Static)
+            if hasattr(widget, "renderable")
+        )
+        assert "tools and servers" in visible_text
+        assert "global preferences" not in visible_text
