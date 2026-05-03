@@ -1649,50 +1649,67 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self,
         action: HomeControlAction,
         *,
+        target_id: str | None = None,
         target_route: str | None = None,
     ) -> HomeControlResult:
         adapter = getattr(self, "home_active_work_adapter", UnavailableHomeActiveWorkAdapter())
-        if target_route is None:
+        if target_id is None and target_route is None:
             result = adapter.handle_control(action)
         else:
-            result = adapter.handle_control(action, target_route=target_route)
+            result = adapter.handle_control(
+                action,
+                target_id=target_id,
+                target_route=target_route,
+            )
         self.notify(result.message, severity=result.severity)
         return result
 
-    def approve_active_home_item(self) -> HomeControlResult:
+    def approve_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
         """Approve the active Home item through the configured adapter."""
-        return self._handle_home_control_action(HomeControlAction.APPROVE)
+        return self._handle_home_control_action(HomeControlAction.APPROVE, target_id=target_id)
 
-    def reject_active_home_item(self) -> HomeControlResult:
+    def reject_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
         """Reject the active Home item through the configured adapter."""
-        return self._handle_home_control_action(HomeControlAction.REJECT)
+        return self._handle_home_control_action(HomeControlAction.REJECT, target_id=target_id)
 
-    def pause_active_home_item(self) -> HomeControlResult:
+    def pause_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
         """Pause the active Home item through the configured adapter."""
-        return self._handle_home_control_action(HomeControlAction.PAUSE)
+        return self._handle_home_control_action(HomeControlAction.PAUSE, target_id=target_id)
 
-    def resume_active_home_item(self) -> HomeControlResult:
+    def resume_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
         """Resume the active Home item through the configured adapter."""
-        return self._handle_home_control_action(HomeControlAction.RESUME)
+        return self._handle_home_control_action(HomeControlAction.RESUME, target_id=target_id)
 
-    def retry_active_home_item(self) -> HomeControlResult:
+    def retry_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
         """Retry the active Home item through the configured adapter."""
-        return self._handle_home_control_action(HomeControlAction.RETRY)
+        return self._handle_home_control_action(HomeControlAction.RETRY, target_id=target_id)
 
-    def open_active_home_item_details(self, *, target_route: str = TAB_CHAT) -> HomeControlResult:
+    def open_active_home_item_details(
+        self,
+        *,
+        target_id: str | None = None,
+        target_route: str = TAB_CHAT,
+    ) -> HomeControlResult:
         """Open active Home item details through the configured adapter."""
         result = self._handle_home_control_action(
             HomeControlAction.OPEN_DETAILS,
+            target_id=target_id,
             target_route=target_route,
         )
         if result.status is HomeControlResultStatus.HANDLED and result.target_route:
             self.post_message(NavigateToScreen(result.target_route))
         return result
 
-    def open_active_home_item_in_console(self, *, target_route: str = TAB_CHAT) -> HomeControlResult:
+    def open_active_home_item_in_console(
+        self,
+        *,
+        target_id: str | None = None,
+        target_route: str = TAB_CHAT,
+    ) -> HomeControlResult:
         """Open active Home item in Console only when the adapter supplies launch context."""
         result = self._handle_home_control_action(
             HomeControlAction.OPEN_IN_CONSOLE,
+            target_id=target_id,
             target_route=target_route,
         )
         if result.status is HomeControlResultStatus.HANDLED and result.console_launch is not None:

@@ -27,10 +27,11 @@ def test_unavailable_home_adapter_builds_dashboard_input_from_runtime_context():
 def test_unavailable_home_adapter_returns_honest_recovery_result():
     adapter = UnavailableHomeActiveWorkAdapter()
 
-    result = adapter.handle_control(HomeControlAction.APPROVE)
+    result = adapter.handle_control(HomeControlAction.APPROVE, target_id="approval-1")
 
     assert result.action is HomeControlAction.APPROVE
     assert result.status is HomeControlResultStatus.UNAVAILABLE
+    assert result.target_id == "approval-1"
     assert result.severity == "warning"
     assert "Approve is not connected" in result.message
     assert result.recovery_route == "chat"
