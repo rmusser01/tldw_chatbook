@@ -100,7 +100,12 @@ class SmartContentTree(Container):
                     id="content-search",
                     classes="search-input"
                 )
-                yield Button("🔍 Filter", id="apply-filter", classes="filter-button")
+                yield Button(
+                    "🔍 Filter",
+                    id="apply-filter",
+                    classes="filter-button",
+                    tooltip="Filter the content tree using the search text and enabled categories.",
+                )
             
             # Category filters
             with Horizontal(classes="category-filters"):
@@ -112,9 +117,27 @@ class SmartContentTree(Container):
             
             # Selection controls
             with Horizontal(classes="selection-controls"):
-                yield Button("Select All", id="select-all", classes="selection-button", variant="default")
-                yield Button("Select None", id="select-none", classes="selection-button", variant="default")
-                yield Button("Invert", id="select-invert", classes="selection-button", variant="default")
+                yield Button(
+                    "Select All",
+                    id="select-all",
+                    classes="selection-button",
+                    variant="default",
+                    tooltip="Select every currently visible content item.",
+                )
+                yield Button(
+                    "Select None",
+                    id="select-none",
+                    classes="selection-button",
+                    variant="default",
+                    tooltip="Clear every selected content item.",
+                )
+                yield Button(
+                    "Invert",
+                    id="select-invert",
+                    classes="selection-button",
+                    variant="default",
+                    tooltip="Reverse selection for the currently visible content items.",
+                )
         
         # Tree container
         with Container(classes="tree-container"):
