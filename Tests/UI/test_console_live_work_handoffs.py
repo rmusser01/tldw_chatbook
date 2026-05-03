@@ -19,6 +19,9 @@ PHASE3_STATUS_CARD_EVIDENCE = (
 PHASE3_HOME_WC_CONSOLE_EVIDENCE = (
     REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-home-wc-active-work-console-launch.md"
 )
+PHASE3_CONSOLE_WC_ACTION_EVIDENCE = (
+    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-wc-action-routing.md"
+)
 
 
 def _load_console_live_work_contract():
@@ -164,6 +167,68 @@ def test_console_live_work_status_card_state_derives_stable_rows_from_launch():
     assert "console-live-work-payload-row" in payload_row.classes
 
 
+def test_console_live_work_status_card_state_exposes_wc_primary_action():
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    ConsoleLiveWorkStatusCardState = _load_console_live_work_status_card_state()
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="W+C",
+        title="Daily security feed",
+        payload={"target_id": "local:watchlist_run:91", "run_id": 91},
+        status="failed",
+        recovery="Review the W+C run details or retry from W+C.",
+        action_label="Open W+C run",
+    )
+
+    card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
+
+    assert card_state.primary_action is not None
+    assert card_state.primary_action.widget_id == "console-live-work-primary-action"
+    assert card_state.primary_action.label == "Open W+C run"
+    assert card_state.primary_action.target_route == "subscriptions"
+    assert card_state.primary_action.target_id == "local:watchlist_run:91"
+
+
+def test_console_live_work_status_card_state_keeps_unsupported_payloads_non_actionable():
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    ConsoleLiveWorkStatusCardState = _load_console_live_work_status_card_state()
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="workflows",
+        title="Daily digest",
+        payload={"run_id": "run-1"},
+        status="running",
+        recovery="Workflow detail routing is not wired yet.",
+        action_label="Open workflow run",
+    )
+
+    card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
+
+    assert card_state.primary_action is None
+
+
+def test_app_console_live_work_primary_action_routes_wc_run_details():
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    app = _build_test_app()
+    app.post_message = Mock()
+    app.notify = Mock()
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="W+C",
+        title="Daily security feed",
+        payload={"target_id": "local:watchlist_run:91", "run_id": 91},
+        status="failed",
+        recovery="Review the W+C run details or retry from W+C.",
+        action_label="Open W+C run",
+    )
+
+    handled = app.open_console_live_work_primary_action(launch)
+
+    assert handled is True
+    assert app.pending_subscription_initial_tab == "watchlist-runs"
+    assert app.pending_subscription_watchlist_run_id == "local:watchlist_run:91"
+    app.post_message.assert_called_once()
+    assert app.post_message.call_args.args[0].screen_name == "subscriptions"
+    app.notify.assert_not_called()
+
+
 def test_phase3_status_card_tracking_evidence_links_task_and_roadmap():
     evidence = PHASE3_STATUS_CARD_EVIDENCE.read_text()
     readme = (REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/README.md").read_text()
@@ -197,6 +262,24 @@ def test_phase3_home_wc_console_launch_tracking_evidence_links_task_and_roadmap(
     assert "Phase 3.3: Open Home W+C active work in Console - `TASK-3.3`" in roadmap
     assert "`TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`" in roadmap
     assert "ConsoleLiveWorkLaunch" in task
+
+
+def test_phase3_console_wc_action_tracking_evidence_links_task_and_roadmap():
+    evidence = PHASE3_CONSOLE_WC_ACTION_EVIDENCE.read_text()
+    readme = (REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/README.md").read_text()
+    roadmap = (REPO_ROOT / "Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text()
+    task = (
+        REPO_ROOT
+        / "backlog/tasks/task-3.4 - Phase-3.4-Route-Console-WC-live-work-actions.md"
+    ).read_text()
+
+    assert "TASK-3.4" in evidence
+    assert "Console live-work action" in evidence
+    assert "console-live-work-primary-action" in evidence
+    assert "2026-05-03-console-wc-action-routing.md" in readme
+    assert "Phase 3.4: Route Console W+C live-work actions - `TASK-3.4`" in roadmap
+    assert "`TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`" in roadmap
+    assert "console-live-work-primary-action" in task
 
 
 @pytest.mark.parametrize(
@@ -311,3 +394,34 @@ async def test_console_renders_pending_launch_context():
         assert "run_id: run-1" in text
         assert isinstance(screen._pending_console_launch_context, ConsoleLiveWorkLaunch)
         assert app.pending_console_launch is None
+
+
+@pytest.mark.asyncio
+async def test_console_wc_live_work_action_button_routes_run_details():
+    app = _build_test_app()
+    app.pending_console_launch = {
+        "source": "W+C",
+        "title": "Daily security feed",
+        "payload": {"target_id": "local:watchlist_run:91", "run_id": 91},
+        "status": "failed",
+        "recovery": "Review the W+C run details or retry from W+C.",
+        "action_label": "Open W+C run",
+    }
+    app.post_message = Mock()
+    app.notify = Mock()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#console-live-work-primary-action")
+        assert str(button.label) == "Open W+C run"
+
+        await pilot.click("#console-live-work-primary-action")
+        await pilot.pause(0.1)
+
+    assert app.pending_subscription_initial_tab == "watchlist-runs"
+    assert app.pending_subscription_watchlist_run_id == "local:watchlist_run:91"
+    app.post_message.assert_called_once()
+    assert app.post_message.call_args.args[0].screen_name == "subscriptions"
+    app.notify.assert_not_called()

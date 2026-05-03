@@ -2,7 +2,7 @@
 
 Date: 2026-05-03
 Status: Phase 2 and Phase 3 in progress
-Source Branch: `origin/dev` at `19605f0f` plus `codex/unified-shell-phase3-console-source-status`
+Source Branch: `origin/dev` at `96f15eae` plus `codex/unified-shell-phase3-console-action-routing`
 
 ## Purpose
 
@@ -30,7 +30,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 - Home active-work controls, detail routing, Console launch requests, item identity, local unread notification counts, notification review routing, local W+C watchlist run snapshots, and local W+C run detail routing now route through explicit adapter boundaries; schedule and agent-service adapters still need implementation.
 - Workflows has no wired workflow service in the shell wrapper.
 - W+C, Schedules, Workflows, and ACP now use honest unavailable Console states until actionable payloads exist.
-- Console now has a typed app-owned launch contract, reusable status-card display seam, and Home W+C active-work source producer for staged live-work payloads; additional source-specific live event producers still need implementation.
+- Console now has a typed app-owned launch contract, reusable status-card display seam, Home W+C active-work source producer, and W+C run-detail action routing for staged live-work payloads; additional source-specific live event producers still need implementation.
 - ACP launch is disabled until an ACP-compatible runtime is configured.
 - MCP management is not embedded in the top-level MCP wrapper.
 - Skills local/server services exist, but the top-level Skills shell still leaves import disabled and lacks list/detail/import UX adoption.
@@ -90,6 +90,7 @@ Initial child tasks:
 - Phase 3.1: Add Console live-work launch contract - `TASK-3.1`
 - Phase 3.2: Add Console live-work status card seam - `TASK-3.2`
 - Phase 3.3: Open Home W+C active work in Console - `TASK-3.3`
+- Phase 3.4: Route Console W+C live-work actions - `TASK-3.4`
 
 ## QA Evidence Index
 
@@ -110,7 +111,7 @@ Initial child tasks:
 | Phase 0: Canonical Tracking | Make remaining work trackable. | verified | `TASK-1`, `TASK-1.1`, `TASK-1.2` | `phase-0/` | Product UI workflows are out of scope for Phase 0. |
 | Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | verified | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3`, `TASK-2.4` | `phase-1/` | Live service workflows remain intentionally deferred to Phases 2-6. |
 | Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | in-progress | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6`, `TASK-4.7` | `phase-2/` | Schedule and agent-service adapters still need implementation; local watchlist retry/pause/resume remain recoverable rather than fully controllable. |
-| Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | in-progress | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3` | `phase-3/` | Additional source-specific live event producers and follow/status wiring still need implementation. |
+| Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | in-progress | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4` | `phase-3/` | Additional source-specific live event producers and follow/status wiring still need implementation. |
 | Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | not-started | `TASK-5` | `phase-4/` | Service coverage varies by destination. |
 | Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | not-started | `TASK-6` | `phase-5/` | Shared taxonomy not yet extracted. |
 | Phase 6: Audit Replay And Closeout | Prove shell works for first-time and power users. | not-started | `TASK-7` | `phase-6/` | Depends on prior phases and running-app QA. |
@@ -202,6 +203,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-3.3` makes Home W+C active-work rows produce a real Console live-work launch context:
 
 - `Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-home-wc-active-work-console-launch.md`
+
+## Phase 3.4 Console W+C Action Routing Evidence
+
+`TASK-3.4` makes supported Console W+C live-work actions route to existing W+C run details:
+
+- `Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-wc-action-routing.md`
 
 ## Phase 0: Canonical Tracking
 
