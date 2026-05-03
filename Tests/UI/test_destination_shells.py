@@ -59,7 +59,7 @@ def _visible_text(screen) -> str:
     return " ".join(
         _static_text(widget)
         for widget in screen.query(Static)
-        if hasattr(widget, "renderable")
+        if widget.display and hasattr(widget, "renderable")
     )
 
 
