@@ -1,5 +1,6 @@
 """Console live-work launch and staged-context handoff boundary tests."""
 
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -11,12 +12,26 @@ from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PHASE3_STATUS_CARD_EVIDENCE = (
+    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-live-work-status-card-seam.md"
+)
+
+
 def _load_console_live_work_contract():
     try:
         from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
     except ModuleNotFoundError:
         pytest.fail("Console live-work launch contract module is missing")
     return ConsoleLiveWorkLaunch
+
+
+def _load_console_live_work_status_card_state():
+    try:
+        from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkStatusCardState
+    except ImportError:
+        pytest.fail("Console live-work status card state is missing")
+    return ConsoleLiveWorkStatusCardState
 
 
 class ConsoleHarness(App):
@@ -115,6 +130,54 @@ def test_open_console_for_live_work_preserves_minimal_call_defaults():
     }
 
 
+def test_console_live_work_status_card_state_derives_stable_rows_from_launch():
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    ConsoleLiveWorkStatusCardState = _load_console_live_work_status_card_state()
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="workflows",
+        title="Daily digest",
+        payload={"attempt": 2, "run_id": "run-1"},
+        status="running",
+        recovery="Workflow is starting.",
+        action_label="Open workflow run",
+    )
+
+    card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
+
+    assert card_state.container_id == "console-pending-launch-card"
+    assert "console-live-work-status-card" in card_state.container_classes
+    assert card_state.badge_text == "Pending Console launch"
+    rows_by_id = {row.widget_id: row.text for row in card_state.rows}
+    assert rows_by_id == {
+        "console-live-work-source": "Source: workflows",
+        "console-live-work-title": "Title: Daily digest",
+        "console-live-work-status": "Status: running",
+        "console-live-work-recovery": "Recovery: Workflow is starting.",
+        "console-live-work-action": "Action: Open workflow run",
+        "console-live-work-payload-attempt": "attempt: 2",
+        "console-live-work-payload-run-id": "run_id: run-1",
+    }
+    payload_row = next(row for row in card_state.rows if row.widget_id == "console-live-work-payload-run-id")
+    assert "console-live-work-payload-row" in payload_row.classes
+
+
+def test_phase3_status_card_tracking_evidence_links_task_and_roadmap():
+    evidence = PHASE3_STATUS_CARD_EVIDENCE.read_text()
+    readme = (REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/README.md").read_text()
+    roadmap = (REPO_ROOT / "Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text()
+    task = (
+        REPO_ROOT
+        / "backlog/tasks/task-3.2 - Phase-3.2-Add-Console-live-work-status-card-seam.md"
+    ).read_text()
+
+    assert "TASK-3.2" in evidence
+    assert "ConsoleLiveWorkStatusCardState" in evidence
+    assert "2026-05-03-console-live-work-status-card-seam.md" in readme
+    assert "Phase 3.2: Add Console live-work status card seam - `TASK-3.2`" in roadmap
+    assert "`TASK-3`, `TASK-3.1`, `TASK-3.2`" in roadmap
+    assert "ConsoleLiveWorkStatusCardState" in task
+
+
 @pytest.mark.parametrize(
     ("route", "button_id", "expected_copy"),
     [
@@ -210,6 +273,13 @@ async def test_console_renders_pending_launch_context():
         screen = _active_console_screen(host)
 
         assert screen.query_one("#console-pending-launch-card")
+        assert screen.query_one("#console-live-work-source").renderable == "Source: workflows"
+        assert screen.query_one("#console-live-work-title").renderable == "Title: Daily digest"
+        assert screen.query_one("#console-live-work-status").renderable == "Status: running"
+        assert screen.query_one("#console-live-work-recovery").renderable == "Recovery: Workflow is starting."
+        assert screen.query_one("#console-live-work-action").renderable == "Action: Open workflow run"
+        assert screen.query_one("#console-live-work-payload-attempt").renderable == "attempt: 2"
+        assert screen.query_one("#console-live-work-payload-run-id").renderable == "run_id: run-1"
         text = _screen_static_text(screen)
         assert "Source: workflows" in text
         assert "Title: Daily digest" in text
