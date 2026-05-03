@@ -80,6 +80,9 @@ class HomeScreen(BaseAppScreen):
             return
 
         if button_id == "home-primary-action":
+            prepare = getattr(self.app_instance, "prepare_home_primary_action", None)
+            if callable(prepare):
+                prepare(dashboard.next_action)
             self.post_message(NavigateToScreen(dashboard.next_action.target_route))
             return
 
