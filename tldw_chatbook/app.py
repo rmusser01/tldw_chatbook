@@ -1774,10 +1774,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 "title": result.console_launch.title,
                 "payload": dict(result.console_launch.payload or {}),
             }
-            for key in ("status", "recovery", "action_label"):
-                value = getattr(result.console_launch, key)
-                if value is not None:
-                    launch_kwargs[key] = value
+            if result.console_launch.status is not None:
+                launch_kwargs["status"] = result.console_launch.status
+            if result.console_launch.recovery is not None:
+                launch_kwargs["recovery"] = result.console_launch.recovery
+            if result.console_launch.action_label is not None:
+                launch_kwargs["action_label"] = result.console_launch.action_label
             self.open_console_for_live_work(**launch_kwargs)
         return result
 
