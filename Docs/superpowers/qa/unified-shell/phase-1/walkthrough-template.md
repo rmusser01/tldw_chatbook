@@ -21,7 +21,7 @@
 
 ## Steps Attempted
 
-1. 
+1.
 
 ## Visual Usability Notes
 
