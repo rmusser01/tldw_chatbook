@@ -279,9 +279,24 @@ class SmartContentSelector(Container):
         
         # Quick selection buttons
         with Horizontal(classes="quick-selection-buttons"):
-            yield Button("Select All", id="select-all", variant="primary")
-            yield Button("Clear All", id="clear-all", variant="default")
-            yield Button("Invert", id="invert-selection", variant="default")
+            yield Button(
+                "Select All",
+                id="select-all",
+                variant="primary",
+                tooltip="Select every visible source item for this embedding collection.",
+            )
+            yield Button(
+                "Clear All",
+                id="clear-all",
+                variant="default",
+                tooltip="Clear every selected source item.",
+            )
+            yield Button(
+                "Invert",
+                id="invert-selection",
+                variant="default",
+                tooltip="Reverse selection for the visible source items.",
+            )
             
         # Preview section
         yield Label("Preview (0 items selected)", id="preview-label", classes="preview-label")
