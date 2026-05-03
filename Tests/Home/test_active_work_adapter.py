@@ -114,6 +114,24 @@ def test_local_notification_adapter_maps_local_watchlist_runs_to_active_work():
     assert dashboard_input.active_work_items[0].console_available is False
 
 
+def test_local_notification_adapter_fails_closed_when_watchlist_snapshot_unavailable():
+    class BrokenWatchlistsService:
+        def list_home_run_snapshot(self, *, limit=20):
+            raise RuntimeError("watchlist store unavailable")
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        watchlist_service=BrokenWatchlistsService()
+    )
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=True,
+    )
+
+    assert dashboard_input.model_ready is True
+    assert dashboard_input.active_work_items == ()
+
+
 def test_local_notification_adapter_fails_closed_when_snapshot_unavailable():
     class BrokenNotificationsService:
         def list_queue(self, *, limit=100, include_dismissed=False, category=None):

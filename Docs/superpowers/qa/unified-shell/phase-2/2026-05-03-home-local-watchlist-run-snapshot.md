@@ -22,13 +22,16 @@ Expose real local W+C watchlist run state on Home so queued, running, and failed
 
 Focused checks were run against the local watchlist service, pure Home dashboard state, the Home adapter, mounted Home navigation, app service wiring, and Phase 2 tracking.
 
-- Red test: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Subscriptions/test_local_watchlists_service.py Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py Tests/UI/test_unified_shell_phase2_home_adapter.py -q`
+- Red test: `python -m pytest Tests/Subscriptions/test_local_watchlists_service.py Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py Tests/UI/test_unified_shell_phase2_home_adapter.py -q`
 - Red result: `7 failed, 77 passed, 10 warnings`; failures covered the missing `list_home_run_snapshot`, missing `watchlist_service`, generic `resume_active_work` routing, missing `watchlist-runs` tab staging, and missing evidence links.
 - Additional red-green self-review check: `Tests/Home/test_dashboard_state.py::test_failed_work_details_follow_failed_item_when_mixed_with_running_work` failed before detail selection followed the failed item, then passed after the selector fix.
-- Green behavior test: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Subscriptions/test_local_watchlists_service.py Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py -q`
-- Green behavior result: `73 passed, 8 warnings`
-- Full focused Phase 2 test: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Subscriptions/test_local_watchlists_service.py Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py Tests/UI/test_unified_shell_phase2_home_adapter.py -q`
-- Full focused Phase 2 result: `85 passed, 8 warnings`
+- Review follow-up regression: `Tests/Home/test_active_work_adapter.py::test_local_notification_adapter_fails_closed_when_watchlist_snapshot_unavailable` covers the logged watchlist snapshot exception path.
+- Green behavior test: `python -m pytest Tests/Subscriptions/test_local_watchlists_service.py Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py -q`
+- Green behavior result: `74 passed, 8 warnings`
+- Full focused Phase 2 test: `python -m pytest Tests/Subscriptions/test_local_watchlists_service.py Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py Tests/UI/test_unified_shell_phase2_home_adapter.py -q`
+- Full focused Phase 2 result: `86 passed, 8 warnings`
+- Post-merge conflict/review follow-up test: `python -m pytest Tests/Subscriptions/test_local_watchlists_service.py Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py Tests/UI/test_unified_shell_phase2_home_adapter.py Tests/UI/test_console_live_work_handoffs.py -q`
+- Post-merge conflict/review follow-up result: `99 passed, 8 warnings`
 
 Warning boundary: warnings are existing dependency/import warnings and are not Home watchlist-run failures.
 

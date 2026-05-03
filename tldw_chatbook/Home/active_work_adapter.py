@@ -6,6 +6,8 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, Mapping, Protocol, runtime_checkable
 
+from loguru import logger
+
 from .dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 
 

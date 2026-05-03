@@ -11,6 +11,14 @@ from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
+def _load_console_live_work_contract():
+    try:
+        from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+    except ModuleNotFoundError:
+        pytest.fail("Console live-work launch contract module is missing")
+    return ConsoleLiveWorkLaunch
+
+
 class ConsoleHarness(App):
     def __init__(self, app_instance):
         super().__init__()
@@ -24,24 +32,86 @@ def _active_console_screen(host: ConsoleHarness):
     return host.screen_stack[-1]
 
 
+def _screen_static_text(screen) -> str:
+    return " ".join(str(widget.renderable) for widget in screen.query("Static"))
+
+
 def test_app_exposes_open_console_for_live_work_helper():
     app = _build_test_app()
 
     assert hasattr(app, "open_console_for_live_work")
 
 
+def test_console_live_work_launch_contract_normalizes_defaults_and_metadata():
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source=" workflows ",
+        title=" ",
+        payload={"run_id": "run-1", "attempt": 2},
+        status=" running ",
+        recovery=" Workflow is starting. ",
+        action_label=" Open workflow run ",
+    )
+
+    assert launch.source == "workflows"
+    assert launch.title == "Untitled"
+    assert launch.payload == {"run_id": "run-1", "attempt": 2}
+    assert launch.status == "running"
+    assert launch.recovery == "Workflow is starting."
+    assert launch.action_label == "Open workflow run"
+    assert launch.to_pending_payload() == {
+        "source": "workflows",
+        "title": "Untitled",
+        "payload": {"run_id": "run-1", "attempt": 2},
+        "status": "running",
+        "recovery": "Workflow is starting.",
+        "action_label": "Open workflow run",
+    }
+
+
 def test_open_console_for_live_work_routes_to_chat_route():
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
     seen = []
     app.post_message = lambda message: seen.append(getattr(message, "screen_name", None))
 
-    app.open_console_for_live_work(source="workflows", title="Daily digest")
+    app.open_console_for_live_work(
+        source="workflows",
+        title="Daily digest",
+        payload={"run_id": "run-1"},
+        status="running",
+        recovery="Workflow is starting.",
+        action_label="Open workflow run",
+    )
 
     assert seen == ["chat"]
-    assert app.pending_console_launch == {
+    assert isinstance(app.pending_console_launch, ConsoleLiveWorkLaunch)
+    assert app.pending_console_launch.to_pending_payload() == {
+        "source": "workflows",
+        "title": "Daily digest",
+        "payload": {"run_id": "run-1"},
+        "status": "running",
+        "recovery": "Workflow is starting.",
+        "action_label": "Open workflow run",
+    }
+
+
+def test_open_console_for_live_work_preserves_minimal_call_defaults():
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    app = _build_test_app()
+    app.post_message = lambda message: None
+
+    app.open_console_for_live_work(source="workflows", title="Daily digest")
+
+    assert isinstance(app.pending_console_launch, ConsoleLiveWorkLaunch)
+    assert app.pending_console_launch.to_pending_payload() == {
         "source": "workflows",
         "title": "Daily digest",
         "payload": {},
+        "status": "pending",
+        "recovery": "Console has staged this live-work request.",
+        "action_label": "Open in Console",
     }
 
 
@@ -123,11 +193,15 @@ async def test_staged_context_actions_use_chat_handoff_not_live_launch(route, bu
 
 @pytest.mark.asyncio
 async def test_console_renders_pending_launch_context():
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
     app.pending_console_launch = {
         "source": "workflows",
         "title": "Daily digest",
-        "payload": {},
+        "payload": {"attempt": 2, "run_id": "run-1"},
+        "status": "running",
+        "recovery": "Workflow is starting.",
+        "action_label": "Open workflow run",
     }
     host = ConsoleHarness(app)
 
@@ -136,4 +210,13 @@ async def test_console_renders_pending_launch_context():
         screen = _active_console_screen(host)
 
         assert screen.query_one("#console-pending-launch-card")
+        text = _screen_static_text(screen)
+        assert "Source: workflows" in text
+        assert "Title: Daily digest" in text
+        assert "Status: running" in text
+        assert "Recovery: Workflow is starting." in text
+        assert "Action: Open workflow run" in text
+        assert "attempt: 2" in text
+        assert "run_id: run-1" in text
+        assert isinstance(screen._pending_console_launch_context, ConsoleLiveWorkLaunch)
         assert app.pending_console_launch is None

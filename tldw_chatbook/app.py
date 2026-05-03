@@ -82,6 +82,7 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_L
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.chat_loop_scope_service import ServerChatLoopScopeService
 from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
 from tldw_chatbook.Chat.server_chat_loop_service import ServerChatLoopService
@@ -1390,7 +1391,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
         self.pending_chat_handoff: Optional[ChatHandoffPayload] = None
-        self.pending_console_launch: Optional[Dict[str, Any]] = None
+        self.pending_console_launch: Optional[ConsoleLiveWorkLaunch | Dict[str, Any]] = None
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
         self.home_active_work_adapter = UnavailableHomeActiveWorkAdapter()
@@ -1662,13 +1663,25 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.pending_chat_handoff = payload
         self.post_message(NavigateToScreen(TAB_CHAT))
 
-    def open_console_for_live_work(self, *, source: str, title: str, payload: dict | None = None) -> None:
+    def open_console_for_live_work(
+        self,
+        *,
+        source: str,
+        title: str,
+        payload: dict | None = None,
+        status: str | None = None,
+        recovery: str | None = None,
+        action_label: str | None = None,
+    ) -> None:
         """Open Console for live work launched from another destination."""
-        self.pending_console_launch = {
-            "source": source,
-            "title": title,
-            "payload": payload or {},
-        }
+        self.pending_console_launch = ConsoleLiveWorkLaunch.from_values(
+            source=source,
+            title=title,
+            payload=payload,
+            status=status,
+            recovery=recovery,
+            action_label=action_label,
+        )
         self.post_message(NavigateToScreen(TAB_CHAT))
 
     def _handle_home_control_action(
