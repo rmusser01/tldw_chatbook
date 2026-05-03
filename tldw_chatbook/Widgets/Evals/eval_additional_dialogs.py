@@ -64,9 +64,18 @@ class FileUploadDialog(ModalScreen):
                 )
             
             with Horizontal(classes="dialog-buttons"):
-                yield Button("Browse", id="browse-button")
+                yield Button(
+                    "Browse",
+                    id="browse-button",
+                    tooltip="Choose an evaluation task or dataset file from disk.",
+                )
                 yield Button("Cancel", id="cancel-button", variant="error")
-                yield Button("Upload", id="upload-button", variant="primary")
+                yield Button(
+                    "Upload",
+                    id="upload-button",
+                    variant="primary",
+                    tooltip="Upload the selected evaluation file.",
+                )
     
     @on(Button.Pressed, "#browse-button")
     def handle_browse(self):

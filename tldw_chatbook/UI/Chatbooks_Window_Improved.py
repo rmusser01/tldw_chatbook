@@ -170,8 +170,18 @@ class EmptyStateWidget(Container):
         
         with Container(classes="empty-state-actions"):
             yield Button("✨ Create Local Pack", id="empty-create-btn", variant="primary")
-            yield Button("📥 Import Local Pack", id="empty-import-btn", variant="default")
-            yield Button("📋 Browse Templates", id="empty-templates-btn", variant="default")
+            yield Button(
+                "📥 Import Local Pack",
+                id="empty-import-btn",
+                variant="default",
+                tooltip="Import a local Chatbook pack from disk.",
+            )
+            yield Button(
+                "📋 Browse Templates",
+                id="empty-templates-btn",
+                variant="default",
+                tooltip="Browse Chatbook templates for a faster start.",
+            )
 
 
 class ChatbooksWindowImproved(Screen):

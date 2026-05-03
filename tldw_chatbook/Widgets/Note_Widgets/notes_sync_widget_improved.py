@@ -131,7 +131,12 @@ class QuickSyncSection(Container):
                 placeholder="Select folder to sync...",
                 id="sync-folder-input"
             )
-            yield Button("Browse", id="browse-folder-btn", variant="default")
+            yield Button(
+                "Browse",
+                id="browse-folder-btn",
+                variant="default",
+                tooltip="Choose the folder to sync with Notes.",
+            )
         
         # Sync settings
         with Horizontal(classes="sync-settings-row"):

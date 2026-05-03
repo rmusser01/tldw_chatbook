@@ -165,7 +165,11 @@ class SmartFileDropZone(CaptureSafePostMixin, Widget):
             with Container(id="drop-area"):
                 yield Static("Drop files here", id="drop-title")
                 yield Static("or browse", id="drop-subtitle")
-                yield ImmediateButton("Browse", id="browse-overlay")
+                yield ImmediateButton(
+                    "Browse",
+                    id="browse-overlay",
+                    tooltip="Choose files from disk for ingestion.",
+                )
             with Container(id="file-list-container"):
                 yield Vertical(id="file-list")
                 yield Static("", id="file-summary")
