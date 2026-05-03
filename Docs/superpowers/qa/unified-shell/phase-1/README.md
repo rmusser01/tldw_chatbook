@@ -1,6 +1,6 @@
 # Phase 1 QA Evidence
 
-Status: in-progress
+Status: verified
 
 This directory contains durable QA summaries for Phase 1 shell-contract work.
 
@@ -11,5 +11,6 @@ This directory contains durable QA summaries for Phase 1 shell-contract work.
 - `2026-05-03-phase-1-protocol-smoke.md` - first smoke summary proving the protocol and template are wired into tracking.
 - `2026-05-03-destination-action-audit.md` - `TASK-2.2` evidence matrix for destination action ownership, usability status, and follow-up boundaries.
 - `2026-05-03-phase-1-3-false-affordance-fix.md` - `TASK-2.3` evidence that skeletal Console launch/follow controls are now honest disabled states.
+- `2026-05-03-phase-1-shell-contract-closeout.md` - `TASK-2.4` final Phase 1 replay and closeout decision.
 
-Do not mark Phase 1 verified until a final shell-contract replay confirms navigation, focus, labels, and primary actions from the running app after `TASK-2.3`.
+Phase 1 shell-contract evidence is verified. Deeper live service completion remains tracked by Phases 2-6.

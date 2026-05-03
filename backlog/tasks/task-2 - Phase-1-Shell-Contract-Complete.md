@@ -1,9 +1,10 @@
 ---
 id: TASK-2
 title: 'Phase 1: Shell Contract Complete'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-05-03 14:47'
+updated_date: '2026-05-03 16:37'
 labels:
   - unified-shell
   - phase-1
@@ -24,8 +25,14 @@ Remove false shell affordances and prove the shell is navigable, understandable,
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every top-level destination has honest status and action ownership.
-- [ ] #2 Manual shell walkthrough verifies navigation, layout, focus, labels, and primary actions.
-- [ ] #3 Focused automated checks cover the changed shell contract seams.
-- [ ] #4 Durable QA summary exists under Docs/superpowers/qa/unified-shell/phase-1/.
+- [x] #1 Every top-level destination has honest status and action ownership.
+- [x] #2 Manual shell walkthrough verifies navigation, layout, focus, labels, and primary actions.
+- [x] #3 Focused automated checks cover the changed shell contract seams.
+- [x] #4 Durable QA summary exists under Docs/superpowers/qa/unified-shell/phase-1/.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Closed Phase 1 after TASK-2.1 through TASK-2.4 established the QA harness, audited all destination actions, removed false Console-launch affordances, and replayed the shell contract with focused Textual verification and durable Phase 1 closeout evidence.
+<!-- SECTION:NOTES:END -->
