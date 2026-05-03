@@ -38,15 +38,8 @@ class HomeScreen(BaseAppScreen):
 
         providers = getattr(self.app_instance, "providers_models", {}) or {}
         has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
-        adapter = getattr(self.app_instance, "home_active_work_adapter", None)
-        if adapter is not None and hasattr(adapter, "build_dashboard_input"):
-            return adapter.build_dashboard_input(
-                providers_models=providers,
-                has_recent_work=has_recent_work,
-            )
-
-        return HomeDashboardInput(
-            model_ready=bool(providers),
+        return self.app_instance.home_active_work_adapter.build_dashboard_input(
+            providers_models=providers,
             has_recent_work=has_recent_work,
         )
 

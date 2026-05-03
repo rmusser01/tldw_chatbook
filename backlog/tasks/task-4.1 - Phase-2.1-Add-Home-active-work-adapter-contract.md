@@ -43,4 +43,6 @@ Introduce an explicit Home active-work adapter boundary so dashboard state and a
 
 <!-- SECTION:NOTES:BEGIN -->
 Introduced a Home active-work adapter contract, wired Home dashboard input and approve/reject/pause/resume/retry controls through the adapter, preserved honest unavailable recovery copy through the default adapter, and added focused unit plus mounted Home tests for the delegation boundary.
+
+Review follow-up tightened the adapter result status contract to `HomeControlResultStatus`, made the unavailable adapter explicitly implement the protocol, removed dead HomeScreen fallback dashboard construction, and normalized QA evidence commands to repo-relative paths.
 <!-- SECTION:NOTES:END -->

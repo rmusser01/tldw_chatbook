@@ -4,7 +4,11 @@ import pytest
 from textual.app import App
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
-from tldw_chatbook.Home.active_work_adapter import HomeControlAction, HomeControlResult
+from tldw_chatbook.Home.active_work_adapter import (
+    HomeControlAction,
+    HomeControlResult,
+    HomeControlResultStatus,
+)
 from tldw_chatbook.Home.dashboard_state import HomeDashboardInput
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -47,7 +51,7 @@ class RecordingHomeActiveWorkAdapter:
         self.control_actions.append(action)
         return HomeControlResult(
             action=action,
-            status="handled",
+            status=HomeControlResultStatus.HANDLED,
             message=f"{action.value} handled by adapter",
             severity="information",
             recovery_route="chat",

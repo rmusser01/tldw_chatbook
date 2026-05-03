@@ -21,12 +21,12 @@ Begin Phase 2 by replacing hard-coded Home active-work placeholder behavior with
 
 Focused checks were run against pure Home state and mounted Textual Home tests.
 
-- Red adapter test: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Home/test_active_work_adapter.py Tests/UI/test_home_screen.py::test_home_screen_uses_active_work_adapter_for_dashboard_and_controls -q`
+- Red adapter test: `python -m pytest Tests/Home/test_active_work_adapter.py Tests/UI/test_home_screen.py::test_home_screen_uses_active_work_adapter_for_dashboard_and_controls -q`
 - Red result before adapter existed: import error for `tldw_chatbook.Home.active_work_adapter`.
-- Focused green check: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Home/test_active_work_adapter.py Tests/UI/test_home_screen.py::test_home_screen_uses_active_work_adapter_for_dashboard_and_controls -q`
-- Focused green result: `3 passed`
-- Home suite: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/UI/test_home_screen.py -q`
-- Home suite result: `15 passed, 8 warnings`
+- Focused green check: `python -m pytest Tests/Home/test_active_work_adapter.py Tests/UI/test_home_screen.py::test_home_screen_uses_active_work_adapter_for_dashboard_and_controls -q`
+- Focused green result after review follow-up: `4 passed`
+- Home suite: `python -m pytest Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/UI/test_home_screen.py -q`
+- Home suite result after review follow-up: `16 passed, 8 warnings`
 - Evidence contract: `Tests/UI/test_unified_shell_phase2_home_adapter.py`
 
 Warning boundary: warnings are existing dependency/import warnings and are not Home adapter behavior failures.

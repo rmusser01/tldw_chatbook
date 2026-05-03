@@ -25,7 +25,7 @@ class HomeControlResultStatus(StrEnum):
 @dataclass(frozen=True)
 class HomeControlResult:
     action: HomeControlAction
-    status: HomeControlResultStatus | str
+    status: HomeControlResultStatus
     message: str
     severity: str = "information"
     recovery_route: str = "chat"
@@ -49,7 +49,7 @@ class HomeActiveWorkAdapter(Protocol):
         ...
 
 
-class UnavailableHomeActiveWorkAdapter:
+class UnavailableHomeActiveWorkAdapter(HomeActiveWorkAdapter):
     """Honest default adapter until active-run services are wired."""
 
     _ACTION_LABELS = {

@@ -1,5 +1,8 @@
+from typing import get_type_hints
+
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
+    HomeControlResult,
     HomeControlResultStatus,
     UnavailableHomeActiveWorkAdapter,
 )
@@ -30,3 +33,7 @@ def test_unavailable_home_adapter_returns_honest_recovery_result():
     assert result.severity == "warning"
     assert "Approve is not connected" in result.message
     assert result.recovery_route == "chat"
+
+
+def test_home_control_result_status_contract_uses_enum_only():
+    assert get_type_hints(HomeControlResult)["status"] is HomeControlResultStatus
