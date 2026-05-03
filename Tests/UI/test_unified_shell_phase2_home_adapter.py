@@ -6,6 +6,7 @@ EVIDENCE = PHASE_2_ROOT / "2026-05-03-home-active-work-adapter-contract.md"
 DETAIL_CONSOLE_EVIDENCE = PHASE_2_ROOT / "2026-05-03-home-detail-console-adapter-actions.md"
 ITEM_CONTEXT_EVIDENCE = PHASE_2_ROOT / "2026-05-03-home-active-work-item-context.md"
 LOCAL_NOTIFICATION_EVIDENCE = PHASE_2_ROOT / "2026-05-03-home-local-notification-snapshot.md"
+NOTIFICATION_REVIEW_EVIDENCE = PHASE_2_ROOT / "2026-05-03-home-notification-review-routing.md"
 README = PHASE_2_ROOT / "README.md"
 ROADMAP = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md")
 TASK_4_1 = Path("backlog/tasks/task-4.1 - Phase-2.1-Add-Home-active-work-adapter-contract.md")
@@ -15,6 +16,9 @@ TASK_4_2 = Path(
 TASK_4_3 = Path("backlog/tasks/task-4.3 - Phase-2.3-Bind-Home-controls-to-active-work-item-context.md")
 TASK_4_4 = Path(
     "backlog/tasks/task-4.4 - Phase-2.4-Wire-Home-to-local-notification-snapshot-adapter.md"
+)
+TASK_4_5 = Path(
+    "backlog/tasks/task-4.5 - Phase-2.5-Route-Home-notification-review-to-the-notifications-inbox.md"
 )
 
 
@@ -124,6 +128,34 @@ def test_phase_two_local_notification_evidence_is_linked_from_index_roadmap_and_
     assert evidence_name in roadmap_text
 
     task_text = TASK_4_4.read_text(encoding="utf-8")
+    assert "status: Done" in task_text
+    assert "- [x] #1" in task_text
+    assert "- [x] #5" in task_text
+
+
+def test_phase_two_notification_review_routing_evidence_exists_and_records_verification():
+    assert NOTIFICATION_REVIEW_EVIDENCE.exists()
+    text = NOTIFICATION_REVIEW_EVIDENCE.read_text(encoding="utf-8")
+
+    assert "TASK-4.5" in text
+    assert "review_notifications" in text
+    assert "pending_subscription_initial_tab" in text
+    assert "SubscriptionWindow.initial_tab" in text
+    assert "Tests/UI/test_home_screen.py" in text
+    assert "3 passed" in text
+    assert "91 passed" in text
+
+
+def test_phase_two_notification_review_routing_evidence_is_linked_from_index_roadmap_and_task():
+    evidence_name = NOTIFICATION_REVIEW_EVIDENCE.name
+
+    assert evidence_name in README.read_text(encoding="utf-8")
+
+    roadmap_text = ROADMAP.read_text(encoding="utf-8")
+    assert "TASK-4.5" in roadmap_text
+    assert evidence_name in roadmap_text
+
+    task_text = TASK_4_5.read_text(encoding="utf-8")
     assert "status: Done" in task_text
     assert "- [x] #1" in task_text
     assert "- [x] #5" in task_text

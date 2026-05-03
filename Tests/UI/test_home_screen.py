@@ -101,7 +101,7 @@ async def test_home_primary_action_opens_target_route():
         await pilot.click("#home-primary-action")
         await pilot.pause(0.1)
 
-    assert seen[-1] in {"chat", "llm", "library", "schedules"}
+    assert seen[-1] in {"chat", "llm", "library", "schedules", "subscriptions"}
 
 
 @pytest.mark.asyncio
@@ -155,6 +155,26 @@ async def test_home_screen_renders_unread_notification_snapshot_without_controls
         assert len(home.query("#home-approve")) == 0
         assert len(home.query("#home-pause")) == 0
         assert len(home.query("#home-open-in-console")) == 0
+
+
+@pytest.mark.asyncio
+async def test_home_notification_primary_action_opens_notifications_inbox_context():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        notification_count=2,
+        has_library_content=True,
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#home-primary-action")
+        await pilot.pause(0.1)
+
+    assert seen[-1] == "subscriptions"
+    assert app.pending_subscription_initial_tab == "notifications"
 
 
 @pytest.mark.asyncio

@@ -104,7 +104,7 @@ def choose_next_best_action(state: HomeDashboardInput) -> HomeAction:
         return HomeAction(
             "review_notifications",
             "Review notifications",
-            "home",
+            "subscriptions",
             "Unread notifications need review.",
         )
     if not state.has_library_content:

@@ -65,6 +65,23 @@ if TYPE_CHECKING:
 #
 ########################################################################################################################
 
+SUBSCRIPTION_INITIAL_TABS = frozenset(
+    {
+        "subscriptions",
+        "review",
+        "notifications",
+        "server-reminders",
+        "server-feed",
+        "watchlist-jobs",
+        "watchlist-runs",
+        "watchlist-alert-rules",
+        "dashboard",
+        "briefings",
+        "settings",
+    }
+)
+
+
 class SubscriptionWindow(Container):
     """Main subscription management window."""
     
@@ -188,6 +205,7 @@ class SubscriptionWindow(Container):
         """
         super().__init__(*args, **kwargs)
         self.app_instance = app_instance  # Changed from self.app to self.app_instance
+        self.initial_tab = self._consume_initial_tab(app_instance)
         self.client_id = "cli"
         self.db: Optional[SubscriptionsDB] = None
         self.scheduler_worker: Optional[SubscriptionSchedulerWorker] = None
@@ -224,7 +242,7 @@ class SubscriptionWindow(Container):
     
     def compose(self) -> ComposeResult:
         """Compose the subscription UI."""
-        with TabbedContent(initial="subscriptions"):
+        with TabbedContent(initial=self.initial_tab):
             # Subscriptions tab
             with TabPane("Subscriptions", id="subscriptions"):
                 yield from self._compose_subscriptions_tab()
@@ -263,6 +281,15 @@ class SubscriptionWindow(Container):
             # Settings tab
             with TabPane("Settings", id="settings"):
                 yield from self._compose_settings_tab()
+
+    @staticmethod
+    def _consume_initial_tab(app_instance: Any) -> str:
+        initial_tab = getattr(app_instance, "pending_subscription_initial_tab", None)
+        if hasattr(app_instance, "pending_subscription_initial_tab"):
+            delattr(app_instance, "pending_subscription_initial_tab")
+        if initial_tab in SUBSCRIPTION_INITIAL_TABS:
+            return str(initial_tab)
+        return "subscriptions"
     
     def _compose_subscriptions_tab(self) -> ComposeResult:
         """Compose subscriptions management tab."""

@@ -79,7 +79,13 @@ def _select_list_item(list_view: _StubListView, index: int = 0) -> object:
     return item
 
 
-def build_window(*, tmp_path: Path, runtime_backend: str, policy_allowed: bool = True) -> SubscriptionWindow:
+def build_window(
+    *,
+    tmp_path: Path,
+    runtime_backend: str,
+    policy_allowed: bool = True,
+    pending_initial_tab: str | None = None,
+) -> SubscriptionWindow:
     notifications_store = ClientNotificationsDB(
         db_path=tmp_path / f"notifications-{runtime_backend}.sqlite3",
         client_id=f"tests-{runtime_backend}",
@@ -95,6 +101,8 @@ def build_window(*, tmp_path: Path, runtime_backend: str, policy_allowed: bool =
         require_ui_action_allowed=require_ui_action_allowed,
         notify=Mock(),
     )
+    if pending_initial_tab is not None:
+        app.pending_subscription_initial_tab = pending_initial_tab
     app.watchlist_scope_service.list_watch_items = AsyncMock(
         return_value=[_normalized_watch_row(runtime_backend)]
     )
@@ -282,6 +290,17 @@ def build_window(*, tmp_path: Path, runtime_backend: str, policy_allowed: bool =
     window.notifications_store = notifications_store
     window._test_widgets = widgets
     return window
+
+
+def test_subscription_window_consumes_pending_notifications_initial_tab(tmp_path: Path):
+    window = build_window(
+        tmp_path=tmp_path,
+        runtime_backend="local",
+        pending_initial_tab="notifications",
+    )
+
+    assert window.initial_tab == "notifications"
+    assert not hasattr(window.app_instance, "pending_subscription_initial_tab")
 
 
 @pytest.mark.asyncio

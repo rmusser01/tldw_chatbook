@@ -45,7 +45,7 @@ def test_next_best_action_surfaces_notifications_after_live_work_blockers():
 
     assert action.action_id == "review_notifications"
     assert action.label == "Review notifications"
-    assert action.target_route == "home"
+    assert action.target_route == "subscriptions"
 
 
 def test_pending_approval_still_outranks_unread_notifications():

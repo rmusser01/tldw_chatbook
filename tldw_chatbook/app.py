@@ -1665,6 +1665,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.notify(result.message, severity=result.severity)
         return result
 
+    def prepare_home_primary_action(self, action: Any) -> None:
+        """Stage route-specific context before Home primary-action navigation."""
+        if getattr(action, "action_id", None) == "review_notifications":
+            self.pending_subscription_initial_tab = "notifications"
+
     def approve_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
         """Approve the active Home item through the configured adapter."""
         return self._handle_home_control_action(HomeControlAction.APPROVE, target_id=target_id)
