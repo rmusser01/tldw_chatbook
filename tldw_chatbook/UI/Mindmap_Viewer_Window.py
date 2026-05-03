@@ -191,7 +191,12 @@ class MindmapViewerWindow(Screen):
                     yield Label("Content tree not available")
                 
                 yield Button("Create Mindmap", id="create-mindmap", variant="primary")
-                yield Button("Clear Selection", id="clear-selection", variant="default")
+                yield Button(
+                    "Clear Selection",
+                    id="clear-selection",
+                    variant="default",
+                    tooltip="Clear selected source content before creating a mindmap.",
+                )
                 yield Button("Import Canvas", id="import-canvas", variant="default", tooltip="Import from Obsidian JSON Canvas")
             
             # Mindmap display

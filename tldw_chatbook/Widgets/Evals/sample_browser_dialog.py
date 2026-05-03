@@ -366,8 +366,18 @@ class SampleBrowserDialog(ModalScreen):
             
             # Action buttons
             with Horizontal(classes="action-row"):
-                yield Button("Select All", id="select-all-btn", classes="action-button")
-                yield Button("Clear Selection", id="clear-btn", classes="action-button")
+                yield Button(
+                    "Select All",
+                    id="select-all-btn",
+                    classes="action-button",
+                    tooltip="Select every sample on the current page.",
+                )
+                yield Button(
+                    "Clear Selection",
+                    id="clear-btn",
+                    classes="action-button",
+                    tooltip="Clear every selected dataset sample.",
+                )
                 yield Button("Export Selected", id="export-btn", classes="action-button", variant="primary")
                 yield Button("Close", id="close-btn", classes="action-button")
     

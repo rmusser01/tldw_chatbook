@@ -126,8 +126,18 @@ class CollectionsTagWindow(Container):
                     classes="search-input"
                 )
                 with Horizontal(classes="keyword-action-buttons"):
-                    yield Button("Select All", id="select-all-keywords", classes="small-button")
-                    yield Button("Clear Selection", id="clear-selection", classes="small-button")
+                    yield Button(
+                        "Select All",
+                        id="select-all-keywords",
+                        classes="small-button",
+                        tooltip="Select every visible keyword or tag.",
+                    )
+                    yield Button(
+                        "Clear Selection",
+                        id="clear-selection",
+                        classes="small-button",
+                        tooltip="Clear every selected keyword or tag.",
+                    )
                 yield ListView(id="keyword-list", classes="keyword-list")
                 
             # Right pane - Actions and details
