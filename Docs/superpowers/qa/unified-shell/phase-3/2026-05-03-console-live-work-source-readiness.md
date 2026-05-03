@@ -1,9 +1,9 @@
 # Console Live-Work Source Readiness
 
 Date: 2026-05-03
-Task: `TASK-3.5`
+Task: `TASK-3.6`
 Branch: `codex/unified-shell-phase3-next-slice`
-Base: `origin/dev` at `fa37fdb0`
+Base: `origin/dev` at `551cd4d3`
 
 ## Purpose
 

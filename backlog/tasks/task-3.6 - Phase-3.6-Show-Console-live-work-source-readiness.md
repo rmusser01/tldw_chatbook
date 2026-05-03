@@ -1,6 +1,6 @@
 ---
-id: TASK-3.5
-title: 'Phase 3.5: Show Console live-work source readiness'
+id: TASK-3.6
+title: 'Phase 3.6: Show Console live-work source readiness'
 status: Done
 assignee: []
 created_date: '2026-05-03 22:59'
@@ -35,7 +35,7 @@ Show a compact Console live-work source readiness summary so users can see W+C i
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Add failing regressions for Console source-readiness state, mounted no-pending rendering, pending-launch suppression, and Phase 3.5 tracking evidence.
+1. Add failing regressions for Console source-readiness state, mounted no-pending rendering, pending-launch suppression, and Phase 3.6 tracking evidence.
 2. Verify the new tests fail before production changes.
 3. Add the minimal `ConsoleLiveWorkSourceReadinessState` display model and render helper, then wire ChatScreen to show it only when no pending launch exists.
 4. Add durable Phase 3 QA evidence and update the unified-shell roadmap index.
@@ -45,5 +45,5 @@ Show a compact Console live-work source readiness summary so users can see W+C i
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Added `ConsoleLiveWorkSourceReadinessState` with stable source row IDs/classes, marking W+C connected and future live-work source families as informational `Not wired` rows with recovery copy. `ChatScreen` now renders the readiness summary only when no pending Console live-work launch is staged, preserving the focused pending launch card when a launch exists. Added regression coverage for the display model, mounted Console rendering, pending-card suppression, and Phase 3.5 evidence/roadmap/task tracking.
+Added `ConsoleLiveWorkSourceReadinessState` with stable source row IDs/classes, marking W+C connected and future live-work source families as informational `Not wired` rows with recovery copy. `ChatScreen` now renders the readiness summary only when no pending Console live-work launch is staged, preserving the focused pending launch card when a launch exists. Added regression coverage for the display model, mounted Console rendering, pending-card suppression, and Phase 3.6 evidence/roadmap/task tracking.
 <!-- SECTION:NOTES:END -->

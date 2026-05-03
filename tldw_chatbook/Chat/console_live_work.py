@@ -225,6 +225,13 @@ class ConsoleLiveWorkSourceReadinessState:
 
     @classmethod
     def default(cls) -> "ConsoleLiveWorkSourceReadinessState":
+        """Build the default Console live-work source readiness summary.
+
+        Returns:
+            ConsoleLiveWorkSourceReadinessState: Readiness state that marks W+C
+                as connected and planned future Console live-work sources as
+                unavailable until their payload producers are wired.
+        """
         connected = "destination-section console-live-work-source-row console-live-work-source-connected"
         unavailable = "destination-section console-live-work-source-row console-live-work-source-unavailable"
         return cls(
