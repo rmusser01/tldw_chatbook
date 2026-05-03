@@ -144,14 +144,23 @@ class ConsoleLiveWorkStatusCardState:
                 text=f"Action: {launch.action_label}",
             ),
         ]
-        rows.extend(
-            ConsoleLiveWorkStatusCardRow(
-                widget_id=f"console-live-work-payload-{_safe_widget_suffix(key)}",
-                text=f"{key}: {value}",
-                classes="destination-section console-live-work-status-row console-live-work-payload-row",
+        seen_ids = set()
+        for key, value in launch.payload_display_items():
+            suffix = _safe_widget_suffix(key)
+            base_id = f"console-live-work-payload-{suffix}"
+            widget_id = base_id
+            counter = 1
+            while widget_id in seen_ids:
+                widget_id = f"{base_id}-{counter}"
+                counter += 1
+            seen_ids.add(widget_id)
+            rows.append(
+                ConsoleLiveWorkStatusCardRow(
+                    widget_id=widget_id,
+                    text=f"{key}: {value}",
+                    classes="destination-section console-live-work-status-row console-live-work-payload-row",
+                )
             )
-            for key, value in launch.payload_display_items()
-        )
         return cls(
             badge_text="Pending Console launch",
             rows=tuple(rows),
