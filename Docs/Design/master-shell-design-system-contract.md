@@ -9,9 +9,17 @@ This contract maps the agentic terminal design system onto the master-shell impl
 ## Source Documents
 
 - `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md`
+- `Docs/superpowers/specs/2026-05-03-agentic-terminal-visual-design-system-design.md`
+- `Docs/Design/agentic-terminal-visual-system.md`
 - `Docs/Design/master-shell-route-inventory.md`
 
 The New_UI concept images are design references, not required runtime or review assets. If the image files are unavailable on a branch, the extracted visual rules in the design-system spec remain authoritative.
+
+## Visual Source Of Truth
+
+Runtime shell implementation must not introduce new visual patterns, token names, or state treatments that are not represented in `Docs/Design/agentic-terminal-visual-system.md`.
+
+If a runtime slice needs a new visual pattern, update the visual-system contract before changing Python widgets or TCSS.
 
 ## Required Shared Classes
 

@@ -90,7 +90,7 @@ This phase must complete before Task 0 or any runtime implementation. It turns t
 - Modify: `Docs/Design/master-shell-design-system-contract.md`
 - Modify: `Docs/superpowers/plans/2026-05-03-agentic-terminal-design-system-hardening.md`
 
-- [ ] **Step 1: Create the visual design-system spec**
+- [x] **Step 1: Create the visual design-system spec**
 
 Create `Docs/superpowers/specs/2026-05-03-agentic-terminal-visual-design-system-design.md`.
 
@@ -157,7 +157,7 @@ Provide ASCII/reference mockups only where they clarify reusable layout rules:
 - Preserve keyboard-first workflows.
 ```
 
-- [ ] **Step 2: Create the implementation-facing visual contract**
+- [x] **Step 2: Create the implementation-facing visual contract**
 
 Create `Docs/Design/agentic-terminal-visual-system.md`.
 
@@ -170,7 +170,7 @@ This file is the bridge from design language to implementation and must include:
 - ASCII mockups or layout diagrams for the 2-4 reference screens from the spec.
 - A "Do Not Implement Yet" section for screen-specific redesigns that are not part of this hardening plan.
 
-- [ ] **Step 3: Link the visual contract from the master shell contract**
+- [x] **Step 3: Link the visual contract from the master shell contract**
 
 Update `Docs/Design/master-shell-design-system-contract.md` so it names `Docs/Design/agentic-terminal-visual-system.md` as the visual source of truth.
 
@@ -180,7 +180,7 @@ Add a short gate:
 Runtime shell implementation must not introduce new visual patterns, token names, or state treatments that are not represented in `Docs/Design/agentic-terminal-visual-system.md`.
 ```
 
-- [ ] **Step 4: Review the visual foundation before runtime work**
+- [x] **Step 4: Review the visual foundation before runtime work**
 
 Review the new visual foundation against these checks:
 
@@ -190,7 +190,7 @@ Review the new visual foundation against these checks:
 - Does it map visual ideas to Textual-compatible tokens/classes?
 - Does it avoid relying on screenshots as literal 1:1 implementation requirements?
 
-- [ ] **Step 5: Verify docs-only quality**
+- [x] **Step 5: Verify docs-only quality**
 
 Run:
 
@@ -204,7 +204,7 @@ Expected:
 - No whitespace errors.
 - The master shell contract and this plan both reference the visual system artifacts.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Docs/superpowers/specs/2026-05-03-agentic-terminal-visual-design-system-design.md Docs/Design/agentic-terminal-visual-system.md Docs/Design/master-shell-design-system-contract.md Docs/superpowers/plans/2026-05-03-agentic-terminal-design-system-hardening.md
