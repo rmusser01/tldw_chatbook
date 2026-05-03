@@ -80,7 +80,7 @@ TAB_DISPLAY_LABELS = {
     TAB_LIBRARY: "Library",
     TAB_ARTIFACTS: "Artifacts",
     TAB_PERSONAS: "Personas",
-    TAB_WATCHLISTS_COLLECTIONS: "Watchlists+Collections",
+    TAB_WATCHLISTS_COLLECTIONS: "W+C",
     TAB_SCHEDULES: "Schedules",
     TAB_WORKFLOWS: "Workflows",
     TAB_MCP: "MCP",

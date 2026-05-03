@@ -32,8 +32,17 @@ class ACPScreen(BaseAppScreen):
                     "ACP runtime is not configured yet. Install or configure an ACP-compatible agent before launch.",
                     id="acp-empty-state",
                 )
-                yield Button("Follow in Console", id="acp-follow-in-console")
-                yield Button("Launch ACP Agent", id="acp-launch-agent", disabled=True)
+                yield Button(
+                    "Follow in Console",
+                    id="acp-follow-in-console",
+                    tooltip="Open Console to inspect ACP sessions and agent work.",
+                )
+                yield Button(
+                    "Launch ACP Agent",
+                    id="acp-launch-agent",
+                    disabled=True,
+                    tooltip="Unavailable until an ACP-compatible runtime is configured.",
+                )
 
     @on(Button.Pressed, "#acp-follow-in-console")
     def follow_in_console(self) -> None:

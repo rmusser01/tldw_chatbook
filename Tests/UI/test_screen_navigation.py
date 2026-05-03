@@ -576,7 +576,7 @@ async def test_main_navigation_copy_and_order():
         ("nav-library", "Library"),
         ("nav-artifacts", "Artifacts"),
         ("nav-personas", "Personas"),
-        ("nav-watchlists_collections", "Watchlists+Collections"),
+        ("nav-watchlists_collections", "W+C"),
         ("nav-schedules", "Schedules"),
         ("nav-workflows", "Workflows"),
         ("nav-mcp", "MCP"),

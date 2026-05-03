@@ -55,6 +55,14 @@ def _static_text(widget: Static) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
+def _visible_text(screen) -> str:
+    return " ".join(
+        _static_text(widget)
+        for widget in screen.query(Static)
+        if hasattr(widget, "renderable")
+    )
+
+
 @pytest.mark.parametrize(
     ("route", "title_id", "purpose_text"),
     [
@@ -77,6 +85,21 @@ async def test_primary_destination_wrappers_mount(route, title_id, purpose_text)
         assert title.has_class("ds-destination-header")
         assert purpose_text in _static_text(screen.query_one(".destination-purpose", Static)).lower()
         assert screen.query_one(".ds-panel")
+
+
+@pytest.mark.asyncio
+async def test_watchlists_collections_uses_compact_title_and_clear_sections():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+
+        assert _static_text(screen.query_one("#watchlists-collections-title", Static)) == "W+C"
+        visible_text = _visible_text(screen)
+        assert "Watchlists" in visible_text
+        assert "Collections" in visible_text
 
 
 @pytest.mark.asyncio
@@ -125,6 +148,22 @@ async def test_destination_action_buttons_emit_compatibility_routes(route, selec
     assert seen_routes[-1] == target_route
 
 
+@pytest.mark.parametrize("route", SCREEN_BY_ROUTE)
+@pytest.mark.asyncio
+async def test_destination_action_buttons_explain_their_outcome(route):
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+
+        for button in screen.query(Button):
+            tooltip = getattr(button, "tooltip", None)
+            assert tooltip is not None, button.id
+            assert str(tooltip).strip().lower() not in {"", "none"}, button.id
+
+
 @pytest.mark.parametrize(
     ("route", "expected_sections"),
     [
@@ -142,11 +181,7 @@ async def test_automation_destination_wrappers_explain_ownership(route, expected
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
-        visible_text = " ".join(
-            _static_text(widget)
-            for widget in screen.query(Static)
-            if hasattr(widget, "renderable")
-        )
+        visible_text = _visible_text(screen)
         for section in expected_sections:
             assert section in visible_text
 
@@ -169,11 +204,7 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(route, ex
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
-        visible_text = " ".join(
-            _static_text(widget)
-            for widget in screen.query(Static)
-            if hasattr(widget, "renderable")
-        )
+        visible_text = _visible_text(screen)
         assert expected_text in visible_text
 
 
@@ -195,11 +226,7 @@ async def test_unwired_destination_actions_are_disabled_with_honest_copy(route, 
 
         button = screen.query_one(selector, Button)
         assert button.disabled is True
-        assert copy in " ".join(
-            _static_text(widget)
-            for widget in screen.query(Static)
-            if hasattr(widget, "renderable")
-        )
+        assert copy in _visible_text(screen)
 
 
 @pytest.mark.asyncio

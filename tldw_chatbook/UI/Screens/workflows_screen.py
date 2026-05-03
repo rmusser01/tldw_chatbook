@@ -31,7 +31,11 @@ class WorkflowsScreen(BaseAppScreen):
                 yield Static("Outputs", classes="destination-section")
                 yield Static("Launch in Console", classes="destination-section")
                 yield Static("No workflow service is wired yet.", id="workflows-empty-state")
-                yield Button("Launch in Console", id="workflows-launch-in-console")
+                yield Button(
+                    "Launch in Console",
+                    id="workflows-launch-in-console",
+                    tooltip="Open Console to start or inspect workflow execution.",
+                )
 
     @on(Button.Pressed, "#workflows-launch-in-console")
     def launch_in_console(self) -> None:

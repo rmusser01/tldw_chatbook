@@ -65,7 +65,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
     ),
     ShellDestination(
         "watchlists_collections",
-        "Watchlists+Collections",
+        "W+C",
         "watchlists_collections",
         "Monitored sources and curated reading/content collections.",
         "Monitor feeds and curate collections.",

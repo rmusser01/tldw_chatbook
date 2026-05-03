@@ -30,7 +30,11 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Storage", classes="destination-section")
                 yield Static("App-level behavior", classes="destination-section")
                 yield Static("MCP and tool-control settings live under MCP, not global Settings.")
-                yield Button("Open Appearance", id="settings-open-appearance")
+                yield Button(
+                    "Open Appearance",
+                    id="settings-open-appearance",
+                    tooltip="Open appearance customization settings.",
+                )
 
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:

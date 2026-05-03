@@ -25,13 +25,21 @@ class ArtifactsScreen(BaseAppScreen):
                 classes="destination-purpose",
             )
             with Vertical(id="artifacts-sections", classes="ds-panel"):
-                yield Button("Open Chatbooks", id="artifacts-open-chatbooks")
+                yield Button(
+                    "Open Chatbooks",
+                    id="artifacts-open-chatbooks",
+                    tooltip="Open portable Chatbook bundles.",
+                )
                 yield Static(
                     "Generated outputs from local and server output services will appear here.",
                     id="artifacts-output-status",
                     classes="destination-purpose",
                 )
-                yield Button("Use in Console", id="artifacts-use-in-console")
+                yield Button(
+                    "Use in Console",
+                    id="artifacts-use-in-console",
+                    tooltip="Stage artifact context in Console.",
+                )
 
     @on(Button.Pressed, "#artifacts-open-chatbooks")
     def open_chatbooks(self) -> None:

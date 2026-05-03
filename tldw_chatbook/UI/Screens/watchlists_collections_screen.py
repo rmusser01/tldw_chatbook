@@ -1,4 +1,4 @@
-"""Watchlists+Collections destination shell."""
+"""W+C destination shell."""
 
 from textual.app import ComposeResult
 from textual import on
@@ -18,7 +18,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         with Vertical(id="watchlists-collections-shell"):
             yield Static(
-                "Watchlists+Collections",
+                "W+C",
                 id="watchlists-collections-title",
                 classes="ds-destination-header",
             )
@@ -36,8 +36,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 yield Static(
                     "Reading/content items, highlights, saved searches, archive state, note links, templates, feeds, import/export."
                 )
-                yield Button("Open current Watchlists", id="wc-open-watchlists")
-                yield Button("Follow in Console", id="watchlists-follow-in-console")
+                yield Button(
+                    "Open current Watchlists",
+                    id="wc-open-watchlists",
+                    tooltip="Open the current watchlist/subscription surface.",
+                )
+                yield Button(
+                    "Follow in Console",
+                    id="watchlists-follow-in-console",
+                    tooltip="Open Console to inspect watchlist and collection work.",
+                )
 
     @on(Button.Pressed, "#wc-open-watchlists")
     def open_watchlists(self) -> None:
@@ -47,5 +55,5 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def follow_in_console(self) -> None:
         self.app_instance.open_console_for_live_work(
             source="watchlists_collections",
-            title="Watchlists+Collections",
+            title="W+C",
         )

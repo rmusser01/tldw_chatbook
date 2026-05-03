@@ -32,4 +32,9 @@ class MCPScreen(BaseAppScreen):
                     "Unified MCP management is not embedded in this shell yet.",
                     id="mcp-management-unavailable",
                 )
-                yield Button("Open MCP Management", id="mcp-open-management", disabled=True)
+                yield Button(
+                    "Open MCP Management",
+                    id="mcp-open-management",
+                    disabled=True,
+                    tooltip="Unavailable until MCP management is embedded in this shell.",
+                )

@@ -50,7 +50,7 @@ All new shell surfaces must support `.density-compact` and `.density-comfortable
 
 - Home and all primary destination wrappers use `.ds-destination-header` and `.ds-panel`.
 - Console renders pending live-work launch context with `.ds-panel` and a readable source/title label.
-- Static source/artifact/persona/skill actions stage `ChatHandoffPayload` context; live work from Watchlists+Collections, Schedules, Workflows, and ACP uses `open_console_for_live_work()`.
+- Static source/artifact/persona/skill actions stage `ChatHandoffPayload` context; live work from W+C, Schedules, Workflows, and ACP uses `open_console_for_live_work()`.
 - `tools_settings` resolves to MCP; global preferences are owned by Settings.
 
 ## Stop Conditions
