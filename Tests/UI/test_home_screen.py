@@ -4,6 +4,11 @@ import pytest
 from textual.app import App
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Home.active_work_adapter import (
+    HomeControlAction,
+    HomeControlResult,
+    HomeControlResultStatus,
+)
 from tldw_chatbook.Home.dashboard_state import HomeDashboardInput
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -24,6 +29,33 @@ class HomeHarness(App):
 
 def _active_home_screen(host: HomeHarness):
     return host.screen_stack[-1]
+
+
+class RecordingHomeActiveWorkAdapter:
+    def __init__(self):
+        self.dashboard_calls = 0
+        self.control_actions = []
+
+    def build_dashboard_input(self, *, providers_models, has_recent_work):
+        self.dashboard_calls += 1
+        return HomeDashboardInput(
+            model_ready=True,
+            pending_approval_count=1,
+            running_run_count=1,
+            active_run_count=1,
+            has_library_content=True,
+            has_recent_work=has_recent_work,
+        )
+
+    def handle_control(self, action):
+        self.control_actions.append(action)
+        return HomeControlResult(
+            action=action,
+            status=HomeControlResultStatus.HANDLED,
+            message=f"{action.value} handled by adapter",
+            severity="information",
+            recovery_route="chat",
+        )
 
 
 @pytest.mark.asyncio
@@ -142,6 +174,27 @@ def test_app_exposes_home_runtime_control_hooks():
         "retry_active_home_item",
     ]:
         assert callable(getattr(app, method_name, None))
+
+
+@pytest.mark.asyncio
+async def test_home_screen_uses_active_work_adapter_for_dashboard_and_controls():
+    app = _build_test_app()
+    adapter = RecordingHomeActiveWorkAdapter()
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#home-approve")
+        await pilot.pause(0.1)
+
+    assert adapter.dashboard_calls == 1
+    assert adapter.control_actions == [HomeControlAction.APPROVE]
+    app.notify.assert_called_once_with(
+        "approve handled by adapter",
+        severity="information",
+    )
 
 
 @pytest.mark.asyncio
