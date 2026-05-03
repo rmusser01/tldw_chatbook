@@ -802,7 +802,7 @@ git commit -m "Add footer shortcut context model"
 - Modify: `tldw_chatbook/css/Themes/themes.py`
 - Regenerate: `tldw_chatbook/css/tldw_cli_modular.tcss`
 
-- [ ] **Step 1: Write failing tests for token naming and theme parity**
+- [x] **Step 1: Write failing tests for token naming and theme parity**
 
 Extend `Tests/UI/test_master_shell_design_system_contract.py`:
 
@@ -834,7 +834,7 @@ def test_generated_stylesheet_preserves_textual_safe_tokens():
         assert f"${token_name}" in loaded_text
 ```
 
-- [ ] **Step 2: Run failing contract tests**
+- [x] **Step 2: Run failing contract tests**
 
 Run:
 
@@ -846,7 +846,7 @@ Expected:
 
 - Fails if any required token is missing from `agentic_terminal_theme.variables` or TCSS sources.
 
-- [ ] **Step 3: Add only missing semantic aliases**
+- [x] **Step 3: Add only missing semantic aliases**
 
 Use hyphenated TCSS variables only. Do not introduce dotted token names.
 
@@ -869,7 +869,9 @@ $ds-source-role-evidence: $accent;
 
 Mirror required token keys in `agentic_terminal_theme.variables`.
 
-- [ ] **Step 4: Regenerate modular CSS after TCSS edits**
+Current rebased `dev` already contains the required aliases in `core/_variables.tcss`, `components/_agentic_terminal.tcss`, `themes.py`, and `tldw_cli_modular.tcss`; no TCSS/theme edits were needed in this slice.
+
+- [x] **Step 4: Regenerate modular CSS after TCSS edits**
 
 Run:
 
@@ -882,7 +884,9 @@ Expected:
 - `tldw_chatbook/css/tldw_cli_modular.tcss` is updated.
 - Output lists `components/_agentic_terminal.tcss` as processed.
 
-- [ ] **Step 5: Verify design-system contract**
+Skipped because this slice did not edit TCSS sources; the generated stylesheet contract test verifies the existing generated CSS.
+
+- [x] **Step 5: Verify design-system contract**
 
 Run:
 
@@ -893,7 +897,7 @@ git diff --check
 
 Expected: PASS and no whitespace errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Tests/UI/test_master_shell_design_system_contract.py tldw_chatbook/css/core/_variables.tcss tldw_chatbook/css/components/_agentic_terminal.tcss tldw_chatbook/css/Themes/themes.py tldw_chatbook/css/tldw_cli_modular.tcss

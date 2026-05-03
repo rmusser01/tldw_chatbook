@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -56,12 +57,17 @@ READABLE_STATUS_LABELS = {
 
 DESIGN_SYSTEM_SPEC = Path("Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md")
 DESIGN_SYSTEM_TCSS = Path("tldw_chatbook/css/components/_agentic_terminal.tcss")
+CORE_VARIABLES_TCSS = Path("tldw_chatbook/css/core/_variables.tcss")
 MAIN_TCSS = Path("tldw_chatbook/css/main.tcss")
 LOADED_TCSS = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
 BUILD_CSS_PY = Path("tldw_chatbook/css/build_css.py")
 APP_PY = Path("tldw_chatbook/app.py")
 THEMES_PY = Path("tldw_chatbook/css/Themes/themes.py")
 CONTRACT_DOC = Path("Docs/Design/master-shell-design-system-contract.md")
+
+
+def assert_no_dotted_design_tokens(text: str) -> None:
+    assert re.search(r"\$ds\.", text) is None
 
 
 def test_master_shell_design_system_class_contract_is_documented():
@@ -109,7 +115,7 @@ def test_loaded_stylesheet_contains_agentic_terminal_contract():
 def test_agentic_terminal_semantic_tokens_and_theme_exist():
     source_text = "\n".join(
         path.read_text(encoding="utf-8")
-        for path in (DESIGN_SYSTEM_TCSS, Path("tldw_chatbook/css/core/_variables.tcss"))
+        for path in (DESIGN_SYSTEM_TCSS, CORE_VARIABLES_TCSS)
         if path.exists()
     )
     for token_name in REQUIRED_SEMANTIC_TOKENS:
@@ -117,6 +123,30 @@ def test_agentic_terminal_semantic_tokens_and_theme_exist():
 
     themes_text = THEMES_PY.read_text(encoding="utf-8")
     assert "agentic_terminal" in themes_text
+
+
+def test_design_system_tokens_use_textual_safe_names():
+    source_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (CORE_VARIABLES_TCSS, DESIGN_SYSTEM_TCSS)
+    )
+
+    assert_no_dotted_design_tokens(source_text)
+    assert "$ds-" in source_text
+
+
+def test_agentic_terminal_theme_variables_cover_required_tokens():
+    themes_text = THEMES_PY.read_text(encoding="utf-8")
+    for token_name in REQUIRED_SEMANTIC_TOKENS:
+        assert f'"{token_name}"' in themes_text
+
+
+def test_generated_stylesheet_preserves_textual_safe_tokens():
+    loaded_text = LOADED_TCSS.read_text(encoding="utf-8")
+
+    assert_no_dotted_design_tokens(loaded_text)
+    for token_name in REQUIRED_SEMANTIC_TOKENS:
+        assert f"${token_name}" in loaded_text
 
 
 def test_status_contract_requires_readable_labels():
