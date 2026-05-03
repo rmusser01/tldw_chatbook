@@ -169,7 +169,7 @@ async def test_destination_action_buttons_explain_their_outcome(route):
     [
         ("watchlists_collections", ["Watchlists", "Collections"]),
         ("schedules", ["Next Run", "Paused", "Failed"]),
-        ("workflows", ["Recipes", "Dry Run", "Launch in Console"]),
+        ("workflows", ["Recipes", "Dry Run", "Console launch unavailable"]),
     ],
 )
 @pytest.mark.asyncio

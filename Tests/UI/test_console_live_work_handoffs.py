@@ -46,27 +46,50 @@ def test_open_console_for_live_work_routes_to_chat_route():
 
 
 @pytest.mark.parametrize(
-    ("route", "button_id"),
+    ("route", "button_id", "expected_copy"),
     [
-        ("watchlists_collections", "watchlists-follow-in-console"),
-        ("schedules", "schedules-follow-in-console"),
-        ("workflows", "workflows-launch-in-console"),
-        ("acp", "acp-follow-in-console"),
+        (
+            "watchlists_collections",
+            "watchlists-follow-in-console",
+            "Console follow is unavailable until watchlist and collection live-work payloads are wired.",
+        ),
+        (
+            "schedules",
+            "schedules-follow-in-console",
+            "Console recovery is unavailable until schedule run payloads are wired.",
+        ),
+        (
+            "workflows",
+            "workflows-launch-in-console",
+            "Console launch is unavailable until workflow execution payloads are wired.",
+        ),
+        (
+            "acp",
+            "acp-follow-in-console",
+            "Console follow is unavailable until ACP session payloads are wired.",
+        ),
     ],
 )
 @pytest.mark.asyncio
-async def test_destination_live_work_actions_open_console(route, button_id):
+async def test_skeletal_destination_console_actions_are_disabled_with_recovery_copy(
+    route,
+    button_id,
+    expected_copy,
+):
     app = _build_test_app()
     app.open_console_for_live_work = Mock()
     host = DestinationHarness(app, route)
 
     async with host.run_test(size=(180, 40)) as pilot:
         await pilot.pause(0.1)
+        button = host.screen.query_one(f"#{button_id}")
+        assert button.disabled is True
+        assert "unavailable" in str(button.label).lower()
+        assert expected_copy in " ".join(str(widget.renderable) for widget in host.screen.query("Static"))
         await pilot.click(f"#{button_id}")
         await pilot.pause(0.1)
 
-    app.open_console_for_live_work.assert_called_once()
-    assert app.open_console_for_live_work.call_args.kwargs["source"] == route
+    app.open_console_for_live_work.assert_not_called()
 
 
 @pytest.mark.parametrize(

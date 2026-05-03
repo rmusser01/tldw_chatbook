@@ -1,7 +1,6 @@
 """Schedules destination shell for run timing and recovery."""
 
 from textual.app import ComposeResult
-from textual import on
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
@@ -28,16 +27,14 @@ class SchedulesScreen(BaseAppScreen):
                 yield Static("Paused", classes="destination-section")
                 yield Static("Failed", classes="destination-section")
                 yield Static("Retry", classes="destination-section")
-                yield Static("Open in Console", classes="destination-section")
-                yield Button(
-                    "Follow in Console",
-                    id="schedules-follow-in-console",
-                    tooltip="Open Console to inspect schedule timing and recovery work.",
+                yield Static("Console recovery unavailable", classes="destination-section")
+                yield Static(
+                    "Console recovery is unavailable until schedule run payloads are wired.",
+                    id="schedules-console-unavailable",
                 )
-
-    @on(Button.Pressed, "#schedules-follow-in-console")
-    def follow_in_console(self) -> None:
-        self.app_instance.open_console_for_live_work(
-            source="schedules",
-            title="Schedules",
-        )
+                yield Button(
+                    "Console recovery unavailable",
+                    id="schedules-follow-in-console",
+                    disabled=True,
+                    tooltip="Unavailable until Schedules can pass actionable run context to Console.",
+                )
