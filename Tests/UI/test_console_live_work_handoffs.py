@@ -34,6 +34,9 @@ PHASE3_WC_DESTINATION_CONSOLE_EVIDENCE = (
 PHASE3_SCHEDULES_CONSOLE_EVIDENCE = (
     REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-schedules-console-launch.md"
 )
+PHASE3_SCHEDULES_DIGEST_CONSOLE_EVIDENCE = (
+    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-schedules-digest-console-launch.md"
+)
 
 
 def _load_console_live_work_contract():
@@ -122,6 +125,41 @@ class RotatingHomeActiveWorkAdapter:
         snapshot_index = min(self.build_calls, len(self.snapshots) - 1)
         self.build_calls += 1
         return HomeDashboardInput(active_work_items=self.snapshots[snapshot_index])
+
+
+class StaticReadingDigestService:
+    def __init__(self, outputs):
+        self.outputs = tuple(outputs)
+        self.calls = []
+
+    def list_reading_digest_outputs(self, *, schedule_id=None, limit=50, offset=0):
+        self.calls.append(
+            {
+                "schedule_id": schedule_id,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+        return {
+            "items": list(self.outputs),
+            "total": len(self.outputs),
+            "limit": limit,
+            "offset": offset,
+        }
+
+
+class ThreadRecordingReadingDigestService(StaticReadingDigestService):
+    def __init__(self, outputs):
+        super().__init__(outputs)
+        self.call_threads = []
+
+    def list_reading_digest_outputs(self, *, schedule_id=None, limit=50, offset=0):
+        self.call_threads.append(threading.get_ident())
+        return super().list_reading_digest_outputs(
+            schedule_id=schedule_id,
+            limit=limit,
+            offset=offset,
+        )
 
 
 def test_app_exposes_open_console_for_live_work_helper():
@@ -431,6 +469,23 @@ def test_phase3_schedules_console_tracking_evidence_links_task_and_roadmap():
         "`TASK-3.5`, `TASK-3.6`, `TASK-3.7`"
     ) in roadmap
     assert "schedules-follow-in-console" in task
+
+
+def test_phase3_schedules_digest_console_tracking_evidence_links_task_and_roadmap():
+    evidence = PHASE3_SCHEDULES_DIGEST_CONSOLE_EVIDENCE.read_text()
+    readme = (REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/README.md").read_text()
+    roadmap = (REPO_ROOT / "Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text()
+    task = (
+        REPO_ROOT
+        / "backlog/tasks/task-3.7 - Phase-3.7-Launch-active-Schedules-run-from-Schedules-into-Console.md"
+    ).read_text()
+
+    assert "TASK-3.7" in evidence
+    assert "Schedules Reading Digest Console Launch" in evidence
+    assert "schedules-follow-in-console" in evidence
+    assert "2026-05-03-schedules-digest-console-launch.md" in readme
+    assert "Schedules Reading Digest Console Launch Evidence" in roadmap
+    assert "reading-digest" in task
 
 
 def test_schedules_console_follow_uses_home_dashboard_app_inputs():
@@ -753,6 +808,112 @@ async def test_watchlists_destination_escapes_console_follow_markup_labels():
         assert getattr(button.label, "spans", []) == []
         assert "[red]Daily[/red] feed" in static_text
         assert "[bold]failed[/bold]" in static_text
+
+
+@pytest.mark.asyncio
+async def test_schedules_destination_keeps_console_launch_disabled_without_digest_output():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
+    app.local_media_reading_service = StaticReadingDigestService(())
+    app.open_console_for_live_work = Mock()
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#schedules-follow-in-console")
+
+        assert button.disabled is True
+        assert str(button.label) == "Console recovery unavailable"
+        assert "No active schedule run is available for Console follow." in _screen_static_text(screen)
+        await pilot.click("#schedules-follow-in-console")
+        await pilot.pause(0.1)
+
+    assert app.local_media_reading_service.calls == [
+        {
+            "schedule_id": None,
+            "limit": 1,
+            "offset": 0,
+        }
+    ]
+    app.open_console_for_live_work.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_schedules_destination_loads_digest_output_off_main_thread():
+    main_thread_id = threading.get_ident()
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
+    app.local_media_reading_service = ThreadRecordingReadingDigestService(
+        (
+            {
+                "output_id": 91,
+                "schedule_id": "local-digest-12",
+                "title": "Morning Digest Output",
+                "metadata": {"item_count": 2, "schedule_name": "Morning Digest"},
+            },
+        )
+    )
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+
+    assert app.local_media_reading_service.call_threads
+    assert main_thread_id not in app.local_media_reading_service.call_threads
+
+
+@pytest.mark.asyncio
+async def test_schedules_destination_routes_latest_digest_output_to_console():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
+    app.local_media_reading_service = StaticReadingDigestService(
+        (
+            {
+                "output_id": 91,
+                "schedule_id": "local-digest-12",
+                "title": "Morning Digest Output",
+                "format": "md",
+                "download_url": "local://reading_digest/12/91",
+                "created_at": "2026-05-03T08:00:00Z",
+                "metadata": {"item_count": 2, "schedule_name": "Morning Digest"},
+            },
+        )
+    )
+    app.open_console_for_live_work = Mock()
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#schedules-follow-in-console")
+
+        assert button.disabled is False
+        assert "Morning Digest Output" in str(button.label)
+        text = _screen_static_text(screen)
+        assert "Console launch available" in text
+        assert "Console recovery unavailable" not in text
+        assert "Console can launch latest reading digest output: Morning Digest Output." in text
+
+        await pilot.click("#schedules-follow-in-console")
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once_with(
+        source="schedules",
+        title="Morning Digest Output",
+        payload={
+            "target_id": "local:reading_digest_output:91",
+            "output_id": 91,
+            "schedule_id": "local-digest-12",
+            "schedule_name": "Morning Digest",
+            "download_url": "local://reading_digest/12/91",
+            "created_at": "2026-05-03T08:00:00Z",
+            "item_count": 2,
+        },
+        status="ready",
+        recovery="Review this reading digest output from Schedules or return to Library.",
+        action_label="Open schedule output",
+    )
 
 
 @pytest.mark.parametrize(
