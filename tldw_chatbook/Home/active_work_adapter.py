@@ -204,7 +204,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                         source="W+C",
                         title=title,
                         payload=self._watchlist_console_payload(run, str(target_id)),
-                        status=str(_mapping_value(run, "status") or "pending"),
+                        status=str(_mapping_value(run, "status") or "pending").strip().lower(),
                         recovery="Review the W+C run details or retry from W+C.",
                         action_label="Open W+C run",
                     ),
