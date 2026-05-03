@@ -1,8 +1,8 @@
 # Unified Shell Maturity Roadmap
 
 Date: 2026-05-03
-Status: Phase 0 verified
-Source Branch: `origin/dev` at `534cf226` plus `codex/unified-shell-maturity-tracking`
+Status: Phase 1 in progress
+Source Branch: `origin/dev` at `2d0fd041` plus `codex/unified-shell-phase1-destination-audit`
 
 ## Purpose
 
@@ -29,6 +29,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 
 - Home active-work controls still use placeholder notification hooks for approve, reject, pause, resume, and retry.
 - Workflows has no wired workflow service in the shell wrapper.
+- W+C, Schedules, Workflows, and ACP have Console follow/launch actions that need actionable payloads or honest unavailable states.
 - ACP launch is disabled until an ACP-compatible runtime is configured.
 - MCP management is not embedded in the top-level MCP wrapper.
 - Skills local/server services exist, but the top-level Skills shell still leaves import disabled and lacks list/detail/import UX adoption.
@@ -76,13 +77,14 @@ Initial child tasks:
 - Phase 0.2: Reconcile current dev state and merged evidence - `TASK-1.2`
 - Phase 1.1: Create shell QA walkthrough harness and evidence template - `TASK-2.1`
 - Phase 1.2: Audit destination action functionality beyond render/click tests - `TASK-2.2`
+- Phase 1.3: Remove false Console-launch affordances from skeletal destinations - `TASK-2.3`
 
 ## QA Evidence Index
 
 | Phase | Evidence Path | Status |
 | --- | --- | --- |
 | Phase 0 | `Docs/superpowers/qa/unified-shell/phase-0/` | verified |
-| Phase 1 | `Docs/superpowers/qa/unified-shell/phase-1/` | not-started |
+| Phase 1 | `Docs/superpowers/qa/unified-shell/phase-1/` | in-progress |
 | Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | not-started |
 | Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | not-started |
 | Phase 4 | `Docs/superpowers/qa/unified-shell/phase-4/` | not-started |
@@ -94,7 +96,7 @@ Initial child tasks:
 | Phase | Goal | Status | Backlog Tasks | QA Evidence | Residual Risk |
 | --- | --- | --- | --- | --- | --- |
 | Phase 0: Canonical Tracking | Make remaining work trackable. | verified | `TASK-1`, `TASK-1.1`, `TASK-1.2` | `phase-0/` | Product UI workflows are out of scope for Phase 0. |
-| Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | not-started | `TASK-2`, `TASK-2.1`, `TASK-2.2` | `phase-1/` | App walkthrough harness not yet created. |
+| Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | in-progress | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3` | `phase-1/` | False Console-launch affordances remain until `TASK-2.3` is complete. |
 | Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | not-started | `TASK-4` | `phase-2/` | Home action adapters still need design and implementation. |
 | Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | not-started | `TASK-3` | `phase-3/` | Live work event sources need explicit contracts. |
 | Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | not-started | `TASK-5` | `phase-4/` | Service coverage varies by destination. |
@@ -108,6 +110,14 @@ Initial child tasks:
 - `Docs/superpowers/qa/unified-shell/phase-1/walkthrough-protocol.md`
 - `Docs/superpowers/qa/unified-shell/phase-1/walkthrough-template.md`
 - `Docs/superpowers/qa/unified-shell/phase-1/2026-05-03-phase-1-protocol-smoke.md`
+
+## Phase 1.2 Destination Action Audit Evidence
+
+`TASK-2.2` records action ownership and usability status for every top-level destination:
+
+- `Docs/superpowers/qa/unified-shell/phase-1/2026-05-03-destination-action-audit.md`
+
+Audit result: W+C, Schedules, Workflows, and ACP have false Console-launch affordances that should be handled by the PR-sized follow-up `TASK-2.3`.
 
 ## Phase 0: Canonical Tracking
 
