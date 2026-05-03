@@ -186,7 +186,8 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             return []
         try:
             runs = self.watchlist_service.list_home_run_snapshot(limit=20)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to fetch local watchlist runs for Home: {e}")
             return []
 
         items: list[HomeActiveWorkItem] = []
