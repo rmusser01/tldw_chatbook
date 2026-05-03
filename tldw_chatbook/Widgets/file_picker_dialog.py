@@ -240,7 +240,12 @@ class QuickPickerWidget(Container):
         with Horizontal(classes="quick-picker"):
             yield Label(self.label, classes="picker-label")
             yield Static("No file selected", id="selected-file-display", classes="file-display")
-            yield Button("Browse...", id="browse-button", classes="browse-button")
+            yield Button(
+                "Browse...",
+                id="browse-button",
+                classes="browse-button",
+                tooltip=f"Choose {self.file_types} from disk.",
+            )
     
     @on(Button.Pressed, "#browse-button")
     def handle_browse(self):

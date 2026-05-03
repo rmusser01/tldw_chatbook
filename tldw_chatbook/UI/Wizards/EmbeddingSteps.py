@@ -350,7 +350,12 @@ class SmartContentSelector(Container):
             )
         )
         container.mount(
-            Button("Browse Files", id="browse-files", variant="primary")
+            Button(
+                "Browse Files",
+                id="browse-files",
+                variant="primary",
+                tooltip="Choose local files to include in this embedding collection.",
+            )
         )
         
     def load_media(self, container: Container) -> None:
