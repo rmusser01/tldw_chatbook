@@ -1,10 +1,12 @@
 """Schedules destination shell for run timing and recovery."""
 
 from textual.app import ComposeResult
+from textual import on
 from textual.containers import Vertical
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
 
 
 class SchedulesScreen(BaseAppScreen):
@@ -17,9 +19,19 @@ class SchedulesScreen(BaseAppScreen):
         with Vertical(id="schedules-shell"):
             yield Static("Schedules", id="schedules-title", classes="ds-destination-header")
             yield Static(
-                "Timing, triggers, pauses, retries, and recovery for active work.",
+                "Schedules own when things run.",
                 id="schedules-purpose",
                 classes="destination-purpose",
             )
             with Vertical(id="schedules-sections", classes="ds-panel"):
-                yield Static("Runs | Triggers | Paused work | Recovery")
+                yield Static("Next Run", classes="destination-section")
+                yield Static("No scheduler data is available yet.", id="schedules-empty-state")
+                yield Static("Paused", classes="destination-section")
+                yield Static("Failed", classes="destination-section")
+                yield Static("Retry", classes="destination-section")
+                yield Static("Open in Console", classes="destination-section")
+                yield Button("Open in Console", id="schedules-open-console")
+
+    @on(Button.Pressed, "#schedules-open-console")
+    def open_console(self) -> None:
+        self.post_message(NavigateToScreen("chat"))

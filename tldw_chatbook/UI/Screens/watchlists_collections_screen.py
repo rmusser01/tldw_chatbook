@@ -1,10 +1,12 @@
 """Watchlists+Collections destination shell."""
 
 from textual.app import ComposeResult
+from textual import on
 from textual.containers import Vertical
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
 
 
 class WatchlistsCollectionsScreen(BaseAppScreen):
@@ -26,4 +28,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 classes="destination-purpose",
             )
             with Vertical(id="watchlists-collections-sections", classes="ds-panel"):
-                yield Static("Watchlists | Collections | Feed status | Open in Console")
+                yield Static("Watchlists", classes="destination-section")
+                yield Static(
+                    "Monitored sources, filters, jobs, runs, outputs, templates, alerts, telemetry, retry/backoff."
+                )
+                yield Static("Collections", classes="destination-section")
+                yield Static(
+                    "Reading/content items, highlights, saved searches, archive state, note links, templates, feeds, import/export."
+                )
+                yield Button("Open current Watchlists", id="wc-open-watchlists")
+
+    @on(Button.Pressed, "#wc-open-watchlists")
+    def open_watchlists(self) -> None:
+        self.post_message(NavigateToScreen("subscriptions"))

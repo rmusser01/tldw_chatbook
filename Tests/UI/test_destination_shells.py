@@ -8,12 +8,18 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
+from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
+from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 
 
 SCREEN_BY_ROUTE = {
     "library": LibraryScreen,
     "artifacts": ArtifactsScreen,
     "personas": PersonasScreen,
+    "watchlists_collections": WatchlistsCollectionsScreen,
+    "schedules": SchedulesScreen,
+    "workflows": WorkflowsScreen,
 }
 
 
@@ -93,6 +99,9 @@ async def test_library_exposes_source_sections_and_import_export_boundary():
         ("library", "#library-open-search", "search"),
         ("artifacts", "#artifacts-open-chatbooks", "chatbooks"),
         ("personas", "#personas-open-profiles", "ccp"),
+        ("watchlists_collections", "#wc-open-watchlists", "subscriptions"),
+        ("schedules", "#schedules-open-console", "chat"),
+        ("workflows", "#workflows-launch-console", "chat"),
     ],
 )
 @pytest.mark.asyncio
@@ -107,3 +116,29 @@ async def test_destination_action_buttons_emit_compatibility_routes(route, selec
         await pilot.pause(0.1)
 
     assert seen_routes[-1] == target_route
+
+
+@pytest.mark.parametrize(
+    ("route", "expected_sections"),
+    [
+        ("watchlists_collections", ["Watchlists", "Collections"]),
+        ("schedules", ["Next Run", "Paused", "Failed"]),
+        ("workflows", ["Recipes", "Dry Run", "Launch in Console"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_automation_destination_wrappers_explain_ownership(route, expected_sections):
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+
+        visible_text = " ".join(
+            _static_text(widget)
+            for widget in screen.query(Static)
+            if hasattr(widget, "renderable")
+        )
+        for section in expected_sections:
+            assert section in visible_text
