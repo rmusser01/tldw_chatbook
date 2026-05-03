@@ -101,6 +101,14 @@ Initial child tasks:
 | Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | not-started | `TASK-6` | `phase-5/` | Shared taxonomy not yet extracted. |
 | Phase 6: Audit Replay And Closeout | Prove shell works for first-time and power users. | not-started | `TASK-7` | `phase-6/` | Depends on prior phases and running-app QA. |
 
+## Phase 1.1 QA Harness Evidence
+
+`TASK-2.1` owns the first reusable Phase 1 QA harness assets:
+
+- `Docs/superpowers/qa/unified-shell/phase-1/walkthrough-protocol.md`
+- `Docs/superpowers/qa/unified-shell/phase-1/walkthrough-template.md`
+- `Docs/superpowers/qa/unified-shell/phase-1/2026-05-03-phase-1-protocol-smoke.md`
+
 ## Phase 0: Canonical Tracking
 
 Done when:
