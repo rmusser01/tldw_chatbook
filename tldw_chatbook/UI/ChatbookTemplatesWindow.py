@@ -22,6 +22,10 @@ if TYPE_CHECKING:
     from ..app import TldwCli
 
 
+CHATBOOK_TEMPLATE_USE_DISABLED_TOOLTIP = "Select a Chatbook template before using it."
+CHATBOOK_TEMPLATE_USE_ENABLED_TOOLTIP = "Create a Chatbook from the selected template."
+
+
 class ChatbookTemplate:
     """Represents a chatbook template."""
     
@@ -297,7 +301,13 @@ class ChatbookTemplatesWindow(ModalScreen):
             
             # Action buttons
             with Container(classes="action-buttons"):
-                yield Button("Use Template", id="use-template", variant="primary", disabled=True)
+                yield Button(
+                    "Use Template",
+                    id="use-template",
+                    variant="primary",
+                    disabled=True,
+                    tooltip=CHATBOOK_TEMPLATE_USE_DISABLED_TOOLTIP,
+                )
                 yield Button("Cancel", id="cancel", variant="default")
     
     async def on_mount(self) -> None:
@@ -351,7 +361,9 @@ class ChatbookTemplatesWindow(ModalScreen):
         self._update_details(template)
         
         # Enable use button
-        self.query_one("#use-template", Button).disabled = False
+        use_button = self.query_one("#use-template", Button)
+        use_button.disabled = False
+        use_button.tooltip = CHATBOOK_TEMPLATE_USE_ENABLED_TOOLTIP
     
     def _update_details(self, template: Optional[ChatbookTemplate]) -> None:
         """Update the details panel."""
