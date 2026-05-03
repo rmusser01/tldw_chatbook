@@ -1,7 +1,6 @@
 """Workflows destination shell for reusable agent procedures."""
 
 from textual.app import ComposeResult
-from textual import on
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
@@ -29,17 +28,15 @@ class WorkflowsScreen(BaseAppScreen):
                 yield Static("Dry Run", classes="destination-section")
                 yield Static("Approvals", classes="destination-section")
                 yield Static("Outputs", classes="destination-section")
-                yield Static("Launch in Console", classes="destination-section")
+                yield Static("Console launch unavailable", classes="destination-section")
                 yield Static("No workflow service is wired yet.", id="workflows-empty-state")
-                yield Button(
-                    "Launch in Console",
-                    id="workflows-launch-in-console",
-                    tooltip="Open Console to start or inspect workflow execution.",
+                yield Static(
+                    "Console launch is unavailable until workflow execution payloads are wired.",
+                    id="workflows-console-unavailable",
                 )
-
-    @on(Button.Pressed, "#workflows-launch-in-console")
-    def launch_in_console(self) -> None:
-        self.app_instance.open_console_for_live_work(
-            source="workflows",
-            title="Workflows",
-        )
+                yield Button(
+                    "Console launch unavailable",
+                    id="workflows-launch-in-console",
+                    disabled=True,
+                    tooltip="Unavailable until Workflows can pass actionable execution context to Console.",
+                )

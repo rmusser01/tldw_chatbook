@@ -1,7 +1,6 @@
 """ACP destination shell for agent sessions and runtimes."""
 
 from textual.app import ComposeResult
-from textual import on
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
@@ -32,10 +31,15 @@ class ACPScreen(BaseAppScreen):
                     "ACP runtime is not configured yet. Install or configure an ACP-compatible agent before launch.",
                     id="acp-empty-state",
                 )
+                yield Static(
+                    "Console follow is unavailable until ACP session payloads are wired.",
+                    id="acp-console-unavailable",
+                )
                 yield Button(
-                    "Follow in Console",
+                    "Console follow unavailable",
                     id="acp-follow-in-console",
-                    tooltip="Open Console to inspect ACP sessions and agent work.",
+                    disabled=True,
+                    tooltip="Unavailable until ACP can pass actionable session context to Console.",
                 )
                 yield Button(
                     "Launch ACP Agent",
@@ -43,10 +47,3 @@ class ACPScreen(BaseAppScreen):
                     disabled=True,
                     tooltip="Unavailable until an ACP-compatible runtime is configured.",
                 )
-
-    @on(Button.Pressed, "#acp-follow-in-console")
-    def follow_in_console(self) -> None:
-        self.app_instance.open_console_for_live_work(
-            source="acp",
-            title="ACP",
-        )

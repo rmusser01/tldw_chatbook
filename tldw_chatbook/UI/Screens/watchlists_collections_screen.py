@@ -41,19 +41,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     id="wc-open-watchlists",
                     tooltip="Open the current watchlist/subscription surface.",
                 )
+                yield Static(
+                    "Console follow is unavailable until watchlist and collection live-work payloads are wired.",
+                    id="watchlists-console-unavailable",
+                )
                 yield Button(
-                    "Follow in Console",
+                    "Console follow unavailable",
                     id="watchlists-follow-in-console",
-                    tooltip="Open Console to inspect watchlist and collection work.",
+                    disabled=True,
+                    tooltip="Unavailable until W+C can pass actionable live-work context to Console.",
                 )
 
     @on(Button.Pressed, "#wc-open-watchlists")
     def open_watchlists(self) -> None:
         self.post_message(NavigateToScreen("subscriptions"))
-
-    @on(Button.Pressed, "#watchlists-follow-in-console")
-    def follow_in_console(self) -> None:
-        self.app_instance.open_console_for_live_work(
-            source="watchlists_collections",
-            title="W+C",
-        )
