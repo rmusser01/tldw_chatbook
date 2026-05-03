@@ -472,7 +472,7 @@ git commit -m "Harden shell navigation metadata"
 - Test: `Tests/UI/test_command_palette_shell_routes.py`
 - Test: `Tests/UI/test_command_palette_providers.py`
 
-- [ ] **Step 1: Write failing palette tests for compact labels**
+- [x] **Step 1: Write failing palette tests for compact labels**
 
 Add a test that verifies the palette can be found with the full `Watchlists+Collections` term even though the top nav label stays `W+C`.
 Add `TAB_WATCHLISTS_COLLECTIONS` to the imports in the test file that owns this assertion.
@@ -516,7 +516,7 @@ async def test_search_matches_destination_help_keywords(tab_provider):
         assert any(expected_label in hit.text for hit in hits), query
 ```
 
-- [ ] **Step 2: Run failing palette tests**
+- [x] **Step 2: Run failing palette tests**
 
 Run:
 
@@ -533,7 +533,7 @@ Expected:
 
 - Fails until help/search text includes the full destination vocabulary and provider search scores help text.
 
-- [ ] **Step 3: Generate palette labels/help from shell metadata where possible**
+- [x] **Step 3: Generate palette labels/help from shell metadata where possible**
 
 Keep the existing `TabNavigationProvider` structure, but stop duplicating shell destination meaning for primary destinations.
 
@@ -592,7 +592,7 @@ for command_text, tab_id, help_text in tab_commands:
         )
 ```
 
-- [ ] **Step 4: Preserve legacy direct commands**
+- [x] **Step 4: Preserve legacy direct commands**
 
 Run:
 
@@ -606,7 +606,7 @@ Expected:
 - Legacy direct commands remain available.
 - Settings and MCP remain separate shell commands.
 
-- [ ] **Step 5: Rerun provider-focused tests**
+- [x] **Step 5: Rerun provider-focused tests**
 
 Run:
 
@@ -616,7 +616,7 @@ Run:
 
 Expected: PASS, or only pre-existing unrelated skips.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tldw_chatbook/app.py Tests/UI/test_command_palette_shell_routes.py Tests/UI/test_command_palette_providers.py

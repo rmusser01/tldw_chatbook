@@ -41,7 +41,7 @@ try:
         TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, 
         TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS, 
         TAB_STATS, TAB_EVALS, TAB_CODING, TAB_STTS, TAB_MCP,
-        TAB_SETTINGS, get_tab_display_label
+        TAB_SETTINGS, TAB_STUDY, TAB_WATCHLISTS_COLLECTIONS, get_tab_display_label
     )
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     IMPORTS_AVAILABLE = True
@@ -82,6 +82,8 @@ except ImportError as e:
     TAB_STTS = "stts"
     TAB_MCP = "mcp"
     TAB_SETTINGS = "settings"
+    TAB_STUDY = "study"
+    TAB_WATCHLISTS_COLLECTIONS = "watchlists_collections"
     ALL_TABS = [
         TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
         TAB_INGEST, TAB_EVALS, TAB_LLM, TAB_STTS,
@@ -307,6 +309,49 @@ class TestTabNavigationProvider:
         assert "Character Chat" not in joined_text
         assert "LLM Management" not in joined_text
         assert "Tools & Settings" not in joined_text
+
+    def test_tab_navigation_provider_exposes_full_label_for_compact_destinations(self, tab_provider):
+        command_text, tab_id, help_text = tab_provider._tab_command(TAB_WATCHLISTS_COLLECTIONS)
+
+        assert tab_id == TAB_WATCHLISTS_COLLECTIONS
+        assert "W+C" in command_text
+        assert "Watchlists+Collections" in command_text
+        assert "Watchlists+Collections" in help_text
+
+    @pytest.mark.asyncio
+    async def test_search_finds_watchlists_collections_by_full_label(self, tab_provider):
+        hits = []
+        async for hit in tab_provider.search("Watchlists+Collections"):
+            hits.append(hit)
+
+        assert any("Watchlists+Collections" in hit.text for hit in hits)
+        assert any("Watchlists+Collections" in (hit.help or "") for hit in hits)
+
+    @pytest.mark.asyncio
+    async def test_search_matches_destination_help_keywords(self, tab_provider):
+        class QueryMatcher:
+            def __init__(self, query: str):
+                self.query = query.lower()
+
+            def match(self, text: str) -> float:
+                return 1.0 if self.query in text.lower() else 0.0
+
+            def highlight(self, text: str) -> str:
+                return text
+
+        cases = [
+            ("Workspaces", "Library"),
+            ("flashcards", "Study"),
+            ("quizzes", "Study"),
+        ]
+
+        for query, expected_label in cases:
+            tab_provider.matcher = lambda query_text, _query=query: QueryMatcher(_query)
+            hits = []
+            async for hit in tab_provider.search(query):
+                hits.append(hit)
+
+            assert any(expected_label in hit.text for hit in hits), query
     
     def test_switch_tab_success(self, tab_provider):
         """Test successful tab switching."""
