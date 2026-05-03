@@ -233,8 +233,12 @@ class CCPSidebarWidget(VerticalScroll):
         
         # ===== Conversations Section =====
         with Collapsible(title="Conversations", id="ccp-conversations-collapsible"):
-            yield Button("Import Conversation", id="ccp-import-conversation-button", 
-                       classes="sidebar-button")
+            yield Button(
+                "Import Conversation",
+                id="ccp-import-conversation-button",
+                classes="sidebar-button",
+                tooltip="Import a conversation file into Library.",
+            )
             
             # Search controls
             yield Label("Search by Title:", classes="sidebar-label")
@@ -283,8 +287,12 @@ class CCPSidebarWidget(VerticalScroll):
         
         # ===== Characters Section =====
         with Collapsible(title="Characters", id="ccp-characters-collapsible", collapsed=True):
-            yield Button("Import Character Card", id="ccp-import-character-button", 
-                       classes="sidebar-button")
+            yield Button(
+                "Import Character Card",
+                id="ccp-import-character-button",
+                classes="sidebar-button",
+                tooltip="Import a character card from disk.",
+            )
             yield Button("Create Character", id="ccp-create-character-button", 
                        classes="sidebar-button")
             yield Select(
@@ -323,7 +331,12 @@ class CCPSidebarWidget(VerticalScroll):
         
         # ===== Prompts Section =====
         with Collapsible(title="Prompts", id="ccp-prompts-collapsible", collapsed=True):
-            yield Button("Import Prompt", id="ccp-import-prompt-button", classes="sidebar-button")
+            yield Button(
+                "Import Prompt",
+                id="ccp-import-prompt-button",
+                classes="sidebar-button",
+                tooltip="Import a prompt file into Library.",
+            )
             yield Button("Create New Prompt", id="ccp-prompt-create-new-button", 
                        classes="sidebar-button")
             yield Input(id="ccp-prompt-search-input", placeholder="Search prompts...", 
@@ -345,8 +358,12 @@ class CCPSidebarWidget(VerticalScroll):
         
         # ===== Dictionaries Section =====
         with Collapsible(title="Chat Dictionaries", id="ccp-dictionaries-collapsible", collapsed=True):
-            yield Button("Import Dictionary", id="ccp-import-dictionary-button", 
-                       classes="sidebar-button")
+            yield Button(
+                "Import Dictionary",
+                id="ccp-import-dictionary-button",
+                classes="sidebar-button",
+                tooltip="Import a dictionary file into Library.",
+            )
             yield Button("Create Dictionary", id="ccp-create-dictionary-button", 
                        classes="sidebar-button")
             yield Select(
@@ -371,8 +388,12 @@ class CCPSidebarWidget(VerticalScroll):
         
         # ===== World Books Section =====
         with Collapsible(title="World/Lore Books", id="ccp-worldbooks-collapsible", collapsed=True):
-            yield Button("Import World Book", id="ccp-import-worldbook-button", 
-                       classes="sidebar-button")
+            yield Button(
+                "Import World Book",
+                id="ccp-import-worldbook-button",
+                classes="sidebar-button",
+                tooltip="Import a world or lore book file into Library.",
+            )
             yield Button("Create World Book", id="ccp-create-worldbook-button", 
                        classes="sidebar-button")
             yield Input(id="ccp-worldbook-search-input", placeholder="Search world books...", 

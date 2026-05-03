@@ -1,9 +1,13 @@
 # UX Audit Remediation Plan
 
 Date: 2026-05-01
-Status: Current-dev rebaseline after UX remediation PRs #146-#190, plus active source-authority handoff recovery slice
-Branch context: current `dev` / `origin/dev` at `a3f8a536`; active branch `codex/ux-handoff-policy-recovery-detail`
+Status: Current-dev rebaseline after UX remediation PRs #146-#202, plus active tag-management action recovery tooltip slice
+Branch context: current `origin/dev` at `d24268ae`; active branch `codex/ux-tag-action-tooltips`
 Previous audit baseline: `e2576cae`
+
+## Follow-On Master Shell Work
+
+The tooltip/remediation stream led into the master shell UX contract now captured in `Docs/Design/master-shell-route-inventory.md`, `Docs/Design/master-shell-design-system-contract.md`, and `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md`. That follow-on work reframes user-facing Chat as Console, adds Home as the dashboard/status front door, and creates destination wrappers for Library, Artifacts, Personas, Watchlists+Collections, Schedules, Workflows, MCP, ACP, Skills, and Settings while preserving legacy route IDs.
 
 ## Goal
 
@@ -29,7 +33,7 @@ This is not a visual refresh. The work is ordered around workflow completion, re
 
 ## Current Dev Rebaseline
 
-Verified on current `dev` at `a3f8a536`:
+Rebaselined on current `dev` at `d24268ae`:
 
 - Phase 0 and Phase 1 are merged: the shared shell/Chatbooks trap, Ingest default source, quiz empty mapping response, Chat save-state, Search/RAG thread mutation, and Search primary-action reachability regressions are covered.
 - Phase 2 is merged: Chat has provider readiness and first-run orientation coverage.
@@ -38,7 +42,7 @@ Verified on current `dev` at `a3f8a536`:
 
 Current source state plus this branch:
 
-- Phase 4 still needs broader live smoke replay and any non-handoff source actions where policy state can still block a visible action.
+- Phase 4 handoff source-authority closeout is complete: blocked Notes, Media, RAG Search, and Web Search `Use in Chat` actions now explain the runtime-policy reason, UX interop active-source/auth/reachability state, and the concrete recovery step without staging Chat.
 - Phase 5 top-level IA labels are merged: visible navigation now uses `Library`, `Models`, and `Speech` while preserving route IDs.
 - Phase 5 Media empty-state copy is merged: Media now points users toward Ingest and selected-item requirements for analysis/save/export.
 - Phase 5 Study empty-state cleanup is merged: flashcards and quizzes now separate no-content guidance for global/local vs workspace scopes while preserving backend-unavailable states.
@@ -78,11 +82,22 @@ Current source state plus this branch:
 - Phase 5 Study section label tooltips are merged through PR #188: compact Study section labels keep fast navigation while explaining Dashboard, Paths, Flashcards, Quizzes, Guides, Mindmaps, Course, and Map.
 - Phase 5 Chatbooks view-toggle tooltips are merged through PR #189: the compact `▦ Grid` and `☰ List` labels explain whether Chatbooks render as visual cards or a dense text list.
 - Phase 7 UX smoke collection repair is merged through PR #190: `Tests/UI/test_ux_audit_smoke.py` collection is restored after the malformed Web Search handoff policy smoke block.
-- Phase 4 source-authority handoff recovery copy is active in `codex/ux-handoff-policy-recovery-detail`: runtime-policy-blocked Notes/Workspace, Media, RAG, and Web Search handoffs include source authority, UX interop active source, server reachability/auth state, and concrete recovery instructions.
+- Phase 4 source-authority handoff recovery copy is merged through PR #191: runtime-policy-blocked Notes/Workspace, Media, RAG, and Web Search handoffs include source authority, UX interop active source, server reachability/auth state, and concrete recovery instructions.
+- Phase 5 Mindmap compact-control tooltips are merged through PR #192: dense Mindmap expand/collapse, search, refresh, view-mode, and search-navigation controls explain their action without slowing keyboard users.
+- Phase 5 SmartContentTree compact-control tooltips are merged through PR #193: Chatbook content selection filter and bulk-selection controls explain what visible content they affect.
+- Phase 5 Media Details content-search tooltips are merged through PR #194: compact search and match-navigation buttons explain their action inside selected media content.
+- Phase 5 Embeddings batch-control tooltips are merged through PR #196: repeated model/collection selection and deletion controls explain which scope they affect.
+- Phase 5 Embedding Wizard selector tooltips are merged through PR #197: source-content Select All, Clear All, and Invert actions explain their visible-item scope.
+- Phase 5 bulk-selection control tooltips are merged through PR #198: Evals, Notes, tags, multi-item review, and Mindmap source selection explain what each select/clear action affects.
+- Phase 5 browse/import/file-picker tooltips are merged through PR #199: file selection and import controls explain what kind of files or folders they operate on.
+- Phase 5 LLM/runtime browse tooltips are merged through PR #200: runtime executable/model/path browse controls explain the expected artifact before opening a picker.
+- Phase 5 disabled-action recovery tooltips are merged through PR #201: transcription history, evaluation template preview/selection, and chunking template actions explain selection or built-in-template prerequisites.
+- Phase 5 Chatbook action recovery tooltips are merged through PR #202: Chatbook template selection, exported-pack toolbar actions, and server-job actions explain selection and job-state prerequisites.
+- Phase 5 tag-management action recovery tooltips are active in `codex/ux-tag-action-tooltips`: Library tag Rename, Merge, and Delete actions explain exact selection requirements and enabled actions.
 - Phase 6 still needs any remaining optional dependency gaps represented as user-facing capability states where relevant.
-- Phase 7 still needs end-to-end audit replay on a clean home/config.
+- Phase 7 clean-home audit replay was captured at `6c0d2469` under `/private/tmp/tldw-chatbook-ux-remediation-verify/` before merging PRs #192 and #193; live external API/server paths remain documented uncertainty.
 
-Planning consequence: remaining implementation should target broader live source-handoff replay cases, any non-handoff source actions where policy state can still block a visible action, any remaining compact-label/descriptive copy outside top navigation, command-palette tab navigation, the Study section bar, and Chatbooks view toggles, disabled-state consistency beyond the already-covered Web Search, Media Source, Study Quiz, Study Flashcard, Study dashboard resume, Study quiz start, Study quiz Review in Chat, Media Viewer, Media Analysis, Media Highlight, Media Analysis navigation, Search/RAG saved-search actions, Media list pagination, and Media multi-item review actions, Phase 6 capability-state presentation beyond Speech/STTS, Web Search, and Search/RAG embeddings where user-relevant, and Phase 7 replay. Do not rebuild already-merged Chat handoff architecture.
+Planning consequence: batch A/B/C are now merged. Continue with small, evidence-backed disabled-action recovery gaps, then reassess remaining Phase 5 controls before moving to broader Phase 6 capability states or Phase 7 live replay. Remaining implementation should target visible no-op or disabled controls with unclear prerequisites, broader live source-handoff replay cases, any non-handoff source actions where policy state can still block a visible action, and any compact-label/descriptive copy outside top navigation. Do not rebuild already-merged Chat handoff architecture.
 
 ## Issues Covered
 
@@ -279,7 +294,7 @@ Branch state: clear/dismiss behavior completed in `codex/ux-chat-handoff-clear-c
 
 Purpose: verify and harden the source-side handoff surfaces that have now landed in current `dev`.
 
-Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG Search, and dedicated Web Search handoffs are implemented and covered by focused tests. Notes, workspace source/artifact, and Media invalid-selection states now have shared-harness smoke coverage. Valid source handoffs from mounted source surfaces replay into the app-owned Chat seam. Backend-provided dry-run and unsupported-action messages are visible on staged Chat context cards. Runtime-policy-denied Notes/Workspace handoff smoke coverage is merged through PR #179. Media handoff policy-denial recovery is merged through PR #180. RAG handoff policy-denial recovery is merged through PR #181. Web Search handoff policy-denial recovery is merged through PR #182. The active branch closes mounted smoke coverage for policy-blocked Media, RAG, and Web Search `Use in Chat`. Remaining work is to close remaining source-action capability edge cases in the shared UX smoke pass.
+Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG Search, and dedicated Web Search handoffs are implemented and covered by focused tests. Notes, workspace source/artifact, and Media invalid-selection states now have shared-harness smoke coverage. Valid source handoffs from mounted source surfaces replay into the app-owned Chat seam. Backend-provided dry-run and unsupported-action messages are visible on staged Chat context cards without implying write sync. Runtime-policy-denied Notes/Workspace handoff smoke coverage is merged through PR #179. Media handoff policy-denial recovery is merged through PR #180. RAG handoff policy-denial recovery is merged through PR #181. Web Search handoff policy-denial recovery is merged through PR #182. Runtime-policy-blocked Media, RAG, and Web Search button-event smoke coverage has also landed. The Phase 4 source-authority closeout extends shared smoke coverage so blocked Notes, Media, RAG Search, and Web Search handoffs all expose source authority, UX interop active-source/auth/reachability state, and recovery copy while leaving Chat unstaged. Remaining risk is non-handoff source-action capability edge cases, not core handoff replay.
 
 ### Files
 
@@ -305,7 +320,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 - [x] Disable Notes and workspace item `Use in Chat` actions until a valid selected item exists, with tooltip recovery copy.
 - [x] Disable or explain source actions when server/auth/capability contracts block them.
 - [x] Consume backend-owned `UX_Interop` and `runtime_policy` contracts consistently; do not rebuild source authority from raw config.
-- [ ] Keep dry-run sync reports diagnostic only; do not imply mirroring or write sync in source screens.
+- [x] Keep dry-run sync reports diagnostic only; do not imply mirroring or write sync in source screens.
 - [x] Replay each source handoff in the Phase 0/7 smoke harness.
 - [x] Replay invalid-selection handoff states for Notes, workspace source/artifact, and Media in the Phase 0/7 smoke harness.
 - [x] Surface backend dry-run sync and unsupported-action messages on staged Chat context cards without implying write sync.
@@ -328,7 +343,7 @@ Current-dev state: Notes, Workspace details/notes/sources/artifacts, Media, RAG 
 
 Purpose: make the app understandable without reducing expert efficiency.
 
-Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, #171, #172, #173, #174, #185, #186, #187, #188, and #189. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Study dashboard Resume action recovery is merged through PR #185, Study quiz Start action recovery is merged through PR #186, Study quiz Review in Chat recovery/handoff is merged through PR #187, Study section-bar compact label tooltips are merged through PR #188, Chatbooks view-toggle compact label tooltips are merged through PR #189, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, Media Highlight actions expose selected-highlight tooltips, Media Analysis navigation actions expose saved-version boundary tooltips, Search/RAG saved-search actions expose selection/reuse recovery, Media list pagination exposes result-page boundary tooltips, and Media multi-item review actions expose generation/cancellation state tooltips.
+Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #158, #159, #160, #161, #162, #163, #164, #165, #166, #167, #168, #169, #170, #171, #172, #173, #174, #185, #186, #187, #188, #189, #191, #192, #193, #194, #196, #197, #198, #199, #200, #201, and #202, with tag-management action recovery cleanup active in `codex/ux-tag-action-tooltips`. Top-level navigation labels now use `Library`, `Models`, and `Speech` while preserving route IDs, Media empty states now direct users to Ingest plus selected-item recovery actions, Study flashcard/quiz empty states distinguish no-content from unavailable runtime, Search/RAG empty states explain search modes, collections, and Chat handoffs, Notes empty states clarify local/server/workspace scope and creation/import routes, Library assets explain their Chat flow, Chatbooks clarifies portable context packs, blocked handoff recovery is clarified, invalid source-selection handoff controls are disabled with recovery copy, command-palette tab navigation aligns with the same IA names, compact main-navigation labels expose explanatory tooltips, Speech/STTS exposes local dependency capability states, Web Search missing dependencies render as disabled-state recovery copy, Media Source disabled actions expose recovery tooltips, Study Quiz disabled actions expose recovery tooltips, Study Flashcards disabled actions expose recovery tooltips, Study dashboard Resume action recovery is merged through PR #185, Study quiz Start action recovery is merged through PR #186, Study quiz Review in Chat recovery/handoff is merged through PR #187, Study section-bar compact label tooltips are merged through PR #188, Chatbooks view-toggle compact label tooltips are merged through PR #189, Mindmap compact-control tooltips are merged through PR #192, SmartContentTree compact-control tooltips are merged through PR #193, Media Details content-search tooltips are merged through PR #194, Embeddings batch-control tooltips are merged through PR #196, Embedding Wizard selector tooltips are merged through PR #197, bulk-selection control tooltips are merged through PR #198, browse/import/file-picker tooltips are merged through PR #199, LLM/runtime browse tooltips are merged through PR #200, transcription/template-management disabled action recovery is merged through PR #201, Chatbook action recovery is merged through PR #202, Media Viewer actions expose selection/capability tooltips, Media Analysis actions expose generated-analysis/saved-version tooltips, Media Highlight actions expose selected-highlight tooltips, Media Analysis navigation actions expose saved-version boundary tooltips, Search/RAG saved-search actions expose selection/reuse recovery, Media list pagination exposes result-page boundary tooltips, and Media multi-item review actions expose generation/cancellation state tooltips.
 
 ### Files
 
@@ -370,6 +385,17 @@ Branch state: partially merged through PRs #152, #153, #154, #155, #156, #157, #
 - [x] Add Study quiz Review in Chat recovery copy and selected-quiz handoff through the app-owned Chat seam.
 - [x] Add Study section-bar tooltips for compact labels while preserving fast direct navigation.
 - [x] Add Chatbooks Grid/List view-toggle tooltips for compact labels while preserving fast direct navigation.
+- [x] Add Mindmap compact-control tooltips for expand/collapse, search, refresh, view modes, and search navigation.
+- [x] Add SmartContentTree compact-control tooltips for filtering and bulk content selection.
+- [x] Add Media Details content-search tooltips for compact search and match-navigation controls.
+- [x] Add Embeddings batch-control tooltips for model and collection selection/deletion scopes.
+- [x] Add Embedding Wizard content selector tooltips for visible source-item bulk actions.
+- [x] Add bulk-selection control tooltips for Evals, Notes, tags, multi-item review, and Mindmap source selection.
+- [x] Add browse/import/file-picker tooltips for file and folder selection actions.
+- [x] Add LLM/runtime browse tooltips for executable, model, script, and path controls.
+- [x] Add disabled-action recovery tooltips for transcription history and template management selection states.
+- [x] Add disabled-action recovery tooltips for Chatbook template selection, exported-pack actions, and server-job states.
+- [x] Add disabled-action recovery tooltips for Library tag Rename, Merge, and Delete selection states.
 - [ ] Add tooltips or short descriptions where compact labels remain necessary outside top navigation.
 
 ### Acceptance Criteria
@@ -421,7 +447,7 @@ Branch state: partially completed in `codex/ux-startup-log-polish`, with Speech/
 
 Purpose: prove the plan actually fixes the observed UX failures.
 
-Current-dev state: partially started. A mounted handoff first-send smoke test now covers Chat staging and send-time context application; the broader replay artifacts still need to be regenerated after Phases 0, 1, 2, 5, and 6 land, then rerun against each source workflow. Current `dev` at `a3f8a536` has the UX smoke collection repair merged; this branch strengthens the policy-blocked handoff assertions before broader replay.
+Current-dev state: complete on local `dev` at `6c0d2469`. A clean-home Textual replay now covers first-run Chat plus the audited Chat, Notes, Ingest, Media, Search/RAG, Study, CCP, and Chatbooks workflows. Probe JSON, SVG screenshots, logs, focused JUnit output, and closeout notes are captured under `/private/tmp/tldw-chatbook-ux-remediation-verify/`. `origin/dev` was one commit ahead at `de8e58f3` during replay and was not pulled into the dirty verification worktree.
 
 ### Files
 
@@ -430,20 +456,20 @@ Current-dev state: partially started. A mounted handoff first-send smoke test no
 
 ### Steps
 
-- [ ] Run focused tests from every phase.
-- [ ] Run `git diff --check`.
+- [x] Run focused tests from every phase.
+- [x] Run `git diff --check`.
 - [x] Restore `Tests/UI/test_ux_audit_smoke.py` collection after the malformed Web Search handoff smoke block.
-- [ ] Launch with a clean home/config and verify first-run Chat.
-- [ ] Replay audited workflows: Chat readiness/send, Notes create/save/handoff, Ingest mount, Media search/handoff, Search/RAG/handoff, Study flashcards/quizzes, CCP persona chat, Chatbooks escape.
-- [ ] Capture probe JSON and screenshots/log excerpts under `/private/tmp/tldw-chatbook-ux-remediation-verify/`.
-- [ ] Document any remaining uncertainty, especially live server/API paths not covered by local probes.
+- [x] Launch with a clean home/config and verify first-run Chat.
+- [x] Replay audited workflows: Chat readiness/send, Notes create/save/handoff, Ingest mount, Media search/handoff, Search/RAG/handoff, Study flashcards/quizzes, CCP persona chat, Chatbooks escape.
+- [x] Capture probe JSON and screenshots/log excerpts under `/private/tmp/tldw-chatbook-ux-remediation-verify/`.
+- [x] Document any remaining uncertainty, especially live server/API paths not covered by local probes.
 
 ### Acceptance Criteria
 
-- [ ] P0 blockers are fixed.
-- [ ] P1 workflow trust failures are fixed or have explicit follow-up tasks.
-- [ ] P2 orientation and empty-state issues have consistent patterns across core surfaces.
-- [ ] The repeatable smoke harness prevents regression of the audited workflows.
+- [x] P0 blockers are fixed.
+- [x] P1 workflow trust failures are fixed or have explicit follow-up tasks.
+- [x] P2 orientation and empty-state issues have consistent patterns across core surfaces.
+- [x] The repeatable smoke harness prevents regression of the audited workflows.
 
 ## Verification Matrix
 
@@ -472,4 +498,4 @@ Current-dev state: partially started. A mounted handoff first-send smoke test no
 
 ## Next Step
 
-After this source-authority handoff recovery slice, remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. The remaining Phase 5 work is any remaining compact-label descriptions outside top navigation plus broader disabled primary-action consistency. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.
+After this tag-management action recovery tooltip slice, re-scan current `dev` for remaining visible disabled/no-op controls that still lack a reason or recovery path before starting broader work. Remaining Phase 4 work should focus on broader live audit replay or any non-handoff source actions where policy state can still block a visible action. Phase 6 should only add more capability states where a missing optional dependency blocks a visible user workflow. Phase 7 live replay remains the higher-risk workflow-completion follow-up.

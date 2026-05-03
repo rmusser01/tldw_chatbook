@@ -112,6 +112,15 @@ def apply_current_handoff_context(app: "TldwCli", message_text: str) -> str:
 
     return payload.format_for_model(message_text)
 
+
+def _tabbed_chat_selector(app: "TldwCli", selector: str) -> str:
+    """Map legacy chat selectors to the active tab-specific widgets."""
+    current_tab_id = getattr(app, "_current_chat_tab_id", None)
+    if current_tab_id and selector in {"#chat-input", "#chat-log"}:
+        return f"{selector}-{current_tab_id}"
+    return selector
+
+
 async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles the send button press for the main chat tab."""
     prefix = "chat"  # This handler is specific to the main chat tab's send button
@@ -134,10 +143,12 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     try:
         # Get the current screen first
         current_screen = app.screen
+        chat_input_selector = _tabbed_chat_selector(app, f"#{prefix}-input")
+        chat_log_selector = _tabbed_chat_selector(app, f"#{prefix}-log")
         
         # Try to find widgets from the current screen's context
-        text_area = current_screen.query_one(f"#{prefix}-input", TextArea)
-        chat_container = current_screen.query_one(f"#{prefix}-log", VerticalScroll)
+        text_area = current_screen.query_one(chat_input_selector, TextArea)
+        chat_container = current_screen.query_one(chat_log_selector, VerticalScroll)
         provider_widget = current_screen.query_one(f"#{prefix}-api-provider", Select)
         model_widget = current_screen.query_one(f"#{prefix}-api-model", Select)
         system_prompt_widget = current_screen.query_one(f"#{prefix}-system-prompt", TextArea)
@@ -166,8 +177,13 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             strip_thinking_tags_value = strip_tags_checkbox.value
             loguru_logger.info(f"Read strip_thinking_tags checkbox value: {strip_thinking_tags_value}")
         except QueryError:
-            loguru_logger.warning("Could not find '#chat-strip-thinking-tags-checkbox'. Defaulting to True for strip_thinking_tags.")
-            strip_thinking_tags_value = True
+            strip_thinking_tags_value = bool(
+                app.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+            )
+            loguru_logger.debug(
+                "Strip-thinking checkbox is not mounted; using chat_defaults.strip_thinking_tags="
+                f"{strip_thinking_tags_value}."
+            )
 
     except QueryError as e:
         loguru_logger.error(f"Send Button: Could not find UI widgets for '{prefix}': {e}")
@@ -176,7 +192,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             # Get current screen for error handling
             current_screen = app.screen
             container_for_error = chat_container if 'chat_container' in locals() and chat_container.is_mounted else current_screen.query_one(
-                f"#{prefix}-log", VerticalScroll) # Re-query if initial one failed
+                _tabbed_chat_selector(app, f"#{prefix}-log"), VerticalScroll) # Re-query if initial one failed
             error_text = f"**Internal Error:**\nMissing UI elements for {prefix}."
             await container_for_error.mount(
                 ChatMessage(error_text, role="System", classes="-error"))

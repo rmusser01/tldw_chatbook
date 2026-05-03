@@ -161,9 +161,13 @@ class SplashScreen(Container):
         
         # Always use random selection unless a specific card is set
         if card_selection == "random" or card_selection == "sequential":
-            # Pick random from active cards
+            # Pick random from active cards that have registered definitions.
             active_cards = self.config.get("active_cards", ["default"])
-            selected_card = random.choice(active_cards)
+            predefined_cards = self._get_predefined_cards()
+            selectable_cards = [card for card in active_cards if card in predefined_cards]
+            if not selectable_cards:
+                selectable_cards = ["default"]
+            selected_card = random.choice(selectable_cards)
             logger.info(f"Randomly selected splash card: {selected_card}")
             return selected_card
         else:

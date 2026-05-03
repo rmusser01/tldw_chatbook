@@ -147,8 +147,18 @@ class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
             
             # Action buttons
             with Horizontal(classes="button-row"):
-                yield Button("Select All", id="select-all-btn", variant="default")
-                yield Button("Clear All", id="clear-all-btn", variant="default")
+                yield Button(
+                    "Select All",
+                    id="select-all-btn",
+                    variant="default",
+                    tooltip="Select every visible note for audio generation.",
+                )
+                yield Button(
+                    "Clear All",
+                    id="clear-all-btn",
+                    variant="default",
+                    tooltip="Clear every selected note.",
+                )
                 yield Button("Generate Audio", id="generate-btn", variant="primary", disabled=True)
                 yield Button("Cancel", id="cancel-btn", variant="default")
     

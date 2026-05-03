@@ -66,7 +66,13 @@ class FileSelectionStep(WizardStep):
                     yield Static("Drop chatbook file here", classes="drop-zone-text")
                     yield Static("or", classes="drop-zone-text")
             
-            yield Button("Browse for Chatbook", id="browse-file", variant="primary", classes="browse-button")
+            yield Button(
+                "Browse for Chatbook",
+                id="browse-file",
+                variant="primary",
+                classes="browse-button",
+                tooltip="Choose a .zip Chatbook pack from disk.",
+            )
             
             # File path display
             with Container(id="file-path-container", classes="file-path-display hidden"):

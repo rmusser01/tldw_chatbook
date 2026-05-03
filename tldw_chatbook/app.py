@@ -74,8 +74,9 @@ from .config import (
     get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
-    TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
+from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
+    TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, TAB_LIBRARY, TAB_ARTIFACTS, TAB_PERSONAS, TAB_WATCHLISTS_COLLECTIONS, \
+    TAB_SCHEDULES, TAB_WORKFLOWS, TAB_MCP, TAB_ACP, TAB_SKILLS, TAB_SETTINGS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
     get_tab_display_label
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
@@ -93,6 +94,12 @@ from tldw_chatbook.Chat import (
     ServerChatConversationService,
 )
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
+from tldw_chatbook.Home.active_work_adapter import (
+    HomeControlAction,
+    HomeControlResult,
+    HomeControlResultStatus,
+    UnavailableHomeActiveWorkAdapter,
+)
 from tldw_chatbook.Logging_Config import RichLogHandler
 from tldw_chatbook.Prompt_Management import (
     LocalPromptService,
@@ -190,22 +197,33 @@ from .UI.Logs_Window import LogsWindow
 from .UI.Stats_Window import StatsWindow
 from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
 from .UI.Navigation.main_navigation import NavigateToScreen
+from .UI.Screens.acp_screen import ACPScreen
+from .UI.Screens.artifacts_screen import ArtifactsScreen
 from .UI.Screens.chat_screen import ChatScreen
+from .UI.Screens.home_screen import HomeScreen
+from .UI.Screens.library_conversations_screen import LibraryConversationsScreen
+from .UI.Screens.library_screen import LibraryScreen
+from .UI.Screens.mcp_screen import MCPScreen
 from .UI.Screens.media_ingest_screen import MediaIngestScreen
 from .UI.Screens.coding_screen import CodingScreen
 from .UI.Screens.conversation_screen import ConversationScreen
 from .UI.Screens.media_screen import MediaScreen
 from .UI.Screens.notes_screen import NotesScreen
+from .UI.Screens.personas_screen import PersonasScreen
+from .UI.Screens.schedules_screen import SchedulesScreen
 from .UI.Screens.notes_scope_models import WorkspaceSubview
 from .UI.Screens.search_screen import SearchScreen
 from .UI.Screens.evals_screen import EvalsScreen
-from .UI.Screens.tools_settings_screen import ToolsSettingsScreen
+from .UI.Screens.settings_screen import SettingsScreen
+from .UI.Screens.skills_screen import SkillsScreen
 from .UI.Screens.llm_screen import LLMScreen
 from .UI.Screens.customize_screen import CustomizeScreen
 from .UI.Screens.logs_screen import LogsScreen
 from .UI.Screens.stats_screen import StatsScreen
 from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
+from .UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
+from .UI.Screens.workflows_screen import WorkflowsScreen
 from .UI.Screens.writing_screen import WritingScreen
 from .UI.Screens.research_screen import ResearchScreen
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
@@ -467,12 +485,29 @@ class ThemeProvider(Provider):
             self.app.notify(f"Failed to apply theme: {e}", severity="error")
 
 
+def _navigate_via_screen(app: App, route: str, success_message: str) -> None:
+    """Navigate through the screen router so palette commands work in shell mode."""
+    app.post_message(NavigateToScreen(route))
+    app.notify(success_message, severity="information")
+
+
 class TabNavigationProvider(Provider):
     """Provider for tab navigation commands."""
 
     TAB_HELP_TEXT = {
-        TAB_CHAT: "Switch to the main chat interface",
-        TAB_CCP: "Switch to Library for conversations, characters, personas, prompts, dictionaries, and world books",
+        TAB_HOME: "Open Home for notifications, status, and next-best actions",
+        TAB_CHAT: "Open Console for live agent work, approvals, tools, and RAG",
+        TAB_LIBRARY: "Open Library for source material, imports, notes, media, conversations, and Search/RAG",
+        TAB_ARTIFACTS: "Open Artifacts for generated outputs, reports, datasets, and Chatbooks",
+        TAB_PERSONAS: "Open Personas for characters, prompts, dictionaries, and behavior profiles",
+        TAB_WATCHLISTS_COLLECTIONS: "Open W+C for monitored sources and curated collections",
+        TAB_SCHEDULES: "Open Schedules for run timing, triggers, pauses, retries, and recovery",
+        TAB_WORKFLOWS: "Open Workflows for reusable procedures, dry-runs, and outputs",
+        TAB_MCP: "Open MCP for servers, tools, permissions, auth, and audit",
+        TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
+        TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
+        TAB_SETTINGS: "Open global preferences, appearance, accounts, storage, and app behavior",
+        TAB_CCP: "Switch to Personas for characters, personas, prompts, dictionaries, and world books",
         TAB_NOTES: "Switch to notes management",
         TAB_MEDIA: "Switch to media library",
         TAB_SEARCH: "Switch to search and RAG",
@@ -485,25 +520,58 @@ class TabNavigationProvider(Provider):
         TAB_RESEARCH: "Switch to research workflows",
         TAB_SUBSCRIPTIONS: "Switch to subscriptions and watchlists",
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
-        TAB_TOOLS_SETTINGS: "Switch to settings and configuration",
+        TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
         TAB_LOGS: "Switch to application logs",
         TAB_CODING: "Switch to coding assistant",
         TAB_STATS: "Switch to statistics view",
         TAB_CUSTOMIZE: "Switch to appearance customization",
     }
 
-    POPULAR_TABS = (
+    NAVIGATION_TABS = (
+        TAB_HOME,
         TAB_CHAT,
-        TAB_CHATBOOKS,
-        TAB_NOTES,
-        TAB_MEDIA,
-        TAB_SEARCH,
-        TAB_TOOLS_SETTINGS,
+        TAB_LIBRARY,
+        TAB_ARTIFACTS,
+        TAB_PERSONAS,
+        TAB_WATCHLISTS_COLLECTIONS,
+        TAB_SCHEDULES,
+        TAB_WORKFLOWS,
+        TAB_MCP,
+        TAB_ACP,
+        TAB_SKILLS,
+        TAB_SETTINGS,
+    )
+
+    POPULAR_TABS = (
+        TAB_HOME,
+        TAB_CHAT,
+        TAB_LIBRARY,
+        TAB_ARTIFACTS,
+        TAB_MCP,
+        TAB_SETTINGS,
     )
     
     def __init__(self, screen, *args, **kwargs):
         """Initialize the TabNavigationProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
+
+    @classmethod
+    def navigation_tab_ids(cls) -> tuple[str, ...]:
+        return cls.NAVIGATION_TABS
+
+    @classmethod
+    def command_palette_tab_ids(cls) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(cls.NAVIGATION_TABS + tuple(ALL_TABS)))
+
+    @staticmethod
+    def route_for_tab(tab_id: str) -> str:
+        route_aliases = {
+            "llm": TAB_LLM,
+            TAB_TOOLS_SETTINGS: TAB_MCP,
+            TAB_MCP: TAB_MCP,
+            TAB_SETTINGS: TAB_SETTINGS,
+        }
+        return route_aliases.get(tab_id, tab_id)
 
     def _tab_command(self, tab_id: str) -> tuple[str, str, str]:
         label = get_tab_display_label(tab_id)
@@ -513,7 +581,7 @@ class TabNavigationProvider(Provider):
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
         
-        tab_commands = [self._tab_command(tab_id) for tab_id in ALL_TABS]
+        tab_commands = [self._tab_command(tab_id) for tab_id in self.command_palette_tab_ids()]
         
         for command_text, tab_id, help_text in tab_commands:
             score = matcher.match(command_text)
@@ -539,8 +607,9 @@ class TabNavigationProvider(Provider):
     def switch_tab(self, tab_id: str) -> None:
         """Switch to the specified tab."""
         try:
-            self.app.current_tab = tab_id
-            self.app.notify(f"Switched to {tab_id.replace('_', ' ').title()} tab", severity="information")
+            route = self.route_for_tab(tab_id)
+            self.app.post_message(NavigateToScreen(route))
+            self.app.notify(f"Switched to {get_tab_display_label(tab_id)}", severity="information")
         except Exception as e:
             self.app.notify(f"Failed to switch tab: {e}", severity="error")
 
@@ -665,20 +734,15 @@ class QuickActionsProvider(Provider):
         """Execute the specified quick action."""
         try:
             if action_id == "new_chat":
-                self.app.current_tab = TAB_CHAT
-                self.app.notify("Switched to Chat tab for new conversation", severity="information")
+                _navigate_via_screen(self.app, TAB_CHAT, "Opened Console for a new conversation")
             elif action_id == "new_character":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Switched to Character Chat tab", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas for character setup")
             elif action_id == "new_note":
-                self.app.current_tab = TAB_NOTES
-                self.app.notify("Switched to Notes tab for new note", severity="information")
+                _navigate_via_screen(self.app, TAB_NOTES, "Opened Notes for a new note")
             elif action_id == "search_all":
-                self.app.current_tab = TAB_SEARCH
-                self.app.notify("Switched to Search tab", severity="information")
+                _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG")
             elif action_id == "import_media":
-                self.app.current_tab = TAB_INGEST
-                self.app.notify("Switched to Ingest tab for media import", severity="information")
+                _navigate_via_screen(self.app, TAB_INGEST, "Opened Import/Export for media import")
             else:
                 self.app.notify(f"Quick action '{action_id}' initiated", severity="information")
         except Exception as e:
@@ -737,8 +801,7 @@ class SettingsProvider(Provider):
         """Handle settings commands."""
         try:
             if setting_id == "open_settings":
-                self.app.current_tab = TAB_TOOLS_SETTINGS
-                self.app.notify("Opened Tools & Settings tab", severity="information")
+                _navigate_via_screen(self.app, TAB_SETTINGS, "Opened Settings")
             elif setting_id == "open_config":
                 from .config import DEFAULT_CONFIG_PATH
                 self.app.notify(f"Config file location: {DEFAULT_CONFIG_PATH}", severity="information")
@@ -807,14 +870,11 @@ class CharacterProvider(Provider):
         """Handle character management actions."""
         try:
             if action_id == "open_character_tab":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Opened Character Chat tab", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas")
             elif action_id == "new_character":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Navigate to Character Chat to create new character", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas to create a character")
             elif action_id == "list_characters":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Showing all characters in Character Chat tab", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas to list characters")
             else:
                 self.app.notify(f"Character action '{action_id}' requested", severity="information")
         except Exception as e:
@@ -872,14 +932,11 @@ class MediaProvider(Provider):
         """Handle media management actions."""
         try:
             if action_id == "open_media":
-                self.app.current_tab = TAB_MEDIA
-                self.app.notify("Opened Media Library tab", severity="information")
+                _navigate_via_screen(self.app, TAB_MEDIA, "Opened Media Library")
             elif action_id == "import_new":
-                self.app.current_tab = TAB_INGEST
-                self.app.notify("Opened Ingest tab for media import", severity="information")
+                _navigate_via_screen(self.app, TAB_INGEST, "Opened Import/Export for media import")
             elif action_id == "search_transcripts":
-                self.app.current_tab = TAB_SEARCH
-                self.app.notify("Opened Search tab for transcript search", severity="information")
+                _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG for transcript search")
             else:
                 self.app.notify(f"Media action '{action_id}' requested", severity="information")
         except Exception as e:
@@ -936,8 +993,7 @@ class DeveloperProvider(Provider):
         """Handle developer/debug actions."""
         try:
             if action_id == "open_logs":
-                self.app.current_tab = TAB_LOGS
-                self.app.notify("Opened Logs tab", severity="information")
+                _navigate_via_screen(self.app, TAB_LOGS, "Opened Logs")
             elif action_id == "app_info":
                 self.app.notify("tldw_chatbook - TUI for LLM interactions", severity="information")
             elif action_id == "show_keys":
@@ -1308,8 +1364,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
         self.pending_chat_handoff: Optional[ChatHandoffPayload] = None
+        self.pending_console_launch: Optional[Dict[str, Any]] = None
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
+        self.home_active_work_adapter = UnavailableHomeActiveWorkAdapter()
         self.loguru_logger = loguru_logger
         self.loguru_logger.info(f"Loaded app_config - strip_thinking_tags: {self.app_config.get('chat_defaults', {}).get('strip_thinking_tags', 'NOT SET')}") # Make loguru_logger an instance variable for handlers
         self.client_id = CLI_APP_CLIENT_ID
@@ -1398,9 +1456,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Initial Tab ---
         initial_tab_from_config = get_cli_setting("general", "default_tab", TAB_CHAT)
-        self._initial_tab_value = initial_tab_from_config if initial_tab_from_config in ALL_TABS else TAB_CHAT
-        if self._initial_tab_value != initial_tab_from_config: # Log if fallback occurred
-            logging.warning(f"Default tab '{initial_tab_from_config}' from config not valid. Falling back to '{self._initial_tab_value}'.")
+        self._initial_tab_value = self._normalize_initial_tab_from_config(initial_tab_from_config)
         logging.info(f"App __init__: Determined initial tab value: {self._initial_tab_value}")
         # current_tab reactive will be set in on_mount after UI is composed
 
@@ -1579,6 +1635,90 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         self.pending_chat_handoff = payload
         self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def open_console_for_live_work(self, *, source: str, title: str, payload: dict | None = None) -> None:
+        """Open Console for live work launched from another destination."""
+        self.pending_console_launch = {
+            "source": source,
+            "title": title,
+            "payload": payload or {},
+        }
+        self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def _handle_home_control_action(
+        self,
+        action: HomeControlAction,
+        *,
+        target_id: str | None = None,
+        target_route: str | None = None,
+    ) -> HomeControlResult:
+        adapter = getattr(self, "home_active_work_adapter", UnavailableHomeActiveWorkAdapter())
+        if target_id is None and target_route is None:
+            result = adapter.handle_control(action)
+        else:
+            result = adapter.handle_control(
+                action,
+                target_id=target_id,
+                target_route=target_route,
+            )
+        self.notify(result.message, severity=result.severity)
+        return result
+
+    def approve_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+        """Approve the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.APPROVE, target_id=target_id)
+
+    def reject_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+        """Reject the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.REJECT, target_id=target_id)
+
+    def pause_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+        """Pause the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.PAUSE, target_id=target_id)
+
+    def resume_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+        """Resume the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.RESUME, target_id=target_id)
+
+    def retry_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+        """Retry the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.RETRY, target_id=target_id)
+
+    def open_active_home_item_details(
+        self,
+        *,
+        target_id: str | None = None,
+        target_route: str = TAB_CHAT,
+    ) -> HomeControlResult:
+        """Open active Home item details through the configured adapter."""
+        result = self._handle_home_control_action(
+            HomeControlAction.OPEN_DETAILS,
+            target_id=target_id,
+            target_route=target_route,
+        )
+        if result.status is HomeControlResultStatus.HANDLED and result.target_route:
+            self.post_message(NavigateToScreen(result.target_route))
+        return result
+
+    def open_active_home_item_in_console(
+        self,
+        *,
+        target_id: str | None = None,
+        target_route: str = TAB_CHAT,
+    ) -> HomeControlResult:
+        """Open active Home item in Console only when the adapter supplies launch context."""
+        result = self._handle_home_control_action(
+            HomeControlAction.OPEN_IN_CONSOLE,
+            target_id=target_id,
+            target_route=target_route,
+        )
+        if result.status is HomeControlResultStatus.HANDLED and result.console_launch is not None:
+            self.open_console_for_live_work(
+                source=result.console_launch.source,
+                title=result.console_launch.title,
+                payload=dict(result.console_launch.payload or {}),
+            )
+        return result
 
     def _wire_character_persona_services(self) -> None:
         self.server_character_persona_service = ServerCharacterPersonaService.from_server_context_provider(
@@ -2877,7 +3017,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         screen_aliases = {
             TAB_CCP: "ccp",
-            "conversation": "ccp",
             TAB_LLM: "llm",
             "subscription": "subscriptions",
         }
@@ -2885,26 +3024,38 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         tab_aliases = {
             "ccp": TAB_CCP,
-            "conversation": TAB_CCP,
+            "conversation": "conversation",
             TAB_CCP: TAB_CCP,
             "llm": TAB_LLM,
             TAB_LLM: TAB_LLM,
             "subscription": TAB_SUBSCRIPTIONS,
             "subscriptions": TAB_SUBSCRIPTIONS,
+            "tools_settings": "mcp",
         }
         canonical_tab = tab_aliases.get(target, tab_aliases.get(canonical_screen, canonical_screen))
 
         screen_map = {
+            "home": HomeScreen,
             "chat": ChatScreen,
+            "library": LibraryScreen,
+            "artifacts": ArtifactsScreen,
+            "personas": PersonasScreen,
+            "watchlists_collections": WatchlistsCollectionsScreen,
+            "schedules": SchedulesScreen,
+            "workflows": WorkflowsScreen,
+            "mcp": MCPScreen,
+            "acp": ACPScreen,
+            "skills": SkillsScreen,
+            "settings": SettingsScreen,
             "ingest": MediaIngestScreen,
             "coding": CodingScreen,
-            "conversation": ConversationScreen,
+            "conversation": LibraryConversationsScreen,
             "ccp": ConversationScreen,
             "media": MediaScreen,
             "notes": NotesScreen,
             "search": SearchScreen,
             "evals": EvalsScreen,
-            "tools_settings": ToolsSettingsScreen,
+            "tools_settings": MCPScreen,
             "llm": LLMScreen,
             "customize": CustomizeScreen,
             "logs": LogsScreen,
@@ -2919,6 +3070,39 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         }
 
         return canonical_screen, canonical_tab, screen_map.get(canonical_screen)
+
+    def _valid_startup_route_ids(self) -> set[str]:
+        """Return route ids allowed in startup config during the shell migration."""
+        from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+
+        shell_routes = {
+            destination.primary_route
+            for destination in SHELL_DESTINATION_ORDER
+        } | {
+            destination.destination_id
+            for destination in SHELL_DESTINATION_ORDER
+        }
+        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings"}
+        return set(ALL_TABS) | shell_routes | legacy_aliases
+
+    def _normalize_initial_tab_from_config(self, configured_route: str | None) -> str:
+        """Validate configured startup route without discarding new shell routes."""
+        candidate = configured_route or TAB_CHAT
+        if candidate in self._valid_startup_route_ids():
+            return candidate
+
+        logging.warning(
+            "Default tab '%s' from config not valid. Falling back to '%s'.",
+            candidate,
+            TAB_CHAT,
+        )
+        return TAB_CHAT
+
+    def _resolve_initial_shell_route(self) -> str:
+        """Choose the startup route while keeping first-run orientation explicit."""
+        if self.app_config.get("_first_run", False):
+            return TAB_HOME
+        return getattr(self, "_initial_tab_value", TAB_CHAT)
         
 
     @on(NavigateToScreen)
@@ -3990,7 +4174,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def _set_initial_tab(self) -> None:  # New method for deferred tab setting
         self.loguru_logger.info("Setting initial tab via call_later.")
-        self.current_tab = self._initial_tab_value
+        self.current_tab = self._resolve_initial_shell_route()
         self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
 
     async def _push_initial_screen(self) -> None:
@@ -3998,7 +4182,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if getattr(self, "_initial_screen_pushed", False):
             return
 
-        initial_tab = getattr(self, "_initial_tab_value", TAB_CHAT)
+        initial_tab = self._resolve_initial_shell_route()
         resolved_screen_name, resolved_tab, screen_class = self._resolve_screen_navigation_target(initial_tab)
         if screen_class is None:
             resolved_screen_name = TAB_CHAT
@@ -4106,7 +4290,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # These also might rely on the main tab windows being fully composed.
         phase_start = time.perf_counter()
         # Only populate widgets for the initial tab to avoid errors with placeholders
-        initial_tab = self._initial_tab_value
+        initial_tab = self._resolve_initial_shell_route()
         if initial_tab == TAB_CHAT:
             # IMPORTANT: Do not populate character filter select here to avoid database connection conflicts
             # The populate_chat_conversation_character_filter_select creates a new DB instance that can
@@ -4144,7 +4328,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # For now, let's assume watch_current_tab will handle it.
         # if self._initial_tab_value == TAB_CCP: # Check against the initial value
         #    self.call_later(ccp_handlers.perform_ccp_conversation_search, self)
-        self.current_tab = self._initial_tab_value
+        self.current_tab = self._resolve_initial_shell_route()
         self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
 
         # --- DB Size Indicator Setup ---

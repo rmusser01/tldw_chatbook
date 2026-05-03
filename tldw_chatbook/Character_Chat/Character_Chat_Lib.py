@@ -443,6 +443,40 @@ def get_character_list_for_ui(db: CharactersRAGDB, limit: int = 1000) -> List[Di
         return []
 
 
+def _get_default_chachanotes_db() -> Optional[CharactersRAGDB]:
+    """Return the app's default character DB when legacy callers omit one."""
+    try:
+        from tldw_chatbook.config import get_chachanotes_db_lazy
+
+        return get_chachanotes_db_lazy()
+    except Exception as exc:
+        logger.error(f"Unable to resolve default character database: {exc}", exc_info=True)
+        return None
+
+
+def fetch_character_names(db: Optional[CharactersRAGDB] = None, limit: int = 1000) -> List[Dict[str, Any]]:
+    """Compatibility wrapper used by older CCP handlers."""
+    target_db = db or _get_default_chachanotes_db()
+    if target_db is None:
+        return []
+    return get_character_list_for_ui(target_db, limit=limit)
+
+
+def fetch_all_dictionaries(db: Optional[CharactersRAGDB] = None, limit: int = 1000) -> List[Dict[str, Any]]:
+    """Compatibility wrapper used by older CCP dictionary handlers."""
+    target_db = db or _get_default_chachanotes_db()
+    if target_db is None:
+        return []
+
+    try:
+        from tldw_chatbook.Character_Chat.Chat_Dictionary_Lib import list_chat_dictionaries
+
+        return list_chat_dictionaries(target_db, limit=limit)
+    except Exception as exc:
+        logger.error(f"Unable to fetch chat dictionaries: {exc}", exc_info=True)
+        return []
+
+
 def extract_character_id_from_ui_choice(choice: str) -> int:
     """Extracts a character ID from a UI selection string.
 

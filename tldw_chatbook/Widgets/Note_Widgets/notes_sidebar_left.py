@@ -82,7 +82,12 @@ class NotesSidebarLeft(VerticalScroll):
         )
         yield Button("Create from Template", id="notes-create-from-template-button", variant="success")
         yield Button("Create Blank Note", id="notes-create-new-button", variant="default")
-        yield Button("Import Note", id="notes-import-button", variant="default")
+        yield Button(
+            "Import Note",
+            id="notes-import-button",
+            variant="default",
+            tooltip="Import a note file into the current Notes scope.",
+        )
 
         yield Static("Search & Filter:", classes="sidebar-label")
         yield Input(placeholder="Search notes content...", id="notes-search-input")

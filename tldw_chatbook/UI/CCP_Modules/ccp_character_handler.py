@@ -22,9 +22,16 @@ def fetch_all_characters() -> List[Dict[str, Any]]:
     from ...Character_Chat.Character_Chat_Lib import fetch_character_names
 
     characters = fetch_character_names()
+    if isinstance(characters, dict):
+        return [
+            {"id": str(char_id), "name": name}
+            for char_id, name in characters.items()
+        ]
+
     return [
-        {"id": str(char_id), "name": name}
-        for char_id, name in characters.items()
+        {"id": str(character.get("id")), "name": character.get("name", "Unnamed")}
+        for character in characters
+        if character.get("id") is not None
     ]
 
 

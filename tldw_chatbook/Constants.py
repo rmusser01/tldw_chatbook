@@ -32,6 +32,17 @@ TAB_RESEARCH = "research"
 TAB_SUBSCRIPTIONS = "subscriptions"
 TAB_CHATBOOKS = "chatbooks"
 TAB_CUSTOMIZE = "customize"
+TAB_HOME = "home"
+TAB_LIBRARY = "library"
+TAB_ARTIFACTS = "artifacts"
+TAB_PERSONAS = "personas"
+TAB_WATCHLISTS_COLLECTIONS = "watchlists_collections"
+TAB_SCHEDULES = "schedules"
+TAB_WORKFLOWS = "workflows"
+TAB_MCP = "mcp"
+TAB_ACP = "acp"
+TAB_SKILLS = "skills"
+TAB_SETTINGS = "settings"
 ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,
             TAB_EVALS, TAB_LLM, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH,
             TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_CODING, TAB_STATS, TAB_CUSTOMIZE]
@@ -46,15 +57,15 @@ TAB_GROUPS = {
 }
 
 TAB_DISPLAY_LABELS = {
-    TAB_CHAT: "Chat",
-    TAB_CCP: "Library",
+    TAB_CHAT: "Console",
+    TAB_CCP: "Personas",
     TAB_NOTES: "Notes",
     TAB_MEDIA: "Media",
     TAB_SEARCH: "Search",
     TAB_INGEST: "Ingest",
     TAB_EVALS: "Evals",
     TAB_LLM: "Models",
-    TAB_TOOLS_SETTINGS: "Settings",
+    TAB_TOOLS_SETTINGS: "MCP",
     TAB_STATS: "Stats",
     TAB_LOGS: "Logs",
     TAB_CODING: "Coding",
@@ -65,6 +76,17 @@ TAB_DISPLAY_LABELS = {
     TAB_SUBSCRIPTIONS: "Subscriptions",
     TAB_CHATBOOKS: "Chatbooks",
     TAB_CUSTOMIZE: "Customize",
+    TAB_HOME: "Home",
+    TAB_LIBRARY: "Library",
+    TAB_ARTIFACTS: "Artifacts",
+    TAB_PERSONAS: "Personas",
+    TAB_WATCHLISTS_COLLECTIONS: "W+C",
+    TAB_SCHEDULES: "Schedules",
+    TAB_WORKFLOWS: "Workflows",
+    TAB_MCP: "MCP",
+    TAB_ACP: "ACP",
+    TAB_SKILLS: "Skills",
+    TAB_SETTINGS: "Settings",
 }
 
 

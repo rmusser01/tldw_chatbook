@@ -10,7 +10,7 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.widgets import Button, TextArea, Select, Collapsible, Input
+from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 from textual.events import Key
 from textual import on
 from textual.reactive import reactive
@@ -141,11 +141,31 @@ class ChatScreen(BaseAppScreen):
         self._state_dirty = False
         self._diagnostics_run = False
         self._handoff_consumption_in_progress = False
+        self._pending_console_launch_context: Optional[Dict[str, Any]] = None
         self.ui_state = UIState()
         self._load_sidebar_state()
+
+    def _consume_pending_console_launch(self) -> Optional[Dict[str, Any]]:
+        """Accept one-shot live-work launch context from another destination."""
+        if self._pending_console_launch_context is not None:
+            return self._pending_console_launch_context
+
+        pending_launch = getattr(self.app_instance, "pending_console_launch", None)
+        if isinstance(pending_launch, dict) and pending_launch:
+            self._pending_console_launch_context = dict(pending_launch)
+            self.app_instance.pending_console_launch = None
+        return self._pending_console_launch_context
         
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
+        pending_launch = self._consume_pending_console_launch()
+        if pending_launch:
+            source = str(pending_launch.get("source") or "unknown")
+            title = str(pending_launch.get("title") or "Untitled")
+            with Container(id="console-pending-launch-card", classes="ds-panel"):
+                yield Static("Pending Console launch", classes="ds-status-badge")
+                yield Static(f"Source: {source}", classes="destination-section")
+                yield Static(f"Title: {title}", classes="destination-section")
         # Create and yield the chat window container
         self.chat_window = ChatWindowEnhanced(self.app_instance, id="chat-window", classes="window")
         yield self.chat_window
@@ -204,7 +224,7 @@ class ChatScreen(BaseAppScreen):
                     
                     # Save tab order
                     if hasattr(tab_container, 'tab_bar') and tab_container.tab_bar:
-                        self.chat_state.tab_order = list(tab_container.tab_bar.tabs.keys())
+                        self.chat_state.tab_order = tab_container.tab_bar.get_tab_ids()
                     
                     # Also save messages for the active session
                     if tab_container.active_session_id:

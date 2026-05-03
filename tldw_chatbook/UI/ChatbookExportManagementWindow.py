@@ -56,6 +56,24 @@ TERMINAL_SERVER_JOB_STATUSES = {
 
 DOWNLOADABLE_SERVER_JOB_STATUSES = {"completed", "success"}
 
+CHATBOOK_EXPORT_DELETE_DISABLED_TOOLTIP = "Select an exported Chatbook before deleting it."
+CHATBOOK_EXPORT_REEXPORT_DISABLED_TOOLTIP = "Select an exported Chatbook before re-exporting it."
+CHATBOOK_EXPORT_SHARE_DISABLED_TOOLTIP = "Select an exported Chatbook before sharing it."
+CHATBOOK_EXPORT_OPEN_DISABLED_TOOLTIP = "Select an exported Chatbook before opening its folder."
+CHATBOOK_EXPORT_DELETE_ENABLED_TOOLTIP = "Delete the selected exported Chatbook."
+CHATBOOK_EXPORT_REEXPORT_ENABLED_TOOLTIP = "Re-export the selected Chatbook."
+CHATBOOK_EXPORT_SHARE_ENABLED_TOOLTIP = "Share the selected Chatbook."
+CHATBOOK_EXPORT_OPEN_ENABLED_TOOLTIP = "Open the selected Chatbook location."
+
+SERVER_JOB_CANCEL_DISABLED_TOOLTIP = "Select a running server Chatbook job before cancelling it."
+SERVER_JOB_DOWNLOAD_DISABLED_TOOLTIP = "Select a completed server export job before downloading it."
+SERVER_JOB_REMOVE_DISABLED_TOOLTIP = "Select a completed, failed, or cancelled server job before removing it."
+SERVER_JOB_REQUIRES_SERVER_TOOLTIP = "Server job actions require a server-owned Chatbook job."
+SERVER_JOB_CANCEL_ENABLED_TOOLTIP = "Cancel the selected running server Chatbook job."
+SERVER_JOB_DOWNLOAD_ENABLED_TOOLTIP = "Download the selected server Chatbook export."
+SERVER_JOB_DOWNLOAD_INELIGIBLE_TOOLTIP = "Only completed server export jobs can be downloaded."
+SERVER_JOB_REMOVE_INELIGIBLE_TOOLTIP = "Only completed, failed, or cancelled server jobs can be removed."
+
 
 class ChatbookExportManagementWindow(ModalScreen):
     """Window for managing exported chatbooks."""
@@ -297,10 +315,34 @@ class ChatbookExportManagementWindow(ModalScreen):
             with Container(classes="toolbar"):
                 with Horizontal(classes="toolbar-buttons"):
                     yield Button("🔄 Refresh", id="refresh-list", variant="default")
-                    yield Button("🗑️ Delete", id="delete-selected", variant="warning", disabled=True)
-                    yield Button("📤 Re-export", id="re-export", variant="default", disabled=True)
-                    yield Button("🔗 Share", id="share-selected", variant="default", disabled=True)
-                    yield Button("📁 Open Location", id="open-location", variant="default", disabled=True)
+                    yield Button(
+                        "🗑️ Delete",
+                        id="delete-selected",
+                        variant="warning",
+                        disabled=True,
+                        tooltip=CHATBOOK_EXPORT_DELETE_DISABLED_TOOLTIP,
+                    )
+                    yield Button(
+                        "📤 Re-export",
+                        id="re-export",
+                        variant="default",
+                        disabled=True,
+                        tooltip=CHATBOOK_EXPORT_REEXPORT_DISABLED_TOOLTIP,
+                    )
+                    yield Button(
+                        "🔗 Share",
+                        id="share-selected",
+                        variant="default",
+                        disabled=True,
+                        tooltip=CHATBOOK_EXPORT_SHARE_DISABLED_TOOLTIP,
+                    )
+                    yield Button(
+                        "📁 Open Location",
+                        id="open-location",
+                        variant="default",
+                        disabled=True,
+                        tooltip=CHATBOOK_EXPORT_OPEN_DISABLED_TOOLTIP,
+                    )
             
             # Main content area
             with Container(classes="main-content"):
@@ -321,9 +363,27 @@ class ChatbookExportManagementWindow(ModalScreen):
                             zebra_stripes=True,
                         )
                         with Horizontal(classes="server-job-actions"):
-                            yield Button("Cancel Job", id="cancel-server-job", variant="warning", disabled=True)
-                            yield Button("Download", id="download-server-job", variant="primary", disabled=True)
-                            yield Button("Remove Job", id="remove-server-job", variant="error", disabled=True)
+                            yield Button(
+                                "Cancel Job",
+                                id="cancel-server-job",
+                                variant="warning",
+                                disabled=True,
+                                tooltip=SERVER_JOB_CANCEL_DISABLED_TOOLTIP,
+                            )
+                            yield Button(
+                                "Download",
+                                id="download-server-job",
+                                variant="primary",
+                                disabled=True,
+                                tooltip=SERVER_JOB_DOWNLOAD_DISABLED_TOOLTIP,
+                            )
+                            yield Button(
+                                "Remove Job",
+                                id="remove-server-job",
+                                variant="error",
+                                disabled=True,
+                                tooltip=SERVER_JOB_REMOVE_DISABLED_TOOLTIP,
+                            )
                 
                 # Right: Details
                 with Container(classes="details-container"):
@@ -582,6 +642,56 @@ class ChatbookExportManagementWindow(ModalScreen):
         cancel_button.disabled = not (is_remote and has_job_id and not is_terminal)
         download_button.disabled = not (is_remote and has_job_id and is_export and is_downloadable)
         remove_button.disabled = not (is_remote and has_job_id and is_terminal)
+        self._update_server_job_action_tooltips(
+            is_remote=is_remote,
+            has_job_id=has_job_id,
+            status=status,
+            is_terminal=is_terminal,
+            is_downloadable=is_downloadable,
+            is_export=is_export,
+        )
+
+    def _update_server_job_action_tooltips(
+        self,
+        *,
+        is_remote: bool,
+        has_job_id: bool,
+        status: str,
+        is_terminal: bool,
+        is_downloadable: bool,
+        is_export: bool,
+    ) -> None:
+        cancel_button = self.query_one("#cancel-server-job", Button)
+        download_button = self.query_one("#download-server-job", Button)
+        remove_button = self.query_one("#remove-server-job", Button)
+
+        if not self.selected_server_job_record:
+            cancel_button.tooltip = SERVER_JOB_CANCEL_DISABLED_TOOLTIP
+            download_button.tooltip = SERVER_JOB_DOWNLOAD_DISABLED_TOOLTIP
+            remove_button.tooltip = SERVER_JOB_REMOVE_DISABLED_TOOLTIP
+            return
+
+        if not (is_remote and has_job_id):
+            cancel_button.tooltip = SERVER_JOB_REQUIRES_SERVER_TOOLTIP
+            download_button.tooltip = SERVER_JOB_REQUIRES_SERVER_TOOLTIP
+            remove_button.tooltip = SERVER_JOB_REQUIRES_SERVER_TOOLTIP
+            return
+
+        cancel_button.tooltip = (
+            SERVER_JOB_CANCEL_ENABLED_TOOLTIP
+            if not is_terminal
+            else f"{status.title()} server jobs cannot be cancelled."
+        )
+        download_button.tooltip = (
+            SERVER_JOB_DOWNLOAD_ENABLED_TOOLTIP
+            if is_export and is_downloadable
+            else SERVER_JOB_DOWNLOAD_INELIGIBLE_TOOLTIP
+        )
+        remove_button.tooltip = (
+            f"Remove the selected {status} server job record."
+            if is_terminal
+            else SERVER_JOB_REMOVE_INELIGIBLE_TOOLTIP
+        )
 
     async def _with_server_chatbook_service(self, operation):
         config = getattr(self.app_instance, "config_data", {}) or {}
@@ -740,10 +850,7 @@ class ChatbookExportManagementWindow(ModalScreen):
             self.selected_chatbook = index
             
             # Enable action buttons
-            self.query_one("#delete-selected", Button).disabled = False
-            self.query_one("#re-export", Button).disabled = False
-            self.query_one("#share-selected", Button).disabled = False
-            self.query_one("#open-location", Button).disabled = False
+            self._update_selected_chatbook_action_buttons(has_selection=True)
             
             # Load and display details
             await self._load_chatbook_details(index)
@@ -883,10 +990,7 @@ class ChatbookExportManagementWindow(ModalScreen):
                 self.query_one("#details-content", Container).display = False
                 
                 # Disable buttons
-                self.query_one("#delete-selected", Button).disabled = True
-                self.query_one("#re-export", Button).disabled = True
-                self.query_one("#share-selected", Button).disabled = True
-                self.query_one("#open-location", Button).disabled = True
+                self._update_selected_chatbook_action_buttons(has_selection=False)
                 
                 self.app_instance.notify(f"Deleted '{chatbook['name']}'", severity="success")
                 
@@ -899,6 +1003,30 @@ class ChatbookExportManagementWindow(ModalScreen):
         # For now, just show notification
         # In future, could launch creation wizard with pre-filled selections
         self.app_instance.notify("Re-export functionality coming soon!", severity="info")
+
+    def _update_selected_chatbook_action_buttons(self, *, has_selection: bool) -> None:
+        button_states = {
+            "#delete-selected": (
+                CHATBOOK_EXPORT_DELETE_ENABLED_TOOLTIP,
+                CHATBOOK_EXPORT_DELETE_DISABLED_TOOLTIP,
+            ),
+            "#re-export": (
+                CHATBOOK_EXPORT_REEXPORT_ENABLED_TOOLTIP,
+                CHATBOOK_EXPORT_REEXPORT_DISABLED_TOOLTIP,
+            ),
+            "#share-selected": (
+                CHATBOOK_EXPORT_SHARE_ENABLED_TOOLTIP,
+                CHATBOOK_EXPORT_SHARE_DISABLED_TOOLTIP,
+            ),
+            "#open-location": (
+                CHATBOOK_EXPORT_OPEN_ENABLED_TOOLTIP,
+                CHATBOOK_EXPORT_OPEN_DISABLED_TOOLTIP,
+            ),
+        }
+        for selector, (enabled_tooltip, disabled_tooltip) in button_states.items():
+            button = self.query_one(selector, Button)
+            button.disabled = not has_selection
+            button.tooltip = enabled_tooltip if has_selection else disabled_tooltip
     
     async def _open_location(self) -> None:
         """Open the folder containing the chatbook."""

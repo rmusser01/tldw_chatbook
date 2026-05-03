@@ -49,6 +49,37 @@ def first_run_settings(monkeypatch):
 
 
 @pytest.fixture
+def first_run_tab_settings(monkeypatch):
+    def get_setting(section, key, default=None):
+        overrides = {
+            ("chat_defaults", "enable_tabs"): True,
+            ("chat_defaults", "max_tabs"): 10,
+            ("chat.voice", "show_mic_button"): True,
+            ("chat.images", "show_attach_button"): True,
+        }
+        return overrides.get((section, key), default)
+
+    providers = {"OpenAI": ["gpt-4o"]}
+
+    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", get_setting)
+    monkeypatch.setattr("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.get_cli_setting",
+        get_setting,
+    )
+    monkeypatch.setattr("tldw_chatbook.Widgets.compact_model_bar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+        lambda: providers,
+    )
+    monkeypatch.setattr("tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
+        lambda: providers,
+    )
+
+
+@pytest.fixture
 def first_run_host():
     host = Mock()
     host.app_config = {
@@ -85,6 +116,28 @@ async def test_chat_first_run_exposes_readiness_and_context_sources(first_run_se
         empty_state = pilot.app.query_one("#chat-empty-state", Static)
         text = _text(empty_state)
 
+        assert "Console" in text
+        assert "Chat is the" not in text
+        assert "agentic control surface" in text
+        assert "OpenAI is not ready" in text
+        assert "OPENAI_API_KEY" in text
+        assert "Notes, Media, Search/RAG, Workspaces" in text
+        assert "Study flashcards/quizzes" in text
+        assert "personas" in text
+        assert "Chatbooks" in text
+        assert "Ctrl+P" in text
+
+
+@pytest.mark.asyncio
+async def test_chat_tab_first_run_exposes_readiness_and_context_sources(first_run_tab_settings, first_run_host):
+    app = _ChatFirstRunHarnessApp(first_run_host)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.1)
+        text = "\n".join(_text(widget) for widget in pilot.app.query(Static))
+
+        assert "Console" in text
+        assert "Chat is the" not in text
         assert "agentic control surface" in text
         assert "OpenAI is not ready" in text
         assert "OPENAI_API_KEY" in text

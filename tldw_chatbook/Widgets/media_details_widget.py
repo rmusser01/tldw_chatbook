@@ -177,9 +177,26 @@ class MediaDetailsWidget(Container):
                     placeholder="Search within content...",
                     classes="content-search-input"
                 )
-                yield Button("🔍", id=f"content-search-button-{self.type_slug}", classes="content-search-button")
-                yield Button("⬆", id=f"content-search-prev-{self.type_slug}", classes="content-search-nav", disabled=True)
-                yield Button("⬇", id=f"content-search-next-{self.type_slug}", classes="content-search-nav", disabled=True)
+                yield Button(
+                    "🔍",
+                    id=f"content-search-button-{self.type_slug}",
+                    classes="content-search-button",
+                    tooltip="Search within the selected media content.",
+                )
+                yield Button(
+                    "⬆",
+                    id=f"content-search-prev-{self.type_slug}",
+                    classes="content-search-nav",
+                    disabled=True,
+                    tooltip="Jump to the previous content search match.",
+                )
+                yield Button(
+                    "⬇",
+                    id=f"content-search-next-{self.type_slug}",
+                    classes="content-search-nav",
+                    disabled=True,
+                    tooltip="Jump to the next content search match.",
+                )
                 yield Static("", id=f"content-search-status-{self.type_slug}", classes="content-search-status")
         
         # Content section (read-only)

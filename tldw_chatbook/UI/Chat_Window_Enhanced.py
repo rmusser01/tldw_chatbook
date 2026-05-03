@@ -375,12 +375,12 @@ class ChatWindowEnhanced(Container):
         return None
 
     def build_first_run_orientation_text(self, provider: Optional[str] = None) -> str:
-        """Build compact first-run guidance for the empty Chat state."""
+        """Build compact first-run guidance for the empty Console state."""
         selected_provider = provider or self._selected_provider_for_orientation()
         readiness = get_provider_readiness(selected_provider, self.app_instance.app_config)
 
         return (
-            "Chat is the agentic control surface for programming, research, and workspace tasks.\n"
+            "Console is the agentic control surface for programming, research, and workspace tasks.\n"
             f"Provider readiness: {readiness.user_message}\n"
             "Context: Notes, Media, Search/RAG, Workspaces, Study flashcards/quizzes, "
             "personas, and Chatbooks. Ctrl+P opens commands."

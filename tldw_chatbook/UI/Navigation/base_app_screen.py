@@ -8,6 +8,7 @@ from textual.screen import Screen
 from textual.containers import Container
 
 from .main_navigation import MainNavigationBar
+from .shell_destinations import resolve_shell_route
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -42,7 +43,8 @@ class BaseAppScreen(Screen):
     def compose(self) -> ComposeResult:
         """Compose the screen with navigation bar and content."""
         # Navigation bar at the top
-        yield MainNavigationBar(active=self.screen_name)
+        active_destination = resolve_shell_route(self.screen_name).destination_id
+        yield MainNavigationBar(active=active_destination)
         
         # Content area below navigation
         with Container(id="screen-content"):

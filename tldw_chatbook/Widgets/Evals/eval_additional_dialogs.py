@@ -64,9 +64,18 @@ class FileUploadDialog(ModalScreen):
                 )
             
             with Horizontal(classes="dialog-buttons"):
-                yield Button("Browse", id="browse-button")
+                yield Button(
+                    "Browse",
+                    id="browse-button",
+                    tooltip="Choose an evaluation task or dataset file from disk.",
+                )
                 yield Button("Cancel", id="cancel-button", variant="error")
-                yield Button("Upload", id="upload-button", variant="primary")
+                yield Button(
+                    "Upload",
+                    id="upload-button",
+                    variant="primary",
+                    tooltip="Upload the selected evaluation file.",
+                )
     
     @on(Button.Pressed, "#browse-button")
     def handle_browse(self):
@@ -329,8 +338,16 @@ class RunSelectionDialog(ModalScreen):
             yield Label("Selected: 0 runs", id="selection-count")
             
             with Horizontal(classes="dialog-buttons"):
-                yield Button("Select All", id="select-all-button")
-                yield Button("Clear All", id="clear-all-button")
+                yield Button(
+                    "Select All",
+                    id="select-all-button",
+                    tooltip="Select every available evaluation run.",
+                )
+                yield Button(
+                    "Clear All",
+                    id="clear-all-button",
+                    tooltip="Clear every selected evaluation run.",
+                )
                 yield Button("Cancel", id="cancel-button", variant="error")
                 yield Button("Compare", id="compare-button", variant="primary")
     

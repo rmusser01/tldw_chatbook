@@ -4,3 +4,29 @@
  * CSS variables, color definitions, and sizing constants
  * Used throughout the application
  * ======================================== */
+
+$ds-surface-panel: $panel;
+$ds-surface-raised: $surface;
+$ds-surface-inspector: $surface;
+$ds-grid-line: $surface-lighten-1;
+$ds-text-primary: $text;
+$ds-text-muted: $text-muted;
+$ds-action-focus: $primary;
+$ds-status-ready: $success;
+$ds-status-running: $primary;
+$ds-status-info: $accent;
+$ds-status-warning: $warning;
+$ds-status-approval-required: $warning;
+$ds-status-blocked: $error;
+$ds-status-error: $error;
+$ds-status-paused: $warning;
+$ds-status-unsaved: $warning;
+$ds-status-recovered: $success;
+$ds-authority-local: $success;
+$ds-authority-server: $primary;
+$ds-authority-workspace: $accent;
+$ds-authority-remote-only: $warning;
+$ds-source-role-context: $accent;
+$ds-source-role-evidence: $accent;
+$ds-source-role-editable-target: $warning;
+$ds-source-role-output-seed: $secondary;

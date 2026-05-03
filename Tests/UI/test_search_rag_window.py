@@ -194,6 +194,9 @@ class TestSearchRAGWindow:
             assert search_input.display is True
             assert search_button.display is True
             assert search_button.disabled is False
+            assert search_button.region.y + search_button.region.height <= pilot.app.size.height
+
+            await pilot.click("#search-button")
 
     @pytest.mark.asyncio
     async def test_missing_embeddings_dependency_disables_primary_search_action_with_recovery(

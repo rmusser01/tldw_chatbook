@@ -79,8 +79,18 @@ class MultiItemReviewWindow(Container):
                     
                 # Selection controls
                 with Horizontal(classes="selection-controls"):
-                    yield Button("Select All", id="select-all-items", classes="small-button")
-                    yield Button("Clear Selection", id="clear-all-items", classes="small-button")
+                    yield Button(
+                        "Select All",
+                        id="select-all-items",
+                        classes="small-button",
+                        tooltip="Select every visible media item for multi-item review.",
+                    )
+                    yield Button(
+                        "Clear Selection",
+                        id="clear-all-items",
+                        classes="small-button",
+                        tooltip="Clear every selected media item.",
+                    )
                     yield Static("0 items selected", id="selection-count", classes="selection-info")
                     
             # Middle section - Item list

@@ -98,6 +98,21 @@
     color: $text-muted;
 }
 
+/* First-run guidance inside tabbed chat sessions */
+.chat-session .chat-empty-state {
+    width: 100%;
+    height: auto;
+    min-height: 5;
+    padding: 1 2;
+    text-align: center;
+    color: $text-muted;
+    content-align: center middle;
+}
+
+.chat-session .chat-empty-state.hidden {
+    display: none;
+}
+
 /* Chat log in tabbed interface */
 .chat-session .chat-log {
     height: 1fr;

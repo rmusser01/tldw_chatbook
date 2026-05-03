@@ -1,6 +1,6 @@
 """Main navigation bar for screen-based navigation."""
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 from loguru import logger
 
 from textual.app import ComposeResult
@@ -9,7 +9,7 @@ from textual.widgets import Button, Static
 from textual.message import Message
 from textual import on
 
-from tldw_chatbook.Constants import TAB_RESEARCH, TAB_WRITING
+from .shell_destinations import SHELL_DESTINATION_ORDER, get_shell_destination, resolve_shell_route
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -28,34 +28,6 @@ class MainNavigationBar(Container):
     Main navigation bar for the application.
     Replaces the tab-based navigation with screen-based navigation.
     """
-
-    # Navigation items organized by visual group
-    NAV_GROUPS = [
-        ("Workspace", [("chat", "Chat"), ("chatbooks", "Chatbooks")]),
-        ("Content", [("notes", "Notes"), ("media", "Media"), ("ingest", "Ingest"), ("search", "Search"), ("subscriptions", "Subscriptions")]),
-        ("Characters", [("ccp", "Library"), ("study", "Study")]),
-        ("AI Config", [("llm", "Models"), ("stts", "Speech"), ("evals", "Evals")]),
-        ("System", [("tools_settings", "Settings"), ("customize", "Customize"), ("logs", "Logs"), ("stats", "Stats"), ("coding", "Coding")]),
-    ]
-    NAV_TOOLTIPS = {
-        "chat": "Agentic chat and control surface.",
-        "chatbooks": "Portable context packs for Chat.",
-        "notes": "Capture notes and send selected context to Chat.",
-        "media": "Browse saved media, transcripts, and analysis.",
-        "ingest": "Import files, URLs, feeds, and media.",
-        "search": "Search saved content and RAG collections.",
-        "subscriptions": "Track feeds, watchlists, reminders, and alerts.",
-        "ccp": "Manage conversations, characters, personas, prompts, dictionaries, and lore.",
-        "study": "Practice with flashcards and quizzes.",
-        "llm": "Configure providers and local model runtimes.",
-        "stts": "Use speech-to-text, dictation, and text-to-speech.",
-        "evals": "Run model, prompt, and task evaluations.",
-        "tools_settings": "Configure app settings and tools.",
-        "customize": "Adjust appearance, themes, and UI preferences.",
-        "logs": "Inspect application logs and diagnostics.",
-        "stats": "Review usage and database statistics.",
-        "coding": "Use the code-focused chat workspace.",
-    }
 
     DEFAULT_CSS = """
     MainNavigationBar {
@@ -89,7 +61,7 @@ class MainNavigationBar(Container):
         text-style: bold;
     }
 
-    .nav-button.active {
+    .nav-button.is-active {
         background: $primary;
         text-style: bold;
         color: $text;
@@ -113,30 +85,24 @@ class MainNavigationBar(Container):
 
     def __init__(self, active: str = "chat", **kwargs):
         super().__init__(**kwargs)
-        self.active_screen = active
+        self.active_screen = resolve_shell_route(active).destination_id
 
     def compose(self) -> ComposeResult:
-        """Compose the navigation bar with visual grouping."""
+        """Compose the navigation bar from master-shell destination metadata."""
         with Horizontal(classes="main-nav"):
-            first_group = True
-            for group_name, items in self.NAV_GROUPS:
-                if not first_group:
-                    yield Static("┃", classes="nav-group-separator")
-                first_group = False
+            for index, destination in enumerate(SHELL_DESTINATION_ORDER):
+                if index > 0:
+                    yield Static("·", classes="nav-separator")
 
-                for i, (screen_id, label) in enumerate(items):
-                    if i > 0:
-                        yield Static("·", classes="nav-separator")
-
-                    button = Button(
-                        label,
-                        id=f"nav-{screen_id}",
-                        classes="nav-button",
-                        tooltip=self.NAV_TOOLTIPS.get(screen_id),
-                    )
-                    if screen_id == self.active_screen:
-                        button.add_class("active")
-                    yield button
+                button = Button(
+                    destination.label,
+                    id=f"nav-{destination.destination_id}",
+                    classes="nav-button",
+                    tooltip=destination.tooltip,
+                )
+                if destination.destination_id == self.active_screen:
+                    button.add_class("is-active")
+                yield button
     
     @on(Button.Pressed, ".nav-button")
     def handle_navigation(self, event: Button.Pressed) -> None:
@@ -145,18 +111,19 @@ class MainNavigationBar(Container):
         if not button_id:
             return
         
-        # Extract screen name from button ID (nav-chat -> chat)
-        screen_name = button_id.replace("nav-", "")
+        destination_id = button_id.replace("nav-", "")
+        destination = get_shell_destination(destination_id)
+        screen_name = destination.primary_route
         
         # Don't navigate if already on this screen
-        if screen_name == self.active_screen:
+        if destination.destination_id == self.active_screen:
             return
         
         # Update active state
         for button in self.query(".nav-button"):
-            button.remove_class("active")
-        event.button.add_class("active")
-        self.active_screen = screen_name
+            button.remove_class("is-active")
+        event.button.add_class("is-active")
+        self.active_screen = destination.destination_id
         
         # Post navigation message to app
         self.post_message(NavigateToScreen(screen_name))
