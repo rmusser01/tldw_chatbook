@@ -4,7 +4,7 @@ title: 'Phase 0.2: Reconcile current dev state and merged evidence'
 status: In Progress
 assignee: []
 created_date: '2026-05-03 14:48'
-updated_date: '2026-05-03 14:48'
+updated_date: '2026-05-03 14:50'
 labels:
   - unified-shell
   - phase-0
@@ -13,6 +13,8 @@ labels:
 dependencies: []
 documentation:
   - Docs/superpowers/specs/2026-05-03-unified-shell-maturity-tracking-design.md
+  - Docs/superpowers/trackers/unified-shell-maturity-roadmap.md
+  - backlog/docs/unified-shell-maturity-roadmap.md
 parent_task_id: TASK-1
 priority: high
 ---
