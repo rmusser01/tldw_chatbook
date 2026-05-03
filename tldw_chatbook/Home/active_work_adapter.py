@@ -119,3 +119,61 @@ class UnavailableHomeActiveWorkAdapter(HomeActiveWorkAdapter):
             recovery_route=recovery_route,
             target_id=target_id,
         )
+
+
+class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
+    """Home adapter that exposes local notification queue state.
+
+    Active run controls remain unavailable until workflow/run services expose a
+    safe synchronous Home contract.
+    """
+
+    def __init__(self, *, notification_service: Any | None = None):
+        self.notification_service = notification_service
+
+    def build_dashboard_input(
+        self,
+        *,
+        providers_models: Mapping[str, Any],
+        has_recent_work: bool,
+    ) -> HomeDashboardInput:
+        dashboard_input = super().build_dashboard_input(
+            providers_models=providers_models,
+            has_recent_work=has_recent_work,
+        )
+        return HomeDashboardInput(
+            model_ready=dashboard_input.model_ready,
+            mcp_ready=dashboard_input.mcp_ready,
+            acp_ready=dashboard_input.acp_ready,
+            rag_ready=dashboard_input.rag_ready,
+            pending_approval_count=dashboard_input.pending_approval_count,
+            active_run_count=dashboard_input.active_run_count,
+            running_run_count=dashboard_input.running_run_count,
+            paused_run_count=dashboard_input.paused_run_count,
+            failed_run_count=dashboard_input.failed_run_count,
+            failed_schedule_count=dashboard_input.failed_schedule_count,
+            notification_count=self._unread_notification_count(),
+            has_library_content=dashboard_input.has_library_content,
+            has_recent_work=dashboard_input.has_recent_work,
+            active_detail_route=dashboard_input.active_detail_route,
+            active_work_items=dashboard_input.active_work_items,
+        )
+
+    def _unread_notification_count(self) -> int:
+        if self.notification_service is None:
+            return 0
+        try:
+            notifications = self.notification_service.list_queue(
+                limit=100,
+                include_dismissed=False,
+                category=None,
+            )
+        except Exception:
+            return 0
+        return sum(1 for notification in notifications if _notification_is_unread(notification))
+
+
+def _notification_is_unread(notification: Any) -> bool:
+    if isinstance(notification, Mapping):
+        return not bool(notification.get("is_read"))
+    return not bool(getattr(notification, "is_read", False))

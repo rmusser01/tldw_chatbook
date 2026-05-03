@@ -33,6 +33,7 @@ class HomeDashboardInput:
     paused_run_count: int = 0
     failed_run_count: int = 0
     failed_schedule_count: int = 0
+    notification_count: int = 0
     has_library_content: bool = False
     has_recent_work: bool = False
     active_detail_route: str = "chat"
@@ -98,6 +99,13 @@ def choose_next_best_action(state: HomeDashboardInput) -> HomeAction:
             "Resume active work",
             "chat",
             "Live work is already running.",
+        )
+    if state.notification_count:
+        return HomeAction(
+            "review_notifications",
+            "Review notifications",
+            "home",
+            "Unread notifications need review.",
         )
     if not state.has_library_content:
         return HomeAction(
@@ -214,7 +222,11 @@ def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
             HomeSection(
                 "attention",
                 "Attention",
-                (approval_label, f"Pending approvals: {_pending_approval_count(state)}"),
+                (
+                    approval_label,
+                    f"Pending approvals: {_pending_approval_count(state)}",
+                    f"Unread notifications: {state.notification_count}",
+                ),
             ),
             HomeSection(
                 "active_work",

@@ -2,7 +2,7 @@
 
 Date: 2026-05-03
 Status: Phase 2 in progress
-Source Branch: `origin/dev` at `726f4954` plus `codex/unified-shell-phase2-home-dashboard-snapshot`
+Source Branch: `origin/dev` at `252b7ba8` plus `codex/unified-shell-phase2-home-local-snapshot-adapter`
 
 ## Purpose
 
@@ -27,7 +27,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 
 ## Known Product Gaps
 
-- Home active-work controls, detail routing, Console launch requests, and item identity now route through an explicit adapter boundary; real service-backed adapters still need implementation.
+- Home active-work controls, detail routing, Console launch requests, item identity, and local unread notification counts now route through explicit adapter boundaries; real active-run service-backed adapters still need implementation.
 - Workflows has no wired workflow service in the shell wrapper.
 - W+C, Schedules, Workflows, and ACP now use honest unavailable Console states until actionable payloads exist.
 - ACP launch is disabled until an ACP-compatible runtime is configured.
@@ -82,6 +82,7 @@ Initial child tasks:
 - Phase 2.1: Add Home active-work adapter contract - `TASK-4.1`
 - Phase 2.2: Route Home detail and Console actions through active-work adapter - `TASK-4.2`
 - Phase 2.3: Bind Home controls to active-work item context - `TASK-4.3`
+- Phase 2.4: Wire Home to local notification snapshot adapter - `TASK-4.4`
 
 ## QA Evidence Index
 
@@ -101,7 +102,7 @@ Initial child tasks:
 | --- | --- | --- | --- | --- | --- |
 | Phase 0: Canonical Tracking | Make remaining work trackable. | verified | `TASK-1`, `TASK-1.1`, `TASK-1.2` | `phase-0/` | Product UI workflows are out of scope for Phase 0. |
 | Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | verified | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3`, `TASK-2.4` | `phase-1/` | Live service workflows remain intentionally deferred to Phases 2-6. |
-| Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | in-progress | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3` | `phase-2/` | Real active-run, schedule, and agent-service adapters still need implementation. |
+| Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | in-progress | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4` | `phase-2/` | Real active-run, schedule, and agent-service adapters still need implementation. |
 | Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | not-started | `TASK-3` | `phase-3/` | Live work event sources need explicit contracts. |
 | Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | not-started | `TASK-5` | `phase-4/` | Service coverage varies by destination. |
 | Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | not-started | `TASK-6` | `phase-5/` | Shared taxonomy not yet extracted. |
@@ -152,6 +153,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-4.3` binds Home controls to explicit visible active-work item context:
 
 - `Docs/superpowers/qa/unified-shell/phase-2/2026-05-03-home-active-work-item-context.md`
+
+## Phase 2.4 Home Local Notification Snapshot Evidence
+
+`TASK-4.4` wires Home to the local unread notification queue without creating false active-work controls:
+
+- `Docs/superpowers/qa/unified-shell/phase-2/2026-05-03-home-local-notification-snapshot.md`
 
 ## Phase 0: Canonical Tracking
 

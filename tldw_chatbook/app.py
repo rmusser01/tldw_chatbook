@@ -98,6 +98,7 @@ from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
     HomeControlResultStatus,
+    LocalNotificationHomeActiveWorkAdapter,
     UnavailableHomeActiveWorkAdapter,
 )
 from tldw_chatbook.Logging_Config import RichLogHandler
@@ -1995,6 +1996,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.client_notifications_service = ClientNotificationsService(
             store=self.client_notifications_db,
             policy_enforcer=self.service_policy_enforcer,
+        )
+        self.home_active_work_adapter = LocalNotificationHomeActiveWorkAdapter(
+            notification_service=self.client_notifications_service,
         )
         self.notification_dispatch_service = NotificationDispatchService(
             store=self.client_notifications_db,
