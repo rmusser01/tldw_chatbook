@@ -1,8 +1,8 @@
 # Unified Shell Maturity Roadmap
 
 Date: 2026-05-03
-Status: Phase 2 in progress
-Source Branch: `origin/dev` at `6ba7304f` plus `codex/unified-shell-phase2-home-notification-review`
+Status: Phase 2 and Phase 3 in progress
+Source Branch: `origin/dev` at `52e4e89e` plus `codex/master-shell-ux-next-slice`
 
 ## Purpose
 
@@ -30,6 +30,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 - Home active-work controls, detail routing, Console launch requests, item identity, local unread notification counts, and notification review routing now route through explicit adapter boundaries; real active-run service-backed adapters still need implementation.
 - Workflows has no wired workflow service in the shell wrapper.
 - W+C, Schedules, Workflows, and ACP now use honest unavailable Console states until actionable payloads exist.
+- Console now has a typed app-owned launch contract for staged live-work payloads; source-specific live event producers still need implementation.
 - ACP launch is disabled until an ACP-compatible runtime is configured.
 - MCP management is not embedded in the top-level MCP wrapper.
 - Skills local/server services exist, but the top-level Skills shell still leaves import disabled and lacks list/detail/import UX adoption.
@@ -84,6 +85,7 @@ Initial child tasks:
 - Phase 2.3: Bind Home controls to active-work item context - `TASK-4.3`
 - Phase 2.4: Wire Home to local notification snapshot adapter - `TASK-4.4`
 - Phase 2.5: Route Home notification review to the notifications inbox - `TASK-4.5`
+- Phase 3.1: Add Console live-work launch contract - `TASK-3.1`
 
 ## QA Evidence Index
 
@@ -92,7 +94,7 @@ Initial child tasks:
 | Phase 0 | `Docs/superpowers/qa/unified-shell/phase-0/` | verified |
 | Phase 1 | `Docs/superpowers/qa/unified-shell/phase-1/` | verified |
 | Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | in-progress |
-| Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | not-started |
+| Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | in-progress |
 | Phase 4 | `Docs/superpowers/qa/unified-shell/phase-4/` | not-started |
 | Phase 5 | `Docs/superpowers/qa/unified-shell/phase-5/` | not-started |
 | Phase 6 | `Docs/superpowers/qa/unified-shell/phase-6/` | not-started |
@@ -104,7 +106,7 @@ Initial child tasks:
 | Phase 0: Canonical Tracking | Make remaining work trackable. | verified | `TASK-1`, `TASK-1.1`, `TASK-1.2` | `phase-0/` | Product UI workflows are out of scope for Phase 0. |
 | Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | verified | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3`, `TASK-2.4` | `phase-1/` | Live service workflows remain intentionally deferred to Phases 2-6. |
 | Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | in-progress | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5` | `phase-2/` | Real active-run, schedule, and agent-service adapters still need implementation. |
-| Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | not-started | `TASK-3` | `phase-3/` | Live work event sources need explicit contracts. |
+| Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | in-progress | `TASK-3`, `TASK-3.1` | `phase-3/` | Source-specific live event producers and follow/status cards still need implementation. |
 | Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | not-started | `TASK-5` | `phase-4/` | Service coverage varies by destination. |
 | Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | not-started | `TASK-6` | `phase-5/` | Shared taxonomy not yet extracted. |
 | Phase 6: Audit Replay And Closeout | Prove shell works for first-time and power users. | not-started | `TASK-7` | `phase-6/` | Depends on prior phases and running-app QA. |
@@ -166,6 +168,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-4.5` makes Home notification review actions lead into the existing notifications inbox:
 
 - `Docs/superpowers/qa/unified-shell/phase-2/2026-05-03-home-notification-review-routing.md`
+
+## Phase 3.1 Console Live-Work Launch Contract Evidence
+
+`TASK-3.1` adds the normalized Console launch payload contract and renders pending launch details in Console:
+
+- `Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-live-work-launch-contract.md`
 
 ## Phase 0: Canonical Tracking
 
