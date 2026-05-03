@@ -717,23 +717,23 @@ async def test_contract_blocked_web_search_handoff_explains_recovery_without_sta
         app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
 
         async with app.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
-        app.window.web_search_results = [
-            {
-                "title": "Article",
-                "content": "Snippet body",
-                "source": "web",
-                "metadata": {"url": "https://example.com", "displayUrl": "example.com"},
-            }
-        ]
-        await app.window._render_web_search_result_cards()
-        await pilot.pause(0.05)
+            await pilot.pause(0.1)
+            app.window.web_search_results = [
+                {
+                    "title": "Article",
+                    "content": "Snippet body",
+                    "source": "web",
+                    "metadata": {"url": "https://example.com", "displayUrl": "example.com"},
+                }
+            ]
+            await app.window._render_web_search_result_cards()
+            await pilot.pause(0.05)
 
-        button = app.window.query_one("#use-in-chat-0", Button)
-        button.press()
-        await pilot.pause(0.05)
+            button = app.window.query_one("#use-in-chat-0", Button)
+            button.press()
+            await pilot.pause(0.05)
 
-        app.app_instance.open_chat_with_handoff.assert_not_called()
-        message = app.app_instance.notify.call_args.args[0]
-        assert "research.search.providers.launch.server requires server mode" in message
-        assert "switch source" in message.lower()
+            app.app_instance.open_chat_with_handoff.assert_not_called()
+            message = app.app_instance.notify.call_args.args[0]
+            assert "research.search.providers.launch.server requires server mode" in message
+            assert "switch source" in message.lower()
