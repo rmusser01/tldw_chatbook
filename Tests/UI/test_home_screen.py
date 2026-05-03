@@ -5,6 +5,7 @@ from textual.app import App
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Home.active_work_adapter import (
+    HomeConsoleLaunch,
     HomeControlAction,
     HomeControlResult,
     HomeControlResultStatus,
@@ -32,12 +33,17 @@ def _active_home_screen(host: HomeHarness):
 
 
 class RecordingHomeActiveWorkAdapter:
-    def __init__(self):
+    def __init__(self, dashboard_input=None, responses=None):
         self.dashboard_calls = 0
         self.control_actions = []
+        self.control_target_routes = []
+        self.dashboard_input = dashboard_input
+        self.responses = responses or {}
 
     def build_dashboard_input(self, *, providers_models, has_recent_work):
         self.dashboard_calls += 1
+        if self.dashboard_input is not None:
+            return self.dashboard_input
         return HomeDashboardInput(
             model_ready=True,
             pending_approval_count=1,
@@ -47,8 +53,11 @@ class RecordingHomeActiveWorkAdapter:
             has_recent_work=has_recent_work,
         )
 
-    def handle_control(self, action):
+    def handle_control(self, action, *, target_route=None):
         self.control_actions.append(action)
+        self.control_target_routes.append(target_route)
+        if action in self.responses:
+            return self.responses[action]
         return HomeControlResult(
             action=action,
             status=HomeControlResultStatus.HANDLED,
@@ -198,7 +207,7 @@ async def test_home_screen_uses_active_work_adapter_for_dashboard_and_controls()
 
 
 @pytest.mark.asyncio
-async def test_home_detail_controls_route_to_owner_and_console():
+async def test_home_detail_controls_do_not_directly_navigate_without_adapter_payload():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
@@ -207,6 +216,7 @@ async def test_home_detail_controls_route_to_owner_and_console():
         has_library_content=True,
         active_detail_route="workflows",
     )
+    app.notify = Mock()
     seen = []
     host = HomeHarness(app, seen)
 
@@ -217,8 +227,119 @@ async def test_home_detail_controls_route_to_owner_and_console():
         await pilot.click("#home-open-in-console")
         await pilot.pause(0.1)
 
-    assert "workflows" in seen
-    assert "chat" in seen
+    assert seen == []
+    assert app.notify.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_home_detail_and_console_buttons_call_runtime_hooks_with_target_route():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        pending_approval_count=1,
+        active_run_count=1,
+        has_library_content=True,
+        active_detail_route="workflows",
+    )
+    app.open_active_home_item_details = Mock()
+    app.open_active_home_item_in_console = Mock()
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#home-open-details")
+        await pilot.pause(0.1)
+        await pilot.click("#home-open-in-console")
+        await pilot.pause(0.1)
+
+    app.open_active_home_item_details.assert_called_once_with(target_route="workflows")
+    app.open_active_home_item_in_console.assert_called_once_with(target_route="chat")
+    assert seen == []
+
+
+def test_app_detail_hook_delegates_to_adapter_and_navigates_handled_route():
+    app = _build_test_app()
+    adapter = RecordingHomeActiveWorkAdapter(
+        responses={
+            HomeControlAction.OPEN_DETAILS: HomeControlResult(
+                action=HomeControlAction.OPEN_DETAILS,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening workflow details.",
+                target_route="workflows",
+            ),
+        }
+    )
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    app.post_message = Mock()
+
+    result = app.open_active_home_item_details(target_route="schedules")
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    assert adapter.control_actions == [HomeControlAction.OPEN_DETAILS]
+    assert adapter.control_target_routes == ["schedules"]
+    app.notify.assert_called_once_with("Opening workflow details.", severity="information")
+    app.post_message.assert_called_once()
+    assert app.post_message.call_args.args[0].screen_name == "workflows"
+
+
+def test_app_console_hook_requires_adapter_launch_payload():
+    app = _build_test_app()
+    adapter = RecordingHomeActiveWorkAdapter(
+        responses={
+            HomeControlAction.OPEN_IN_CONSOLE: HomeControlResult(
+                action=HomeControlAction.OPEN_IN_CONSOLE,
+                status=HomeControlResultStatus.UNAVAILABLE,
+                message="Open in Console is not connected.",
+                severity="warning",
+                recovery_route="chat",
+            ),
+        }
+    )
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    app.open_console_for_live_work = Mock()
+
+    result = app.open_active_home_item_in_console(target_route="chat")
+
+    assert result.status is HomeControlResultStatus.UNAVAILABLE
+    assert adapter.control_actions == [HomeControlAction.OPEN_IN_CONSOLE]
+    assert adapter.control_target_routes == ["chat"]
+    app.notify.assert_called_once_with("Open in Console is not connected.", severity="warning")
+    app.open_console_for_live_work.assert_not_called()
+
+
+def test_app_console_hook_opens_console_with_adapter_launch_payload():
+    app = _build_test_app()
+    launch = HomeConsoleLaunch(
+        source="workflows",
+        title="Daily digest",
+        payload={"run_id": "run-1"},
+    )
+    adapter = RecordingHomeActiveWorkAdapter(
+        responses={
+            HomeControlAction.OPEN_IN_CONSOLE: HomeControlResult(
+                action=HomeControlAction.OPEN_IN_CONSOLE,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening Console for Daily digest.",
+                console_launch=launch,
+            ),
+        }
+    )
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    app.open_console_for_live_work = Mock()
+
+    result = app.open_active_home_item_in_console(target_route="chat")
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    app.notify.assert_called_once_with("Opening Console for Daily digest.", severity="information")
+    app.open_console_for_live_work.assert_called_once_with(
+        source="workflows",
+        title="Daily digest",
+        payload={"run_id": "run-1"},
+    )
 
 
 @pytest.mark.asyncio

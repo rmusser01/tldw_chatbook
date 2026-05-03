@@ -21,6 +21,13 @@ HOME_CONTROL_METHODS = {
     "home-pause": "pause_active_home_item",
     "home-resume": "resume_active_home_item",
     "home-retry": "retry_active_home_item",
+    "home-open-details": "open_active_home_item_details",
+    "home-open-in-console": "open_active_home_item_in_console",
+}
+
+HOME_CONTROL_METHODS_WITH_TARGET_ROUTE = {
+    "home-open-details",
+    "home-open-in-console",
 }
 
 
@@ -83,6 +90,12 @@ class HomeScreen(BaseAppScreen):
         method_name = HOME_CONTROL_METHODS.get(control.control_id)
         method = getattr(self.app_instance, method_name, None) if method_name else None
         if callable(method):
-            method()
+            if control.control_id in HOME_CONTROL_METHODS_WITH_TARGET_ROUTE:
+                method(target_route=control.target_route)
+            else:
+                method()
         else:
-            self.post_message(NavigateToScreen(control.target_route))
+            self.app_instance.notify(
+                f"{control.label} is not connected yet.",
+                severity="warning",
+            )

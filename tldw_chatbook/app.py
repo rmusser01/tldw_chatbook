@@ -97,6 +97,7 @@ from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
+    HomeControlResultStatus,
     UnavailableHomeActiveWorkAdapter,
 )
 from tldw_chatbook.Logging_Config import RichLogHandler
@@ -1644,9 +1645,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         }
         self.post_message(NavigateToScreen(TAB_CHAT))
 
-    def _handle_home_control_action(self, action: HomeControlAction) -> HomeControlResult:
+    def _handle_home_control_action(
+        self,
+        action: HomeControlAction,
+        *,
+        target_route: str | None = None,
+    ) -> HomeControlResult:
         adapter = getattr(self, "home_active_work_adapter", UnavailableHomeActiveWorkAdapter())
-        result = adapter.handle_control(action)
+        if target_route is None:
+            result = adapter.handle_control(action)
+        else:
+            result = adapter.handle_control(action, target_route=target_route)
         self.notify(result.message, severity=result.severity)
         return result
 
@@ -1669,6 +1678,30 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def retry_active_home_item(self) -> HomeControlResult:
         """Retry the active Home item through the configured adapter."""
         return self._handle_home_control_action(HomeControlAction.RETRY)
+
+    def open_active_home_item_details(self, *, target_route: str = TAB_CHAT) -> HomeControlResult:
+        """Open active Home item details through the configured adapter."""
+        result = self._handle_home_control_action(
+            HomeControlAction.OPEN_DETAILS,
+            target_route=target_route,
+        )
+        if result.status is HomeControlResultStatus.HANDLED and result.target_route:
+            self.post_message(NavigateToScreen(result.target_route))
+        return result
+
+    def open_active_home_item_in_console(self, *, target_route: str = TAB_CHAT) -> HomeControlResult:
+        """Open active Home item in Console only when the adapter supplies launch context."""
+        result = self._handle_home_control_action(
+            HomeControlAction.OPEN_IN_CONSOLE,
+            target_route=target_route,
+        )
+        if result.status is HomeControlResultStatus.HANDLED and result.console_launch is not None:
+            self.open_console_for_live_work(
+                source=result.console_launch.source,
+                title=result.console_launch.title,
+                payload=dict(result.console_launch.payload or {}),
+            )
+        return result
 
     def _wire_character_persona_services(self) -> None:
         self.server_character_persona_service = ServerCharacterPersonaService.from_server_context_provider(
