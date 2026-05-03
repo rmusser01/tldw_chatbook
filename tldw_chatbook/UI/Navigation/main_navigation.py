@@ -81,6 +81,13 @@ class MainNavigationBar(Container):
         width: auto;
         text-style: bold;
     }
+
+    .nav-overflow-hint {
+        dock: right;
+        width: auto;
+        padding: 0 1;
+        color: $text-muted;
+    }
     """
 
     def __init__(self, active: str = "chat", **kwargs):
@@ -103,6 +110,7 @@ class MainNavigationBar(Container):
                 if destination.destination_id == self.active_screen:
                     button.add_class("is-active")
                 yield button
+        yield Static("More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint")
     
     @on(Button.Pressed, ".nav-button")
     def handle_navigation(self, event: Button.Pressed) -> None:

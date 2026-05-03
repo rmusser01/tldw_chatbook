@@ -43,8 +43,8 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "library",
         "Library",
         "library",
-        "Source material, imports, notes, media, conversations, and Search/RAG.",
-        "Browse, import, search, and query source material.",
+        "Workspaces, source material, imports, notes, media, conversations, and Search/RAG.",
+        "Browse Workspaces, imports, notes, media, search, and source material.",
         ("notes", "media", "ingest", "search", "conversation"),
     ),
     ShellDestination(

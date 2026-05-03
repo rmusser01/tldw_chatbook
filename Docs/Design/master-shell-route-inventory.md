@@ -12,7 +12,7 @@ This inventory maps current routes and UI surfaces onto the approved master shel
 | --- | --- | --- | --- | --- |
 | Home | `home` | new | Home | New default for first-run users |
 | Console | `chat` | `ChatScreen` | Console | Route remains `chat`; live work stores `pending_console_launch` and opens Console |
-| Library | `notes`, `media`, `ingest`, `search`, `conversation`, conversation browsing | `LibraryScreen` plus legacy screens | Library | Wrapper links to source routes; staged source context uses Chat handoff payloads |
+| Library | `notes`, `media`, `ingest`, `search`, `conversation`, conversation browsing | `LibraryScreen` plus legacy screens | Library | Wrapper exposes Workspaces and links to source routes; staged source context uses Chat handoff payloads |
 | Artifacts | `chatbooks` | `ArtifactsScreen` plus `ChatbooksScreen` | Artifacts | Wrapper owns Chatbooks and generated/portable outputs; staged artifacts use Chat handoff payloads |
 | Personas | `ccp`, character/persona/prompt/lore subviews | `PersonasScreen` plus `ConversationScreen` | Personas | Personas owns behavior and identity management; staged persona context uses Chat handoff payloads |
 | W+C | `subscriptions` plus collections services | `WatchlistsCollectionsScreen` plus `SubscriptionScreen` | W+C | Wrapper separates Watchlists from Collections and can follow live work in Console |

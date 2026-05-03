@@ -219,7 +219,7 @@ git commit -m "Add agentic terminal visual design system foundation"
 - Modify: `tldw_chatbook/UI/Navigation/main_navigation.py`
 - Modify: `Docs/Design/master-shell-route-inventory.md`
 
-- [ ] **Step 1: Write failing visibility and overflow tests**
+- [x] **Step 1: Write failing visibility and overflow tests**
 
 Create `Tests/UI/test_shell_product_model_visibility.py`.
 
@@ -264,7 +264,7 @@ async def test_navigation_exposes_explicit_overflow_hint():
     assert "Ctrl+P" in str(overflow.renderable)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail for the intended reasons**
+- [x] **Step 2: Run tests to verify they fail for the intended reasons**
 
 Run:
 
@@ -277,7 +277,7 @@ Expected:
 - Fails because Library metadata does not mention Workspaces.
 - Fails because `#nav-overflow-hint` does not exist.
 
-- [ ] **Step 3: Add minimal product-model vocabulary**
+- [x] **Step 3: Add minimal product-model vocabulary**
 
 Update the Library destination metadata, not screen content:
 
@@ -294,7 +294,7 @@ ShellDestination(
 
 Update `Docs/Design/master-shell-route-inventory.md` so Library compatibility explicitly includes Workspaces.
 
-- [ ] **Step 4: Add a non-invasive overflow hint**
+- [x] **Step 4: Add a non-invasive overflow hint**
 
 In `MainNavigationBar.compose()`, keep all existing nav buttons and add an explicit overflow/discovery hint after the primary nav row:
 
@@ -315,7 +315,7 @@ In `MainNavigationBar.DEFAULT_CSS`, add styling that does not hide Home or Conso
 
 Do not build a responsive overflow menu in this task. The purpose is to remove silent hidden navigation by making command-palette discovery explicit.
 
-- [ ] **Step 5: Verify focused tests**
+- [x] **Step 5: Verify focused tests**
 
 Run:
 
@@ -325,7 +325,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Tests/UI/test_shell_product_model_visibility.py tldw_chatbook/UI/Navigation/shell_destinations.py tldw_chatbook/UI/Navigation/main_navigation.py Docs/Design/master-shell-route-inventory.md
