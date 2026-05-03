@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Harden the current Unified Shell and agentic terminal design-system implementation so it remains usable, honest, and extensible as the app migrates from legacy tabs to Chat-first agentic workflows.
+**Goal:** Establish the visual design-system foundation first, then harden the current Unified Shell and agentic terminal implementation so it remains usable, honest, and extensible as the app migrates from legacy tabs to Chat-first agentic workflows.
 
-**Architecture:** Keep the current Phase 1 shell rather than rewriting it. Add contract tests around the seams that are most likely to regress: primary top navigation, explicit overflow discoverability, command-palette naming, product-model visibility, footer shortcut state, semantic design tokens, and shell chrome ownership. Implement only small code changes behind those tests, then update the design docs to match verified behavior.
+**Architecture:** Treat the visual design system as the first source of truth, not as polish after code. Create and review a Textual-aware visual system contract before runtime implementation, then add contract tests around the seams that are most likely to regress: primary top navigation, explicit overflow discoverability, command-palette naming, product-model visibility, footer shortcut state, semantic design tokens, and shell chrome ownership. Implement only small code changes behind those tests, then update the design docs to match verified behavior.
 
 **Tech Stack:** Python 3.11+, Textual, pytest, TCSS modules, `tldw_chatbook/css/build_css.py`, existing `TldwCli` command-palette providers.
 
@@ -12,10 +12,11 @@
 
 ## Scope
 
-This plan starts from current `origin/dev`, where Unified Shell Phase 1 already exists. It does not recreate the New_UI concept screens and does not convert every legacy screen to the new design system in one pass.
+This plan starts from current `origin/dev`, where Unified Shell Phase 1 already exists. It first creates the visual design-system foundation that future code work must follow. It does not recreate the New_UI concept screens and does not convert every legacy screen to the new design system in one pass.
 
 The work hardens the existing shell contract:
 
+- Visual design-system foundations are established before runtime hardening.
 - Top bar remains the global primary destination navigation.
 - Home and Console stay first-class, always reachable destinations.
 - Compact destination labels, especially `W+C`, must expose full meaning through tooltip/help/palette text.
@@ -31,6 +32,7 @@ The work hardens the existing shell contract:
 - Do not replace the command palette.
 - Do not move every `BaseAppScreen` to app-owned chrome in one large patch.
 - Do not edit untracked root checkout files or depend on untracked `Docs/Design/New_UI/*.png`.
+- Do not start runtime implementation tasks until Phase 0 visual design-system artifacts are committed and reviewed.
 
 ## Preconditions
 
@@ -45,11 +47,13 @@ The work hardens the existing shell contract:
 - If the virtualenv is unavailable, stop and set up dependencies before changing code.
 - Use `apply_patch` for manual edits.
 - Use TDD for every runtime change: failing test, minimal implementation, focused verification, commit.
+- Complete and commit Phase 0 before editing runtime Python or TCSS files. Phase 0 is design/doc work, not runtime implementation.
 
 ## File Structure
 
 Modify:
 
+- `Docs/Design/master-shell-design-system-contract.md` - verified contract updates and links to the visual system foundation.
 - `tldw_chatbook/UI/Navigation/shell_destinations.py` - canonical shell destination metadata; add full-label and nav-priority semantics here if needed.
 - `tldw_chatbook/UI/Navigation/main_navigation.py` - renders primary top navigation from destination metadata.
 - `tldw_chatbook/app.py` - command-palette route labels/help; keep shell vocabulary aligned with navigation metadata.
@@ -58,11 +62,12 @@ Modify:
 - `tldw_chatbook/css/components/_agentic_terminal.tcss` - shared design-system classes and state styles.
 - `tldw_chatbook/css/tldw_cli_modular.tcss` - generated stylesheet after TCSS module changes.
 - `tldw_chatbook/css/Themes/themes.py` - `agentic_terminal` theme semantic variable values.
-- `Docs/Design/master-shell-design-system-contract.md` - verified contract updates.
 - `Docs/Design/master-shell-route-inventory.md` - destination metadata and route vocabulary updates only if behavior changes.
 
 Create:
 
+- `Docs/superpowers/specs/2026-05-03-agentic-terminal-visual-design-system-design.md` - visual source of truth for the agentic terminal design language.
+- `Docs/Design/agentic-terminal-visual-system.md` - implementation-facing visual contract with token, component, state, and mockup guidance.
 - `tldw_chatbook/UI/Navigation/shortcut_context.py` - small typed model for footer shortcut context, if the footer needs a reusable source-of-truth object.
 - `Tests/UI/test_app_footer_shortcut_context.py` - focused tests for footer shortcut context lifecycle.
 - `Tests/UI/test_shell_chrome_contract.py` - guardrail tests for shell chrome ownership and duplicate navigation.
@@ -74,6 +79,137 @@ Extend:
 - `Tests/UI/test_command_palette_shell_routes.py` - command-palette full-label/help contract.
 - `Tests/UI/test_command_palette_providers.py` - renamed display-label regressions where relevant.
 - `Tests/UI/test_master_shell_design_system_contract.py` - semantic token and generated stylesheet contract tests.
+
+## Phase 0: Visual Design-System Foundation
+
+This phase must complete before Task 0 or any runtime implementation. It turns the existing screenshots/concepts/specs into an implementation-aware visual language that can be tested and coded in Textual without guessing.
+
+**Files:**
+- Create: `Docs/superpowers/specs/2026-05-03-agentic-terminal-visual-design-system-design.md`
+- Create: `Docs/Design/agentic-terminal-visual-system.md`
+- Modify: `Docs/Design/master-shell-design-system-contract.md`
+- Modify: `Docs/superpowers/plans/2026-05-03-agentic-terminal-design-system-hardening.md`
+
+- [ ] **Step 1: Create the visual design-system spec**
+
+Create `Docs/superpowers/specs/2026-05-03-agentic-terminal-visual-design-system-design.md`.
+
+The spec must include these sections:
+
+```markdown
+# Agentic Terminal Visual Design System
+
+## Purpose
+
+Define the reusable visual language for the Chat-first agentic shell before runtime implementation begins.
+
+## Product Model
+
+- Console is the primary agentic control surface.
+- Top bar is primary destination navigation.
+- Workspaces are global context, not a buried note feature.
+- Personas shape behavior and identity.
+- Flashcards and quizzes remain visible Study modules.
+- Library, Search, Media, Notes, Artifacts, Handoffs, MCP, ACP, Skills, Schedules, and Workflows remain visible in the product model.
+
+## Visual Principles
+
+- Command-line credible, not decorative terminal cosplay.
+- Dense enough for power users, legible enough for first-time users.
+- Status and authority are visible without reading logs.
+- Recovery is part of the interface, not hidden in errors.
+
+## Screen Grammar
+
+- Top navigation: primary destinations only.
+- Destination header: local title, purpose, readiness, source authority, and primary actions.
+- Main work area: task-specific panels.
+- Inspector/sidebar: context, provenance, artifacts, or settings.
+- Footer: current shortcut context and low-noise status.
+
+## Token System
+
+Document semantic roles for surfaces, text, actions, focus, status, authority, source roles, borders, and density.
+
+## Component Anatomy
+
+Document top nav, destination header, panel, toolbar, status badge, recovery callout, source role chip, approval card, event row, field row, inspector, and shortcut bar.
+
+## State Language
+
+Document ready, running, paused, blocked, unavailable, approval required, unsaved, stale, conflict, recovered, local, server, workspace, remote-only, and dry-run.
+
+## Reference Screens
+
+Provide ASCII/reference mockups only where they clarify reusable layout rules:
+
+- Home dashboard shell.
+- Console agentic control surface.
+- Library or Workspace/source context screen.
+- Study or Personas screen showing flashcards/quizzes/persona visibility.
+
+## Textual Implementation Constraints
+
+- Use hyphenated TCSS variables and `Theme.variables` keys.
+- Avoid dotted token names in TCSS.
+- Require fallback glyphs and readable text labels.
+- Design for compact terminal widths.
+- Preserve keyboard-first workflows.
+```
+
+- [ ] **Step 2: Create the implementation-facing visual contract**
+
+Create `Docs/Design/agentic-terminal-visual-system.md`.
+
+This file is the bridge from design language to implementation and must include:
+
+- Canonical semantic token names using Textual-safe hyphenated names.
+- Component class mapping to `.ds-*` classes.
+- State class mapping to `.is-*`, `.source-*`, and `.needs-*` classes.
+- Density rules for compact and comfortable terminal layouts.
+- ASCII mockups or layout diagrams for the 2-4 reference screens from the spec.
+- A "Do Not Implement Yet" section for screen-specific redesigns that are not part of this hardening plan.
+
+- [ ] **Step 3: Link the visual contract from the master shell contract**
+
+Update `Docs/Design/master-shell-design-system-contract.md` so it names `Docs/Design/agentic-terminal-visual-system.md` as the visual source of truth.
+
+Add a short gate:
+
+```markdown
+Runtime shell implementation must not introduce new visual patterns, token names, or state treatments that are not represented in `Docs/Design/agentic-terminal-visual-system.md`.
+```
+
+- [ ] **Step 4: Review the visual foundation before runtime work**
+
+Review the new visual foundation against these checks:
+
+- Does it explain what a first-time user sees first?
+- Does it preserve command-palette and keyboard speed for power users?
+- Does it keep Console primary without hiding Workspaces, Personas, Flashcards, Quizzes, Library, Search, Media, Notes, Artifacts, and Handoffs?
+- Does it map visual ideas to Textual-compatible tokens/classes?
+- Does it avoid relying on screenshots as literal 1:1 implementation requirements?
+
+- [ ] **Step 5: Verify docs-only quality**
+
+Run:
+
+```bash
+git diff --check
+rg -n "Docs/Design/agentic-terminal-visual-system.md|agentic-terminal-visual-design-system" Docs/Design/master-shell-design-system-contract.md Docs/superpowers/plans/2026-05-03-agentic-terminal-design-system-hardening.md
+```
+
+Expected:
+
+- No whitespace errors.
+- The master shell contract and this plan both reference the visual system artifacts.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add Docs/superpowers/specs/2026-05-03-agentic-terminal-visual-design-system-design.md Docs/Design/agentic-terminal-visual-system.md Docs/Design/master-shell-design-system-contract.md Docs/superpowers/plans/2026-05-03-agentic-terminal-design-system-hardening.md
+git commit -m "Add agentic terminal visual design system foundation"
+```
 
 ## Task 0: Verify Product-Model Visibility And Overflow Hints
 
@@ -852,6 +988,7 @@ If no runtime files changed, omit them from `git add`.
 
 **Files:**
 - Modify: `Docs/Design/master-shell-design-system-contract.md`
+- Modify: `Docs/Design/agentic-terminal-visual-system.md`
 - Modify: `Docs/Design/master-shell-route-inventory.md`
 - Modify: `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md`
 
@@ -864,6 +1001,7 @@ Document:
 - Footer shortcut source-of-truth API.
 - Token naming contract: hyphenated TCSS variables, `Theme.variables` keys, no dotted TCSS names.
 - Shell chrome guardrail test coverage and the deferred full app-owned chrome migration.
+- Any verified runtime deviation from Phase 0 visual system rules.
 
 - [ ] **Step 2: Do not claim screen-level redesign completion**
 
@@ -886,13 +1024,24 @@ Expected: no whitespace errors.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Docs/Design/master-shell-design-system-contract.md Docs/Design/master-shell-route-inventory.md Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md
+git add Docs/Design/master-shell-design-system-contract.md Docs/Design/agentic-terminal-visual-system.md Docs/Design/master-shell-route-inventory.md Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md
 git commit -m "Document verified shell design-system contracts"
 ```
 
 ## Final Verification
 
 Run from `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-agentic-design-system-review-fixes`:
+
+Phase 0 docs gate:
+
+```bash
+test -f Docs/superpowers/specs/2026-05-03-agentic-terminal-visual-design-system-design.md
+test -f Docs/Design/agentic-terminal-visual-system.md
+rg -n "Agentic Terminal Visual Design System|Screen Grammar|Token System|Component Anatomy|State Language|Reference Screens" Docs/superpowers/specs/2026-05-03-agentic-terminal-visual-design-system-design.md
+rg -n "Docs/Design/agentic-terminal-visual-system.md|Runtime shell implementation must not introduce" Docs/Design/master-shell-design-system-contract.md
+```
+
+Runtime and contract verification:
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
@@ -911,6 +1060,7 @@ git status --short --branch
 
 Expected:
 
+- Phase 0 visual design-system docs exist and are linked from the shell contract.
 - Focused tests pass, or only pre-existing unrelated skips are reported.
 - `git diff --check` reports no whitespace errors.
 - Branch is ahead of `origin/dev` by the planned commits.
@@ -932,6 +1082,9 @@ Walk through:
 
 ## Review Checklist
 
+- [ ] Phase 0 visual design-system spec exists and is committed before runtime implementation.
+- [ ] Implementation-facing visual contract maps visual rules to Textual-safe tokens, classes, states, and density rules.
+- [ ] Reference mockups clarify reusable layout grammar without becoming literal 1:1 screen mandates.
 - [ ] Top navigation still renders Home and Console first.
 - [ ] Top navigation exposes explicit overflow/discovery guidance instead of silently relying on horizontal scroll.
 - [ ] Workspaces, Flashcards, and Quizzes remain discoverable through destination metadata, command-palette help, or route inventory.
@@ -947,6 +1100,7 @@ Walk through:
 
 ## Stop Conditions
 
+- Stop if Phase 0 visual design-system artifacts are missing, unreviewed, or contradict the current shell route inventory.
 - Stop if focused `TldwCli()` tests fail before assertions due local SQLite sandbox access; treat that as an environment limitation and prefer smaller widget/provider tests for this plan.
 - Stop if implementing footer context requires changing event handlers across multiple feature screens; create a follow-up task instead.
 - Stop if explicit nav overflow requires a custom responsive widget larger than one PR; this plan only adds the minimal `More: Ctrl+P` discovery hint and guardrails for a later overflow affordance.
