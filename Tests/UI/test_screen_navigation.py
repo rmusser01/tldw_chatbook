@@ -160,6 +160,57 @@ def test_master_shell_route_inventory_has_known_legacy_routes():
     assert unresolved == []
 
 
+def test_home_route_resolves_to_home_screen():
+    app = _build_test_app()
+
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("home")
+
+    assert screen_name == "home"
+    assert current_tab == "home"
+    assert screen_class.__name__ == "HomeScreen"
+
+
+def test_first_run_initial_route_defaults_to_home():
+    app = _build_test_app()
+    app.app_config["_first_run"] = True
+    app._initial_tab_value = "chat"
+
+    assert app._resolve_initial_shell_route() == "home"
+
+
+@pytest.mark.asyncio
+async def test_deferred_initial_tab_uses_first_run_home_route():
+    app = _build_test_app()
+    app.app_config["_first_run"] = True
+    app._initial_tab_value = "chat"
+
+    await app._set_initial_tab()
+
+    assert app.current_tab == "home"
+
+
+@pytest.mark.parametrize("configured_route", ["home", "library", "settings", "notes"])
+def test_returning_user_initial_route_preserves_configured_default(configured_route):
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = configured_route
+
+    assert app._resolve_initial_shell_route() == configured_route
+
+
+def test_startup_route_validation_accepts_shell_and_legacy_defaults():
+    app = _build_test_app()
+
+    for route in ["home", "library", "settings", "notes"]:
+        assert app._normalize_initial_tab_from_config(route) == route
+
+
+def test_startup_route_validation_rejects_unknown_default():
+    app = _build_test_app()
+
+    assert app._normalize_initial_tab_from_config("definitely-not-a-route") == "chat"
+
+
 def _build_test_app() -> TldwCli:
     user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-test-"))
 

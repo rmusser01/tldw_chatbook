@@ -74,7 +74,7 @@ from .config import (
     get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
+from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
     get_tab_display_label
@@ -191,6 +191,7 @@ from .UI.Stats_Window import StatsWindow
 from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
 from .UI.Navigation.main_navigation import NavigateToScreen
 from .UI.Screens.chat_screen import ChatScreen
+from .UI.Screens.home_screen import HomeScreen
 from .UI.Screens.media_ingest_screen import MediaIngestScreen
 from .UI.Screens.coding_screen import CodingScreen
 from .UI.Screens.conversation_screen import ConversationScreen
@@ -1398,9 +1399,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Initial Tab ---
         initial_tab_from_config = get_cli_setting("general", "default_tab", TAB_CHAT)
-        self._initial_tab_value = initial_tab_from_config if initial_tab_from_config in ALL_TABS else TAB_CHAT
-        if self._initial_tab_value != initial_tab_from_config: # Log if fallback occurred
-            logging.warning(f"Default tab '{initial_tab_from_config}' from config not valid. Falling back to '{self._initial_tab_value}'.")
+        self._initial_tab_value = self._normalize_initial_tab_from_config(initial_tab_from_config)
         logging.info(f"App __init__: Determined initial tab value: {self._initial_tab_value}")
         # current_tab reactive will be set in on_mount after UI is composed
 
@@ -2895,6 +2894,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         canonical_tab = tab_aliases.get(target, tab_aliases.get(canonical_screen, canonical_screen))
 
         screen_map = {
+            "home": HomeScreen,
             "chat": ChatScreen,
             "ingest": MediaIngestScreen,
             "coding": CodingScreen,
@@ -2919,6 +2919,39 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         }
 
         return canonical_screen, canonical_tab, screen_map.get(canonical_screen)
+
+    def _valid_startup_route_ids(self) -> set[str]:
+        """Return route ids allowed in startup config during the shell migration."""
+        from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+
+        shell_routes = {
+            destination.primary_route
+            for destination in SHELL_DESTINATION_ORDER
+        } | {
+            destination.destination_id
+            for destination in SHELL_DESTINATION_ORDER
+        }
+        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings"}
+        return set(ALL_TABS) | shell_routes | legacy_aliases
+
+    def _normalize_initial_tab_from_config(self, configured_route: str | None) -> str:
+        """Validate configured startup route without discarding new shell routes."""
+        candidate = configured_route or TAB_CHAT
+        if candidate in self._valid_startup_route_ids():
+            return candidate
+
+        logging.warning(
+            "Default tab '%s' from config not valid. Falling back to '%s'.",
+            candidate,
+            TAB_CHAT,
+        )
+        return TAB_CHAT
+
+    def _resolve_initial_shell_route(self) -> str:
+        """Choose the startup route while keeping first-run orientation explicit."""
+        if self.app_config.get("_first_run", False):
+            return TAB_HOME
+        return getattr(self, "_initial_tab_value", TAB_CHAT)
         
 
     @on(NavigateToScreen)
@@ -3990,7 +4023,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def _set_initial_tab(self) -> None:  # New method for deferred tab setting
         self.loguru_logger.info("Setting initial tab via call_later.")
-        self.current_tab = self._initial_tab_value
+        self.current_tab = self._resolve_initial_shell_route()
         self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
 
     async def _push_initial_screen(self) -> None:
@@ -3998,7 +4031,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if getattr(self, "_initial_screen_pushed", False):
             return
 
-        initial_tab = getattr(self, "_initial_tab_value", TAB_CHAT)
+        initial_tab = self._resolve_initial_shell_route()
         resolved_screen_name, resolved_tab, screen_class = self._resolve_screen_navigation_target(initial_tab)
         if screen_class is None:
             resolved_screen_name = TAB_CHAT
@@ -4106,7 +4139,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # These also might rely on the main tab windows being fully composed.
         phase_start = time.perf_counter()
         # Only populate widgets for the initial tab to avoid errors with placeholders
-        initial_tab = self._initial_tab_value
+        initial_tab = self._resolve_initial_shell_route()
         if initial_tab == TAB_CHAT:
             # IMPORTANT: Do not populate character filter select here to avoid database connection conflicts
             # The populate_chat_conversation_character_filter_select creates a new DB instance that can
@@ -4144,7 +4177,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # For now, let's assume watch_current_tab will handle it.
         # if self._initial_tab_value == TAB_CCP: # Check against the initial value
         #    self.call_later(ccp_handlers.perform_ccp_conversation_search, self)
-        self.current_tab = self._initial_tab_value
+        self.current_tab = self._resolve_initial_shell_route()
         self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
 
         # --- DB Size Indicator Setup ---
