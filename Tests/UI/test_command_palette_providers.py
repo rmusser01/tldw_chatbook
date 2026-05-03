@@ -43,6 +43,7 @@ try:
         TAB_STATS, TAB_EVALS, TAB_CODING, TAB_STTS, TAB_MCP,
         TAB_SETTINGS, get_tab_display_label
     )
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     IMPORTS_AVAILABLE = True
 except ImportError as e:
     print(f"Import error: {e}")
@@ -89,6 +90,10 @@ except ImportError as e:
 
     def get_tab_display_label(tab_id):
         return tab_id.replace("_", " ").title()
+
+    class NavigateToScreen:
+        def __init__(self, screen_name):
+            self.screen_name = screen_name
 
 #######################################################################################################################
 #
@@ -398,23 +403,26 @@ class TestQuickActionsProvider:
     def test_execute_new_chat_action(self, quick_actions_provider):
         """Test new chat action execution."""
         quick_actions_provider.execute_quick_action("new_chat")
-        
-        assert quick_actions_provider.app.current_tab == TAB_CHAT
+
+        quick_actions_provider.app.post_message.assert_called_once()
+        message = quick_actions_provider.app.post_message.call_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_CHAT
         quick_actions_provider.app.notify.assert_called_once()
         call_args = quick_actions_provider.app.notify.call_args[0]
-        assert "Chat tab" in call_args[0]
+        assert "Console" in call_args[0]
     
     def test_execute_new_note_action(self, quick_actions_provider):
         """Test new note action execution."""
         quick_actions_provider.execute_quick_action("new_note")
-        
-        assert quick_actions_provider.app.current_tab == TAB_NOTES
+
+        message = quick_actions_provider.app.post_message.call_args.args[0]
+        assert message.screen_name == TAB_NOTES
         quick_actions_provider.app.notify.assert_called_once()
     
     def test_execute_action_failure(self, quick_actions_provider):
         """Test quick action execution with error handling."""
-        # Mock the current_tab property to raise an exception when set
-        type(quick_actions_provider.app).current_tab = PropertyMock(side_effect=Exception("Action error"))
+        quick_actions_provider.app.post_message.side_effect = Exception("Action error")
         
         quick_actions_provider.execute_quick_action("new_chat")
         
@@ -516,8 +524,11 @@ class TestSettingsProvider:
     def test_open_settings_tab(self, settings_provider):
         """Test opening settings tab."""
         settings_provider.handle_setting("open_settings")
-        
-        assert settings_provider.app.current_tab == TAB_TOOLS_SETTINGS
+
+        settings_provider.app.post_message.assert_called_once()
+        message = settings_provider.app.post_message.call_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_SETTINGS
         settings_provider.app.notify.assert_called_once()
     
     def test_show_config_path(self, settings_provider):
@@ -662,8 +673,7 @@ class TestCommandPaletteIntegration:
             if method_name == "switch_tab":
                 provider.app.post_message.side_effect = Exception("Test error")
             elif method_name == "execute_quick_action":
-                # This method sets current_tab
-                type(provider.app).current_tab = PropertyMock(side_effect=Exception("Test error"))
+                provider.app.post_message.side_effect = Exception("Test error")
             elif method_name == "switch_theme":
                 # This method sets theme
                 type(provider.app).theme = PropertyMock(side_effect=Exception("Test error"))

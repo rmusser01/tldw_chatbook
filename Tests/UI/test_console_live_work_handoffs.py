@@ -113,3 +113,4 @@ async def test_console_renders_pending_launch_context():
         screen = _active_console_screen(host)
 
         assert screen.query_one("#console-pending-launch-card")
+        assert app.pending_console_launch is None

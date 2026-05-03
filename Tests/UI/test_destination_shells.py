@@ -2,7 +2,7 @@
 
 import pytest
 from textual.app import App
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
@@ -175,6 +175,45 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(route, ex
             if hasattr(widget, "renderable")
         )
         assert expected_text in visible_text
+
+
+@pytest.mark.parametrize(
+    ("route", "selector", "copy"),
+    [
+        ("mcp", "#mcp-open-management", "Unified MCP management is not embedded in this shell yet."),
+        ("skills", "#skills-import-skill", "Skill import is not wired in this shell yet."),
+    ],
+)
+@pytest.mark.asyncio
+async def test_unwired_destination_actions_are_disabled_with_honest_copy(route, selector, copy):
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+
+        button = screen.query_one(selector, Button)
+        assert button.disabled is True
+        assert copy in " ".join(
+            _static_text(widget)
+            for widget in screen.query(Static)
+            if hasattr(widget, "renderable")
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_action_routes_to_customize_surface():
+    app = _build_test_app()
+    seen_routes = []
+    host = DestinationHarness(app, "settings", seen_routes)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#settings-open-appearance")
+        await pilot.pause(0.1)
+
+    assert seen_routes[-1] == "customize"
 
 
 @pytest.mark.asyncio

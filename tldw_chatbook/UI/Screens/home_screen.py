@@ -38,21 +38,14 @@ class HomeScreen(BaseAppScreen):
 
         providers = getattr(self.app_instance, "providers_models", {}) or {}
         model_ready = bool(providers)
-        pending_launch = getattr(self.app_instance, "pending_console_launch", None)
-        live_work_active = isinstance(pending_launch, dict) and bool(pending_launch)
-        active_detail_route = "chat"
-        if isinstance(pending_launch, dict):
-            source_route = pending_launch.get("source")
-            if source_route in {"watchlists_collections", "schedules", "workflows", "acp"}:
-                active_detail_route = source_route
         return HomeDashboardInput(
             model_ready=model_ready,
             pending_approval_count=0,
-            active_run_count=1 if live_work_active else 0,
-            running_run_count=1 if live_work_active else 0,
+            active_run_count=0,
+            running_run_count=0,
             has_library_content=False,
             has_recent_work=bool(getattr(self.app_instance, "_screen_states", {})),
-            active_detail_route=active_detail_route,
+            active_detail_route="chat",
         )
 
     def compose_content(self) -> ComposeResult:

@@ -479,6 +479,12 @@ class ThemeProvider(Provider):
             self.app.notify(f"Failed to apply theme: {e}", severity="error")
 
 
+def _navigate_via_screen(app: App, route: str, success_message: str) -> None:
+    """Navigate through the screen router so palette commands work in shell mode."""
+    app.post_message(NavigateToScreen(route))
+    app.notify(success_message, severity="information")
+
+
 class TabNavigationProvider(Provider):
     """Provider for tab navigation commands."""
 
@@ -495,7 +501,7 @@ class TabNavigationProvider(Provider):
         TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
         TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
         TAB_SETTINGS: "Open global preferences, appearance, accounts, storage, and app behavior",
-        TAB_CCP: "Switch to Library for conversations, characters, personas, prompts, dictionaries, and world books",
+        TAB_CCP: "Switch to Personas for characters, personas, prompts, dictionaries, and world books",
         TAB_NOTES: "Switch to notes management",
         TAB_MEDIA: "Switch to media library",
         TAB_SEARCH: "Switch to search and RAG",
@@ -722,20 +728,15 @@ class QuickActionsProvider(Provider):
         """Execute the specified quick action."""
         try:
             if action_id == "new_chat":
-                self.app.current_tab = TAB_CHAT
-                self.app.notify("Switched to Chat tab for new conversation", severity="information")
+                _navigate_via_screen(self.app, TAB_CHAT, "Opened Console for a new conversation")
             elif action_id == "new_character":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Switched to Character Chat tab", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas for character setup")
             elif action_id == "new_note":
-                self.app.current_tab = TAB_NOTES
-                self.app.notify("Switched to Notes tab for new note", severity="information")
+                _navigate_via_screen(self.app, TAB_NOTES, "Opened Notes for a new note")
             elif action_id == "search_all":
-                self.app.current_tab = TAB_SEARCH
-                self.app.notify("Switched to Search tab", severity="information")
+                _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG")
             elif action_id == "import_media":
-                self.app.current_tab = TAB_INGEST
-                self.app.notify("Switched to Ingest tab for media import", severity="information")
+                _navigate_via_screen(self.app, TAB_INGEST, "Opened Import/Export for media import")
             else:
                 self.app.notify(f"Quick action '{action_id}' initiated", severity="information")
         except Exception as e:
@@ -794,8 +795,7 @@ class SettingsProvider(Provider):
         """Handle settings commands."""
         try:
             if setting_id == "open_settings":
-                self.app.current_tab = TAB_TOOLS_SETTINGS
-                self.app.notify("Opened Tools & Settings tab", severity="information")
+                _navigate_via_screen(self.app, TAB_SETTINGS, "Opened Settings")
             elif setting_id == "open_config":
                 from .config import DEFAULT_CONFIG_PATH
                 self.app.notify(f"Config file location: {DEFAULT_CONFIG_PATH}", severity="information")
@@ -864,14 +864,11 @@ class CharacterProvider(Provider):
         """Handle character management actions."""
         try:
             if action_id == "open_character_tab":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Opened Character Chat tab", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas")
             elif action_id == "new_character":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Navigate to Character Chat to create new character", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas to create a character")
             elif action_id == "list_characters":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Showing all characters in Character Chat tab", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas to list characters")
             else:
                 self.app.notify(f"Character action '{action_id}' requested", severity="information")
         except Exception as e:
@@ -929,14 +926,11 @@ class MediaProvider(Provider):
         """Handle media management actions."""
         try:
             if action_id == "open_media":
-                self.app.current_tab = TAB_MEDIA
-                self.app.notify("Opened Media Library tab", severity="information")
+                _navigate_via_screen(self.app, TAB_MEDIA, "Opened Media Library")
             elif action_id == "import_new":
-                self.app.current_tab = TAB_INGEST
-                self.app.notify("Opened Ingest tab for media import", severity="information")
+                _navigate_via_screen(self.app, TAB_INGEST, "Opened Import/Export for media import")
             elif action_id == "search_transcripts":
-                self.app.current_tab = TAB_SEARCH
-                self.app.notify("Opened Search tab for transcript search", severity="information")
+                _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG for transcript search")
             else:
                 self.app.notify(f"Media action '{action_id}' requested", severity="information")
         except Exception as e:
@@ -993,8 +987,7 @@ class DeveloperProvider(Provider):
         """Handle developer/debug actions."""
         try:
             if action_id == "open_logs":
-                self.app.current_tab = TAB_LOGS
-                self.app.notify("Opened Logs tab", severity="information")
+                _navigate_via_screen(self.app, TAB_LOGS, "Opened Logs")
             elif action_id == "app_info":
                 self.app.notify("tldw_chatbook - TUI for LLM interactions", severity="information")
             elif action_id == "show_keys":
@@ -1644,6 +1637,32 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             "payload": payload or {},
         }
         self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def _notify_home_control_unavailable(self, action_label: str) -> None:
+        self.notify(
+            f"{action_label} is not connected to an active run service yet. Open details or Console to inspect the work.",
+            severity="warning",
+        )
+
+    def approve_active_home_item(self) -> None:
+        """Placeholder hook for Home approval controls until run services are wired."""
+        self._notify_home_control_unavailable("Approve")
+
+    def reject_active_home_item(self) -> None:
+        """Placeholder hook for Home approval controls until run services are wired."""
+        self._notify_home_control_unavailable("Reject")
+
+    def pause_active_home_item(self) -> None:
+        """Placeholder hook for Home run controls until run services are wired."""
+        self._notify_home_control_unavailable("Pause")
+
+    def resume_active_home_item(self) -> None:
+        """Placeholder hook for Home run controls until run services are wired."""
+        self._notify_home_control_unavailable("Resume")
+
+    def retry_active_home_item(self) -> None:
+        """Placeholder hook for Home recovery controls until run services are wired."""
+        self._notify_home_control_unavailable("Retry")
 
     def _wire_character_persona_services(self) -> None:
         self.server_character_persona_service = ServerCharacterPersonaService.from_server_context_provider(

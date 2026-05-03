@@ -103,7 +103,7 @@ def test_loaded_stylesheet_contains_agentic_terminal_contract():
     for class_name in REQUIRED_DESIGN_SYSTEM_CLASSES | REQUIRED_STATE_CLASSES:
         assert f".{class_name}" in loaded_text
     for token_name in REQUIRED_SEMANTIC_TOKENS:
-        assert token_name in loaded_text
+        assert f"${token_name}" in loaded_text
 
 
 def test_agentic_terminal_semantic_tokens_and_theme_exist():
@@ -113,7 +113,7 @@ def test_agentic_terminal_semantic_tokens_and_theme_exist():
         if path.exists()
     )
     for token_name in REQUIRED_SEMANTIC_TOKENS:
-        assert token_name in source_text
+        assert f"${token_name}" in source_text
 
     themes_text = THEMES_PY.read_text(encoding="utf-8")
     assert "agentic_terminal" in themes_text

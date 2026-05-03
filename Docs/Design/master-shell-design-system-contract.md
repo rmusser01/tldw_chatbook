@@ -8,8 +8,8 @@ This contract maps the agentic terminal design system onto the master-shell impl
 
 ## Source Documents
 
-- `Docs/superpowers/specs/2026-05-02-new-user-first-run-shell-ux-design.md`
 - `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md`
+- `Docs/Design/master-shell-route-inventory.md`
 
 ## Required Shared Classes
 
@@ -55,6 +55,6 @@ All new shell surfaces must support `.density-compact` and `.density-comfortable
 
 ## Stop Conditions
 
-- Stop before shell implementation if the design-system spec is unavailable on the implementation branch.
+- Stop before shell implementation if the design-system spec or route inventory is unavailable on the implementation branch.
 - Stop before shell implementation if the shared design-system TCSS classes, density classes, state classes, and `agentic_terminal` theme are missing and need a separate design-system PR.
 - Stop before shell implementation if the generated stylesheet loaded by `TldwCli.CSS_PATH` does not contain the design-system classes and semantic tokens.

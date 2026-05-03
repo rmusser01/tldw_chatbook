@@ -7,7 +7,7 @@ Previous audit baseline: `e2576cae`
 
 ## Follow-On Master Shell Work
 
-The tooltip/remediation stream led into the master shell UX spec and implementation plan: `Docs/superpowers/specs/2026-05-02-new-user-first-run-shell-ux-design.md` and `Docs/superpowers/plans/2026-05-03-master-shell-ux-implementation.md`. That follow-on work reframes user-facing Chat as Console, adds Home as the dashboard/status front door, and creates destination wrappers for Library, Artifacts, Personas, Watchlists+Collections, Schedules, Workflows, MCP, ACP, Skills, and Settings while preserving legacy route IDs.
+The tooltip/remediation stream led into the master shell UX contract now captured in `Docs/Design/master-shell-route-inventory.md`, `Docs/Design/master-shell-design-system-contract.md`, and `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md`. That follow-on work reframes user-facing Chat as Console, adds Home as the dashboard/status front door, and creates destination wrappers for Library, Artifacts, Personas, Watchlists+Collections, Schedules, Workflows, MCP, ACP, Skills, and Settings while preserving legacy route IDs.
 
 ## Goal
 

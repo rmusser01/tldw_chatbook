@@ -1,10 +1,12 @@
 """Settings destination shell for global app preferences."""
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
 
 
 class SettingsScreen(BaseAppScreen):
@@ -29,3 +31,7 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("App-level behavior", classes="destination-section")
                 yield Static("MCP and tool-control settings live under MCP, not global Settings.")
                 yield Button("Open Appearance", id="settings-open-appearance")
+
+    @on(Button.Pressed, "#settings-open-appearance")
+    def open_appearance_settings(self) -> None:
+        self.post_message(NavigateToScreen("customize"))

@@ -58,7 +58,7 @@ TAB_GROUPS = {
 
 TAB_DISPLAY_LABELS = {
     TAB_CHAT: "Console",
-    TAB_CCP: "Library",
+    TAB_CCP: "Personas",
     TAB_NOTES: "Notes",
     TAB_MEDIA: "Media",
     TAB_SEARCH: "Search",

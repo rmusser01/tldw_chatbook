@@ -4,7 +4,7 @@ Date: 2026-05-02
 Status: User-approved design, pending implementation planning
 Primary Repo: `tldw_chatbook`
 Scope: Design system for the master shell UX, default visual identity, reusable UI grammar, Textual/TCSS mapping, and validation rules
-Product Authority: `Docs/superpowers/specs/2026-05-02-new-user-first-run-shell-ux-design.md`
+Product Authority: `Docs/Design/master-shell-route-inventory.md`
 Visual References: `Docs/Design/New_UI/*.png`
 
 ## Summary

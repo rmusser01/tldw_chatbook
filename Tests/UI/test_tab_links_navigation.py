@@ -141,7 +141,7 @@ class TestTabLinksNavigation:
         """Test that each tab has the correct label text."""
         expected_labels = {
             TAB_CHAT: "Console",
-            TAB_CCP: "Library",
+            TAB_CCP: "Personas",
             TAB_NOTES: "Notes",
             TAB_MEDIA: "Media",
             TAB_SEARCH: "Search",
@@ -170,7 +170,7 @@ class TestTabLinksNavigation:
                 
                 # Handle special cases where tab_id doesn't match expected labels
                 if tab_id == "conversations_characters_prompts":
-                    expected = "Library"
+                    expected = "Personas"
                 elif tab_id == "llm_management":
                     expected = "Models"
                 elif tab_id == "subscriptions":

@@ -131,6 +131,19 @@ async def test_home_control_clicks_call_available_runtime_hooks():
     app.retry_active_home_item.assert_called_once()
 
 
+def test_app_exposes_home_runtime_control_hooks():
+    app = _build_test_app()
+
+    for method_name in [
+        "approve_active_home_item",
+        "reject_active_home_item",
+        "pause_active_home_item",
+        "resume_active_home_item",
+        "retry_active_home_item",
+    ]:
+        assert callable(getattr(app, method_name, None))
+
+
 @pytest.mark.asyncio
 async def test_home_detail_controls_route_to_owner_and_console():
     app = _build_test_app()
@@ -173,4 +186,22 @@ async def test_pending_chat_handoff_does_not_create_live_work_controls():
         assert len(home.query("#home-pause")) == 0
         assert len(home.query("#home-resume")) == 0
         assert len(home.query("#home-retry")) == 0
+        assert len(home.query("#home-open-in-console")) == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_console_launch_does_not_create_home_live_work_controls():
+    app = _build_test_app()
+    app.pending_console_launch = {
+        "source": "workflows",
+        "title": "Daily digest",
+        "payload": {},
+    }
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        home = _active_home_screen(host)
+
+        assert len(home.query("#home-pause")) == 0
         assert len(home.query("#home-open-in-console")) == 0

@@ -36,7 +36,11 @@ class SkillsScreen(BaseAppScreen):
                 yield Static("Assets", classes="destination-section")
                 yield Static("Attachments", classes="destination-section")
                 yield Static(f"Local skills directory: {skills_dir_label}", id="skills-local-directory")
-                yield Button("Import Skill", id="skills-import-skill")
+                yield Static(
+                    "Skill import is not wired in this shell yet.",
+                    id="skills-import-unavailable",
+                )
+                yield Button("Import Skill", id="skills-import-skill", disabled=True)
                 yield Button("Attach to Console", id="skills-attach-to-console")
 
     @on(Button.Pressed, "#skills-attach-to-console")

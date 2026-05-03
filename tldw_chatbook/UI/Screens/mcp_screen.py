@@ -28,4 +28,8 @@ class MCPScreen(BaseAppScreen):
                 yield Static("Auth", classes="destination-section")
                 yield Static("Audit", classes="destination-section")
                 yield Static("Test Tool", classes="destination-section")
-                yield Button("Open MCP Management", id="mcp-open-management")
+                yield Static(
+                    "Unified MCP management is not embedded in this shell yet.",
+                    id="mcp-management-unavailable",
+                )
+                yield Button("Open MCP Management", id="mcp-open-management", disabled=True)
