@@ -47,6 +47,10 @@ from ....Utils.paths import get_user_data_dir
 
 # Conditionally import web search functionality
 WEB_SEARCH_AVAILABLE = DEPENDENCIES_AVAILABLE.get('websearch', False)
+USE_IN_CONSOLE_UNAVAILABLE_RECOVERY = (
+    "Use in Console is unavailable because the Console live-work surface is not mounted. "
+    "Open Console from the navigation, then try again."
+)
 if WEB_SEARCH_AVAILABLE:
     try:
         from ....Web_Scraping.WebSearch_APIs import search_web_bing, parse_bing_results
@@ -514,6 +518,42 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             runtime_backend=self._authoritative_runtime_backend(),
         )
 
+    def _build_search_console_launch(self, result: Dict[str, Any]) -> dict[str, Any]:
+        handoff_payload = self._build_search_chat_handoff_payload(result)
+        metadata = dict(handoff_payload.metadata or {})
+        source_id = str(handoff_payload.source_id or "").strip()
+        content_ref = str(handoff_payload.content_ref or "").strip()
+        target_id = content_ref or (
+            f"{handoff_payload.source}:{source_id}" if source_id else handoff_payload.source
+        )
+        is_web = handoff_payload.source == "search-web"
+        launch_payload = {
+            "target_id": target_id,
+            "source_id": source_id,
+            "content_ref": content_ref,
+            "runtime_backend": handoff_payload.runtime_backend or self._authoritative_runtime_backend(),
+            "source": str(result.get("source") or "unknown").strip() or "unknown",
+            "score": metadata.get("score"),
+            "display_summary": handoff_payload.display_summary,
+            "suggested_prompt": handoff_payload.suggested_prompt,
+        }
+        return {
+            "source": "Web Search" if is_web else "RAG",
+            "title": handoff_payload.title,
+            "payload": {
+                key: value
+                for key, value in launch_payload.items()
+                if value is not None and str(value).strip()
+            },
+            "status": "ready",
+            "recovery": (
+                "Use this web result as Console context, or return to Search/RAG to adjust the query."
+                if is_web
+                else "Use this retrieved RAG result as Console context, or return to Search/RAG to adjust the query."
+            ),
+            "action_label": "Ask from web result" if is_web else "Ask from RAG result",
+        }
+
     @staticmethod
     def _rag_handoff_runtime_action_id(payload: ChatHandoffPayload) -> str | None:
         if payload.source != "search-rag":
@@ -544,6 +584,20 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             self.app_instance.notify(USE_IN_CHAT_UNAVAILABLE_RECOVERY, severity="warning")
             return
         open_chat(payload)
+
+    @on(SearchResult.UseInConsoleRequested)
+    def handle_search_result_use_in_console(self, event: SearchResult.UseInConsoleRequested) -> None:
+        event.stop()
+        payload = self._build_search_chat_handoff_payload(event.result)
+        policy_message = self._rag_handoff_policy_blocking_message(payload)
+        if policy_message:
+            self.app_instance.notify(policy_message, severity="warning")
+            return
+        open_console = getattr(self.app_instance, "open_console_for_live_work", None)
+        if not callable(open_console):
+            self.app_instance.notify(USE_IN_CONSOLE_UNAVAILABLE_RECOVERY, severity="warning")
+            return
+        open_console(**self._build_search_console_launch(event.result))
 
     @on(SavedSearchesPanel.LoadRequested)
     def handle_saved_search_load_requested(self, event: SavedSearchesPanel.LoadRequested) -> None:
