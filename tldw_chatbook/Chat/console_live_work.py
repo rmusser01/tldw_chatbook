@@ -228,10 +228,10 @@ class ConsoleLiveWorkSourceReadinessState:
         """Build the default Console live-work source readiness summary.
 
         Returns:
-            ConsoleLiveWorkSourceReadinessState: Readiness state that marks W+C
-                and Schedules as connected while planned future Console
-                live-work sources stay unavailable until their payload
-                producers are wired.
+            ConsoleLiveWorkSourceReadinessState: Readiness state that marks W+C,
+                Schedules, Workflows, RAG, and Artifacts as connected while
+                planned future Console live-work sources stay unavailable until
+                their payload producers are wired.
         """
         connected = "destination-section console-live-work-source-row console-live-work-source-connected"
         unavailable = "destination-section console-live-work-source-row console-live-work-source-unavailable"
@@ -247,9 +247,9 @@ class ConsoleLiveWorkSourceReadinessState:
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-workflows",
                     label="Workflows",
-                    status="Not wired",
-                    recovery="Workflow execution payloads are not wired yet.",
-                    classes=unavailable,
+                    status="Connected",
+                    recovery="Workflows active work can open Console when adapter context exists.",
+                    classes=connected,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-schedules",
