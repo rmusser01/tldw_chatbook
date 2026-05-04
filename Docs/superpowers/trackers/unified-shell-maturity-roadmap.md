@@ -1,8 +1,8 @@
 # Unified Shell Maturity Roadmap
 
-Date: 2026-05-03
+Date: 2026-05-04
 Status: Phase 2 and Phase 3 in progress
-Source Branch: `origin/dev` at `0fbbe48e` plus `codex/unified-shell-phase3-artifacts-console-launch`
+Source Branch: `origin/dev` at `eeaac81c` plus `codex/unified-shell-phase4-mcp-destination-service`
 
 ## Purpose
 
@@ -32,7 +32,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 - W+C and Schedules now expose Console follow when the existing active-work adapter has actionable run context; Schedules also exposes Console launch for the latest local reading-digest output when no active run is available; Search/RAG result cards can stage selected retrieved evidence into Console; Artifacts can launch the latest local Chatbook artifact into Console; Workflows and ACP still use honest unavailable Console states until actionable payloads exist.
 - Console now has a typed app-owned launch contract, reusable status-card display seam, source-readiness summary, Home W+C active-work source producer, W+C and Schedules destination follow producers, a Schedules reading-digest output fallback producer, a RAG search-result producer, an Artifacts Chatbook producer, and W+C run-detail action routing for staged live-work payloads; additional source-specific live event producers still need implementation.
 - ACP launch is disabled until an ACP-compatible runtime is configured.
-- MCP management is not embedded in the top-level MCP wrapper.
+- MCP now adopts the existing Unified MCP management panel in the top-level MCP wrapper; Console MCP live-work launch and deeper service expansion remain future work.
 - Skills local/server services exist, but the top-level Skills shell still leaves import disabled and lacks list/detail/import UX adoption.
 - Library still links into legacy Notes, Media, Ingest, Search/RAG, and conversation screens rather than fully Library-native views.
 - Product workflows remain unverified until running-app QA evidence is added in later phases.
@@ -96,6 +96,7 @@ Initial child tasks:
 - Phase 3.7: Launch active Schedules run from Schedules into Console - `TASK-3.7`
 - Phase 3.8: Launch RAG search result from Search/RAG into Console - `TASK-3.8`
 - Phase 3.9: Launch latest Chatbook artifact from Artifacts into Console - `TASK-3.9`
+- Phase 4.1: Adopt Unified MCP panel in MCP destination - `TASK-5.1`
 
 ## QA Evidence Index
 
@@ -105,7 +106,7 @@ Initial child tasks:
 | Phase 1 | `Docs/superpowers/qa/unified-shell/phase-1/` | verified |
 | Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | in-progress |
 | Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | in-progress |
-| Phase 4 | `Docs/superpowers/qa/unified-shell/phase-4/` | not-started |
+| Phase 4 | `Docs/superpowers/qa/unified-shell/phase-4/` | in-progress |
 | Phase 5 | `Docs/superpowers/qa/unified-shell/phase-5/` | not-started |
 | Phase 6 | `Docs/superpowers/qa/unified-shell/phase-6/` | not-started |
 
@@ -117,7 +118,7 @@ Initial child tasks:
 | Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | verified | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3`, `TASK-2.4` | `phase-1/` | Live service workflows remain intentionally deferred to Phases 2-6. |
 | Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | in-progress | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6`, `TASK-4.7` | `phase-2/` | Schedule and agent-service adapters still need implementation; local watchlist retry/pause/resume remain recoverable rather than fully controllable. |
 | Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | in-progress | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, `TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9` | `phase-3/` | Workflows, ACP, MCP, server Artifacts, and deeper source-specific live event streams still need implementation. |
-| Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | not-started | `TASK-5` | `phase-4/` | Service coverage varies by destination. |
+| Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | in-progress | `TASK-5`, `TASK-5.1` | `phase-4/` | Service coverage varies by destination; MCP now adopts the existing Unified MCP panel but remaining destinations still need adoption or verified recovery. |
 | Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | not-started | `TASK-6` | `phase-5/` | Shared taxonomy not yet extracted. |
 | Phase 6: Audit Replay And Closeout | Prove shell works for first-time and power users. | not-started | `TASK-7` | `phase-6/` | Depends on prior phases and running-app QA. |
 
@@ -250,6 +251,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-3.9` lets Artifacts stage the latest local Chatbook artifact in Console while preserving the existing Chatbooks destination route:
 
 - `Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-artifacts-chatbook-console-launch.md`
+
+## Phase 4.1 MCP Destination Service Adoption Evidence
+
+`TASK-5.1` embeds the existing Unified MCP management panel in the top-level MCP destination while preserving the legacy `tools_settings` MCP alias:
+
+- `Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-mcp-destination-service-adoption.md`
 
 ## Phase 0: Canonical Tracking
 

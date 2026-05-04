@@ -165,7 +165,12 @@ class UnifiedMCPPanel(Container):
                     yield Label("Payload (JSON)", classes="form-label")
                     yield TextArea("{}", id="unified-mcp-action-payload")
                     with Horizontal(classes="unified-mcp-action-row"):
-                        yield Button("Run Action", id="unified-mcp-action-run", variant="primary")
+                        yield Button(
+                            "Run Action",
+                            id="unified-mcp-action-run",
+                            variant="primary",
+                            tooltip="Run the selected Unified MCP action with the JSON payload above.",
+                        )
                     yield Static("", id="unified-mcp-action-result", classes="help-text")
 
     async def on_mount(self) -> None:
