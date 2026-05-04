@@ -22,6 +22,11 @@ Make Artifacts a real Console live-work source for local Chatbook artifacts. A u
 - Broader focused command: `.venv/bin/python -m pytest Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_shells.py -q`
 - Broader focused result: `76 passed, 1 warning in 24.15s`.
 - Whitespace check: `git diff --check` completed with no output.
+- Review-fix red result: three focused regressions failed for unsafe Chatbook metadata, lexicographic latest-Chatbook tie-break, and service errors rendering as empty-state copy.
+- Review-fix focused green command: `.venv/bin/python -m pytest Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_sanitizes_chatbook_metadata_before_console_launch Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbook Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_distinguishes_chatbook_service_failure_from_empty_state -q`
+- Review-fix focused green result: `3 passed, 1 warning in 8.87s`.
+- Review-fix broader focused command: `.venv/bin/python -m pytest Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_destination_shells.py -q`
+- Review-fix broader focused result: `79 passed, 1 warning in 26.35s`.
 
 ## QA Walkthrough Notes
 
@@ -30,6 +35,8 @@ Make Artifacts a real Console live-work source for local Chatbook artifacts. A u
 - Visual check: Artifacts preserves the `Open Chatbooks` primary route and shows either `Console launch available` with the latest Chatbook title or `Console launch unavailable` with recovery copy.
 - Functional result: selecting `artifacts-use-in-console` with a local Chatbook stages a typed Console launch payload containing Chatbook identity, file path, description, tags, categories, and updated timestamp.
 - Recovery result: without a local Chatbook, the Console launch control is disabled and does not stage chat or Console context.
+- Review-fix recovery result: if the local Chatbook service fails, Artifacts now shows distinct service-unavailable recovery copy instead of claiming there are no local Chatbooks.
+- Review-fix security result: Chatbook metadata is sanitized through `input_validation.py` before being staged into Console launch payloads.
 
 ## Residual Risk
 

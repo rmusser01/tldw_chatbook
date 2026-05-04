@@ -4,7 +4,7 @@ title: Phase 3.9 Launch latest Chatbook artifact from Artifacts into Console
 status: Done
 assignee: []
 created_date: '2026-05-04 02:39'
-updated_date: '2026-05-04 02:46'
+updated_date: '2026-05-04 02:59'
 labels:
   - unified-shell
   - phase-3
@@ -47,4 +47,6 @@ Make Artifacts participate in the Console live-work model through a real Chatboo
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented a local Chatbook-backed Artifacts Console launch path. Artifacts now loads the latest local Chatbook through the existing local_chatbook_service seam, disables Console launch with recovery copy when no Chatbook exists, and stages a typed Console live-work payload when a Chatbook is available. Updated Console readiness, Phase 3 roadmap/readme evidence, and focused UI regression coverage.
+
+Review fixes: sanitized Chatbook metadata through input_validation.py before Console staging, changed latest Chatbook tie-break to parsed timestamp plus numeric ID ordering, and split service-unavailable recovery copy from the empty-Chatbook state. Added focused regressions for all three PR findings.
 <!-- SECTION:NOTES:END -->

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
+from html import escape as html_escape
 from typing import Any
 
 from loguru import logger
@@ -15,11 +18,14 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
+from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 
 
 logger = logger.bind(module="ArtifactsScreen")
+CHATBOOK_SERVICE_ERROR_COPY = "Chatbook service unavailable; retry Artifacts later."
+DANGEROUS_TEXT_PATTERNS = ("javascript:", "onclick=", "onerror=")
 
 
 class ArtifactsScreen(BaseAppScreen):
@@ -28,6 +34,7 @@ class ArtifactsScreen(BaseAppScreen):
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "artifacts", **kwargs)
         self._latest_chatbook_console_launch: dict[str, Any] | None = None
+        self._chatbook_lookup_error: str | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -35,11 +42,16 @@ class ArtifactsScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True)
     def _refresh_latest_chatbook_context(self) -> None:
-        launch_kwargs = self._latest_local_chatbook_console_launch()
-        self.app.call_from_thread(self._apply_latest_chatbook_context, launch_kwargs)
+        launch_kwargs, lookup_error = self._latest_local_chatbook_console_launch()
+        self.app.call_from_thread(self._apply_latest_chatbook_context, launch_kwargs, lookup_error)
 
-    def _apply_latest_chatbook_context(self, launch_kwargs: dict[str, Any] | None) -> None:
+    def _apply_latest_chatbook_context(
+        self,
+        launch_kwargs: dict[str, Any] | None,
+        lookup_error: str | None = None,
+    ) -> None:
         self._latest_chatbook_console_launch = launch_kwargs
+        self._chatbook_lookup_error = lookup_error
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -48,39 +60,82 @@ class ArtifactsScreen(BaseAppScreen):
         text = str(value or "").strip()
         return text or fallback
 
-    @staticmethod
-    def _csv(value: Any) -> str | None:
+    @classmethod
+    def _safe_text(cls, value: Any, fallback: str = "", *, max_length: int = 1000) -> str:
+        text = sanitize_string(str(value or ""), max_length=max_length).strip()
+        if not text:
+            return fallback
+        text = html_escape(text, quote=False)
+        if validate_text_input(text, max_length=max_length, allow_html=False):
+            return text
+        for pattern in DANGEROUS_TEXT_PATTERNS:
+            text = re.sub(re.escape(pattern), pattern.rstrip(":=").replace("=", ""), text, flags=re.IGNORECASE)
+        if validate_text_input(text, max_length=max_length, allow_html=False):
+            return text
+        return fallback
+
+    @classmethod
+    def _csv(cls, value: Any) -> str | None:
         if value is None:
             return None
         if isinstance(value, str):
-            return value.strip() or None
+            return cls._safe_text(value) or None
         if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
-            text = ", ".join(str(item).strip() for item in value if str(item).strip())
+            safe_items = [cls._safe_text(item) for item in value]
+            text = ", ".join(item for item in safe_items if item)
             return text or None
-        return str(value).strip() or None
+        return cls._safe_text(value) or None
 
     @classmethod
-    def _chatbook_sort_key(cls, record: Mapping[str, Any]) -> tuple[str, str]:
-        updated_at = cls._text(record.get("updated_at") or record.get("created_at"))
-        chatbook_id = cls._text(record.get("chatbook_id") or record.get("id"))
-        return (updated_at, chatbook_id)
+    def _safe_identifier(cls, value: Any) -> int | str | None:
+        if isinstance(value, int):
+            return value
+        text = cls._safe_text(value, max_length=128)
+        return text or None
+
+    @classmethod
+    def _datetime_sort_key(cls, value: Any) -> float:
+        text = cls._text(value)
+        if not text:
+            return 0.0
+        try:
+            normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        except (TypeError, ValueError):
+            return 0.0
+
+    @classmethod
+    def _chatbook_id_sort_key(cls, value: Any) -> tuple[int, int, str]:
+        text = cls._text(value)
+        if text.isdigit():
+            return (1, int(text), "")
+        return (0, 0, text)
+
+    @classmethod
+    def _chatbook_sort_key(cls, record: Mapping[str, Any]) -> tuple[float, int, int, str]:
+        updated_at = cls._datetime_sort_key(record.get("updated_at") or record.get("created_at"))
+        id_kind, id_number, id_text = cls._chatbook_id_sort_key(record.get("chatbook_id") or record.get("id"))
+        return (updated_at, id_kind, id_number, id_text)
 
     @classmethod
     def _build_chatbook_console_launch(cls, record: Mapping[str, Any]) -> dict[str, Any] | None:
-        chatbook_id = record.get("chatbook_id") or record.get("id")
+        chatbook_id = cls._safe_identifier(record.get("chatbook_id") or record.get("id"))
         if chatbook_id in (None, ""):
             return None
-        title = cls._text(record.get("name") or record.get("title"), "Untitled Chatbook")
-        description = cls._text(record.get("description"))
+        title = cls._safe_text(record.get("name") or record.get("title"), "Untitled Chatbook")
+        description = cls._safe_text(record.get("description"))
         payload = {
             "target_id": f"local:chatbook:{chatbook_id}",
             "chatbook_id": chatbook_id,
-            "record_id": record.get("id"),
-            "file_path": record.get("file_path"),
+            "record_id": cls._safe_text(record.get("id")),
+            "file_path": cls._safe_text(record.get("file_path"), max_length=2000),
             "description": description,
             "tags": cls._csv(record.get("tags")),
             "categories": cls._csv(record.get("categories")),
-            "updated_at": record.get("updated_at"),
+            "updated_at": cls._safe_text(record.get("updated_at")),
         }
         return {
             "source": "artifacts",
@@ -91,11 +146,11 @@ class ArtifactsScreen(BaseAppScreen):
             "action_label": "Open Chatbook artifact",
         }
 
-    def _latest_local_chatbook_console_launch(self) -> dict[str, Any] | None:
+    def _latest_local_chatbook_console_launch(self) -> tuple[dict[str, Any] | None, str | None]:
         service = getattr(self.app_instance, "local_chatbook_service", None)
         list_chatbooks = getattr(service, "list_chatbooks", None)
         if not callable(list_chatbooks):
-            return None
+            return None, None
         try:
             result = list_chatbooks(q=None, limit=25, offset=0)
             if inspect.isawaitable(result):
@@ -105,12 +160,12 @@ class ArtifactsScreen(BaseAppScreen):
                 "Failed to load latest local Chatbook artifact for Console launch.",
                 exc_info=True,
             )
-            return None
+            return None, CHATBOOK_SERVICE_ERROR_COPY
         records = [record for record in tuple(result or ()) if isinstance(record, Mapping)]
         if not records:
-            return None
+            return None, None
         latest_record = max(records, key=self._chatbook_sort_key)
-        return self._build_chatbook_console_launch(latest_record)
+        return self._build_chatbook_console_launch(latest_record), None
 
     def compose_content(self) -> ComposeResult:
         launch_kwargs = self._latest_chatbook_console_launch
@@ -156,15 +211,22 @@ class ArtifactsScreen(BaseAppScreen):
                     )
                 else:
                     yield Static("Console launch unavailable", classes="destination-section")
+                    unavailable_copy = self._chatbook_lookup_error or (
+                        "No local Chatbook artifact is available for Console launch."
+                    )
                     yield Static(
-                        "No local Chatbook artifact is available for Console launch.",
+                        unavailable_copy,
                         id="artifacts-console-unavailable",
                     )
                     yield Button(
                         "Console launch unavailable",
                         id="artifacts-use-in-console",
                         disabled=True,
-                        tooltip="Unavailable until a local Chatbook artifact exists.",
+                        tooltip=(
+                            "Unavailable while the local Chatbook service is unavailable."
+                            if self._chatbook_lookup_error
+                            else "Unavailable until a local Chatbook artifact exists."
+                        ),
                     )
 
     @on(Button.Pressed, "#artifacts-open-chatbooks")
@@ -177,7 +239,7 @@ class ArtifactsScreen(BaseAppScreen):
         launch_kwargs = self._latest_chatbook_console_launch
         if launch_kwargs is None:
             self.app_instance.notify(
-                "No local Chatbook artifact is available for Console launch.",
+                self._chatbook_lookup_error or "No local Chatbook artifact is available for Console launch.",
                 severity="warning",
             )
             return

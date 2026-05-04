@@ -185,6 +185,11 @@ class StaticLocalChatbookService:
         return list(self.chatbooks)[int(offset) : int(offset) + int(limit)]
 
 
+class RaisingLocalChatbookService:
+    async def list_chatbooks(self, *, q=None, limit=100, offset=0, **kwargs):
+        raise RuntimeError("registry read failed")
+
+
 def test_app_exposes_open_console_for_live_work_helper():
     app = _build_test_app()
 
@@ -1075,6 +1080,106 @@ async def test_artifacts_destination_launches_latest_local_chatbook_in_console()
         action_label="Open Chatbook artifact",
     )
     app.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_launch():
+    app = _build_test_app()
+    app.local_chatbook_service = StaticLocalChatbookService(
+        (
+            {
+                "chatbook_id": "7",
+                "id": "7",
+                "name": "Research <script>alert(1)</script> Pack\x00",
+                "description": "Open javascript:alert(1) and onerror=bad",
+                "file_path": "/tmp/<script>bad</script>.chatbook\x00",
+                "tags": ["safe", "<script>tag</script>"],
+                "categories": ["onclick=bad", "Library"],
+                "updated_at": "2026-05-03T20:00:00Z",
+            },
+        )
+    )
+    app.open_console_for_live_work = Mock()
+    host = DestinationHarness(app, "artifacts")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        await pilot.click("#artifacts-use-in-console")
+        await pilot.pause(0.1)
+
+    launch_kwargs = app.open_console_for_live_work.call_args.kwargs
+    payload_strings = [launch_kwargs["title"]]
+    payload_strings.extend(
+        str(value)
+        for value in launch_kwargs["payload"].values()
+        if value is not None
+    )
+    combined = " ".join(payload_strings).lower()
+    assert "\x00" not in combined
+    assert "<script" not in combined
+    assert "javascript:" not in combined
+    assert "onclick=" not in combined
+    assert "onerror=" not in combined
+    assert "&lt;script&gt;" in combined
+
+
+@pytest.mark.asyncio
+async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbook():
+    app = _build_test_app()
+    app.local_chatbook_service = StaticLocalChatbookService(
+        (
+            {
+                "chatbook_id": 9,
+                "id": "9",
+                "name": "Nine Pack",
+                "updated_at": "2026-05-03T20:00:00Z",
+            },
+            {
+                "chatbook_id": 10,
+                "id": "10",
+                "name": "Ten Pack",
+                "updated_at": "2026-05-03T20:00:00Z",
+            },
+        )
+    )
+    app.open_console_for_live_work = Mock()
+    host = DestinationHarness(app, "artifacts")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#artifacts-use-in-console")
+
+        assert "Ten Pack" in str(button.label)
+
+        await pilot.click("#artifacts-use-in-console")
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once()
+    assert app.open_console_for_live_work.call_args.kwargs["payload"]["chatbook_id"] == 10
+
+
+@pytest.mark.asyncio
+async def test_artifacts_destination_distinguishes_chatbook_service_failure_from_empty_state():
+    app = _build_test_app()
+    app.local_chatbook_service = RaisingLocalChatbookService()
+    app.open_console_for_live_work = Mock()
+    host = DestinationHarness(app, "artifacts")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#artifacts-use-in-console")
+        text = _screen_static_text(screen)
+
+        assert button.disabled is True
+        assert "Chatbook service unavailable; retry Artifacts later." in text
+        assert "No local Chatbook artifact is available" not in text
+
+        await pilot.click("#artifacts-use-in-console")
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_not_called()
 
 
 @pytest.mark.parametrize(
