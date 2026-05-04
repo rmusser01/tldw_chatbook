@@ -1,5 +1,6 @@
 """Console live-work launch and staged-context handoff boundary tests."""
 
+import threading
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -11,6 +12,7 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -91,6 +93,19 @@ class StaticHomeActiveWorkAdapter:
 
     def handle_control(self, action, *, target_id=None, target_route=None):
         raise AssertionError(f"Unexpected direct control call: {action} {target_id} {target_route}")
+
+
+class ThreadRecordingHomeActiveWorkAdapter(StaticHomeActiveWorkAdapter):
+    def __init__(self, items):
+        super().__init__(items)
+        self.call_threads = []
+
+    def build_dashboard_input(self, *, providers_models, has_recent_work):
+        self.call_threads.append(threading.get_ident())
+        return super().build_dashboard_input(
+            providers_models=providers_models,
+            has_recent_work=has_recent_work,
+        )
 
 
 class RaisingHomeActiveWorkAdapter:
@@ -416,6 +431,60 @@ def test_phase3_schedules_console_tracking_evidence_links_task_and_roadmap():
         "`TASK-3.5`, `TASK-3.6`, `TASK-3.7`"
     ) in roadmap
     assert "schedules-follow-in-console" in task
+
+
+def test_schedules_console_follow_uses_home_dashboard_app_inputs():
+    app = _build_test_app()
+    app.providers_models = {"OpenAI": ["gpt-4.1"]}
+    app._screen_states = {"chat": {"conversation_id": "c1"}}
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="schedule:run:11",
+                title="Daily digest schedule",
+                source="Schedules",
+                status="running",
+                detail_route="schedules",
+                console_available=True,
+            ),
+        )
+    )
+    screen = SchedulesScreen(app)
+
+    item = screen._latest_console_follow_item()
+
+    assert getattr(item, "item_id", None) == "schedule:run:11"
+    assert app.home_active_work_adapter.build_calls == [
+        {
+            "providers_models": {"OpenAI": ["gpt-4.1"]},
+            "has_recent_work": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_schedules_destination_loads_console_follow_item_off_main_thread():
+    main_thread_id = threading.get_ident()
+    app = _build_test_app()
+    app.home_active_work_adapter = ThreadRecordingHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="schedule:run:11",
+                title="Daily digest schedule",
+                source="Schedules",
+                status="running",
+                detail_route="schedules",
+                console_available=True,
+            ),
+        )
+    )
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+
+    assert app.home_active_work_adapter.call_threads
+    assert main_thread_id not in app.home_active_work_adapter.call_threads
 
 
 @pytest.mark.parametrize(

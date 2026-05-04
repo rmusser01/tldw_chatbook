@@ -3,7 +3,7 @@
 from loguru import logger
 from rich.markup import escape as escape_markup
 from rich.text import Text
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Static
@@ -19,17 +19,45 @@ class SchedulesScreen(BaseAppScreen):
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "schedules", **kwargs)
+        self._current_console_follow_item = None
         self._latest_console_follow_item_id = None
 
+    def on_mount(self) -> None:
+        super().on_mount()
+        self._refresh_latest_console_follow_item()
+
+    @work(exclusive=True, thread=True)
+    def _refresh_latest_console_follow_item(self) -> None:
+        latest_console_item = self._latest_console_follow_item_from_adapter()
+        self.app.call_from_thread(
+            self._apply_latest_console_follow_item,
+            latest_console_item,
+        )
+
+    def _apply_latest_console_follow_item(self, latest_console_item) -> None:
+        self._current_console_follow_item = latest_console_item
+        self._latest_console_follow_item_id = (
+            getattr(latest_console_item, "item_id", None)
+            if latest_console_item is not None
+            else None
+        )
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
     def _latest_console_follow_item(self):
+        return self._latest_console_follow_item_from_adapter()
+
+    def _latest_console_follow_item_from_adapter(self):
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         build_dashboard_input = getattr(adapter, "build_dashboard_input", None)
         if not callable(build_dashboard_input):
             return None
         try:
+            providers = getattr(self.app_instance, "providers_models", {}) or {}
+            has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
             dashboard_input = build_dashboard_input(
-                providers_models={},
-                has_recent_work=False,
+                providers_models=providers,
+                has_recent_work=has_recent_work,
             )
         except Exception:
             logger.warning(
@@ -47,7 +75,7 @@ class SchedulesScreen(BaseAppScreen):
         return None
 
     def compose_content(self) -> ComposeResult:
-        latest_console_item = self._latest_console_follow_item()
+        latest_console_item = self._current_console_follow_item
         self._latest_console_follow_item_id = (
             getattr(latest_console_item, "item_id", None)
             if latest_console_item is not None
