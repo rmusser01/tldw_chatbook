@@ -1,6 +1,8 @@
 """Master shell destination wrapper tests."""
 
+import asyncio
 import inspect
+import time
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -26,6 +28,7 @@ from tldw_chatbook.UI.Screens.skills_screen import SkillsScreen
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.UI.Screens import personas_screen as personas_screen_module
 from tldw_chatbook.UI.Screens import skills_screen as skills_screen_module
 
 
@@ -52,6 +55,39 @@ PHASE4_SKILLS_ADOPTION_EVIDENCE = Path(
 PHASE4_LIBRARY_ADOPTION_EVIDENCE = Path(
     "Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-library-source-service-adoption.md"
 )
+PHASE4_PERSONAS_ADOPTION_EVIDENCE = Path(
+    "Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-personas-service-adoption.md"
+)
+
+
+class StaticPersonasScopeService:
+    def __init__(self, *, characters=(), profiles=()):
+        self.characters = tuple(characters)
+        self.profiles = tuple(profiles)
+        self.character_calls = []
+        self.profile_calls = []
+
+    async def list_characters(self, **kwargs):
+        self.character_calls.append(kwargs)
+        return list(self.characters)
+
+    async def list_persona_profiles(self, **kwargs):
+        self.profile_calls.append(kwargs)
+        return list(self.profiles)
+
+
+class RaisingPersonasScopeService:
+    async def list_characters(self, **kwargs):
+        raise RuntimeError("characters unavailable")
+
+    async def list_persona_profiles(self, **kwargs):
+        return []
+
+
+class SlowPersonasScopeService(StaticPersonasScopeService):
+    async def list_characters(self, **kwargs):
+        await asyncio.sleep(0.35)
+        return await super().list_characters(**kwargs)
 
 
 class StaticLibraryNotesScopeService:
@@ -163,6 +199,38 @@ def _visible_text(screen) -> str:
     )
 
 
+async def _wait_for_personas_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    terminal_selectors = (
+        "#personas-service-error",
+        "#personas-empty-state",
+        "#personas-characters-summary",
+        "#personas-profiles-summary",
+    )
+    while time.monotonic() < deadline:
+        terminal_state_visible = any(screen.query(selector) for selector in terminal_selectors)
+        buttons = list(screen.query("#personas-attach-to-console"))
+        if buttons:
+            button = buttons[0]
+            if button.disabled is False:
+                await pilot.pause()
+                return
+            if terminal_state_visible:
+                await pilot.pause()
+                return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for Personas snapshot. Visible text: {_visible_text(screen)}")
+
+
+async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if mock.call_count:
+            return
+        await pilot.pause()
+    raise AssertionError("Timed out waiting for mock call")
+
+
 @pytest.mark.parametrize(
     ("route", "title_id", "purpose_text"),
     [
@@ -200,6 +268,146 @@ async def test_watchlists_collections_uses_compact_title_and_clear_sections():
         visible_text = _visible_text(screen)
         assert "Watchlists" in visible_text
         assert "Collections" in visible_text
+
+
+@pytest.mark.asyncio
+async def test_personas_destination_lists_local_behavior_snapshot_from_service():
+    app = _build_test_app()
+    app.character_persona_scope_service = StaticPersonasScopeService(
+        characters=[
+            {"name": "Research Mentor", "id": 1},
+            {"name": "Code Reviewer", "id": 2},
+        ],
+        profiles=[
+            {"name": "Socratic Tutor", "id": "persona-1", "description": "Guides by asking questions."},
+        ],
+    )
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+        text = _visible_text(screen)
+        button = screen.query_one("#personas-attach-to-console", Button)
+
+        assert "Local Personas snapshot" in text
+        assert "Characters: 2" in text
+        assert "Persona profiles: 1" in text
+        assert "Research Mentor" in text
+        assert "Code Reviewer" in text
+        assert "Socratic Tutor" in text
+        assert button.disabled is False
+
+    assert app.character_persona_scope_service.character_calls[0] == {
+        "mode": "local",
+        "limit": getattr(personas_screen_module, "PERSONAS_LOCAL_PAGE_SIZE", None),
+        "offset": 0,
+    }
+    assert app.character_persona_scope_service.profile_calls[0] == {
+        "mode": "local",
+        "active_only": True,
+        "include_deleted": False,
+        "limit": getattr(personas_screen_module, "PERSONAS_LOCAL_PAGE_SIZE", None),
+        "offset": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_personas_destination_waits_for_threaded_snapshot_without_fixed_sleep():
+    app = _build_test_app()
+    app.character_persona_scope_service = SlowPersonasScopeService(
+        characters=[{"name": "Delayed Mentor", "id": 1}],
+        profiles=[],
+    )
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+
+        assert "Delayed Mentor" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_personas_destination_empty_state_disables_console_attach():
+    app = _build_test_app()
+    app.character_persona_scope_service = StaticPersonasScopeService()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+        button = screen.query_one("#personas-attach-to-console", Button)
+
+        assert "No local characters or persona profiles are available yet." in _visible_text(screen)
+        assert button.disabled is True
+        assert "Stage local persona context" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_personas_destination_service_failure_uses_recovery_copy():
+    app = _build_test_app()
+    app.character_persona_scope_service = RaisingPersonasScopeService()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+        button = screen.query_one("#personas-attach-to-console", Button)
+
+        assert "Personas service unavailable; retry Personas later." in _visible_text(screen)
+        assert button.disabled is True
+        assert "Personas service is unavailable" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_personas_attach_to_console_uses_listed_behavior_context():
+    app = _build_test_app()
+    app.character_persona_scope_service = StaticPersonasScopeService(
+        characters=[
+            {"name": "Research Mentor", "id": 1, "description": "Helps reason over sources."},
+        ],
+        profiles=[
+            {"name": "Socratic Tutor", "id": "persona-1", "description": "Guides by asking questions."},
+        ],
+    )
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+        await pilot.click("#personas-attach-to-console")
+        await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert isinstance(payload, ChatHandoffPayload)
+    assert payload.source == "personas"
+    assert payload.item_type == "personas-context"
+    assert payload.title == "Local Personas Context"
+    assert "Characters: 1" in payload.body
+    assert "Persona profiles: 1" in payload.body
+    assert "Research Mentor" in payload.body
+    assert "Socratic Tutor" in payload.body
+    assert "Stage characters, prompts, dictionaries" not in payload.body
+    assert payload.metadata["character_count"] == 1
+    assert payload.metadata["persona_profile_count"] == 1
+    assert payload.metadata["character_names"] == ["Research Mentor"]
+    assert payload.metadata["persona_profile_names"] == ["Socratic Tutor"]
+
+
+def test_personas_destination_service_adoption_tracking_evidence_exists():
+    evidence = PHASE4_PERSONAS_ADOPTION_EVIDENCE.read_text(encoding="utf-8")
+    roadmap = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text(encoding="utf-8")
+    task = Path(
+        "backlog/tasks/task-5.4 - Phase-4.4-Adopt-Personas-service-in-Personas-destination.md"
+    ).read_text(encoding="utf-8")
+
+    assert "Phase 4.4 Personas Service Adoption" in evidence
+    assert "TASK-5.4" in evidence
+    assert "Phase 4.4: Adopt Personas service in Personas destination - `TASK-5.4`" in roadmap
+    assert "character_persona_scope_service" in task
 
 
 @pytest.mark.asyncio
