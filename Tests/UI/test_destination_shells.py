@@ -1,6 +1,8 @@
 """Master shell destination wrapper tests."""
 
+import asyncio
 import inspect
+import time
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -80,6 +82,12 @@ class RaisingPersonasScopeService:
 
     async def list_persona_profiles(self, **kwargs):
         return []
+
+
+class SlowPersonasScopeService(StaticPersonasScopeService):
+    async def list_characters(self, **kwargs):
+        await asyncio.sleep(0.35)
+        return await super().list_characters(**kwargs)
 
 
 class StaticLibraryNotesScopeService:
@@ -191,6 +199,38 @@ def _visible_text(screen) -> str:
     )
 
 
+async def _wait_for_personas_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    terminal_selectors = (
+        "#personas-service-error",
+        "#personas-empty-state",
+        "#personas-characters-summary",
+        "#personas-profiles-summary",
+    )
+    while time.monotonic() < deadline:
+        terminal_state_visible = any(screen.query(selector) for selector in terminal_selectors)
+        buttons = list(screen.query("#personas-attach-to-console"))
+        if buttons:
+            button = buttons[0]
+            if button.disabled is False:
+                await pilot.pause()
+                return
+            if terminal_state_visible:
+                await pilot.pause()
+                return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for Personas snapshot. Visible text: {_visible_text(screen)}")
+
+
+async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if mock.call_count:
+            return
+        await pilot.pause()
+    raise AssertionError("Timed out waiting for mock call")
+
+
 @pytest.mark.parametrize(
     ("route", "title_id", "purpose_text"),
     [
@@ -245,8 +285,8 @@ async def test_personas_destination_lists_local_behavior_snapshot_from_service()
     host = DestinationHarness(app, "personas")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
         text = _visible_text(screen)
         button = screen.query_one("#personas-attach-to-console", Button)
 
@@ -273,14 +313,30 @@ async def test_personas_destination_lists_local_behavior_snapshot_from_service()
 
 
 @pytest.mark.asyncio
+async def test_personas_destination_waits_for_threaded_snapshot_without_fixed_sleep():
+    app = _build_test_app()
+    app.character_persona_scope_service = SlowPersonasScopeService(
+        characters=[{"name": "Delayed Mentor", "id": 1}],
+        profiles=[],
+    )
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+
+        assert "Delayed Mentor" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
 async def test_personas_destination_empty_state_disables_console_attach():
     app = _build_test_app()
     app.character_persona_scope_service = StaticPersonasScopeService()
     host = DestinationHarness(app, "personas")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
         button = screen.query_one("#personas-attach-to-console", Button)
 
         assert "No local characters or persona profiles are available yet." in _visible_text(screen)
@@ -295,8 +351,8 @@ async def test_personas_destination_service_failure_uses_recovery_copy():
     host = DestinationHarness(app, "personas")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
         button = screen.query_one("#personas-attach-to-console", Button)
 
         assert "Personas service unavailable; retry Personas later." in _visible_text(screen)
@@ -319,9 +375,10 @@ async def test_personas_attach_to_console_uses_listed_behavior_context():
     host = DestinationHarness(app, "personas")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
         await pilot.click("#personas-attach-to-console")
-        await pilot.pause(0.1)
+        await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
 
     app.open_chat_with_handoff.assert_called_once()
     payload = app.open_chat_with_handoff.call_args.args[0]

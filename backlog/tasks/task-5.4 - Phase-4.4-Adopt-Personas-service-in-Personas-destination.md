@@ -48,5 +48,6 @@ Make the top-level Personas destination use the existing character/persona scope
 - Rendered loading, available, empty, service-unavailable, and policy-denied recovery states while preserving the existing `Open Personas` route.
 - Changed `Attach to Console` from a generic placeholder to a disabled-until-ready `personas-context` Chat handoff with concrete local character/profile counts, sample names, and descriptions.
 - Added focused destination shell and Console handoff regression coverage plus Phase 4.4 QA evidence and roadmap links.
-- Verified with `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_shell_product_model_visibility.py Tests/Character_Chat/test_character_persona_scope_service.py -q` resulting in `161 passed, 8 warnings in 92.93s`.
+- Replaced Personas destination test fixed sleeps with deterministic polling for loaded/error/empty UI states and added a delayed-service regression for the threaded worker path.
+- Verified with `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_shell_product_model_visibility.py Tests/Character_Chat/test_character_persona_scope_service.py -q` resulting in `162 passed, 8 warnings in 93.70s`.
 <!-- SECTION:NOTES:END -->

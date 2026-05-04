@@ -24,7 +24,10 @@ Turn the top-level Personas destination from static legacy-route links plus gene
 - First green behavior command after implementation: `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py -q`
 - First green behavior result: `1 failed, 57 passed, 1 warning in 21.79s`; only the tracking evidence file was still missing.
 - Final focused command: `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_shell_product_model_visibility.py Tests/Character_Chat/test_character_persona_scope_service.py -q`
-- Final focused result: `161 passed, 8 warnings in 92.93s`.
+- Final focused result: `162 passed, 8 warnings in 93.70s`.
+- PR review follow-up red command: `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py::test_personas_destination_waits_for_threaded_snapshot_without_fixed_sleep -q`
+- PR review follow-up red result: `1 failed, 1 warning in 7.47s` because a fixed `pilot.pause(0.2)` still observed the loading state while the threaded worker was running.
+- PR review follow-up green result: `162 passed, 8 warnings in 93.70s` for the focused UI and character/persona scope suite after replacing fixed Persona test sleeps with deterministic polling.
 
 ## QA Walkthrough Notes
 
