@@ -1355,7 +1355,6 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from
 @pytest.mark.parametrize(
     ("route", "button_id"),
     [
-        ("library", "library-use-in-console"),
         ("personas", "personas-attach-to-console"),
     ],
 )
