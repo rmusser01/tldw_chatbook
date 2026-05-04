@@ -1,5 +1,7 @@
 """MCP destination shell for tools, servers, permissions, and audit."""
 
+from typing import Any
+
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
@@ -11,7 +13,7 @@ from ..Navigation.base_app_screen import BaseAppScreen
 class MCPScreen(BaseAppScreen):
     """MCP servers, tools, permissions, auth, and audit surface."""
 
-    def __init__(self, app_instance, **kwargs):
+    def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "mcp", **kwargs)
         self.mcp_panel: UnifiedMCPPanel | None = None
 
@@ -24,23 +26,41 @@ class MCPScreen(BaseAppScreen):
                 classes="destination-purpose",
             )
             self.mcp_panel = UnifiedMCPPanel(self.app_instance, id="unified-mcp-panel", classes="ds-panel")
+            self.mcp_panel.set_initial_view_state(self.state_data.get("unified_mcp_view_state"))
             yield self.mcp_panel
 
-    def save_state(self):
-        """Save Unified MCP view state when the screen is switched away."""
+    def save_state(self) -> dict[str, Any]:
+        """Save Unified MCP view state when the screen is switched away.
+
+        Returns:
+            Screen state including the embedded Unified MCP panel selection.
+        """
         state = super().save_state()
         if self.mcp_panel:
             state["unified_mcp_view_state"] = self.mcp_panel.get_view_state()
         return state
 
-    def restore_state(self, state):
-        """Restore Unified MCP view state when the screen is revisited."""
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore Unified MCP view state when the screen is revisited.
+
+        Args:
+            state: Previously saved screen state.
+        """
         super().restore_state(state)
-        if self.mcp_panel and isinstance(state, dict):
+        if self.mcp_panel:
             self.mcp_panel.set_initial_view_state(state.get("unified_mcp_view_state"))
 
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
-        """Refresh MCP context when runtime backend/source changes."""
+        """Schedule MCP context refresh when runtime backend/source changes.
+
+        Args:
+            runtime_backend: Newly active runtime backend identifier.
+        """
         _ = runtime_backend
         if self.mcp_panel:
-            await self.mcp_panel.load_context()
+            self.run_worker(
+                self.mcp_panel.load_context(),
+                name="mcp-screen-runtime-refresh",
+                group="mcp-screen-runtime-refresh",
+                exclusive=True,
+            )

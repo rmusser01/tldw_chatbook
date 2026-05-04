@@ -105,6 +105,30 @@ class UnifiedMCPPanel(Container):
             return None
 
     def compose(self) -> ComposeResult:
+        pending_view_state = self._pending_view_state or {}
+        initial_source = str(pending_view_state.get("selected_source") or "local")
+        if initial_source not in {"local", "server"}:
+            initial_source = "local"
+        initial_section = str(pending_view_state.get("selected_section") or "overview")
+        if initial_section not in {"overview", "inventory", "external_servers"}:
+            initial_section = "overview"
+        initial_scope = str(pending_view_state.get("selected_scope") or "personal")
+        if initial_scope not in {"personal", "team", "org", "system_admin"}:
+            initial_scope = "personal"
+        initial_scope_options = [("Personal", "personal")]
+        if initial_scope == "team":
+            initial_scope_options.append(("Team", "team"))
+        elif initial_scope == "org":
+            initial_scope_options.append(("Org", "org"))
+        elif initial_scope == "system_admin":
+            initial_scope_options.append(("System Admin", "system_admin"))
+        initial_scope_ref = pending_view_state.get("selected_scope_ref")
+        initial_scope_ref_options = [("No scope entities", Select.BLANK)]
+        initial_scope_ref_value = Select.BLANK
+        if initial_scope_ref not in (None, ""):
+            initial_scope_ref_value = str(initial_scope_ref)
+            initial_scope_ref_options = [(f"Scope {initial_scope_ref_value}", initial_scope_ref_value)]
+
         with Vertical(classes="unified-mcp-shell"):
             with Container(classes="settings-group"):
                 yield Static("Unified MCP", classes="settings-group-title")
@@ -120,7 +144,7 @@ class UnifiedMCPPanel(Container):
                                 [("Local", "local"), ("Server", "server")],
                                 id="unified-mcp-source",
                                 allow_blank=False,
-                                value="local",
+                                value=initial_source,
                             )
                         with Container(classes="unified-mcp-field"):
                             yield Label("Server", classes="form-label")
@@ -133,17 +157,17 @@ class UnifiedMCPPanel(Container):
                         with Container(classes="unified-mcp-field"):
                             yield Label("Scope", classes="form-label")
                             yield Select(
-                                [("Personal", "personal")],
+                                initial_scope_options,
                                 id="unified-mcp-scope",
                                 allow_blank=False,
-                                value="personal",
+                                value=initial_scope,
                             )
                         with Container(classes="unified-mcp-field"):
                             yield Label("Scope Entity", classes="form-label")
                             yield Select(
-                                [("No scope entities", Select.BLANK)],
+                                initial_scope_ref_options,
                                 id="unified-mcp-scope-ref",
-                                value=Select.BLANK,
+                                value=initial_scope_ref_value,
                             )
                         with Container(classes="unified-mcp-field"):
                             yield Label("Section", classes="form-label")
@@ -151,7 +175,7 @@ class UnifiedMCPPanel(Container):
                                 [("Overview", "overview"), ("Inventory", "inventory"), ("External Servers", "external_servers")],
                                 id="unified-mcp-section",
                                 allow_blank=False,
-                                value="overview",
+                                value=initial_section,
                             )
                 yield Static("", id="unified-mcp-status", classes="unified-mcp-status")
                 yield Static("Unified MCP is loading...", id="unified-mcp-content", classes="unified-mcp-content")
