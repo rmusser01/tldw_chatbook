@@ -282,9 +282,9 @@ class ConsoleLiveWorkSourceReadinessState:
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-artifacts",
                     label="Artifacts",
-                    status="Not wired",
-                    recovery="Artifact live-work payloads are not wired yet; use artifact handoff for context.",
-                    classes=unavailable,
+                    status="Connected",
+                    recovery="Latest local Chatbook artifacts can launch into Console.",
+                    classes=connected,
                 ),
             )
         )
