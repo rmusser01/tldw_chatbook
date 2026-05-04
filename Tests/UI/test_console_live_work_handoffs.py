@@ -1,5 +1,6 @@
 """Console live-work launch and staged-context handoff boundary tests."""
 
+import threading
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -11,6 +12,7 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +30,9 @@ PHASE3_CONSOLE_SOURCE_READINESS_EVIDENCE = (
 )
 PHASE3_WC_DESTINATION_CONSOLE_EVIDENCE = (
     REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-wc-destination-console-launch.md"
+)
+PHASE3_SCHEDULES_CONSOLE_EVIDENCE = (
+    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-schedules-console-launch.md"
 )
 
 
@@ -88,6 +93,19 @@ class StaticHomeActiveWorkAdapter:
 
     def handle_control(self, action, *, target_id=None, target_route=None):
         raise AssertionError(f"Unexpected direct control call: {action} {target_id} {target_route}")
+
+
+class ThreadRecordingHomeActiveWorkAdapter(StaticHomeActiveWorkAdapter):
+    def __init__(self, items):
+        super().__init__(items)
+        self.call_threads = []
+
+    def build_dashboard_input(self, *, providers_models, has_recent_work):
+        self.call_threads.append(threading.get_ident())
+        return super().build_dashboard_input(
+            providers_models=providers_models,
+            has_recent_work=has_recent_work,
+        )
 
 
 class RaisingHomeActiveWorkAdapter:
@@ -254,7 +272,7 @@ def test_console_live_work_status_card_state_keeps_unsupported_payloads_non_acti
     assert card_state.primary_action is None
 
 
-def test_console_live_work_source_readiness_marks_wc_connected_and_future_sources_unavailable():
+def test_console_live_work_source_readiness_marks_connected_sources_and_future_sources_unavailable():
     ConsoleLiveWorkSourceReadinessState = _load_console_live_work_source_readiness_state()
 
     state = ConsoleLiveWorkSourceReadinessState.default()
@@ -266,9 +284,12 @@ def test_console_live_work_source_readiness_marks_wc_connected_and_future_source
         "W+C: Connected - Home W+C active work can open and route run details in Console."
     )
     assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-wc"].classes
+    assert rows_by_id["console-live-work-source-schedules"].text == (
+        "Schedules: Connected - Schedules active work can open Console when adapter context exists."
+    )
+    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-schedules"].classes
     for source_id in (
         "console-live-work-source-workflows",
-        "console-live-work-source-schedules",
         "console-live-work-source-acp",
         "console-live-work-source-mcp",
         "console-live-work-source-rag",
@@ -391,13 +412,88 @@ def test_phase3_wc_destination_console_tracking_evidence_links_task_and_roadmap(
     assert "watchlists-follow-in-console" in task
 
 
+def test_phase3_schedules_console_tracking_evidence_links_task_and_roadmap():
+    evidence = PHASE3_SCHEDULES_CONSOLE_EVIDENCE.read_text()
+    readme = (REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/README.md").read_text()
+    roadmap = (REPO_ROOT / "Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text()
+    task = (
+        REPO_ROOT
+        / "backlog/tasks/task-3.7 - Phase-3.7-Launch-active-Schedules-run-from-Schedules-into-Console.md"
+    ).read_text()
+
+    assert "TASK-3.7" in evidence
+    assert "Schedules destination Console follow" in evidence
+    assert "schedules-follow-in-console" in evidence
+    assert "2026-05-03-schedules-console-launch.md" in readme
+    assert "Phase 3.7: Launch active Schedules run from Schedules into Console - `TASK-3.7`" in roadmap
+    assert (
+        "`TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, "
+        "`TASK-3.5`, `TASK-3.6`, `TASK-3.7`"
+    ) in roadmap
+    assert "schedules-follow-in-console" in task
+
+
+def test_schedules_console_follow_uses_home_dashboard_app_inputs():
+    app = _build_test_app()
+    app.providers_models = {"OpenAI": ["gpt-4.1"]}
+    app._screen_states = {"chat": {"conversation_id": "c1"}}
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="schedule:run:11",
+                title="Daily digest schedule",
+                source="Schedules",
+                status="running",
+                detail_route="schedules",
+                console_available=True,
+            ),
+        )
+    )
+    screen = SchedulesScreen(app)
+
+    item = screen._latest_console_follow_item()
+
+    assert getattr(item, "item_id", None) == "schedule:run:11"
+    assert app.home_active_work_adapter.build_calls == [
+        {
+            "providers_models": {"OpenAI": ["gpt-4.1"]},
+            "has_recent_work": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_schedules_destination_loads_console_follow_item_off_main_thread():
+    main_thread_id = threading.get_ident()
+    app = _build_test_app()
+    app.home_active_work_adapter = ThreadRecordingHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="schedule:run:11",
+                title="Daily digest schedule",
+                source="Schedules",
+                status="running",
+                detail_route="schedules",
+                console_available=True,
+            ),
+        )
+    )
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+
+    assert app.home_active_work_adapter.call_threads
+    assert main_thread_id not in app.home_active_work_adapter.call_threads
+
+
 @pytest.mark.parametrize(
     ("route", "button_id", "expected_copy"),
     [
         (
             "schedules",
             "schedules-follow-in-console",
-            "Console recovery is unavailable until schedule run payloads are wired.",
+            "No active schedule run is available for Console follow.",
         ),
         (
             "workflows",
@@ -431,6 +527,69 @@ async def test_skeletal_destination_console_actions_are_disabled_with_recovery_c
         await pilot.pause(0.1)
 
     app.open_console_for_live_work.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_schedules_destination_keeps_console_follow_disabled_without_active_run():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
+    app.open_active_home_item_in_console = Mock()
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#schedules-follow-in-console")
+
+        assert button.disabled is True
+        assert str(button.label) == "Console recovery unavailable"
+        assert "No active schedule run is available for Console follow." in _screen_static_text(screen)
+
+    app.open_active_home_item_in_console.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_schedules_destination_routes_latest_active_run_to_console():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="schedule:run:7",
+                title="Daily digest schedule",
+                source="Schedules",
+                status="failed",
+                detail_route="schedules",
+                console_available=True,
+            ),
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:9",
+                title="Watchlist run",
+                source="W+C",
+                status="failed",
+                detail_route="subscriptions",
+                console_available=True,
+            ),
+        )
+    )
+    app.open_active_home_item_in_console = Mock()
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#schedules-follow-in-console")
+
+        assert button.disabled is False
+        assert "Daily digest schedule" in str(button.label)
+        assert "failed" in _screen_static_text(screen)
+
+        await pilot.click("#schedules-follow-in-console")
+        await pilot.pause(0.1)
+
+    app.open_active_home_item_in_console.assert_called_once_with(
+        target_id="schedule:run:7",
+        target_route="chat",
+    )
 
 
 @pytest.mark.asyncio
@@ -680,7 +839,7 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
             "W+C: Connected - Home W+C active work can open and route run details in Console."
         )
         assert "Workflows: Not wired" in str(screen.query_one("#console-live-work-source-workflows").renderable)
-        assert "Schedules: Not wired" in str(screen.query_one("#console-live-work-source-schedules").renderable)
+        assert "Schedules: Connected" in str(screen.query_one("#console-live-work-source-schedules").renderable)
         assert "ACP: Not wired" in str(screen.query_one("#console-live-work-source-acp").renderable)
         assert "MCP: Not wired" in str(screen.query_one("#console-live-work-source-mcp").renderable)
         assert "RAG: Not wired" in str(screen.query_one("#console-live-work-source-rag").renderable)
