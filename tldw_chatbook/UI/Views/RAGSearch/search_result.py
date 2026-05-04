@@ -24,6 +24,14 @@ class SearchResult(Container):
             super().__init__()
             self.index = index
             self.result = dict(result)
+
+    class UseInConsoleRequested(Message):
+        """Request staging a search result into Console live-work context."""
+
+        def __init__(self, index: int, result: Dict[str, Any]) -> None:
+            super().__init__()
+            self.index = index
+            self.result = dict(result)
     
     def __init__(self, result: Dict[str, Any], index: int):
         super().__init__(id=f"result-{index}", classes="search-result-card-enhanced")
@@ -124,14 +132,21 @@ class SearchResult(Container):
                     yield Button("📋 Copy", id=f"copy-{self.index}", classes="result-button")
                     yield Button("📝 Note", id=f"add-note-{self.index}", classes="result-button")
                     yield Button("Use in Chat", id=f"use-in-chat-{self.index}", classes="result-button")
+                    yield Button("Use in Console", id=f"use-in-console-{self.index}", classes="result-button")
                     yield Button("📤 Export", id=f"export-{self.index}", classes="result-button")
 
     def _build_use_in_chat_event(self) -> UseInChatRequested:
         return self.UseInChatRequested(self.index, self.result)
 
+    def _build_use_in_console_event(self) -> UseInConsoleRequested:
+        return self.UseInConsoleRequested(self.index, self.result)
+
     @on(Button.Pressed)
     def handle_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id != f"use-in-chat-{self.index}":
+        if event.button.id == f"use-in-chat-{self.index}":
+            event.stop()
+            self.post_message(self._build_use_in_chat_event())
             return
-        event.stop()
-        self.post_message(self._build_use_in_chat_event())
+        if event.button.id == f"use-in-console-{self.index}":
+            event.stop()
+            self.post_message(self._build_use_in_console_event())

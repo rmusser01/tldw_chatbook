@@ -275,9 +275,9 @@ class ConsoleLiveWorkSourceReadinessState:
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-rag",
                     label="RAG",
-                    status="Not wired",
-                    recovery="RAG live-run payloads are not wired yet; use Search/RAG handoff for context.",
-                    classes=unavailable,
+                    status="Connected",
+                    recovery="Search/RAG results can stage retrieved evidence in Console.",
+                    classes=connected,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-artifacts",

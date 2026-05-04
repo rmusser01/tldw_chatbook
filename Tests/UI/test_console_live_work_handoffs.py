@@ -37,6 +37,9 @@ PHASE3_SCHEDULES_CONSOLE_EVIDENCE = (
 PHASE3_SCHEDULES_DIGEST_CONSOLE_EVIDENCE = (
     REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-schedules-digest-console-launch.md"
 )
+PHASE3_RAG_CONSOLE_EVIDENCE = (
+    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-rag-search-console-launch.md"
+)
 
 
 def _load_console_live_work_contract():
@@ -326,11 +329,14 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
         "Schedules: Connected - Schedules active work can open Console when adapter context exists."
     )
     assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-schedules"].classes
+    assert rows_by_id["console-live-work-source-rag"].text == (
+        "RAG: Connected - Search/RAG results can stage retrieved evidence in Console."
+    )
+    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-rag"].classes
     for source_id in (
         "console-live-work-source-workflows",
         "console-live-work-source-acp",
         "console-live-work-source-mcp",
-        "console-live-work-source-rag",
         "console-live-work-source-artifacts",
     ):
         assert "Not wired" in rows_by_id[source_id].text
@@ -486,6 +492,27 @@ def test_phase3_schedules_digest_console_tracking_evidence_links_task_and_roadma
     assert "2026-05-03-schedules-digest-console-launch.md" in readme
     assert "Schedules Reading Digest Console Launch Evidence" in roadmap
     assert "reading-digest" in task
+
+
+def test_phase3_rag_console_launch_tracking_evidence_links_task_and_roadmap():
+    evidence = PHASE3_RAG_CONSOLE_EVIDENCE.read_text()
+    readme = (REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/README.md").read_text()
+    roadmap = (REPO_ROOT / "Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text()
+    task = (
+        REPO_ROOT
+        / "backlog/tasks/task-3.8 - Phase-3.8-Launch-RAG-search-result-from-Search-RAG-into-Console.md"
+    ).read_text()
+
+    assert "TASK-3.8" in evidence
+    assert "Search/RAG" in evidence
+    assert "open_console_for_live_work" in evidence
+    assert "2026-05-03-rag-search-console-launch.md" in readme
+    assert "Phase 3.8: Launch RAG search result from Search/RAG into Console - `TASK-3.8`" in roadmap
+    assert (
+        "`TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, "
+        "`TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`"
+    ) in roadmap
+    assert "RAG result" in task
 
 
 def test_schedules_console_follow_uses_home_dashboard_app_inputs():
@@ -1003,7 +1030,7 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
         assert "Schedules: Connected" in str(screen.query_one("#console-live-work-source-schedules").renderable)
         assert "ACP: Not wired" in str(screen.query_one("#console-live-work-source-acp").renderable)
         assert "MCP: Not wired" in str(screen.query_one("#console-live-work-source-mcp").renderable)
-        assert "RAG: Not wired" in str(screen.query_one("#console-live-work-source-rag").renderable)
+        assert "RAG: Connected" in str(screen.query_one("#console-live-work-source-rag").renderable)
         assert "Artifacts: Not wired" in str(screen.query_one("#console-live-work-source-artifacts").renderable)
 
 

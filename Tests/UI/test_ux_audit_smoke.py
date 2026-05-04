@@ -638,6 +638,7 @@ class SearchRAGHandoffSmokeApp(App[None]):
             api_endpoint="test-endpoint",
             get_authoritative_runtime_source=Mock(return_value="server"),
             open_chat_with_handoff=Mock(),
+            open_console_for_live_work=Mock(),
         )
         self.window = SearchRAGWindow(self.app_instance)
 
@@ -688,6 +689,103 @@ async def test_valid_rag_search_handoff_replays_from_mounted_window_to_app_seam(
 
 
 @pytest.mark.asyncio
+async def test_valid_rag_search_console_launch_replays_from_mounted_window_to_app_seam(tmp_path):
+    with (
+        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+    ):
+        app = SearchRAGHandoffSmokeApp()
+
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause(0.1)
+            app.window.search_results = [
+                {
+                    "title": "Retrieved Chunk",
+                    "content": "Evidence body",
+                    "source": "notes",
+                    "score": 0.91,
+                    "metadata": {"document_id": "doc-1", "chunk_id": "chunk-7"},
+                }
+            ]
+            app.window.total_results = 1
+            await app.window._display_results()
+            await pilot.pause(0.05)
+
+            button = app.window.query_one("#use-in-console-0", Button)
+            button.press()
+            await pilot.pause(0.05)
+
+            app.app_instance.open_chat_with_handoff.assert_not_called()
+            app.app_instance.open_console_for_live_work.assert_called_once_with(
+                source="RAG",
+                title="Retrieved Chunk",
+                payload={
+                    "target_id": "search-rag:doc-1",
+                    "source_id": "doc-1",
+                    "content_ref": "search-rag:doc-1",
+                    "runtime_backend": "server",
+                    "source": "notes",
+                    "score": 0.91,
+                    "display_summary": "Evidence body",
+                    "suggested_prompt": "Use this retrieved result as context and answer or reason from it carefully.",
+                },
+                status="ready",
+                recovery="Use this retrieved RAG result as Console context, or return to Search/RAG to adjust the query.",
+                action_label="Ask from RAG result",
+            )
+
+
+@pytest.mark.asyncio
+async def test_rag_search_console_launch_escapes_result_markup_before_staging(tmp_path):
+    with (
+        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+    ):
+        app = SearchRAGHandoffSmokeApp()
+
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause(0.1)
+            app.window.search_results = [
+                {
+                    "title": "[red]Retrieved[/red] <script>\x00",
+                    "content": "[bold]Evidence[/bold] <script>alert(1)</script>\x00",
+                    "source": "notes",
+                    "score": 0.91,
+                    "metadata": {"document_id": "doc-[red]-<script>"},
+                }
+            ]
+            app.window.total_results = 1
+            await app.window._display_results()
+            await pilot.pause(0.05)
+
+            app.window.query_one("#use-in-console-0", Button).press()
+            await pilot.pause(0.05)
+
+            app.app_instance.open_console_for_live_work.assert_called_once()
+            call_kwargs = app.app_instance.open_console_for_live_work.call_args.kwargs
+            assert call_kwargs["title"] == r"\[red]Retrieved\[/red] &lt;script&gt;"
+            assert call_kwargs["payload"]["target_id"] == r"search-rag:doc-\[red]-&lt;script&gt;"
+            assert call_kwargs["payload"]["source"] == "notes"
+            assert call_kwargs["payload"]["display_summary"] == (
+                r"\[bold]Evidence\[/bold] &lt;script&gt;alert(1)&lt;/script&gt;"
+            )
+
+
+@pytest.mark.asyncio
 async def test_contract_blocked_rag_search_handoff_explains_recovery_without_staging(tmp_path):
     with (
         patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
@@ -723,6 +821,51 @@ async def test_contract_blocked_rag_search_handoff_explains_recovery_without_sta
             button.press()
             await pilot.pause(0.05)
 
+            app.app_instance.open_chat_with_handoff.assert_not_called()
+            message = app.app_instance.notify.call_args.args[0]
+            assert "rag.media_embeddings.search.server requires server mode" in message
+            assert "source authority: runtime_policy/server" in message.lower()
+            assert "ux interop: active source local" in message.lower()
+            assert "switch source to server" in message.lower()
+
+
+@pytest.mark.asyncio
+async def test_contract_blocked_rag_search_console_launch_explains_recovery_without_staging(tmp_path):
+    with (
+        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+    ):
+        app = SearchRAGHandoffSmokeApp()
+        app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+        app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause(0.1)
+            app.window.search_results = [
+                {
+                    "title": "Server Chunk",
+                    "content": "Evidence body",
+                    "source": "notes",
+                    "score": 0.91,
+                    "metadata": {"document_id": "doc-1"},
+                }
+            ]
+            app.window.total_results = 1
+            await app.window._display_results()
+            await pilot.pause(0.05)
+
+            button = app.window.query_one("#use-in-console-0", Button)
+            button.press()
+            await pilot.pause(0.05)
+
+            app.app_instance.open_console_for_live_work.assert_not_called()
             app.app_instance.open_chat_with_handoff.assert_not_called()
             message = app.app_instance.notify.call_args.args[0]
             assert "rag.media_embeddings.search.server requires server mode" in message
