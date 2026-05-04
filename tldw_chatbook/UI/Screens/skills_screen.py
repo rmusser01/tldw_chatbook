@@ -16,17 +16,31 @@ from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...runtime_policy.types import PolicyDeniedError
+from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 
 
 logger = logger.bind(module="SkillsScreen")
+SKILLS_LOCAL_PAGE_SIZE = 25
 SKILLS_SERVICE_ERROR_COPY = "Skills service unavailable; retry Skills later."
+SKILLS_SERVICE_UNAVAILABLE_COPY = "Skills service is unavailable in this runtime."
+SKILLS_POLICY_DENIED_FALLBACK_COPY = "Local Skills are blocked by the current runtime policy."
+SKILL_TEXT_LIMITS = {
+    "name": 64,
+    "skill_name": 64,
+    "description": 1024,
+    "argument_hint": 500,
+    "record_id": 256,
+    "backend": 32,
+    "policy_message": 500,
+}
 
 
 class SkillsScreen(BaseAppScreen):
     """Agent Skills packs, discovery, validation, and attachments."""
 
-    def __init__(self, app_instance, **kwargs):
+    def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "skills", **kwargs)
         self._local_skill_records: tuple[Mapping[str, Any], ...] = ()
         self._skills_lookup_error: str | None = None
@@ -56,16 +70,28 @@ class SkillsScreen(BaseAppScreen):
         service = getattr(self.app_instance, "skills_scope_service", None)
         list_skills = getattr(service, "list_skills", None)
         if not callable(list_skills):
-            return (), None
+            return (), SKILLS_SERVICE_UNAVAILABLE_COPY
         try:
             result = list_skills(
                 mode="local",
-                limit=25,
+                limit=SKILLS_LOCAL_PAGE_SIZE,
                 offset=0,
                 include_hidden=False,
             )
             if inspect.isawaitable(result):
                 result = asyncio.run(result)
+        except PolicyDeniedError as exc:
+            logger.info(
+                "Runtime policy denied local Agent Skills listing.",
+                action_id=exc.action_id,
+                reason_code=exc.reason_code,
+            )
+            policy_message = self._safe_skill_text(
+                exc.user_message,
+                fallback=SKILLS_POLICY_DENIED_FALLBACK_COPY,
+                max_length=SKILL_TEXT_LIMITS["policy_message"],
+            )
+            return (), policy_message
         except Exception:
             logger.warning(
                 "Failed to load local Agent Skills for Skills destination.",
@@ -78,10 +104,19 @@ class SkillsScreen(BaseAppScreen):
         return records, None
 
     @staticmethod
-    def _skill_field(record: Mapping[str, Any], key: str, fallback: str = "") -> str:
+    def _safe_skill_text(value: Any, fallback: str = "", *, max_length: int = 1000) -> str:
+        text = sanitize_string(str(value or ""), max_length=max_length).strip()
+        if not text:
+            return fallback
+        if validate_text_input(text, max_length=max_length, allow_html=False):
+            return text
+        return fallback
+
+    @classmethod
+    def _skill_field(cls, record: Mapping[str, Any], key: str, fallback: str = "") -> str:
         value = record.get(key)
-        text = str(value or "").strip()
-        return text or fallback
+        max_length = SKILL_TEXT_LIMITS.get(key, 1000)
+        return cls._safe_skill_text(value, fallback=fallback, max_length=max_length)
 
     def _skill_body(self) -> str:
         lines = [

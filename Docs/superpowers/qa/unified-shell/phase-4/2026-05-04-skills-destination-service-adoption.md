@@ -24,7 +24,9 @@ Turn the top-level Skills destination from a static Agent Skills placeholder int
 - First green behavior command after implementation: `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py::test_skills_destination_lists_local_skills_from_scope_service Tests/UI/test_destination_shells.py::test_skills_destination_empty_state_disables_console_attach Tests/UI/test_destination_shells.py::test_skills_destination_service_failure_uses_recovery_copy Tests/UI/test_destination_shells.py::test_skills_attach_to_console_uses_listed_skill_context -q`
 - First green behavior result: `4 passed, 1 warning in 7.00s`.
 - Final focused command: `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/Skills/test_skills_scope_service.py Tests/Skills/test_local_skills_service.py -q`
-- Final focused result: `106 passed, 8 warnings in 61.88s`.
+- PR review follow-up red result: `5 failed, 1 warning in 9.61s` for missing initializer annotations, missing page-size constant, missing-service error classification, policy-denied recovery copy, and unsafe skill text in handoff payloads.
+- PR review follow-up green result: `5 passed, 1 warning in 7.39s`.
+- Final focused result after review fixes: `110 passed, 8 warnings in 69.45s`.
 
 ## QA Walkthrough Notes
 
