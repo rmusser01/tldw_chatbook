@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
+from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +43,9 @@ PHASE3_RAG_CONSOLE_EVIDENCE = (
 )
 PHASE3_ARTIFACTS_CHATBOOK_CONSOLE_EVIDENCE = (
     REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-artifacts-chatbook-console-launch.md"
+)
+PHASE3_WORKFLOWS_CONSOLE_EVIDENCE = (
+    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-workflows-console-launch.md"
 )
 
 
@@ -358,8 +362,15 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
         "RAG: Connected - Search/RAG results can stage retrieved evidence in Console."
     )
     assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-rag"].classes
+    assert rows_by_id["console-live-work-source-workflows"].text == (
+        "Workflows: Connected - Workflows active work can open Console when adapter context exists."
+    )
+    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-workflows"].classes
+    assert rows_by_id["console-live-work-source-artifacts"].text == (
+        "Artifacts: Connected - Latest local Chatbook artifacts can launch into Console."
+    )
+    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-artifacts"].classes
     for source_id in (
-        "console-live-work-source-workflows",
         "console-live-work-source-acp",
         "console-live-work-source-mcp",
     ):
@@ -564,6 +575,27 @@ def test_phase3_artifacts_chatbook_console_launch_tracking_evidence_links_task_a
     assert "Chatbook payload" in task
 
 
+def test_phase3_workflows_console_tracking_evidence_links_task_and_roadmap():
+    evidence = PHASE3_WORKFLOWS_CONSOLE_EVIDENCE.read_text()
+    readme = (REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/README.md").read_text()
+    roadmap = (REPO_ROOT / "Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text()
+    task = (
+        REPO_ROOT
+        / "backlog/tasks/task-3.10 - Phase-3.10-Launch-active-Workflows-run-from-Workflows-into-Console.md"
+    ).read_text()
+
+    assert "TASK-3.10" in evidence
+    assert "Workflows destination Console launch" in evidence
+    assert "workflows-launch-in-console" in evidence
+    assert "2026-05-03-workflows-console-launch.md" in readme
+    assert "Phase 3.10: Launch active Workflows run from Workflows into Console - `TASK-3.10`" in roadmap
+    assert (
+        "`TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, "
+        "`TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9`, `TASK-3.10`"
+    ) in roadmap
+    assert "workflows-launch-in-console" in task
+
+
 def test_schedules_console_follow_uses_home_dashboard_app_inputs():
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4.1"]}
@@ -629,7 +661,7 @@ async def test_schedules_destination_loads_console_follow_item_off_main_thread()
         (
             "workflows",
             "workflows-launch-in-console",
-            "Console launch is unavailable until workflow execution payloads are wired.",
+            "No active workflow run is available for Console launch.",
         ),
         (
             "acp",
@@ -719,6 +751,144 @@ async def test_schedules_destination_routes_latest_active_run_to_console():
 
     app.open_active_home_item_in_console.assert_called_once_with(
         target_id="schedule:run:7",
+        target_route="chat",
+    )
+
+
+def test_workflows_console_launch_uses_home_dashboard_app_inputs():
+    app = _build_test_app()
+    app.providers_models = {"OpenAI": ["gpt-4.1"]}
+    app._screen_states = {"chat": {"conversation_id": "c1"}}
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="workflow:run:11",
+                title="Digest workflow",
+                source="Workflows",
+                status="running",
+                detail_route="workflows",
+                console_available=True,
+            ),
+        )
+    )
+    screen = WorkflowsScreen(app)
+
+    item = screen._latest_console_follow_item()
+
+    assert getattr(item, "item_id", None) == "workflow:run:11"
+    assert app.home_active_work_adapter.build_calls == [
+        {
+            "providers_models": {"OpenAI": ["gpt-4.1"]},
+            "has_recent_work": True,
+        }
+    ]
+
+
+def test_workflows_console_launch_accepts_route_style_source():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="workflow:run:12",
+                title="Route style workflow",
+                source="workflows",
+                status="running",
+                detail_route="workflows",
+                console_available=True,
+            ),
+        )
+    )
+    screen = WorkflowsScreen(app)
+
+    item = screen._latest_console_follow_item()
+
+    assert getattr(item, "item_id", None) == "workflow:run:12"
+
+
+@pytest.mark.asyncio
+async def test_workflows_destination_loads_console_follow_item_off_main_thread():
+    main_thread_id = threading.get_ident()
+    app = _build_test_app()
+    app.home_active_work_adapter = ThreadRecordingHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="workflow:run:11",
+                title="Digest workflow",
+                source="Workflows",
+                status="running",
+                detail_route="workflows",
+                console_available=True,
+            ),
+        )
+    )
+    host = DestinationHarness(app, "workflows")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+
+    assert app.home_active_work_adapter.call_threads
+    assert main_thread_id not in app.home_active_work_adapter.call_threads
+
+
+@pytest.mark.asyncio
+async def test_workflows_destination_keeps_console_launch_disabled_without_active_run():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
+    app.open_active_home_item_in_console = Mock()
+    host = DestinationHarness(app, "workflows")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#workflows-launch-in-console")
+
+        assert button.disabled is True
+        assert str(button.label) == "Console launch unavailable"
+        assert "No active workflow run is available for Console launch." in _screen_static_text(screen)
+
+    app.open_active_home_item_in_console.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_workflows_destination_routes_latest_active_run_to_console():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="workflow:run:7",
+                title="Daily digest workflow",
+                source="Workflows",
+                status="failed",
+                detail_route="workflows",
+                console_available=True,
+            ),
+            HomeActiveWorkItem(
+                item_id="schedule:run:7",
+                title="Schedule run",
+                source="Schedules",
+                status="failed",
+                detail_route="schedules",
+                console_available=True,
+            ),
+        )
+    )
+    app.open_active_home_item_in_console = Mock()
+    host = DestinationHarness(app, "workflows")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#workflows-launch-in-console")
+
+        assert button.disabled is False
+        assert "Daily digest workflow" in str(button.label)
+        assert "failed" in _screen_static_text(screen)
+
+        await pilot.click("#workflows-launch-in-console")
+        await pilot.pause(0.1)
+
+    app.open_active_home_item_in_console.assert_called_once_with(
+        target_id="workflow:run:7",
         target_route="chat",
     )
 
@@ -1264,7 +1434,7 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
         assert screen.query_one("#console-live-work-source-wc").renderable == (
             "W+C: Connected - Home W+C active work can open and route run details in Console."
         )
-        assert "Workflows: Not wired" in str(screen.query_one("#console-live-work-source-workflows").renderable)
+        assert "Workflows: Connected" in str(screen.query_one("#console-live-work-source-workflows").renderable)
         assert "Schedules: Connected" in str(screen.query_one("#console-live-work-source-schedules").renderable)
         assert "ACP: Not wired" in str(screen.query_one("#console-live-work-source-acp").renderable)
         assert "MCP: Not wired" in str(screen.query_one("#console-live-work-source-mcp").renderable)
