@@ -1352,32 +1352,6 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from
     app.open_console_for_live_work.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    ("route", "button_id"),
-    [
-        ("personas", "personas-attach-to-console"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_staged_context_actions_use_chat_handoff_not_live_launch(route, button_id):
-    app = _build_test_app()
-    app.open_chat_with_handoff = Mock()
-    app.open_console_for_live_work = Mock()
-    host = DestinationHarness(app, route)
-
-    async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
-        await pilot.click(f"#{button_id}")
-        await pilot.pause(0.1)
-
-    app.open_chat_with_handoff.assert_called_once()
-    payload = app.open_chat_with_handoff.call_args.args[0]
-    assert isinstance(payload, ChatHandoffPayload)
-    assert payload.source == route
-    app.open_console_for_live_work.assert_not_called()
-    assert getattr(app, "pending_console_launch", None) in (None, {})
-
-
 @pytest.mark.asyncio
 async def test_console_renders_pending_launch_context():
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
