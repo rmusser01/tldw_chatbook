@@ -1,6 +1,8 @@
 """Master shell destination wrapper tests."""
 
+import inspect
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from textual.app import App
@@ -8,8 +10,10 @@ from textual.widgets import Button, Select, Static, TextArea
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_unified_mcp_panel import FakeUnifiedMCPService
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
@@ -21,6 +25,7 @@ from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens.skills_screen import SkillsScreen
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
+from tldw_chatbook.UI.Screens import skills_screen as skills_screen_module
 
 
 SCREEN_BY_ROUTE = {
@@ -40,6 +45,35 @@ SCREEN_BY_ROUTE = {
 PHASE4_MCP_ADOPTION_EVIDENCE = Path(
     "Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-mcp-destination-service-adoption.md"
 )
+PHASE4_SKILLS_ADOPTION_EVIDENCE = Path(
+    "Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-skills-destination-service-adoption.md"
+)
+
+
+class StaticSkillsScopeService:
+    def __init__(self, skills):
+        self.skills = tuple(skills)
+        self.calls = []
+
+    async def list_skills(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"skills": list(self.skills), "total": len(self.skills)}
+
+
+class RaisingSkillsScopeService:
+    async def list_skills(self, **kwargs):
+        raise RuntimeError("skills registry unavailable")
+
+
+class PolicyDeniedSkillsScopeService:
+    async def list_skills(self, **kwargs):
+        raise PolicyDeniedError(
+            action_id="skills.list.local",
+            reason_code="authority_denied",
+            user_message="Local Skills are disabled by workspace policy.",
+            effective_source="local",
+            authority_owner="local",
+        )
 
 
 class DestinationHarness(App):
@@ -331,6 +365,201 @@ def test_mcp_destination_service_adoption_tracking_evidence_exists():
     assert "TASK-5.1" in evidence
     assert "Phase 4.1: Adopt Unified MCP panel in MCP destination - `TASK-5.1`" in roadmap
     assert "UnifiedMCPPanel" in task
+
+
+def test_skills_screen_public_initializer_is_typed():
+    signature = inspect.signature(SkillsScreen.__init__)
+
+    assert signature.parameters["app_instance"].annotation is not inspect.Parameter.empty
+    assert signature.parameters["kwargs"].annotation is not inspect.Parameter.empty
+    assert signature.return_annotation in {None, "None"}
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_lists_local_skills_from_scope_service():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "argument_hint": "note id",
+                "record_id": "local:skill:summarize-notes",
+            },
+            {
+                "name": "code-review",
+                "description": "Review code changes",
+                "record_id": "local:skill:code-review",
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+        button = screen.query_one("#skills-attach-to-console", Button)
+
+        assert "Installed local skills: 2" in text
+        assert "summarize-notes" in text
+        assert "Summarize note collections" in text
+        assert "code-review" in text
+        assert button.disabled is False
+
+    assert app.skills_scope_service.calls[0]["mode"] == "local"
+    assert app.skills_scope_service.calls[0]["limit"] == getattr(
+        skills_screen_module,
+        "SKILLS_LOCAL_PAGE_SIZE",
+        None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_empty_state_disables_console_attach():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService([])
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        button = screen.query_one("#skills-attach-to-console", Button)
+
+        assert "No local Agent Skills are installed yet." in _visible_text(screen)
+        assert button.disabled is True
+        assert "Stage local skill context" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_service_failure_uses_recovery_copy():
+    app = _build_test_app()
+    app.skills_scope_service = RaisingSkillsScopeService()
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        button = screen.query_one("#skills-attach-to-console", Button)
+
+        assert "Skills service unavailable; retry Skills later." in _visible_text(screen)
+        assert button.disabled is True
+        assert "Skills service is unavailable" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_missing_service_uses_unavailable_state():
+    app = _build_test_app()
+    app.skills_scope_service = object()
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        button = screen.query_one("#skills-attach-to-console", Button)
+
+        assert "Skills service is unavailable in this runtime." in _visible_text(screen)
+        assert button.disabled is True
+        assert "Skills service is unavailable" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_policy_denied_surfaces_policy_message():
+    app = _build_test_app()
+    app.skills_scope_service = PolicyDeniedSkillsScopeService()
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        button = screen.query_one("#skills-attach-to-console", Button)
+
+        assert "Local Skills are disabled by workspace policy." in _visible_text(screen)
+        assert button.disabled is True
+        assert "Skills service unavailable; retry Skills later." not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_skills_attach_to_console_uses_listed_skill_context():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "argument_hint": "note id",
+                "record_id": "local:skill:summarize-notes",
+            }
+        ]
+    )
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#skills-attach-to-console")
+        await pilot.pause(0.1)
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert isinstance(payload, ChatHandoffPayload)
+    assert payload.source == "skills"
+    assert payload.item_type == "skills-context"
+    assert payload.title == "Local Agent Skills (1)"
+    assert "summarize-notes" in payload.body
+    assert "Summarize note collections" in payload.body
+    assert "argument hint: note id" in payload.body
+    assert "Stage installed skills, SKILL.md instructions" not in payload.body
+    assert payload.metadata["skill_count"] == 1
+    assert payload.metadata["skill_names"] == ["summarize-notes"]
+
+
+@pytest.mark.asyncio
+async def test_skills_attach_to_console_sanitizes_listed_skill_text():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "unsafe-skill",
+                "description": "Summarize <script>alert(1)</script> notes",
+                "argument_hint": "note id onclick=steal",
+                "record_id": "local:skill:unsafe-skill\x00",
+            }
+        ]
+    )
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        visible_text = _visible_text(screen).lower()
+        await pilot.click("#skills-attach-to-console")
+        await pilot.pause(0.1)
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+
+    assert "unsafe-skill" in payload.body
+    assert "<script" not in payload.body.lower()
+    assert "onclick=" not in payload.body.lower()
+    assert "\x00" not in payload.body
+    assert "<script" not in visible_text
+    assert "onclick=" not in visible_text
+    assert payload.metadata["skill_names"] == ["unsafe-skill"]
+
+
+def test_skills_destination_service_adoption_tracking_evidence_exists():
+    evidence = PHASE4_SKILLS_ADOPTION_EVIDENCE.read_text(encoding="utf-8")
+    roadmap = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text(encoding="utf-8")
+    task = Path(
+        "backlog/tasks/task-5.2 - Phase-4.2-Adopt-Skills-services-in-Skills-destination.md"
+    ).read_text(encoding="utf-8")
+
+    assert "Phase 4.2 Skills Destination Service Adoption" in evidence
+    assert "TASK-5.2" in evidence
+    assert "Phase 4.2: Adopt Skills services in Skills destination - `TASK-5.2`" in roadmap
+    assert "skills_scope_service" in task
 
 
 @pytest.mark.asyncio

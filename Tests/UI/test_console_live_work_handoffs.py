@@ -1357,7 +1357,6 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from
     [
         ("library", "library-use-in-console"),
         ("personas", "personas-attach-to-console"),
-        ("skills", "skills-attach-to-console"),
     ],
 )
 @pytest.mark.asyncio

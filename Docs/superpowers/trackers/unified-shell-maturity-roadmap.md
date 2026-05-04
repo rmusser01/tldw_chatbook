@@ -2,7 +2,7 @@
 
 Date: 2026-05-04
 Status: Phase 2, Phase 3, and Phase 4 in progress
-Source Branch: `origin/dev` at `d3dba3f9` plus `codex/unified-shell-phase4-mcp-destination-service`
+Source Branch: `origin/dev` at `5a413536` plus `codex/unified-shell-phase4-skills-destination-service`
 
 ## Purpose
 
@@ -33,7 +33,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 - Console now has a typed app-owned launch contract, reusable status-card display seam, source-readiness summary, Home W+C active-work source producer, W+C, Schedules, and Workflows destination producers, a Schedules reading-digest output fallback producer, a RAG search-result producer, an Artifacts Chatbook producer, and W+C run-detail action routing for staged live-work payloads; additional source-specific live event producers still need implementation.
 - ACP launch is disabled until an ACP-compatible runtime is configured.
 - MCP now adopts the existing Unified MCP management panel in the top-level MCP wrapper; Console MCP live-work launch and deeper service expansion remain future work.
-- Skills local/server services exist, but the top-level Skills shell still leaves import disabled and lacks list/detail/import UX adoption.
+- Skills now lists local Agent Skills through `skills_scope_service` and can stage local skill context into Console; server skills, import, detail, edit, validation, and execution UX remain future work.
 - Library still links into legacy Notes, Media, Ingest, Search/RAG, and conversation screens rather than fully Library-native views.
 - Product workflows remain unverified until running-app QA evidence is added in later phases.
 
@@ -98,6 +98,7 @@ Initial child tasks:
 - Phase 3.9: Launch latest Chatbook artifact from Artifacts into Console - `TASK-3.9`
 - Phase 3.10: Launch active Workflows run from Workflows into Console - `TASK-3.10`
 - Phase 4.1: Adopt Unified MCP panel in MCP destination - `TASK-5.1`
+- Phase 4.2: Adopt Skills services in Skills destination - `TASK-5.2`
 
 ## QA Evidence Index
 
@@ -119,7 +120,7 @@ Initial child tasks:
 | Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | verified | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3`, `TASK-2.4` | `phase-1/` | Live service workflows remain intentionally deferred to Phases 2-6. |
 | Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | in-progress | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6`, `TASK-4.7` | `phase-2/` | Schedule and agent-service adapters still need implementation; local watchlist retry/pause/resume remain recoverable rather than fully controllable. |
 | Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | in-progress | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, `TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9`, `TASK-3.10` | `phase-3/` | ACP, MCP, server Artifacts, and deeper source-specific live event streams still need implementation. |
-| Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | in-progress | `TASK-5`, `TASK-5.1` | `phase-4/` | Service coverage varies by destination; MCP now adopts the existing Unified MCP panel but remaining destinations still need adoption or verified recovery. |
+| Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | in-progress | `TASK-5`, `TASK-5.1`, `TASK-5.2` | `phase-4/` | Service coverage varies by destination; MCP now adopts the existing Unified MCP panel and Skills now lists/stages local Agent Skills, but remaining destinations and deeper Skills flows still need adoption or verified recovery. |
 | Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | not-started | `TASK-6` | `phase-5/` | Shared taxonomy not yet extracted. |
 | Phase 6: Audit Replay And Closeout | Prove shell works for first-time and power users. | not-started | `TASK-7` | `phase-6/` | Depends on prior phases and running-app QA. |
 
@@ -264,6 +265,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-5.1` embeds the existing Unified MCP management panel in the top-level MCP destination while preserving the legacy `tools_settings` MCP alias:
 
 - `Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-mcp-destination-service-adoption.md`
+
+## Phase 4.2 Skills Destination Service Adoption Evidence
+
+`TASK-5.2` makes the top-level Skills destination list local Agent Skills through `skills_scope_service` and stage concrete local skill context into Console:
+
+- `Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-skills-destination-service-adoption.md`
 
 ## Phase 0: Canonical Tracking
 
