@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import inspect
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -37,6 +35,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._latest_console_follow_item_id = None
         self._latest_console_follow_item_cache = None
         self._latest_console_follow_loaded = False
+        self._latest_console_follow_error_logged = False
         self._local_watchlist_records: tuple[Mapping[str, Any], ...] = ()
         self._local_collection_records: tuple[Mapping[str, Any], ...] = ()
         self._local_watchlist_count = 0
@@ -50,8 +49,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         super().on_mount()
         self._refresh_local_wc_snapshot()
 
-    @work(exclusive=True, thread=True)
-    def _refresh_local_wc_snapshot(self) -> None:
+    @work(exclusive=True)
+    async def _refresh_local_wc_snapshot(self) -> None:
         (
             watchlists,
             collections,
@@ -60,9 +59,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             watchlist_total_known,
             collection_total_known,
             lookup_error,
-        ) = self._list_local_wc_snapshot()
-        self.app.call_from_thread(
-            self._apply_local_wc_snapshot,
+        ) = await self._list_local_wc_snapshot()
+        self._apply_local_wc_snapshot(
             watchlists,
             collections,
             watchlist_count,
@@ -94,19 +92,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.refresh(recompose=True)
 
     @staticmethod
-    def _run_maybe_awaitable(value: Any) -> Any:
-        if inspect.isawaitable(value):
-            return asyncio.run(value)
-        return value
-
-    @staticmethod
     def _safe_text(value: Any, fallback: str = "", *, max_length: int = 500) -> str:
         text = sanitize_string(str(value or ""), max_length=max_length).strip()
         if not text:
             return fallback
-        text = text.replace("<", "").replace(">", "")
-        for pattern in ("javascript:", "onclick=", "onerror="):
-            text = text.replace(pattern, "")
         if validate_text_input(text, max_length=max_length, allow_html=False):
             return text
         return fallback
@@ -142,7 +131,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             total_known = False
         return records, max(count, 0), total_known
 
-    def _list_local_wc_snapshot(
+    async def _list_local_wc_snapshot(
         self,
     ) -> tuple[
         tuple[Mapping[str, Any], ...],
@@ -161,19 +150,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return (), (), 0, 0, True, True, WC_SERVICE_UNAVAILABLE_COPY
 
         try:
-            watchlist_result = self._run_maybe_awaitable(
-                list_watch_items(
-                    runtime_backend="local",
-                    limit=WC_LOCAL_PAGE_SIZE,
-                    offset=0,
-                )
+            watchlist_result = await list_watch_items(
+                runtime_backend="local",
+                limit=WC_LOCAL_PAGE_SIZE,
+                offset=0,
             )
-            collection_result = self._run_maybe_awaitable(
-                list_read_it_later(
-                    mode="local",
-                    limit=WC_LOCAL_PAGE_SIZE,
-                    offset=0,
-                )
+            collection_result = await list_read_it_later(
+                mode="local",
+                limit=WC_LOCAL_PAGE_SIZE,
+                offset=0,
             )
         except PolicyDeniedError as exc:
             policy_message = self._safe_text(exc.user_message, WC_SERVICE_ERROR_COPY)
@@ -230,10 +215,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _latest_console_follow_item(self):
         if self._latest_console_follow_loaded:
             return self._latest_console_follow_item_cache
-        self._latest_console_follow_loaded = True
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         build_dashboard_input = getattr(adapter, "build_dashboard_input", None)
         if not callable(build_dashboard_input):
+            self._latest_console_follow_item_cache = None
+            self._latest_console_follow_loaded = True
+            self._latest_console_follow_error_logged = False
             return None
         try:
             dashboard_input = build_dashboard_input(
@@ -241,21 +228,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 has_recent_work=False,
             )
         except Exception:
-            logger.warning(
-                "Failed to load W+C Console follow item from Home active-work adapter.",
-                exc_info=True,
-            )
+            if not self._latest_console_follow_error_logged:
+                logger.warning(
+                    "Failed to load W+C Console follow item from Home active-work adapter.",
+                    exc_info=True,
+                )
+                self._latest_console_follow_error_logged = True
+            self._latest_console_follow_item_cache = None
             return None
+        selected_item = None
         for item in tuple(getattr(dashboard_input, "active_work_items", ()) or ()):
             if (
                 getattr(item, "source", None) == "W+C"
                 and bool(getattr(item, "console_available", False))
                 and getattr(item, "item_id", None)
             ):
-                self._latest_console_follow_item_cache = item
-                return item
-        self._latest_console_follow_item_cache = None
-        return None
+                selected_item = item
+                break
+        self._latest_console_follow_item_cache = selected_item
+        self._latest_console_follow_loaded = True
+        self._latest_console_follow_error_logged = False
+        return selected_item
 
     def compose_content(self) -> ComposeResult:
         latest_console_item = self._latest_console_follow_item()

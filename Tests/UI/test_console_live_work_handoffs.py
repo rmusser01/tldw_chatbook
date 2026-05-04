@@ -137,6 +137,18 @@ class RotatingHomeActiveWorkAdapter:
         return HomeDashboardInput(active_work_items=self.snapshots[snapshot_index])
 
 
+class FailOnceHomeActiveWorkAdapter:
+    def __init__(self, items):
+        self.items = tuple(items)
+        self.build_calls = 0
+
+    def build_dashboard_input(self, *, providers_models, has_recent_work):
+        self.build_calls += 1
+        if self.build_calls == 1:
+            raise RuntimeError("temporary adapter failure")
+        return HomeDashboardInput(active_work_items=self.items)
+
+
 class StaticReadingDigestService:
     def __init__(self, outputs):
         self.outputs = tuple(outputs)
@@ -192,6 +204,16 @@ class StaticLocalChatbookService:
 class RaisingLocalChatbookService:
     async def list_chatbooks(self, *, q=None, limit=100, offset=0, **kwargs):
         raise RuntimeError("registry read failed")
+
+
+class StaticWatchlistSnapshotService:
+    async def list_watch_items(self, **kwargs):
+        return []
+
+
+class StaticReadItLaterSnapshotService:
+    async def list_read_it_later(self, **kwargs):
+        return {"items": [], "total": 0}
 
 
 def test_app_exposes_open_console_for_live_work_helper():
@@ -980,6 +1002,47 @@ async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(m
     assert "W+C Console follow" in logger.warning.call_args.args[0]
     assert logger.warning.call_args.kwargs["exc_info"] is True
     app.open_active_home_item_in_console.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_watchlists_destination_retries_console_follow_after_initial_adapter_failure():
+    app = _build_test_app()
+    app.home_active_work_adapter = FailOnceHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:11",
+                title="Recovered run",
+                source="W+C",
+                status="running",
+                detail_route="subscriptions",
+                console_available=True,
+            ),
+        )
+    )
+    app.watchlist_scope_service = StaticWatchlistSnapshotService()
+    app.media_reading_scope_service = StaticReadItLaterSnapshotService()
+    app.open_active_home_item_in_console = Mock()
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        screen = _active_console_screen(host)
+        for _ in range(100):
+            button = screen.query_one("#watchlists-follow-in-console")
+            if "Recovered run" in str(button.label):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(f"Console follow did not recover. Text: {_screen_static_text(screen)}")
+
+        assert button.disabled is False
+        await pilot.click("#watchlists-follow-in-console")
+        await pilot.pause(0.1)
+
+    assert app.home_active_work_adapter.build_calls >= 2
+    app.open_active_home_item_in_console.assert_called_once_with(
+        target_id="local:watchlist_run:11",
+        target_route="chat",
+    )
 
 
 @pytest.mark.asyncio

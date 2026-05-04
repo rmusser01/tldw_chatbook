@@ -28,6 +28,14 @@ Turn the top-level W+C destination from static explanatory copy plus active-run 
 - Focused regression result: `2 passed, 1 warning in 8.69s`.
 - Final focused command: `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_shell_product_model_visibility.py Tests/Subscriptions/test_watchlist_scope_service.py::test_scope_service_routes_local_and_server_actions_with_watchlists_action_ids Tests/Media/test_media_reading_scope_service.py::test_scope_service_list_read_it_later_normalizes_local_saved_state -q`
 - Final focused result: `116 passed, 8 warnings in 89.31s`.
+- PR review red command: `.venv/bin/python -m pytest Tests/UI/test_console_live_work_handoffs.py::test_watchlists_destination_retries_console_follow_after_initial_adapter_failure Tests/UI/test_destination_shells.py::test_watchlists_collections_preserves_safe_comparison_titles_and_rejects_dangerous_text -q`
+- PR review red result: `2 failed, 1 warning in 11.90s` because transient active-work adapter failures cached Console follow unavailable for the screen lifetime and W+C title sanitization corrupted safe comparison titles while disguising dangerous text.
+- PR review green command: `.venv/bin/python -m pytest Tests/UI/test_console_live_work_handoffs.py::test_watchlists_destination_retries_console_follow_after_initial_adapter_failure Tests/UI/test_destination_shells.py::test_watchlists_collections_preserves_safe_comparison_titles_and_rejects_dangerous_text -q`
+- PR review green result: `2 passed, 1 warning in 7.94s`.
+- PR review regression command: `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py::test_watchlists_collections_lists_local_snapshot_from_services Tests/UI/test_destination_shells.py::test_watchlists_collections_empty_state_disables_console_attach Tests/UI/test_destination_shells.py::test_watchlists_collections_service_failure_uses_recovery_copy Tests/UI/test_destination_shells.py::test_watchlists_collections_attach_to_console_uses_listed_context Tests/UI/test_console_live_work_handoffs.py::test_watchlists_destination_logs_adapter_failure_and_disables_follow Tests/UI/test_console_live_work_handoffs.py::test_watchlists_destination_click_uses_item_promised_by_button_label -q`
+- PR review regression result: `6 passed, 1 warning in 9.62s`.
+- Final PR review focused command: `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_shell_product_model_visibility.py Tests/Subscriptions/test_watchlist_scope_service.py::test_scope_service_routes_local_and_server_actions_with_watchlists_action_ids Tests/Media/test_media_reading_scope_service.py::test_scope_service_list_read_it_later_normalizes_local_saved_state -q`
+- Final PR review focused result: `118 passed, 8 warnings in 91.23s`.
 
 ## QA Walkthrough Notes
 
@@ -39,6 +47,7 @@ Turn the top-level W+C destination from static explanatory copy plus active-run 
 - Service-error result: scope-service exceptions render `W+C services unavailable; retry W+C later.` and disable Console staging with retry-oriented recovery copy.
 - Functional result: Console handoff stages `wc-context` with watchlist and collection counts, sample titles, runtime/source ownership metadata, and no generic placeholder body.
 - Regression result: existing active-run Console follow keeps the run promised by the visible button even after the asynchronous local W+C snapshot refresh recomposes the screen.
+- PR review result: W+C snapshot loading now uses a native async Textual worker instead of a thread worker plus `asyncio.run`, safe comparison titles with `<` and `>` survive display and Console staging, dangerous text is rejected instead of rewritten, and transient Home active-work adapter failures can recover without duplicate warning spam.
 
 ## Residual Risk
 

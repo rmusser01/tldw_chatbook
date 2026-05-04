@@ -421,6 +421,36 @@ async def test_watchlists_collections_attach_to_console_uses_listed_context():
 
 
 @pytest.mark.asyncio
+async def test_watchlists_collections_preserves_safe_comparison_titles_and_rejects_dangerous_text():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService(
+        [{"title": "Model A < Model B > Baseline", "id": 1}]
+    )
+    app.media_reading_scope_service = StaticReadItLaterScopeService(
+        [{"title": "javascript:alert(1)", "id": 10}]
+    )
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_wc_snapshot(screen, pilot)
+        text = _visible_text(screen)
+
+        assert "Model A < Model B > Baseline" in text
+        assert "javascript:alert(1)" not in text
+        assert "alert(1)" not in text
+
+        await pilot.click("#wc-attach-to-console")
+        await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
+
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert "Model A < Model B > Baseline" in payload.body
+    assert "javascript:alert(1)" not in payload.body
+    assert "alert(1)" not in payload.body
+
+
+@pytest.mark.asyncio
 async def test_personas_destination_lists_local_behavior_snapshot_from_service():
     app = _build_test_app()
     app.character_persona_scope_service = StaticPersonasScopeService(
