@@ -1,10 +1,16 @@
 """Master shell destination wrapper tests."""
 
+from pathlib import Path
+
 import pytest
 from textual.app import App
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static, TextArea
 
 from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.test_unified_mcp_panel import FakeUnifiedMCPService
+from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
+from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
+from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -31,16 +37,24 @@ SCREEN_BY_ROUTE = {
     "settings": SettingsScreen,
 }
 
+PHASE4_MCP_ADOPTION_EVIDENCE = Path(
+    "Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-mcp-destination-service-adoption.md"
+)
+
 
 class DestinationHarness(App):
-    def __init__(self, app_instance, route, seen_routes=None):
+    def __init__(self, app_instance, route, seen_routes=None, restored_state=None):
         super().__init__()
         self.app_instance = app_instance
         self.route = route
         self.seen_routes = seen_routes if seen_routes is not None else []
+        self.restored_state = restored_state
 
     async def on_mount(self) -> None:
-        await self.push_screen(SCREEN_BY_ROUTE[self.route](self.app_instance))
+        screen = SCREEN_BY_ROUTE[self.route](self.app_instance)
+        if self.restored_state is not None:
+            screen.restore_state(self.restored_state)
+        await self.push_screen(screen)
 
     def on_navigate_to_screen(self, message) -> None:
         self.seen_routes.append(message.screen_name)
@@ -211,7 +225,6 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(route, ex
 @pytest.mark.parametrize(
     ("route", "selector", "copy"),
     [
-        ("mcp", "#mcp-open-management", "Unified MCP management is not embedded in this shell yet."),
         ("skills", "#skills-import-skill", "Skill import is not wired in this shell yet."),
     ],
 )
@@ -227,6 +240,97 @@ async def test_unwired_destination_actions_are_disabled_with_honest_copy(route, 
         button = screen.query_one(selector, Button)
         assert button.disabled is True
         assert copy in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_embeds_unified_mcp_management_panel():
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one(UnifiedMCPPanel)
+        assert screen.query_one("#unified-mcp-source", Select)
+        assert screen.query_one("#unified-mcp-server-target", Select)
+        assert screen.query_one("#unified-mcp-scope", Select)
+        assert screen.query_one("#unified-mcp-section", Select)
+        assert screen.query_one("#unified-mcp-action", Select)
+        assert screen.query_one("#unified-mcp-action-payload", TextArea)
+        assert screen.query_one("#unified-mcp-action-run", Button)
+        assert not screen.query("#mcp-open-management")
+        assert "Unified MCP management is not embedded in this shell yet." not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_restores_unified_mcp_view_state_after_mount(tmp_path):
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    target_store.save_targets(
+        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+    )
+    app = _build_test_app()
+    app.unified_mcp_service = FakeUnifiedMCPService(target_store)
+    host = DestinationHarness(
+        app,
+        "mcp",
+        restored_state={
+            "unified_mcp_view_state": {
+                "selected_source": "server",
+                "selected_active_server_id": "server-a",
+                "selected_scope": "team",
+                "selected_scope_ref": "21",
+                "selected_section": "inventory",
+            }
+        },
+    )
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        panel = _active_destination_screen(host).query_one(UnifiedMCPPanel)
+
+        assert panel.context.selected_source == "server"
+        assert panel.context.selected_active_server_id == "server-a"
+        assert panel.context.selected_scope == "team"
+        assert panel.context.selected_scope_ref == "21"
+        assert panel.context.selected_section == "inventory"
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch):
+    app = _build_test_app()
+    screen = MCPScreen(app)
+    scheduled = {}
+
+    class FakePanel:
+        async def load_context(self):
+            return None
+
+    def capture_worker(coro, **kwargs):
+        scheduled["kwargs"] = kwargs
+        coro.close()
+
+    screen.mcp_panel = FakePanel()
+    monkeypatch.setattr(screen, "run_worker", capture_worker)
+
+    await screen.handle_runtime_backend_changed("server")
+
+    assert scheduled["kwargs"]["name"] == "mcp-screen-runtime-refresh"
+    assert scheduled["kwargs"]["group"] == "mcp-screen-runtime-refresh"
+    assert scheduled["kwargs"]["exclusive"] is True
+
+
+def test_mcp_destination_service_adoption_tracking_evidence_exists():
+    evidence = PHASE4_MCP_ADOPTION_EVIDENCE.read_text(encoding="utf-8")
+    roadmap = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text(encoding="utf-8")
+    task = Path(
+        "backlog/tasks/task-5.1 - Phase-4.1-Adopt-Unified-MCP-panel-in-MCP-destination.md"
+    ).read_text(encoding="utf-8")
+
+    assert "Phase 4.1 MCP Destination Service Adoption" in evidence
+    assert "TASK-5.1" in evidence
+    assert "Phase 4.1: Adopt Unified MCP panel in MCP destination - `TASK-5.1`" in roadmap
+    assert "UnifiedMCPPanel" in task
 
 
 @pytest.mark.asyncio
