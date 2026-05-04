@@ -40,6 +40,9 @@ PHASE3_SCHEDULES_DIGEST_CONSOLE_EVIDENCE = (
 PHASE3_RAG_CONSOLE_EVIDENCE = (
     REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-rag-search-console-launch.md"
 )
+PHASE3_ARTIFACTS_CHATBOOK_CONSOLE_EVIDENCE = (
+    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-artifacts-chatbook-console-launch.md"
+)
 
 
 def _load_console_live_work_contract():
@@ -163,6 +166,23 @@ class ThreadRecordingReadingDigestService(StaticReadingDigestService):
             limit=limit,
             offset=offset,
         )
+
+
+class StaticLocalChatbookService:
+    def __init__(self, chatbooks):
+        self.chatbooks = tuple(chatbooks)
+        self.calls = []
+
+    async def list_chatbooks(self, *, q=None, limit=100, offset=0, **kwargs):
+        self.calls.append(
+            {
+                "q": q,
+                "limit": limit,
+                "offset": offset,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return list(self.chatbooks)[int(offset) : int(offset) + int(limit)]
 
 
 def test_app_exposes_open_console_for_live_work_helper():
@@ -337,10 +357,13 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
         "console-live-work-source-workflows",
         "console-live-work-source-acp",
         "console-live-work-source-mcp",
-        "console-live-work-source-artifacts",
     ):
         assert "Not wired" in rows_by_id[source_id].text
         assert "console-live-work-source-unavailable" in rows_by_id[source_id].classes
+    assert rows_by_id["console-live-work-source-artifacts"].text == (
+        "Artifacts: Connected - Latest local Chatbook artifacts can launch into Console."
+    )
+    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-artifacts"].classes
 
 
 def test_app_console_live_work_primary_action_routes_wc_run_details():
@@ -513,6 +536,27 @@ def test_phase3_rag_console_launch_tracking_evidence_links_task_and_roadmap():
         "`TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`"
     ) in roadmap
     assert "RAG result" in task
+
+
+def test_phase3_artifacts_chatbook_console_launch_tracking_evidence_links_task_and_roadmap():
+    evidence = PHASE3_ARTIFACTS_CHATBOOK_CONSOLE_EVIDENCE.read_text()
+    readme = (REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/README.md").read_text()
+    roadmap = (REPO_ROOT / "Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text()
+    task = (
+        REPO_ROOT
+        / "backlog/tasks/task-3.9 - Phase-3.9-Launch-latest-Chatbook-artifact-from-Artifacts-into-Console.md"
+    ).read_text()
+
+    assert "TASK-3.9" in evidence
+    assert "Artifacts Chatbook Console Launch" in evidence
+    assert "artifacts-use-in-console" in evidence
+    assert "2026-05-03-artifacts-chatbook-console-launch.md" in readme
+    assert "Phase 3.9: Launch latest Chatbook artifact from Artifacts into Console - `TASK-3.9`" in roadmap
+    assert (
+        "`TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, "
+        "`TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9`"
+    ) in roadmap
+    assert "Chatbook payload" in task
 
 
 def test_schedules_console_follow_uses_home_dashboard_app_inputs():
@@ -943,11 +987,100 @@ async def test_schedules_destination_routes_latest_digest_output_to_console():
     )
 
 
+@pytest.mark.asyncio
+async def test_artifacts_destination_keeps_console_launch_disabled_without_chatbooks():
+    app = _build_test_app()
+    app.local_chatbook_service = StaticLocalChatbookService(())
+    app.open_console_for_live_work = Mock()
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "artifacts")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#artifacts-use-in-console")
+
+        assert button.disabled is True
+        assert str(button.label) == "Console launch unavailable"
+        assert "No local Chatbook artifact is available for Console launch." in _screen_static_text(screen)
+
+        await pilot.click("#artifacts-use-in-console")
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_not_called()
+    app.open_chat_with_handoff.assert_not_called()
+    assert app.local_chatbook_service.calls == [{"q": None, "limit": 25, "offset": 0, "kwargs": {}}]
+
+
+@pytest.mark.asyncio
+async def test_artifacts_destination_launches_latest_local_chatbook_in_console():
+    app = _build_test_app()
+    app.local_chatbook_service = StaticLocalChatbookService(
+        (
+            {
+                "chatbook_id": 41,
+                "id": "41",
+                "name": "Older Pack",
+                "description": "Previous bundle",
+                "file_path": "/tmp/older-pack.chatbook",
+                "tags": ["archive"],
+                "categories": ["Library"],
+                "updated_at": "2026-05-02T20:00:00Z",
+            },
+            {
+                "chatbook_id": 42,
+                "id": "42",
+                "name": "Research Pack",
+                "description": "A portable research bundle",
+                "file_path": "/tmp/research-pack.chatbook",
+                "tags": ["research", "portable"],
+                "categories": ["Library"],
+                "updated_at": "2026-05-03T20:00:00Z",
+            },
+        )
+    )
+    app.open_console_for_live_work = Mock()
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "artifacts")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one("#artifacts-use-in-console")
+
+        assert button.disabled is False
+        assert "Research Pack" in str(button.label)
+        text = _screen_static_text(screen)
+        assert "Console can launch latest Chatbook artifact: Research Pack." in text
+        assert "A portable research bundle" in text
+
+        await pilot.click("#artifacts-use-in-console")
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once_with(
+        source="artifacts",
+        title="Research Pack",
+        payload={
+            "target_id": "local:chatbook:42",
+            "chatbook_id": 42,
+            "record_id": "42",
+            "file_path": "/tmp/research-pack.chatbook",
+            "description": "A portable research bundle",
+            "tags": "research, portable",
+            "categories": "Library",
+            "updated_at": "2026-05-03T20:00:00Z",
+        },
+        status="ready",
+        recovery="Review this Chatbook artifact in Console or return to Artifacts.",
+        action_label="Open Chatbook artifact",
+    )
+    app.open_chat_with_handoff.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("route", "button_id"),
     [
         ("library", "library-use-in-console"),
-        ("artifacts", "artifacts-use-in-console"),
         ("personas", "personas-attach-to-console"),
         ("skills", "skills-attach-to-console"),
     ],
@@ -1031,7 +1164,7 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
         assert "ACP: Not wired" in str(screen.query_one("#console-live-work-source-acp").renderable)
         assert "MCP: Not wired" in str(screen.query_one("#console-live-work-source-mcp").renderable)
         assert "RAG: Connected" in str(screen.query_one("#console-live-work-source-rag").renderable)
-        assert "Artifacts: Not wired" in str(screen.query_one("#console-live-work-source-artifacts").renderable)
+        assert "Artifacts: Connected" in str(screen.query_one("#console-live-work-source-artifacts").renderable)
 
 
 @pytest.mark.asyncio
