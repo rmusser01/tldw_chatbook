@@ -13,5 +13,6 @@ This directory contains durable QA summaries for Phase 3 Console live-work hub s
 - `2026-05-03-wc-destination-console-launch.md` - `TASK-3.5` W+C destination Console follow producer for the latest active W+C run.
 - `2026-05-03-console-live-work-source-readiness.md` - `TASK-3.6` Console source-readiness summary showing W+C and Schedules connected while future sources remain honestly unavailable.
 - `2026-05-03-schedules-console-launch.md` - `TASK-3.7` Schedules destination Console follow producer for active schedule runs.
+- `2026-05-03-schedules-digest-console-launch.md` - `TASK-3.7` Schedules destination Console launch producer for the latest local reading-digest output.
 
 Do not mark Phase 3 verified until launch, follow, status, and recovery flows are verified in the running app against workflows, schedules, ACP, MCP, RAG, artifacts, and active-work source adapters.

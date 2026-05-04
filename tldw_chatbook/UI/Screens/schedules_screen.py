@@ -1,5 +1,8 @@
 """Schedules destination shell for run timing and recovery."""
 
+from collections.abc import Mapping
+from typing import Any
+
 from loguru import logger
 from rich.markup import escape as escape_markup
 from rich.text import Text
@@ -21,26 +24,32 @@ class SchedulesScreen(BaseAppScreen):
         super().__init__(app_instance, "schedules", **kwargs)
         self._current_console_follow_item = None
         self._latest_console_follow_item_id = None
+        self._latest_console_launch_kwargs: dict[str, Any] | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
-        self._refresh_latest_console_follow_item()
+        self._refresh_latest_console_context()
 
     @work(exclusive=True, thread=True)
-    def _refresh_latest_console_follow_item(self) -> None:
+    def _refresh_latest_console_context(self) -> None:
         latest_console_item = self._latest_console_follow_item_from_adapter()
+        latest_console_launch = None
+        if latest_console_item is None:
+            latest_console_launch = self._latest_reading_digest_console_launch()
         self.app.call_from_thread(
-            self._apply_latest_console_follow_item,
+            self._apply_latest_console_context,
             latest_console_item,
+            latest_console_launch,
         )
 
-    def _apply_latest_console_follow_item(self, latest_console_item) -> None:
+    def _apply_latest_console_context(self, latest_console_item, latest_console_launch) -> None:
         self._current_console_follow_item = latest_console_item
         self._latest_console_follow_item_id = (
             getattr(latest_console_item, "item_id", None)
             if latest_console_item is not None
             else None
         )
+        self._latest_console_launch_kwargs = latest_console_launch
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -74,6 +83,56 @@ class SchedulesScreen(BaseAppScreen):
                 return item
         return None
 
+    def _latest_reading_digest_console_launch(self) -> dict[str, Any] | None:
+        service = getattr(self.app_instance, "local_media_reading_service", None)
+        list_outputs = getattr(service, "list_reading_digest_outputs", None)
+        if not callable(list_outputs):
+            return None
+        try:
+            output_listing = list_outputs(schedule_id=None, limit=1, offset=0)
+        except Exception:
+            logger.warning(
+                "Failed to load Schedules Console launch context from local reading digest outputs.",
+                exc_info=True,
+            )
+            return None
+        items = output_listing.get("items") if isinstance(output_listing, Mapping) else None
+        latest_output = next(iter(tuple(items or ())), None)
+        if not isinstance(latest_output, Mapping):
+            return None
+
+        output_id = latest_output.get("output_id") or latest_output.get("id")
+        if output_id in (None, ""):
+            return None
+
+        metadata = latest_output.get("metadata")
+        metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
+        schedule_name = str(
+            metadata.get("schedule_name")
+            or latest_output.get("schedule_name")
+            or latest_output.get("schedule_id")
+            or ""
+        ).strip()
+        title = str(latest_output.get("title") or schedule_name or "Reading digest output").strip()
+        item_count = metadata.get("item_count", latest_output.get("item_count"))
+        payload = {
+            "target_id": f"local:reading_digest_output:{output_id}",
+            "output_id": output_id,
+            "schedule_id": latest_output.get("schedule_id"),
+            "schedule_name": schedule_name or None,
+            "download_url": latest_output.get("download_url") or latest_output.get("storage_path"),
+            "created_at": latest_output.get("created_at"),
+            "item_count": item_count,
+        }
+        return {
+            "source": "schedules",
+            "title": title,
+            "payload": payload,
+            "status": "ready",
+            "recovery": "Review this reading digest output from Schedules or return to Library.",
+            "action_label": "Open schedule output",
+        }
+
     def compose_content(self) -> ComposeResult:
         latest_console_item = self._current_console_follow_item
         self._latest_console_follow_item_id = (
@@ -97,6 +156,7 @@ class SchedulesScreen(BaseAppScreen):
                 if latest_console_item is not None:
                     title = str(getattr(latest_console_item, "title", None) or "Untitled")
                     status = str(getattr(latest_console_item, "status", None) or "unknown")
+                    yield Static("Console launch available", classes="destination-section")
                     yield Static(
                         Text.from_markup(
                             "Console can follow active schedule run: "
@@ -108,6 +168,21 @@ class SchedulesScreen(BaseAppScreen):
                         Text.from_markup(f"Follow {escape_markup(title)} in Console"),
                         id="schedules-follow-in-console",
                         tooltip="Open the active schedule run in Console.",
+                    )
+                elif self._latest_console_launch_kwargs is not None:
+                    title = str(self._latest_console_launch_kwargs["title"])
+                    yield Static("Console launch available", classes="destination-section")
+                    yield Static(
+                        Text.from_markup(
+                            "Console can launch latest reading digest output: "
+                            f"{escape_markup(title)}."
+                        ),
+                        id="schedules-console-available",
+                    )
+                    yield Button(
+                        Text.from_markup(f"Launch {escape_markup(title)} in Console"),
+                        id="schedules-follow-in-console",
+                        tooltip="Open the latest local reading digest output in Console.",
                     )
                 else:
                     yield Static("Console recovery unavailable", classes="destination-section")
@@ -126,20 +201,33 @@ class SchedulesScreen(BaseAppScreen):
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
         event.stop()
         target_id = self._latest_console_follow_item_id
-        if not target_id:
-            self.app_instance.notify(
-                "No active schedule run is available for Console follow.",
-                severity="warning",
+        if target_id:
+            open_active_item_in_console = getattr(self.app_instance, "open_active_home_item_in_console", None)
+            if not callable(open_active_item_in_console):
+                self.app_instance.notify(
+                    "Console follow is unavailable for Schedules in this runtime.",
+                    severity="warning",
+                )
+                return
+            open_active_item_in_console(
+                target_id=target_id,
+                target_route="chat",
             )
             return
-        open_in_console = getattr(self.app_instance, "open_active_home_item_in_console", None)
-        if not callable(open_in_console):
-            self.app_instance.notify(
-                "Console follow is unavailable for Schedules in this runtime.",
-                severity="warning",
-            )
+
+        launch_kwargs = self._latest_console_launch_kwargs
+        if launch_kwargs is not None:
+            open_in_console = getattr(self.app_instance, "open_console_for_live_work", None)
+            if not callable(open_in_console):
+                self.app_instance.notify(
+                    "Console launch is unavailable for Schedules in this runtime.",
+                    severity="warning",
+                )
+                return
+            open_in_console(**launch_kwargs)
             return
-        open_in_console(
-            target_id=target_id,
-            target_route="chat",
+
+        self.app_instance.notify(
+            "No active schedule run is available for Console follow.",
+            severity="warning",
         )

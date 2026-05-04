@@ -2,7 +2,7 @@
 
 Date: 2026-05-03
 Status: Phase 2 and Phase 3 in progress
-Source Branch: `origin/dev` at `bce5430e` plus `codex/unified-shell-phase3-schedules-live-work`
+Source Branch: `origin/dev` at `f9783093` plus `codex/unified-shell-phase3-schedules-console-launch`
 
 ## Purpose
 
@@ -29,8 +29,8 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 
 - Home active-work controls, detail routing, Console launch requests, item identity, local unread notification counts, notification review routing, local W+C watchlist run snapshots, and local W+C run detail routing now route through explicit adapter boundaries; schedule and agent-service adapters still need implementation.
 - Workflows has no wired workflow service in the shell wrapper.
-- W+C and Schedules now expose Console follow when the existing active-work adapter has actionable run context; Workflows and ACP still use honest unavailable Console states until actionable payloads exist.
-- Console now has a typed app-owned launch contract, reusable status-card display seam, source-readiness summary, Home W+C active-work source producer, W+C and Schedules destination follow producers, and W+C run-detail action routing for staged live-work payloads; additional source-specific live event producers still need implementation.
+- W+C and Schedules now expose Console follow when the existing active-work adapter has actionable run context; Schedules also exposes Console launch for the latest local reading-digest output when no active run is available; Workflows and ACP still use honest unavailable Console states until actionable payloads exist.
+- Console now has a typed app-owned launch contract, reusable status-card display seam, source-readiness summary, Home W+C active-work source producer, W+C and Schedules destination follow producers, a Schedules reading-digest output fallback producer, and W+C run-detail action routing for staged live-work payloads; additional source-specific live event producers still need implementation.
 - ACP launch is disabled until an ACP-compatible runtime is configured.
 - MCP management is not embedded in the top-level MCP wrapper.
 - Skills local/server services exist, but the top-level Skills shell still leaves import disabled and lacks list/detail/import UX adoption.
@@ -230,6 +230,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-3.7` makes Schedules itself expose Console follow for active schedule runs when adapter context exists:
 
 - `Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-schedules-console-launch.md`
+
+## Phase 3.7 Schedules Reading Digest Console Launch Evidence
+
+`TASK-3.7` also lets Schedules stage the latest local reading-digest output in Console when no active schedule-run context exists:
+
+- `Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-schedules-digest-console-launch.md`
 
 ## Phase 0: Canonical Tracking
 
