@@ -14,8 +14,10 @@ Continue Phase 3 by making Console source readiness visible when no live-work it
 - Added `ConsoleLiveWorkSourceReadinessState` and source readiness rows.
 - Marked W+C as connected because Home W+C active work can now launch and route run details through Console.
 - Marked Schedules as connected because Schedules can now follow active schedule-run context into Console when adapter context exists.
-- Marked Workflows, ACP, MCP, RAG, and Artifacts as `Not wired` with explicit recovery copy.
-- Follow-up: `TASK-3.8` changes RAG to connected after Search/RAG result Console launch wiring landed.
+- Marked RAG as connected because Search/RAG results can stage selected evidence into Console.
+- Marked Artifacts as connected because latest local Chatbook artifacts can launch into Console.
+- Marked Workflows as connected because Workflows can launch active workflow-run context into Console when adapter context exists.
+- Marked ACP and MCP as `Not wired` with explicit recovery copy.
 - Updated `ChatScreen` to render the source readiness summary only when no pending Console live-work launch is staged.
 - Preserved pending launch focus by suppressing the readiness summary while a live-work card is visible.
 
@@ -36,13 +38,13 @@ Warning boundary: warnings are existing dependency/import warnings and are not C
 
 ## UX Result
 
-- First-time users can see that W+C, Schedules, and RAG are connected live-work sources after the `TASK-3.8` update.
+- First-time users can see that W+C, Schedules, RAG, Artifacts, and Workflows are connected live-work sources.
 - Power users can quickly distinguish supported Console follow-through from future source integrations.
 - Planned sources remain visible without false affordances because unavailable rows are informational only.
 
 ## Residual Risk
 
 - This is a source-readiness visibility slice, not full Phase 3 completion.
-- Workflows, ACP, MCP, and Artifacts still need source-specific payload producers.
+- ACP, MCP, and deeper source-specific live event producers still need implementation.
 - Console still does not subscribe to real live event streams.
 - Full Phase 3 cannot be verified until all relevant launch, follow, status, and recovery flows are exercised in the running app.

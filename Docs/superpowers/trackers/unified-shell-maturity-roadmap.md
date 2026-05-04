@@ -28,9 +28,9 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 ## Known Product Gaps
 
 - Home active-work controls, detail routing, Console launch requests, item identity, local unread notification counts, notification review routing, local W+C watchlist run snapshots, and local W+C run detail routing now route through explicit adapter boundaries; schedule and agent-service adapters still need implementation.
-- Workflows has no wired workflow service in the shell wrapper.
-- W+C and Schedules now expose Console follow when the existing active-work adapter has actionable run context; Schedules also exposes Console launch for the latest local reading-digest output when no active run is available; Search/RAG result cards can stage selected retrieved evidence into Console; Artifacts can launch the latest local Chatbook artifact into Console; Workflows and ACP still use honest unavailable Console states until actionable payloads exist.
-- Console now has a typed app-owned launch contract, reusable status-card display seam, source-readiness summary, Home W+C active-work source producer, W+C and Schedules destination follow producers, a Schedules reading-digest output fallback producer, a RAG search-result producer, an Artifacts Chatbook producer, and W+C run-detail action routing for staged live-work payloads; additional source-specific live event producers still need implementation.
+- Workflows has no wired workflow service in the shell wrapper, but can launch Console when the active-work adapter already has actionable workflow-run context.
+- W+C, Schedules, and Workflows now expose Console follow or launch when the existing active-work adapter has actionable run context; Schedules also exposes Console launch for the latest local reading-digest output when no active run is available; Search/RAG result cards can stage selected retrieved evidence into Console; Artifacts can launch the latest local Chatbook artifact into Console; ACP still uses honest unavailable Console states until actionable payloads exist.
+- Console now has a typed app-owned launch contract, reusable status-card display seam, source-readiness summary, Home W+C active-work source producer, W+C, Schedules, and Workflows destination producers, a Schedules reading-digest output fallback producer, a RAG search-result producer, an Artifacts Chatbook producer, and W+C run-detail action routing for staged live-work payloads; additional source-specific live event producers still need implementation.
 - ACP launch is disabled until an ACP-compatible runtime is configured.
 - MCP management is not embedded in the top-level MCP wrapper.
 - Skills local/server services exist, but the top-level Skills shell still leaves import disabled and lacks list/detail/import UX adoption.
@@ -96,6 +96,7 @@ Initial child tasks:
 - Phase 3.7: Launch active Schedules run from Schedules into Console - `TASK-3.7`
 - Phase 3.8: Launch RAG search result from Search/RAG into Console - `TASK-3.8`
 - Phase 3.9: Launch latest Chatbook artifact from Artifacts into Console - `TASK-3.9`
+- Phase 3.10: Launch active Workflows run from Workflows into Console - `TASK-3.10`
 
 ## QA Evidence Index
 
@@ -116,7 +117,7 @@ Initial child tasks:
 | Phase 0: Canonical Tracking | Make remaining work trackable. | verified | `TASK-1`, `TASK-1.1`, `TASK-1.2` | `phase-0/` | Product UI workflows are out of scope for Phase 0. |
 | Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | verified | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3`, `TASK-2.4` | `phase-1/` | Live service workflows remain intentionally deferred to Phases 2-6. |
 | Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | in-progress | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6`, `TASK-4.7` | `phase-2/` | Schedule and agent-service adapters still need implementation; local watchlist retry/pause/resume remain recoverable rather than fully controllable. |
-| Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | in-progress | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, `TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9` | `phase-3/` | Workflows, ACP, MCP, server Artifacts, and deeper source-specific live event streams still need implementation. |
+| Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | in-progress | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, `TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9`, `TASK-3.10` | `phase-3/` | ACP, MCP, server Artifacts, and deeper source-specific live event streams still need implementation. |
 | Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | not-started | `TASK-5` | `phase-4/` | Service coverage varies by destination. |
 | Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | not-started | `TASK-6` | `phase-5/` | Shared taxonomy not yet extracted. |
 | Phase 6: Audit Replay And Closeout | Prove shell works for first-time and power users. | not-started | `TASK-7` | `phase-6/` | Depends on prior phases and running-app QA. |
@@ -250,6 +251,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-3.9` lets Artifacts stage the latest local Chatbook artifact in Console while preserving the existing Chatbooks destination route:
 
 - `Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-artifacts-chatbook-console-launch.md`
+
+## Phase 3.10 Workflows Destination Console Launch Evidence
+
+`TASK-3.10` makes Workflows itself expose Console launch for active workflow runs when adapter context exists:
+
+- `Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-workflows-console-launch.md`
 
 ## Phase 0: Canonical Tracking
 
