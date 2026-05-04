@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container
 from textual.message import Message
@@ -85,7 +86,7 @@ class ChatHandoffCard(Container):
         return "\n".join(parts)
 
     def compose(self) -> ComposeResult:
-        yield Static(self.render_text(), classes="chat-handoff-card-body")
+        yield Static(Text(self.render_text()), classes="chat-handoff-card-body")
         if self.payload.status != "sent" and self.clear_action_id:
             yield Button(
                 "Clear staged context",

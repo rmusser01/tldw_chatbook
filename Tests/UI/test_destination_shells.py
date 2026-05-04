@@ -64,6 +64,19 @@ class StaticLibraryNotesScopeService:
         return {"items": list(self.notes), "pagination": {"total": len(self.notes)}}
 
 
+class StaticLibraryNotesListScopeService:
+    def __init__(self, notes):
+        self.notes = tuple(notes)
+        self.calls = []
+
+    async def list_notes(self, **kwargs):
+        self.calls.append(kwargs)
+        limit = kwargs.get("limit")
+        if isinstance(limit, int):
+            return list(self.notes[:limit])
+        return list(self.notes)
+
+
 class StaticLibraryMediaScopeService:
     def __init__(self, media_items):
         self.media_items = tuple(media_items)
@@ -276,6 +289,47 @@ async def test_library_destination_empty_state_disables_console_handoff():
         assert "No local Library sources are available yet." in _visible_text(screen)
         assert button.disabled is True
         assert "Stage Library source context" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService(
+        [{"title": f"Research Note {index}", "id": f"note-{index}"} for index in range(1, 7)]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Notes (showing up to 5): 5" in text
+        assert "Notes: 5" not in text
+        assert "Research Note 1" in text
+        assert "Research Note 5" in text
+        assert "Research Note 6" not in text
+
+        await pilot.click("#library-use-in-console")
+        await pilot.pause(0.1)
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert "Notes (showing up to 5): 5" in payload.body
+    assert "Notes: 5" not in payload.body
+    assert payload.metadata["notes_sample_count"] == 5
+    assert payload.metadata["notes_total_count"] is None
+    assert "notes_count" not in payload.metadata
+    assert payload.metadata["note_titles"] == [
+        "Research Note 1",
+        "Research Note 2",
+        "Research Note 3",
+        "Research Note 4",
+        "Research Note 5",
+    ]
 
 
 @pytest.mark.asyncio

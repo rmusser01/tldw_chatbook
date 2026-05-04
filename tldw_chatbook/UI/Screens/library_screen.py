@@ -44,6 +44,11 @@ class LibraryScreen(BaseAppScreen):
             "media": 0,
             "conversations": 0,
         }
+        self._local_source_total_known: dict[str, bool] = {
+            "notes": True,
+            "media": True,
+            "conversations": True,
+        }
         self._library_lookup_error: str | None = None
         self._library_loaded = False
 
@@ -53,17 +58,25 @@ class LibraryScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True)
     def _refresh_local_source_snapshot(self) -> None:
-        records, counts, lookup_error = self._list_local_source_snapshot()
-        self.app.call_from_thread(self._apply_local_source_snapshot, records, counts, lookup_error)
+        records, counts, total_known, lookup_error = self._list_local_source_snapshot()
+        self.app.call_from_thread(
+            self._apply_local_source_snapshot,
+            records,
+            counts,
+            total_known,
+            lookup_error,
+        )
 
     def _apply_local_source_snapshot(
         self,
         records: dict[str, tuple[Mapping[str, Any], ...]],
         counts: dict[str, int],
+        total_known: dict[str, bool],
         lookup_error: str | None = None,
     ) -> None:
         self._local_source_records = records
         self._local_source_counts = counts
+        self._local_source_total_known = total_known
         self._library_lookup_error = lookup_error
         self._library_loaded = True
         if self.is_mounted:
@@ -101,7 +114,8 @@ class LibraryScreen(BaseAppScreen):
         return "Untitled source"
 
     @staticmethod
-    def _response_records_and_count(result: Any) -> tuple[tuple[Mapping[str, Any], ...], int]:
+    def _response_records_and_count(result: Any) -> tuple[tuple[Mapping[str, Any], ...], int, bool]:
+        total = None
         if isinstance(result, Mapping):
             raw_items = result.get("items")
             pagination = result.get("pagination")
@@ -110,21 +124,26 @@ class LibraryScreen(BaseAppScreen):
                 total = pagination.get("total", pagination.get("total_items", total))
         elif isinstance(result, Sequence) and not isinstance(result, (str, bytes, bytearray)):
             raw_items = result
-            total = None
         else:
             raw_items = ()
-            total = None
 
         records = tuple(record for record in tuple(raw_items or ()) if isinstance(record, Mapping))
+        total_known = total is not None
         try:
             count = int(total) if total is not None else len(records)
         except (TypeError, ValueError):
             count = len(records)
-        return records, count
+            total_known = False
+        return records, max(count, 0), total_known
 
     def _list_local_source_snapshot(
         self,
-    ) -> tuple[dict[str, tuple[Mapping[str, Any], ...]], dict[str, int], str | None]:
+    ) -> tuple[
+        dict[str, tuple[Mapping[str, Any], ...]],
+        dict[str, int],
+        dict[str, bool],
+        str | None,
+    ]:
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         media_service = getattr(self.app_instance, "media_reading_scope_service", None)
         conversation_service = getattr(self.app_instance, "chat_conversation_scope_service", None)
@@ -138,8 +157,9 @@ class LibraryScreen(BaseAppScreen):
             "conversations": (),
         }
         empty_counts = {"notes": 0, "media": 0, "conversations": 0}
+        empty_total_known = {"notes": True, "media": True, "conversations": True}
         if not all(callable(call) for call in (list_notes, list_media, list_conversations)):
-            return empty_records, empty_counts, LIBRARY_SERVICE_UNAVAILABLE_COPY
+            return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_UNAVAILABLE_COPY
 
         try:
             notes_result = self._run_maybe_awaitable(
@@ -167,17 +187,21 @@ class LibraryScreen(BaseAppScreen):
             )
         except PolicyDeniedError as exc:
             policy_message = self._safe_text(exc.user_message, LIBRARY_SERVICE_ERROR_COPY)
-            return empty_records, empty_counts, policy_message
+            return empty_records, empty_counts, empty_total_known, policy_message
         except Exception:
             logger.warning(
                 "Failed to load local Library source snapshot.",
                 exc_info=True,
             )
-            return empty_records, empty_counts, LIBRARY_SERVICE_ERROR_COPY
+            return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_ERROR_COPY
 
-        notes, notes_count = self._response_records_and_count(notes_result)
-        media, media_count = self._response_records_and_count(media_result)
-        conversations, conversations_count = self._response_records_and_count(conversation_result)
+        notes, notes_count, notes_total_known = self._response_records_and_count(notes_result)
+        media, media_count, media_total_known = self._response_records_and_count(media_result)
+        (
+            conversations,
+            conversations_count,
+            conversations_total_known,
+        ) = self._response_records_and_count(conversation_result)
         return (
             {
                 "notes": notes,
@@ -188,6 +212,11 @@ class LibraryScreen(BaseAppScreen):
                 "notes": notes_count,
                 "media": media_count,
                 "conversations": conversations_count,
+            },
+            {
+                "notes": notes_total_known,
+                "media": media_total_known,
+                "conversations": conversations_total_known,
             },
             None,
         )
@@ -202,17 +231,43 @@ class LibraryScreen(BaseAppScreen):
             ("media", "Media"),
             ("conversations", "Conversations"),
         ):
-            lines.append(f"{label}: {self._local_source_counts[source_type]}")
+            lines.append(self._source_count_label(source_type, label))
             for index, record in enumerate(self._local_source_records[source_type], start=1):
                 lines.append(f"  {index}. {self._source_title(source_type, record)}")
             lines.append("")
         return "\n".join(lines).strip()
+
+    def _source_count_label(self, source_type: str, label: str) -> str:
+        count = self._local_source_counts[source_type]
+        if self._local_source_total_known[source_type]:
+            return f"{label}: {count}"
+        return f"{label} (showing up to {LIBRARY_SOURCE_PAGE_SIZE}): {count}"
 
     def _source_sample_titles(self, source_type: str) -> list[str]:
         return [
             self._source_title(source_type, record)
             for record in self._local_source_records[source_type]
         ]
+
+    def _source_count_metadata(self) -> dict[str, int | None]:
+        metadata: dict[str, int | None] = {}
+        for source_type in ("notes", "media", "conversations"):
+            count = self._local_source_counts[source_type]
+            metadata[f"{source_type}_sample_count"] = len(self._local_source_records[source_type])
+            metadata[f"{source_type}_total_count"] = (
+                count if self._local_source_total_known[source_type] else None
+            )
+            if self._local_source_total_known[source_type]:
+                metadata[f"{source_type}_count"] = count
+        return metadata
+
+    def _source_snapshot_metadata(self) -> dict[str, Any]:
+        return {
+            **self._source_count_metadata(),
+            "note_titles": self._source_sample_titles("notes"),
+            "media_titles": self._source_sample_titles("media"),
+            "conversation_titles": self._source_sample_titles("conversations"),
+        }
 
     def compose_content(self) -> ComposeResult:
         has_sources = self._has_local_sources()
@@ -266,7 +321,7 @@ class LibraryScreen(BaseAppScreen):
                         ("conversations", "Conversations", "library-conversations-summary"),
                     ):
                         yield Static(
-                            f"{label}: {self._local_source_counts[source_type]}",
+                            self._source_count_label(source_type, label),
                             id=widget_id,
                         )
                         for index, record in enumerate(self._local_source_records[source_type]):
@@ -336,13 +391,6 @@ class LibraryScreen(BaseAppScreen):
                 runtime_backend="local",
                 source_owner="local",
                 source_selector_state="local",
-                metadata={
-                    "notes_count": self._local_source_counts["notes"],
-                    "media_count": self._local_source_counts["media"],
-                    "conversations_count": self._local_source_counts["conversations"],
-                    "note_titles": self._source_sample_titles("notes"),
-                    "media_titles": self._source_sample_titles("media"),
-                    "conversation_titles": self._source_sample_titles("conversations"),
-                },
+                metadata=self._source_snapshot_metadata(),
             )
         )

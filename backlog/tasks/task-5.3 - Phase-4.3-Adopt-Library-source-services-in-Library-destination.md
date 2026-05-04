@@ -46,7 +46,8 @@ Make the top-level Library destination use existing local source services so use
 <!-- SECTION:NOTES:BEGIN -->
 - Added local Library snapshot loading in `LibraryScreen` through `notes_scope_service`, `media_reading_scope_service`, and `chat_conversation_scope_service`.
 - Rendered loading, available, empty, service-unavailable, and policy-denied recovery states while preserving existing legacy Library navigation routes.
-- Changed `Use in Console` from a generic placeholder to a disabled-until-ready `library-source-snapshot` Chat handoff with concrete source counts and sample titles.
+- Changed `Use in Console` from a generic placeholder to a disabled-until-ready `library-source-snapshot` Chat handoff with concrete source totals when available, explicit sample counts when totals are unavailable, and sample titles.
 - Added focused destination shell and Console handoff regression coverage plus Phase 4.3 QA evidence and roadmap links.
-- Verified with `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_shell_product_model_visibility.py -q` resulting in `103 passed, 1 warning in 32.21s`.
+- Post-review hardening renders Chat handoff cards as plain text and adds regression coverage for the production plain-list notes return shape.
+- Verified with `.venv/bin/python -m pytest Tests/UI/test_destination_shells.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_shell_product_model_visibility.py Tests/UI/test_chat_first_handoffs.py -q` resulting in `128 passed, 1 warning in 30.71s`.
 <!-- SECTION:NOTES:END -->
