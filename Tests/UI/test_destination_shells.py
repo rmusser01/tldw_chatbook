@@ -25,6 +25,7 @@ from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens.skills_screen import SkillsScreen
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens import skills_screen as skills_screen_module
 
 
@@ -48,6 +49,57 @@ PHASE4_MCP_ADOPTION_EVIDENCE = Path(
 PHASE4_SKILLS_ADOPTION_EVIDENCE = Path(
     "Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-skills-destination-service-adoption.md"
 )
+PHASE4_LIBRARY_ADOPTION_EVIDENCE = Path(
+    "Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-library-source-service-adoption.md"
+)
+
+
+class StaticLibraryNotesScopeService:
+    def __init__(self, notes):
+        self.notes = tuple(notes)
+        self.calls = []
+
+    async def list_notes(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"items": list(self.notes), "pagination": {"total": len(self.notes)}}
+
+
+class StaticLibraryNotesListScopeService:
+    def __init__(self, notes):
+        self.notes = tuple(notes)
+        self.calls = []
+
+    async def list_notes(self, **kwargs):
+        self.calls.append(kwargs)
+        limit = kwargs.get("limit")
+        if isinstance(limit, int):
+            return list(self.notes[:limit])
+        return list(self.notes)
+
+
+class StaticLibraryMediaScopeService:
+    def __init__(self, media_items):
+        self.media_items = tuple(media_items)
+        self.calls = []
+
+    async def list_media_items(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"items": list(self.media_items), "pagination": {"total_items": len(self.media_items)}}
+
+
+class StaticLibraryConversationScopeService:
+    def __init__(self, conversations):
+        self.conversations = tuple(conversations)
+        self.calls = []
+
+    async def list_conversations(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"items": list(self.conversations), "pagination": {"total": len(self.conversations)}}
+
+
+class RaisingLibraryNotesScopeService:
+    async def list_notes(self, **kwargs):
+        raise RuntimeError("notes unavailable")
 
 
 class StaticSkillsScopeService:
@@ -167,6 +219,187 @@ async def test_library_exposes_source_sections_and_import_export_boundary():
             "#library-open-search",
         ]:
             assert screen.query_one(selector)
+
+
+@pytest.mark.asyncio
+async def test_library_destination_lists_local_source_snapshot_from_services():
+    app = _build_test_app()
+    app.notes_user_id = "unit-user"
+    app.notes_scope_service = StaticLibraryNotesScopeService(
+        [
+            {"title": "Research Note", "id": "note-1"},
+            {"title": "Meeting Note", "id": "note-2"},
+        ]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService(
+        [{"title": "Transcript A", "id": "media-1"}]
+    )
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        [{"title": "Planning Chat", "id": "chat-1"}]
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+        button = screen.query_one("#library-use-in-console", Button)
+
+        assert "Local Library snapshot" in text
+        assert "Notes: 2" in text
+        assert "Media: 1" in text
+        assert "Conversations: 1" in text
+        assert "Research Note" in text
+        assert "Transcript A" in text
+        assert "Planning Chat" in text
+        assert button.disabled is False
+
+    assert app.notes_scope_service.calls[0] == {
+        "scope": "local_note",
+        "limit": getattr(library_screen_module, "LIBRARY_SOURCE_PAGE_SIZE", None),
+        "offset": 0,
+        "user_id": "unit-user",
+    }
+    assert app.media_reading_scope_service.calls[0] == {
+        "mode": "local",
+        "page": 1,
+        "results_per_page": getattr(library_screen_module, "LIBRARY_SOURCE_PAGE_SIZE", None),
+        "include_keywords": False,
+    }
+    assert app.chat_conversation_scope_service.calls[0] == {
+        "mode": "local",
+        "limit": getattr(library_screen_module, "LIBRARY_SOURCE_PAGE_SIZE", None),
+        "offset": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_library_destination_empty_state_disables_console_handoff():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        button = screen.query_one("#library-use-in-console", Button)
+
+        assert "No local Library sources are available yet." in _visible_text(screen)
+        assert button.disabled is True
+        assert "Stage Library source context" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService(
+        [{"title": f"Research Note {index}", "id": f"note-{index}"} for index in range(1, 7)]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Notes (showing up to 5): 5" in text
+        assert "Notes: 5" not in text
+        assert "Research Note 1" in text
+        assert "Research Note 5" in text
+        assert "Research Note 6" not in text
+
+        await pilot.click("#library-use-in-console")
+        await pilot.pause(0.1)
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert "Notes (showing up to 5): 5" in payload.body
+    assert "Notes: 5" not in payload.body
+    assert payload.metadata["notes_sample_count"] == 5
+    assert payload.metadata["notes_total_count"] is None
+    assert "notes_count" not in payload.metadata
+    assert payload.metadata["note_titles"] == [
+        "Research Note 1",
+        "Research Note 2",
+        "Research Note 3",
+        "Research Note 4",
+        "Research Note 5",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_library_destination_service_failure_uses_recovery_copy():
+    app = _build_test_app()
+    app.notes_scope_service = RaisingLibraryNotesScopeService()
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        button = screen.query_one("#library-use-in-console", Button)
+
+        assert "Library source services unavailable; retry Library later." in _visible_text(screen)
+        assert button.disabled is True
+        assert "Library source services are unavailable" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_library_use_in_console_uses_source_snapshot_context():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService(
+        [{"title": "Research Note", "id": "note-1"}]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService(
+        [{"title": "Transcript A", "id": "media-1"}]
+    )
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        [{"title": "Planning Chat", "id": "chat-1"}]
+    )
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#library-use-in-console")
+        await pilot.pause(0.1)
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert isinstance(payload, ChatHandoffPayload)
+    assert payload.source == "library"
+    assert payload.item_type == "library-source-snapshot"
+    assert payload.title == "Local Library Sources"
+    assert "Notes: 1" in payload.body
+    assert "Media: 1" in payload.body
+    assert "Conversations: 1" in payload.body
+    assert "Research Note" in payload.body
+    assert "Transcript A" in payload.body
+    assert "Planning Chat" in payload.body
+    assert "Stage Library source material" not in payload.body
+    assert payload.metadata["notes_count"] == 1
+    assert payload.metadata["media_count"] == 1
+    assert payload.metadata["conversations_count"] == 1
+
+
+def test_library_destination_service_adoption_tracking_evidence_exists():
+    evidence = PHASE4_LIBRARY_ADOPTION_EVIDENCE.read_text(encoding="utf-8")
+    roadmap = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text(encoding="utf-8")
+    task = Path(
+        "backlog/tasks/task-5.3 - Phase-4.3-Adopt-Library-source-services-in-Library-destination.md"
+    ).read_text(encoding="utf-8")
+
+    assert "Phase 4.3 Library Source Service Adoption" in evidence
+    assert "TASK-5.3" in evidence
+    assert "Phase 4.3: Adopt Library source services in Library destination - `TASK-5.3`" in roadmap
+    assert "notes_scope_service" in task
+    assert "media_reading_scope_service" in task
 
 
 @pytest.mark.parametrize(

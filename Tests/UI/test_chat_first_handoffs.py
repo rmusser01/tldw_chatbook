@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
-from textual.widgets import Button, TextArea
+from textual.widgets import Button, Static, TextArea
 
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload, HANDOFF_BODY_CHAR_LIMIT
@@ -367,6 +367,33 @@ def test_handoff_card_uses_status_source_title_and_metadata():
     assert "Server: srv-primary" in text
     assert "Sync: dry-run only" in text
     assert "https://example.com" in text
+
+
+@pytest.mark.asyncio
+async def test_handoff_card_renders_user_controlled_text_as_plain_text():
+    class HandoffCardHarness(App):
+        def compose(self) -> ComposeResult:
+            yield ChatHandoffCard(
+                ChatHandoffPayload(
+                    source="library",
+                    item_type="library-source-snapshot",
+                    title="[bold red]Injected title[/]",
+                    body="[green]Injected body[/]",
+                    display_summary="[blue]Injected summary[/]",
+                    metadata={"note_titles": ["[reverse]Injected note[/]"]},
+                )
+            )
+
+    async with HandoffCardHarness().run_test(size=(120, 20)) as pilot:
+        card_body = pilot.app.query_one(".chat-handoff-card-body", Static)
+        card = pilot.app.query_one(ChatHandoffCard)
+        renderable = card_body.renderable
+
+        assert getattr(renderable, "plain", "") == card.render_text()
+        assert getattr(renderable, "spans", []) == []
+        assert "[bold red]Injected title[/]" in renderable.plain
+        assert "[blue]Injected summary[/]" in renderable.plain
+        assert "[reverse]Injected note[/]" in renderable.plain
 
 
 def test_handoff_card_surfaces_backend_contract_recovery_without_implying_write_sync():
