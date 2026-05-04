@@ -21,6 +21,8 @@ Make Search/RAG results a real Console live-work source instead of only a Chat c
 - Focused green result: `5 passed, 1 warning in 8.26s`.
 - Broader focused command: `.venv/bin/python -m pytest Tests/UI/test_ux_audit_smoke.py Tests/UI/test_console_live_work_handoffs.py -q --tb=short`
 - Broader focused result: `55 passed, 1 warning in 19.50s`.
+- Review-fix red result: sanitizer regression failed because Console launch payload still contained raw Rich markup, HTML-like text, and a null byte.
+- Review-fix green result: `.venv/bin/python -m pytest Tests/UI/test_ux_audit_smoke.py Tests/UI/test_console_live_work_handoffs.py -q --tb=short` -> `56 passed, 1 warning in 19.51s`.
 
 Warning boundary: the remaining warning is the existing `requests` dependency version warning and is not caused by the Search/RAG Console launch path.
 

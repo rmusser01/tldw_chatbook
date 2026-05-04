@@ -743,6 +743,49 @@ async def test_valid_rag_search_console_launch_replays_from_mounted_window_to_ap
 
 
 @pytest.mark.asyncio
+async def test_rag_search_console_launch_escapes_result_markup_before_staging(tmp_path):
+    with (
+        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+    ):
+        app = SearchRAGHandoffSmokeApp()
+
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause(0.1)
+            app.window.search_results = [
+                {
+                    "title": "[red]Retrieved[/red] <script>\x00",
+                    "content": "[bold]Evidence[/bold] <script>alert(1)</script>\x00",
+                    "source": "notes",
+                    "score": 0.91,
+                    "metadata": {"document_id": "doc-[red]-<script>"},
+                }
+            ]
+            app.window.total_results = 1
+            await app.window._display_results()
+            await pilot.pause(0.05)
+
+            app.window.query_one("#use-in-console-0", Button).press()
+            await pilot.pause(0.05)
+
+            app.app_instance.open_console_for_live_work.assert_called_once()
+            call_kwargs = app.app_instance.open_console_for_live_work.call_args.kwargs
+            assert call_kwargs["title"] == r"\[red]Retrieved\[/red] &lt;script&gt;"
+            assert call_kwargs["payload"]["target_id"] == r"search-rag:doc-\[red]-&lt;script&gt;"
+            assert call_kwargs["payload"]["source"] == "notes"
+            assert call_kwargs["payload"]["display_summary"] == (
+                r"\[bold]Evidence\[/bold] &lt;script&gt;alert(1)&lt;/script&gt;"
+            )
+
+
+@pytest.mark.asyncio
 async def test_contract_blocked_rag_search_handoff_explains_recovery_without_staging(tmp_path):
     with (
         patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, List, Dict, Any, Tuple
 import asyncio
 from datetime import datetime
+from html import escape as html_escape
 from pathlib import Path
 import json
 
@@ -43,6 +44,7 @@ from ....Chat.chat_handoff_messages import (
 from ....Chat.chat_handoff_models import ChatHandoffPayload
 from ....Utils.optional_deps import DEPENDENCIES_AVAILABLE
 from ....DB.search_history_db import SearchHistoryDB
+from ....Utils.input_validation import sanitize_string
 from ....Utils.paths import get_user_data_dir
 
 # Conditionally import web search functionality
@@ -51,6 +53,14 @@ USE_IN_CONSOLE_UNAVAILABLE_RECOVERY = (
     "Use in Console is unavailable because the Console live-work surface is not mounted. "
     "Open Console from the navigation, then try again."
 )
+
+
+def _sanitize_console_text(value: Any, *, max_length: int = 1000) -> str:
+    """Return text safe for Rich/Textual status-row rendering."""
+    cleaned = sanitize_string(str(value or ""), max_length=max_length)
+    return escape(html_escape(cleaned, quote=False))
+
+
 if WEB_SEARCH_AVAILABLE:
     try:
         from ....Web_Scraping.WebSearch_APIs import search_web_bing, parse_bing_results
@@ -528,18 +538,21 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         )
         is_web = handoff_payload.source == "search-web"
         launch_payload = {
-            "target_id": target_id,
-            "source_id": source_id,
-            "content_ref": content_ref,
+            "target_id": _sanitize_console_text(target_id),
+            "source_id": _sanitize_console_text(source_id),
+            "content_ref": _sanitize_console_text(content_ref),
             "runtime_backend": handoff_payload.runtime_backend or self._authoritative_runtime_backend(),
-            "source": str(result.get("source") or "unknown").strip() or "unknown",
+            "source": _sanitize_console_text(
+                str(result.get("source") or "unknown").strip() or "unknown",
+                max_length=120,
+            ),
             "score": metadata.get("score"),
-            "display_summary": handoff_payload.display_summary,
-            "suggested_prompt": handoff_payload.suggested_prompt,
+            "display_summary": _sanitize_console_text(handoff_payload.display_summary),
+            "suggested_prompt": _sanitize_console_text(handoff_payload.suggested_prompt),
         }
         return {
             "source": "Web Search" if is_web else "RAG",
-            "title": handoff_payload.title,
+            "title": _sanitize_console_text(handoff_payload.title, max_length=500),
             "payload": {
                 key: value
                 for key, value in launch_payload.items()
@@ -587,6 +600,11 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
 
     @on(SearchResult.UseInConsoleRequested)
     def handle_search_result_use_in_console(self, event: SearchResult.UseInConsoleRequested) -> None:
+        """Stage a selected Search/RAG result as Console live-work context.
+
+        Args:
+            event: Result-card event carrying the selected search result.
+        """
         event.stop()
         payload = self._build_search_chat_handoff_payload(event.result)
         policy_message = self._rag_handoff_policy_blocking_message(payload)

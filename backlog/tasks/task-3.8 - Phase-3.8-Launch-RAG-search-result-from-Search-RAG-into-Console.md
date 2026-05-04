@@ -4,7 +4,7 @@ title: 'Phase 3.8: Launch RAG search result from Search/RAG into Console'
 status: Done
 assignee: []
 created_date: '2026-05-04 01:54'
-updated_date: '2026-05-04 02:02'
+updated_date: '2026-05-04 02:23'
 labels: []
 dependencies: []
 parent_task_id: TASK-3
@@ -40,4 +40,6 @@ Make Search/RAG results a real Phase 3 Console live-work source by allowing a se
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented a separate Search/RAG Use in Console action that reuses existing RAG handoff payloads and runtime-policy blocking before staging a typed Console live-work launch. Updated Console source readiness to mark RAG connected, added focused mounted-window regressions, and recorded Phase 3.8 roadmap and QA evidence.
+
+Review follow-up sanitized Console-bound Search/RAG result strings with input_validation.sanitize_string plus Rich/HTML escaping before staging, added a regression for markup/control-character payloads, and added a Google-style docstring to the Console event handler.
 <!-- SECTION:NOTES:END -->
