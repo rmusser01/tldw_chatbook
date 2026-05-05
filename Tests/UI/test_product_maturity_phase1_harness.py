@@ -18,6 +18,9 @@ TEMPLATE = PHASE_1_ROOT / "walkthrough-template.md"
 SMOKE = PHASE_1_ROOT / "2026-05-05-phase-1-1-harness-smoke.md"
 BACKLOG_TASKS = Path("backlog/tasks")
 
+TASK_ID_RE = re.compile(r"`(TASK-[0-9]+(?:\.[0-9]+)*)`")
+FRONTMATTER_RE = re.compile(r"\A---\n(?P<body>.*?)\n---\n", re.DOTALL)
+
 REQUIRED_TEMPLATE_SECTIONS = {
     "Environment",
     "Task Or Phase",
@@ -50,14 +53,19 @@ def _text(path: Path) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
-def _task_text_containing(title_fragment: str) -> str:
-    matches: list[str] = []
-    for path in (REPO_ROOT / BACKLOG_TASKS).glob("*.md"):
+def _task_ids_from_phase_row(row: list[str]) -> set[str]:
+    assert len(row) > 3, "phase row should include a task column"
+    return set(TASK_ID_RE.findall(row[3]))
+
+
+def _task_text_by_id(task_id: str) -> str:
+    id_line_re = re.compile(rf"^id:\s*['\"]?{re.escape(task_id)}['\"]?\s*$", re.MULTILINE)
+    for path in sorted((REPO_ROOT / BACKLOG_TASKS).glob("*.md")):
         text = path.read_text(encoding="utf-8")
-        if title_fragment in text:
-            matches.append(text)
-    assert len(matches) == 1, f"expected one task containing {title_fragment!r}, found {len(matches)}"
-    return matches[0]
+        frontmatter_match = FRONTMATTER_RE.match(text)
+        if frontmatter_match and id_line_re.search(frontmatter_match.group("body")):
+            return text
+    raise AssertionError(f"task {task_id!r} not found by YAML frontmatter id")
 
 
 def _phase_row(markdown: str, phase_title: str) -> list[str]:
@@ -104,8 +112,6 @@ def test_product_maturity_protocol_defines_clean_run_and_terminal_matrix() -> No
 
 def test_product_maturity_tracker_links_phase_one_harness_and_tasks() -> None:
     tracker = _text(TRACKER)
-    phase_one_task = _task_text_containing("Product Maturity Phase 1: QA Baseline And Usability Guardrails")
-    phase_one_one_task = _task_text_containing("Product Maturity Phase 1.1: Canonical QA Harness")
 
     assert str(SPEC) in tracker
     assert str(PROTOCOL) in tracker
@@ -115,6 +121,13 @@ def test_product_maturity_tracker_links_phase_one_harness_and_tasks() -> None:
     assert "<PHASE_" not in tracker
 
     phase_one_row = _phase_row(tracker, "Phase 1: QA Baseline And Usability Guardrails")
+    phase_one_task_ids = _task_ids_from_phase_row(phase_one_row)
+    assert len(phase_one_task_ids) == 2
+    phase_one_task_id = next(task_id for task_id in phase_one_task_ids if "." not in task_id)
+    phase_one_one_task_id = next(task_id for task_id in phase_one_task_ids if "." in task_id)
+    phase_one_task = _task_text_by_id(phase_one_task_id)
+    phase_one_one_task = _task_text_by_id(phase_one_one_task_id)
+
     assert phase_one_row[2] in {"planned", "in_progress"}
     assert "Phase 1.1" in phase_one_row[3]
     assert "TASK-" in phase_one_row[3]

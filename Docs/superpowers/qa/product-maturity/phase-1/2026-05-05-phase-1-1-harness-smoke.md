@@ -4,9 +4,9 @@
 
 - Date: 2026-05-05
 - Branch: codex/product-maturity-phase1-1
-- Commit: 0e3d093e
-- Python version: Python 3.9.6
-- Runtime source: documentation/test harness
+- Commit: PR #247 review-fix worktree
+- Python version: Python 3.12.11
+- Runtime source: root repository virtualenv at `../../.venv/bin/python` from this worktree
 - Config/home directory: not applicable
 
 ## Task Or Phase
@@ -17,7 +17,7 @@
 
 ## Entry Path
 
-- Focused contract: `python3 -m pytest Tests/UI/test_product_maturity_phase1_harness.py -q`
+- Focused contract: `../../.venv/bin/python -m pytest Tests/UI/test_product_maturity_phase1_harness.py -q`
 
 ## Steps Attempted
 
@@ -49,9 +49,10 @@
 
 ## Evidence
 
-- Test commands: `python3 -m pytest Tests/UI/test_product_maturity_phase1_harness.py -q` -> 5 passed
+- Test commands: `../../.venv/bin/python -m pytest Tests/UI/test_product_maturity_phase1_harness.py -q` -> 5 passed
+- Adjacent protocol check: `../../.venv/bin/python -m pytest Tests/UI/test_unified_shell_qa_protocol.py -q` -> 5 passed
 - Diff hygiene: `git diff --check` -> no output
-- Related PRs or commits: `abe83f6e`, `0e3d093e`
+- Related PRs or commits: `abe83f6e`, `0e3d093e`, PR #247 review-fix worktree
 
 ## Residual Risk
 
