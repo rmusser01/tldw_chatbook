@@ -1,9 +1,10 @@
 ---
 id: TASK-8.1
 title: 'Product Maturity Phase 1.1: Canonical QA Harness'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-05-05 15:11'
+updated_date: '2026-05-05 15:12'
 labels:
   - product-maturity
   - phase-1-qa-baseline
@@ -26,3 +27,13 @@ Create the reusable product-maturity QA protocol, template, evidence index, seve
 - [ ] #4 Focused pytest coverage verifies the protocol, template, tracker, and Backlog anchors exist and preserve the harness-only boundary.
 - [ ] #5 Harness smoke evidence states that Phase 1.1 verifies the QA harness only and does not complete the full product walkthrough.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add the focused product-maturity QA harness regression test and confirm it fails before harness docs exist.
+2. Create the product-maturity tracker, QA evidence root, Phase 1 protocol, template, README, and harness smoke evidence.
+3. Run the focused harness test and adjacent Unified Shell QA protocol regression.
+4. Update Phase 1.1 tracker and evidence status after verification.
+5. Mark Phase 1.1 acceptance criteria complete with implementation notes while leaving Phase 1 open.
+<!-- SECTION:PLAN:END -->
