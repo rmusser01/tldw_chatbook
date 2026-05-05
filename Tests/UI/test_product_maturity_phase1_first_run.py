@@ -19,10 +19,23 @@ EVIDENCE = Path("Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_1_README = Path("Docs/superpowers/qa/product-maturity/phase-1/README.md")
 TASK = Path("backlog/tasks/task-8.2 - Product-Maturity-Phase-1.2-Clean-First-Run-Launch-And-Configuration-Walkthrough.md")
+LOCAL_PATH_PREFIXES = (
+    "/Users/",
+    "/home/",
+    "/var/home/",
+    "/private/var/folders/",
+    "C:\\Users\\",
+    "C:/Users/",
+)
 
 
 def _text(path: Path) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def _assert_no_local_path_prefixes(text: str) -> None:
+    leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
+    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
 
 
 def _screen_text(app) -> str:
@@ -99,11 +112,13 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
             assert "nav-library" in nav_ids
             assert "nav-settings" in nav_ids
 
-            home_text = _screen_text(app)
-            assert "Dashboard, notifications, status, active work, and next actions." in home_text
-            assert "Set up Console model" in home_text
-            assert "Start in Console" not in home_text
-            assert "More: Ctrl+P" in home_text
+            home_purpose = app.screen.query_one("#home-purpose", Static)
+            primary_action = app.screen.query_one("#home-primary-action", Button)
+            nav_overflow_hint = app.screen.query_one("#nav-overflow-hint", Static)
+            assert str(home_purpose.renderable).strip()
+            assert str(primary_action.label).strip() == "Set up Console model"
+            assert str(primary_action.label).strip() != "Start in Console"
+            assert "Ctrl+P" in str(nav_overflow_hint.renderable)
 
             for button_id, current_tab, screen_name, required_copy in (
                 (
@@ -153,17 +168,28 @@ async def test_clean_first_run_home_survives_supported_terminal_sizes(
                 lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
             )
 
-            home_text = _screen_text(app)
+            primary_action = app.screen.query_one("#home-primary-action", Button)
+            nav_overflow_hint = app.screen.query_one("#nav-overflow-hint", Static)
             assert app.current_tab == "home"
             assert app.screen.__class__.__name__ == "HomeScreen"
-            assert "Set up Console model" in home_text
-            assert "More: Ctrl+P" in home_text
+            assert str(primary_action.label).strip() == "Set up Console model"
+            assert "Ctrl+P" in str(nav_overflow_hint.renderable)
+
+
+@pytest.mark.parametrize("prefix", LOCAL_PATH_PREFIXES)
+def test_local_path_guard_rejects_common_home_and_temp_prefixes(prefix: str) -> None:
+    with pytest.raises(AssertionError):
+        _assert_no_local_path_prefixes(f"Fresh HOME: {prefix}developer/project")
+
+
+def test_local_path_guard_allows_sanitized_temp_placeholders() -> None:
+    _assert_no_local_path_prefixes("Fresh HOME: <tmp>/home")
 
 
 def test_phase_one_two_evidence_records_clean_first_run_walkthrough() -> None:
     evidence = _text(EVIDENCE)
 
-    assert "/Users/" not in evidence
+    _assert_no_local_path_prefixes(evidence)
     for required_text in (
         "## Clean-Run Setup",
         "Fresh HOME",
