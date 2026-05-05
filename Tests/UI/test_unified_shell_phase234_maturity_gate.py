@@ -80,8 +80,8 @@ def _assert_roadmap_status_tracks_current_phase_progress(roadmap_text: str) -> N
     assert "phase 3" in normalized_status
     assert "phase 4" in normalized_status
     assert "verified" in normalized_status
-    assert re.search(r"phase\s+5\s+in\s+progress", normalized_status)
-    assert re.search(r"phase\s+6\s+not\s+started", normalized_status)
+    assert re.search(r"phase\s+5\s+verified", normalized_status)
+    assert re.search(r"phase\s+6\s+in\s+progress", normalized_status)
 
 
 def _markdown_path(path: Path) -> str:
