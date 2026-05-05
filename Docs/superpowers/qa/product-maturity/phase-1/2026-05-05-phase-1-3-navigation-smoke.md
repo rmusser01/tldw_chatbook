@@ -95,7 +95,7 @@
 - Screenshots: not captured; mounted app assertions were sufficient for this top-level navigation smoke gate.
 - Logs: pytest captured standard Textual startup logs.
 - Probe JSON: not applicable.
-- Test commands: `../../.venv/bin/python -m pytest Tests/UI/test_product_maturity_phase1_navigation_smoke.py -q` -> 3 passed
+- Test commands: `../../.venv/bin/python -m pytest Tests/UI/test_product_maturity_phase1_navigation_smoke.py -q` -> 4 passed
 - Harness regression: `../../.venv/bin/python -m pytest Tests/UI/test_product_maturity_phase1_harness.py -q` -> 6 passed
 - First-run regression: `../../.venv/bin/python -m pytest Tests/UI/test_product_maturity_phase1_first_run.py -q` -> 12 passed
 - Related PRs or commits: Phase 1.3 execution branch

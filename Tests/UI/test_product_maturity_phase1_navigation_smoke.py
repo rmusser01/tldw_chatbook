@@ -28,10 +28,11 @@ def _text(path: Path) -> str:
 
 
 def _screen_text(app) -> str:
+    content = app.screen.query_one("#screen-content")
     pieces: list[str] = []
-    for widget in app.screen.query(Static):
+    for widget in content.query(Static):
         pieces.append(str(widget.renderable))
-    for widget in app.screen.query(Button):
+    for widget in content.query(Button):
         pieces.append(str(widget.label).strip())
     return "\n".join(pieces)
 
@@ -80,6 +81,25 @@ async def _wait_until(
 
 
 @pytest.mark.asyncio
+async def test_destination_body_text_helper_excludes_navigation_chrome(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _build_clean_navigation_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(180, 50)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+            )
+
+            screen_text = _screen_text(app)
+            assert "Set up Console model" in screen_text
+            assert "Ctrl+P" not in screen_text
+
+
+@pytest.mark.asyncio
 async def test_clean_run_top_level_navigation_reaches_every_destination(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -105,7 +125,7 @@ async def test_clean_run_top_level_navigation_reaches_every_destination(
                 )
                 assert expected_screen_class is not None, destination.primary_route
 
-                app.screen.query_one(f"#nav-{destination.destination_id}", Button).press()
+                await pilot.click(f"#nav-{destination.destination_id}")
                 await _wait_until(
                     pilot,
                     lambda expected_tab=expected_tab, expected_screen_class=expected_screen_class: (
