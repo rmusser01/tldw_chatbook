@@ -105,9 +105,8 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
             )
 
             card_text = "\n".join(
-                str(widget.renderable)
+                str(card.query_one(".chat-handoff-card-body", Static).renderable)
                 for card in app.screen.query(ChatHandoffCard)
-                for widget in card.query(Static)
             )
             draft_text = "\n".join(widget.text for widget in app.screen.query(TextArea))
 
@@ -139,4 +138,6 @@ def test_phase_1_7_core_loop_evidence_is_tracked() -> None:
     assert "2026-05-05-phase-1-7-core-loop-proof.md" in readme
     assert "status: Done" in task
     assert "- [x] #1" in task
+    assert "- [x] #2" in task
+    assert "- [x] #3" in task
     assert "- [x] #4" in task
