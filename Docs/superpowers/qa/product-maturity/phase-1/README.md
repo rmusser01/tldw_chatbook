@@ -38,3 +38,11 @@ Phase 1.4 keyboard/focus status: verified
 - `2026-05-05-phase-1-4-keyboard-focus.md`
 
 Phase 1.4 verifies clean-run keyboard reachability for top-level navigation and the first-run setup action. It does not complete the full visual broken-state, empty/error/setup-state, or core-loop audits.
+
+Phase 1.5 evidence:
+
+Phase 1.5 visual broken-state status: verified
+
+- `2026-05-05-phase-1-5-visual-broken-state-audit.md`
+
+Phase 1.5 verifies clean-run visual/chrome integrity across compact, laptop, and large terminal sizes for every top-level destination. It does not complete the full empty/error/setup-state or core-loop audits.
