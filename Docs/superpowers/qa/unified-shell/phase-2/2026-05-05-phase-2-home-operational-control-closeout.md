@@ -6,6 +6,37 @@ Parent Task: `TASK-4`
 Branch: `codex/unified-shell-phase2-home-closeout`
 Base: `origin/dev` at `32ac2bdc`
 
+<!-- PHASE_2_CLOSEOUT_METADATA:BEGIN -->
+```json
+{
+  "closeout_task": "TASK-4.8",
+  "parent_task": "TASK-4",
+  "decision": "verified",
+  "verified_workflows": [
+    "approve",
+    "reject",
+    "pause",
+    "resume",
+    "retry",
+    "open-detail",
+    "open-in-console",
+    "notification-review"
+  ],
+  "unsupported_controls_policy": "explicitly_recoverable",
+  "baseline_replay_result": {
+    "passed": 57,
+    "failed": 2,
+    "warnings": 10
+  },
+  "final_focused_replay_result": {
+    "passed": 60,
+    "failed": 0,
+    "warnings": 8
+  }
+}
+```
+<!-- PHASE_2_CLOSEOUT_METADATA:END -->
+
 ## Current Baseline
 
 Phase 2 is replayed after the merged Home operational-control slices:
@@ -36,16 +67,16 @@ The implemented product boundary is explicit-adapter control, not full schedule 
 
 ## Focused Verification
 
-Commands run from `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/codex-unified-shell-phase2-home-closeout`:
+Commands were run from the repository root using the project virtual environment. Portable command form:
 
-- Baseline replay: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Home/test_dashboard_state.py Tests/Home/test_active_work_adapter.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py::test_app_initializes_watchlists_and_notifications_services Tests/UI/test_unified_shell_phase2_home_adapter.py Tests/UI/test_unified_shell_phase234_maturity_gate.py -q`
+- Baseline replay: `python3 -m pytest Tests/Home/test_dashboard_state.py Tests/Home/test_active_work_adapter.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py::test_app_initializes_watchlists_and_notifications_services Tests/UI/test_unified_shell_phase2_home_adapter.py Tests/UI/test_unified_shell_phase234_maturity_gate.py -q`
 - Baseline replay result before closeout tracker updates: `57 passed, 2 failed, 10 warnings`
 - Baseline failures were tracker drift only:
   - `Tests/UI/test_unified_shell_phase2_home_adapter.py::test_phase_two_home_adapter_is_linked_from_index_roadmap_and_task` still expected Phase 2 `in-progress`.
   - `Tests/UI/test_unified_shell_phase234_maturity_gate.py::test_phase_two_three_four_closeout_tasks_keep_parent_phases_open` still expected `TASK-4.8` to remain `To Do`.
-- Red closeout contract: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_unified_shell_phase234_maturity_gate.py::test_phase_two_closeout_doc_records_verified_workflows_and_task_completion -q`
+- Red closeout contract: `python3 -m pytest Tests/UI/test_unified_shell_phase234_maturity_gate.py::test_phase_two_closeout_doc_records_verified_workflows_and_task_completion -q`
 - Red closeout result before evidence existed: `1 failed` with `FileNotFoundError` for this closeout document.
-- Final focused replay: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Home/test_dashboard_state.py Tests/Home/test_active_work_adapter.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py::test_app_initializes_watchlists_and_notifications_services Tests/UI/test_unified_shell_phase2_home_adapter.py Tests/UI/test_unified_shell_phase234_maturity_gate.py -q`
+- Final focused replay: `python3 -m pytest Tests/Home/test_dashboard_state.py Tests/Home/test_active_work_adapter.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py::test_app_initializes_watchlists_and_notifications_services Tests/UI/test_unified_shell_phase2_home_adapter.py Tests/UI/test_unified_shell_phase234_maturity_gate.py -q`
 - Final focused replay result after closeout updates: `60 passed, 8 warnings`
 
 Warning boundary: final warnings are existing dependency/import warnings. Baseline replay also emitted train splash string warnings. None are Home operational-control behavior failures.

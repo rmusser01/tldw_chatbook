@@ -1,8 +1,15 @@
+import json
+import re
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ROADMAP = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md")
+PHASE_2_CLOSEOUT_METADATA = re.compile(
+    r"<!-- PHASE_2_CLOSEOUT_METADATA:BEGIN -->\s*```json\s*(.*?)\s*```\s*"
+    r"<!-- PHASE_2_CLOSEOUT_METADATA:END -->",
+    re.DOTALL,
+)
 
 PHASES = {
     "Phase 2": {
@@ -74,6 +81,12 @@ def _markdown_path(path: Path) -> str:
     return relative_path.as_posix()
 
 
+def _phase_two_closeout_metadata(text: str) -> dict:
+    metadata_match = PHASE_2_CLOSEOUT_METADATA.search(text)
+    assert metadata_match is not None
+    return json.loads(metadata_match.group(1))
+
+
 def test_phase_two_three_four_roadmap_and_indexes_record_current_gate_status():
     roadmap_text = _text(ROADMAP)
 
@@ -114,20 +127,27 @@ def test_phase_two_three_four_closeout_tasks_record_current_parent_status():
 def test_phase_two_closeout_doc_records_verified_workflows_and_task_completion():
     phase = PHASES["Phase 2"]
     closeout_text = _text(phase["closeout_doc"])
+    metadata = _phase_two_closeout_metadata(closeout_text)
 
-    for expected in [
-        "TASK-4.8",
-        "Closeout Decision: verified",
+    assert "/Users/" not in closeout_text
+    assert metadata["closeout_task"] == "TASK-4.8"
+    assert metadata["parent_task"] == "TASK-4"
+    assert metadata["decision"] == "verified"
+    assert metadata["verified_workflows"] == [
         "approve",
         "reject",
         "pause",
         "resume",
         "retry",
         "open-detail",
-        "explicitly recoverable",
-        "57 passed",
-    ]:
-        assert expected in closeout_text
+        "open-in-console",
+        "notification-review",
+    ]
+    assert metadata["unsupported_controls_policy"] == "explicitly_recoverable"
+    assert metadata["baseline_replay_result"]["failed"] == 2
+    assert metadata["final_focused_replay_result"]["failed"] == 0
+    assert metadata["final_focused_replay_result"]["passed"] > 0
+    assert metadata["final_focused_replay_result"]["warnings"] >= 0
 
     parent_text = _text(phase["parent_task_file"])
     assert "status: Done" in parent_text
