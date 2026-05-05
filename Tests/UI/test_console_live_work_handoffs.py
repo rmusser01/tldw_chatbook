@@ -1461,6 +1461,75 @@ async def test_artifacts_destination_launches_latest_local_chatbook_in_console()
 
 
 @pytest.mark.asyncio
+async def test_artifacts_destination_reopens_console_saved_chatbook_with_provenance():
+    app = _build_test_app()
+    app.local_chatbook_service = StaticLocalChatbookService(
+        (
+            {
+                "chatbook_id": 77,
+                "id": "77",
+                "name": "Grounded Answer",
+                "description": "Saved from Console assistant response. Preview: Grounded answer body.",
+                "file_path": "/tmp/grounded-answer.chatbook",
+                "tags": ["console", "artifact"],
+                "categories": ["Console", "Artifacts"],
+                "metadata": {
+                    "artifact_source": "console",
+                    "artifact_kind": "assistant-response",
+                    "conversation_id": "conv-123",
+                    "message_id": "msg-456",
+                    "message_role": "Assistant",
+                    "provider": "OpenAI",
+                    "model": "gpt-4.1",
+                    "content": "Grounded answer body from saved artifact.",
+                    "content_truncated": False,
+                },
+                "updated_at": "2026-05-05T20:00:00Z",
+            },
+        )
+    )
+    app.open_console_for_live_work = Mock()
+    host = DestinationHarness(app, "artifacts")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        text = _screen_static_text(screen)
+
+        assert "Console can launch latest Chatbook artifact: Grounded Answer." in text
+        assert "Saved from Console assistant response." in text
+        assert "OpenAI / gpt-4.1" in text
+        assert "Grounded answer body from saved artifact." in text
+
+        await pilot.click("#artifacts-use-in-console")
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once()
+    launch_kwargs = app.open_console_for_live_work.call_args.kwargs
+    assert launch_kwargs["source"] == "artifacts"
+    assert launch_kwargs["title"] == "Grounded Answer"
+    assert launch_kwargs["payload"] == {
+        "target_id": "local:chatbook:77",
+        "chatbook_id": 77,
+        "record_id": "77",
+        "file_path": "/tmp/grounded-answer.chatbook",
+        "description": "Saved from Console assistant response. Preview: Grounded answer body.",
+        "tags": "console, artifact",
+        "categories": "Console, Artifacts",
+        "updated_at": "2026-05-05T20:00:00Z",
+        "artifact_source": "console",
+        "artifact_kind": "assistant-response",
+        "conversation_id": "conv-123",
+        "message_id": "msg-456",
+        "message_role": "Assistant",
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "content_preview": "Grounded answer body from saved artifact.",
+        "content_truncated": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_launch():
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
@@ -1473,6 +1542,17 @@ async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_
                 "file_path": "/tmp/<script>bad</script>.chatbook\x00",
                 "tags": ["safe", "<script>tag</script>"],
                 "categories": ["onclick=bad", "Library"],
+                "metadata": {
+                    "artifact_source": "console",
+                    "artifact_kind": "assistant-response",
+                    "conversation_id": "conv-<script>bad</script>",
+                    "message_id": "msg-onclick=bad",
+                    "message_role": "Assistant",
+                    "provider": "javascript:alert(1)",
+                    "model": "onerror=bad",
+                    "content": "<script>bad</script> onerror=bad",
+                    "content_truncated": False,
+                },
                 "updated_at": "2026-05-03T20:00:00Z",
             },
         )
