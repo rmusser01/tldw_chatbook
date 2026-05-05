@@ -3,6 +3,7 @@
 #
 # Imports
 import logging
+import inspect
 import json
 import os
 import time
@@ -55,6 +56,10 @@ if TYPE_CHECKING:
 #
 # Security Functions:
 
+MAX_CONSOLE_CHATBOOK_ARTIFACT_CONTENT_CHARS = 20_000
+MAX_CONSOLE_CHATBOOK_ARTIFACT_TITLE_CHARS = 80
+MAX_CONSOLE_CHATBOOK_ARTIFACT_DESCRIPTION_CHARS = 280
+
 def safe_json_loads(json_str: str, max_size: int = 1024 * 1024) -> Optional[Union[dict, list]]:
     """
     Safely parse JSON with size limits to prevent DoS attacks.
@@ -82,6 +87,92 @@ def safe_json_loads(json_str: str, max_size: int = 1024 * 1024) -> Optional[Unio
     except Exception as e:
         loguru_logger.error(f"Unexpected error parsing JSON: {e}")
         return None
+
+
+def _simple_metadata_value(value: Any) -> Optional[Union[str, int, float, bool]]:
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return None
+
+
+def _console_chatbook_artifact_title(message_text: str) -> str:
+    for line in str(message_text or "").splitlines():
+        title = " ".join(line.strip().lstrip("#>*-` ").split())
+        if title:
+            if len(title) > MAX_CONSOLE_CHATBOOK_ARTIFACT_TITLE_CHARS:
+                return title[: MAX_CONSOLE_CHATBOOK_ARTIFACT_TITLE_CHARS - 3].rstrip() + "..."
+            return title
+    return "Console response artifact"
+
+
+def _console_chatbook_artifact_description(message_text: str) -> str:
+    preview = " ".join(str(message_text or "").split())
+    if len(preview) > MAX_CONSOLE_CHATBOOK_ARTIFACT_DESCRIPTION_CHARS:
+        preview = preview[: MAX_CONSOLE_CHATBOOK_ARTIFACT_DESCRIPTION_CHARS - 3].rstrip() + "..."
+    if not preview:
+        return "Saved from Console assistant response."
+    return f"Saved from Console assistant response. Preview: {preview}"
+
+
+def _console_chatbook_artifact_metadata(
+    app: "TldwCli",
+    action_widget: Union[ChatMessage, ChatMessageEnhanced],
+    message_text: str,
+    message_role: str,
+) -> dict[str, Any]:
+    content = str(message_text or "")
+    metadata: dict[str, Any] = {
+        "artifact_source": "console",
+        "artifact_kind": "assistant-response",
+        "message_role": str(message_role or "Assistant"),
+        "content": content[:MAX_CONSOLE_CHATBOOK_ARTIFACT_CONTENT_CHARS],
+        "content_truncated": len(content) > MAX_CONSOLE_CHATBOOK_ARTIFACT_CONTENT_CHARS,
+    }
+    optional_values = {
+        "conversation_id": getattr(app, "current_chat_conversation_id", None)
+        or getattr(app, "current_conversation_id", None),
+        "message_id": getattr(action_widget, "message_id_internal", None),
+        "provider": getattr(app, "current_provider", None),
+        "model": getattr(app, "current_model", None),
+    }
+    for key, value in optional_values.items():
+        simple_value = _simple_metadata_value(value)
+        if simple_value:
+            metadata[key] = simple_value
+    return metadata
+
+
+async def _save_console_chatbook_artifact(
+    app: "TldwCli",
+    action_widget: Union[ChatMessage, ChatMessageEnhanced],
+    message_text: str,
+    message_role: str,
+) -> None:
+    if not action_widget.has_class("-ai"):
+        app.notify("Only assistant responses can be saved as Chatbook artifacts.", severity="warning", timeout=5)
+        return
+
+    service = getattr(app, "local_chatbook_service", None)
+    create_chatbook = getattr(service, "create_chatbook", None)
+    if not callable(create_chatbook):
+        app.notify("Local Chatbook artifact service is unavailable.", severity="warning", timeout=5)
+        return
+
+    title = _console_chatbook_artifact_title(message_text)
+    try:
+        result = create_chatbook(
+            name=title,
+            description=_console_chatbook_artifact_description(message_text),
+            tags=["console", "artifact"],
+            categories=["Console", "Artifacts"],
+            metadata=_console_chatbook_artifact_metadata(app, action_widget, message_text, message_role),
+        )
+        if inspect.isawaitable(result):
+            await result
+        app.notify(f"Saved response as Chatbook artifact: {title}", severity="information", timeout=4)
+    except Exception as exc:
+        loguru_logger.error("Failed to save Console response as Chatbook artifact: %s", exc, exc_info=True)
+        app.notify(f"Failed to save Chatbook artifact: {exc}", severity="error", timeout=7)
 
 ########################################################################################################################
 #
@@ -1131,6 +1222,10 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         app.notify("Message content copied to clipboard.", severity="information", timeout=2)
         button.label = get_char(EMOJI_COPIED, FALLBACK_COPIED) + "Copied"
         app.set_timer(1.5, lambda: setattr(button, "label", get_char(EMOJI_COPY, FALLBACK_COPY)))
+
+    elif "artifact-button" in button_classes:
+        logging.info("Action: Save artifact clicked for %s message: '%s...'", message_role, message_text[:50])
+        await _save_console_chatbook_artifact(app, action_widget, message_text, message_role)
 
     elif "note-button" in button_classes:
         logging.info("Action: Create Note clicked for %s message: '%s...'", message_role, message_text[:50])

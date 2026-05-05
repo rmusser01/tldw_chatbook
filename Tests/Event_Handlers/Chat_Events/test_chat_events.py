@@ -336,6 +336,91 @@ async def test_handle_chat_action_button_pressed_edit_and_save(mock_ccl, mock_te
     assert EMOJI_EDIT in mock_button.label or FALLBACK_EDIT in mock_button.label
 
 
+async def test_handle_chat_action_button_pressed_saves_ai_message_as_chatbook_artifact(mock_app):
+    """Assistant message artifact save routes through the local Chatbook service."""
+    mock_app.local_chatbook_service = MagicMock()
+    mock_app.local_chatbook_service.create_chatbook = AsyncMock(
+        return_value={"id": "artifact-1", "name": "Important answer"}
+    )
+    mock_app.current_chat_conversation_id = "conv-123"
+    mock_app.current_provider = "OpenAI"
+    mock_app.current_model = "gpt-4.1"
+    mock_button = MagicMock(spec=Button, classes=["artifact-button"])
+    mock_action_widget = MagicMock(spec=ChatMessage)
+    mock_action_widget.has_class.return_value = True
+    mock_action_widget.message_text = "Important answer\n\n" + ("x" * 21000)
+    mock_action_widget.role = "Assistant"
+    mock_action_widget.message_id_internal = "msg-456"
+    mock_action_widget.remove = AsyncMock()
+
+    await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
+
+    mock_app.local_chatbook_service.create_chatbook.assert_awaited_once()
+    create_kwargs = mock_app.local_chatbook_service.create_chatbook.await_args.kwargs
+    assert create_kwargs["name"] == "Important answer"
+    assert create_kwargs["tags"] == ["console", "artifact"]
+    assert create_kwargs["categories"] == ["Console", "Artifacts"]
+    assert "Saved from Console assistant response." in create_kwargs["description"]
+    assert create_kwargs["metadata"]["artifact_source"] == "console"
+    assert create_kwargs["metadata"]["artifact_kind"] == "assistant-response"
+    assert create_kwargs["metadata"]["conversation_id"] == "conv-123"
+    assert create_kwargs["metadata"]["message_id"] == "msg-456"
+    assert create_kwargs["metadata"]["message_role"] == "Assistant"
+    assert create_kwargs["metadata"]["provider"] == "OpenAI"
+    assert create_kwargs["metadata"]["model"] == "gpt-4.1"
+    assert len(create_kwargs["metadata"]["content"]) == 20000
+    assert create_kwargs["metadata"]["content_truncated"] is True
+    mock_action_widget.remove.assert_not_awaited()
+    mock_app.notify.assert_called_with(
+        "Saved response as Chatbook artifact: Important answer",
+        severity="information",
+        timeout=4,
+    )
+
+
+async def test_handle_chat_action_button_pressed_reports_missing_chatbook_service(mock_app):
+    """Save-to-artifact failure is recoverable and preserves the message."""
+    mock_app.local_chatbook_service = None
+    mock_button = MagicMock(spec=Button, classes=["artifact-button"])
+    mock_action_widget = MagicMock(spec=ChatMessage)
+    mock_action_widget.has_class.return_value = True
+    mock_action_widget.message_text = "Answer that should stay visible"
+    mock_action_widget.role = "Assistant"
+    mock_action_widget.message_id_internal = "msg-789"
+    mock_action_widget.remove = AsyncMock()
+
+    await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
+
+    mock_action_widget.remove.assert_not_awaited()
+    mock_app.notify.assert_called_with(
+        "Local Chatbook artifact service is unavailable.",
+        severity="warning",
+        timeout=5,
+    )
+
+
+async def test_handle_chat_action_button_pressed_reports_chatbook_create_failure(mock_app):
+    """Create failures notify the user without deleting the source response."""
+    mock_app.local_chatbook_service = MagicMock()
+    mock_app.local_chatbook_service.create_chatbook = AsyncMock(side_effect=RuntimeError("disk full"))
+    mock_button = MagicMock(spec=Button, classes=["artifact-button"])
+    mock_action_widget = MagicMock(spec=ChatMessage)
+    mock_action_widget.has_class.return_value = True
+    mock_action_widget.message_text = "Answer that should stay visible"
+    mock_action_widget.role = "Assistant"
+    mock_action_widget.message_id_internal = "msg-789"
+    mock_action_widget.remove = AsyncMock()
+
+    await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
+
+    mock_action_widget.remove.assert_not_awaited()
+    mock_app.notify.assert_called_with(
+        "Failed to save Chatbook artifact: disk full",
+        severity="error",
+        timeout=7,
+    )
+
+
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.load_character_and_image')
 async def test_handle_chat_load_character_with_greeting(mock_load_char, mock_app):
     """Test that loading a character into an empty, ephemeral chat posts a greeting."""
