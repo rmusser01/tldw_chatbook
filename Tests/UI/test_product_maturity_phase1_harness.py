@@ -171,7 +171,8 @@ def test_product_maturity_phase_one_two_plan_scopes_first_run_walkthrough() -> N
     assert "not mark Phase 1 complete" in plan or "Do not mark Phase 1 complete" in plan
     assert "Tests/UI/test_product_maturity_phase1_first_run.py" in plan
     assert PHASE_1_2_PLAN.name in readme
-    assert "Phase 1.2 clean first-run status: planned" in readme
+    assert "Phase 1.2 clean first-run status: verified" in readme
+    assert "2026-05-05-phase-1-2-first-run-walkthrough.md" in readme
 
 
 def test_phase_one_one_smoke_evidence_records_harness_only_boundary() -> None:
