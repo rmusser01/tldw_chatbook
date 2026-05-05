@@ -1,8 +1,8 @@
 # Unified Shell Maturity Roadmap
 
-Date: 2026-05-04
-Status: Phase 2, Phase 3, and Phase 4 in progress
-Source Branch: `origin/dev` at `2c3ce979` plus `codex/unified-shell-phase4-wc-service`
+Date: 2026-05-05
+Status: Phase 2, Phase 3, and Phase 4 need maturity-gate QA
+Source Branch: `origin/dev` at `5d178698` plus `codex/unified-shell-phase234-closeout`
 
 ## Purpose
 
@@ -37,7 +37,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 - Library now surfaces a local source snapshot from notes, media, and conversations and can stage concrete source context into Console; full Library-native detail views, embedded Import/Export, and embedded Search/RAG remain future work.
 - Personas now surfaces a local behavior snapshot from characters and persona profiles and can stage concrete behavior context into Console; detail, edit, import/export, archetypes, exemplars, dictionaries, and lore remain future work.
 - W+C now surfaces a local monitored-source and saved-collection snapshot from `watchlist_scope_service` and `media_reading_scope_service` and can stage concrete W+C context into Console; full detail, edit, import/export, feed WebSub, alert-rule, retry/backoff, and server collection-feed UX remain future work.
-- Product workflows remain unverified until running-app QA evidence is added in later phases.
+- Phase 2, Phase 3, and Phase 4 implementation slices are merged, but the parent phases remain open until `TASK-4.8`, `TASK-3.11`, and `TASK-5.6` replay running-app maturity-gate QA and prove workflows are not render-only or click-only behavior.
 
 ## Definition Of Done
 
@@ -89,6 +89,7 @@ Initial child tasks:
 - Phase 2.5: Route Home notification review to the notifications inbox - `TASK-4.5`
 - Phase 2.6: Surface local watchlist runs in Home active work - `TASK-4.6`
 - Phase 2.7: Open Home local watchlist run details - `TASK-4.7`
+- Phase 2.8: Replay Home operational-control maturity gate - `TASK-4.8`
 - Phase 3.1: Add Console live-work launch contract - `TASK-3.1`
 - Phase 3.2: Add Console live-work status card seam - `TASK-3.2`
 - Phase 3.3: Open Home W+C active work in Console - `TASK-3.3`
@@ -99,11 +100,13 @@ Initial child tasks:
 - Phase 3.8: Launch RAG search result from Search/RAG into Console - `TASK-3.8`
 - Phase 3.9: Launch latest Chatbook artifact from Artifacts into Console - `TASK-3.9`
 - Phase 3.10: Launch active Workflows run from Workflows into Console - `TASK-3.10`
+- Phase 3.11: Replay Console live-work maturity gate - `TASK-3.11`
 - Phase 4.1: Adopt Unified MCP panel in MCP destination - `TASK-5.1`
 - Phase 4.2: Adopt Skills services in Skills destination - `TASK-5.2`
 - Phase 4.3: Adopt Library source services in Library destination - `TASK-5.3`
 - Phase 4.4: Adopt Personas service in Personas destination - `TASK-5.4`
 - Phase 4.5: Adopt W+C services in W+C destination - `TASK-5.5`
+- Phase 4.6: Replay destination service-adoption maturity gate - `TASK-5.6`
 
 ## QA Evidence Index
 
@@ -111,9 +114,9 @@ Initial child tasks:
 | --- | --- | --- |
 | Phase 0 | `Docs/superpowers/qa/unified-shell/phase-0/` | verified |
 | Phase 1 | `Docs/superpowers/qa/unified-shell/phase-1/` | verified |
-| Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | in-progress |
-| Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | in-progress |
-| Phase 4 | `Docs/superpowers/qa/unified-shell/phase-4/` | in-progress |
+| Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | qa-needed |
+| Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | qa-needed |
+| Phase 4 | `Docs/superpowers/qa/unified-shell/phase-4/` | qa-needed |
 | Phase 5 | `Docs/superpowers/qa/unified-shell/phase-5/` | not-started |
 | Phase 6 | `Docs/superpowers/qa/unified-shell/phase-6/` | not-started |
 
@@ -123,9 +126,9 @@ Initial child tasks:
 | --- | --- | --- | --- | --- | --- |
 | Phase 0: Canonical Tracking | Make remaining work trackable. | verified | `TASK-1`, `TASK-1.1`, `TASK-1.2` | `phase-0/` | Product UI workflows are out of scope for Phase 0. |
 | Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | verified | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3`, `TASK-2.4` | `phase-1/` | Live service workflows remain intentionally deferred to Phases 2-6. |
-| Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | in-progress | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6`, `TASK-4.7` | `phase-2/` | Schedule and agent-service adapters still need implementation; local watchlist retry/pause/resume remain recoverable rather than fully controllable. |
-| Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | in-progress | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, `TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9`, `TASK-3.10` | `phase-3/` | ACP, MCP, server Artifacts, and deeper source-specific live event streams still need implementation. |
-| Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | in-progress | `TASK-5`, `TASK-5.1`, `TASK-5.2`, `TASK-5.3`, `TASK-5.4`, `TASK-5.5` | `phase-4/` | Service coverage varies by destination; MCP now adopts the existing Unified MCP panel, Skills now lists/stages local Agent Skills, Library now lists/stages local source snapshots, Personas now lists/stages local behavior snapshots, and W+C now lists/stages local monitored-source and collection snapshots, but remaining destinations and deeper flows still need adoption or verified recovery. |
+| Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | qa-needed | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6`, `TASK-4.7`, `TASK-4.8` | `phase-2/` | Implementation slices are merged, but `TASK-4.8` must replay running-app QA before the parent phase can be verified. |
+| Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | qa-needed | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, `TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9`, `TASK-3.10`, `TASK-3.11` | `phase-3/` | Implementation slices are merged, but `TASK-3.11` must replay running-app QA before the parent phase can be verified. |
+| Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | qa-needed | `TASK-5`, `TASK-5.1`, `TASK-5.2`, `TASK-5.3`, `TASK-5.4`, `TASK-5.5`, `TASK-5.6` | `phase-4/` | Implementation slices are merged, but `TASK-5.6` must replay running-app QA before the parent phase can be verified. |
 | Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | not-started | `TASK-6` | `phase-5/` | Shared taxonomy not yet extracted. |
 | Phase 6: Audit Replay And Closeout | Prove shell works for first-time and power users. | not-started | `TASK-7` | `phase-6/` | Depends on prior phases and running-app QA. |
 
@@ -199,6 +202,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 
 - `Docs/superpowers/qa/unified-shell/phase-2/2026-05-03-home-local-watchlist-run-details.md`
 
+## Phase 2.8 Home Operational-Control Maturity-Gate QA
+
+`TASK-4.8` must replay Home operational-control workflows in the running app before `TASK-4` can be verified:
+
+- Planned evidence path: `Docs/superpowers/qa/unified-shell/phase-2/2026-05-05-phase-2-home-operational-control-closeout.md`
+
 ## Phase 3.1 Console Live-Work Launch Contract Evidence
 
 `TASK-3.1` adds the normalized Console launch payload contract and renders pending launch details in Console:
@@ -265,6 +274,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 
 - `Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-workflows-console-launch.md`
 
+## Phase 3.11 Console Live-Work Maturity-Gate QA
+
+`TASK-3.11` must replay Console live-work launch, follow, status, and recovery workflows in the running app before `TASK-3` can be verified:
+
+- Planned evidence path: `Docs/superpowers/qa/unified-shell/phase-3/2026-05-05-phase-3-console-live-work-closeout.md`
+
 ## Phase 4.1 MCP Destination Service Adoption Evidence
 
 `TASK-5.1` embeds the existing Unified MCP management panel in the top-level MCP destination while preserving the legacy `tools_settings` MCP alias:
@@ -294,6 +309,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-5.5` makes the top-level W+C destination list local monitored sources and saved collection items through existing Watchlists and Media Reading services and stage concrete W+C context into Console:
 
 - `Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-wc-service-adoption.md`
+
+## Phase 4.6 Destination Service-Adoption Maturity-Gate QA
+
+`TASK-5.6` must replay destination service-adoption workflows in the running app before `TASK-5` can be verified:
+
+- Planned evidence path: `Docs/superpowers/qa/unified-shell/phase-4/2026-05-05-phase-4-destination-service-adoption-closeout.md`
 
 ## Phase 0: Canonical Tracking
 
