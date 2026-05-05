@@ -19,6 +19,7 @@ from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
+from .destination_recovery import policy_denied_recovery_state
 
 
 logger = logger.bind(module="SkillsScreen")
@@ -44,6 +45,7 @@ class SkillsScreen(BaseAppScreen):
         super().__init__(app_instance, "skills", **kwargs)
         self._local_skill_records: tuple[Mapping[str, Any], ...] = ()
         self._skills_lookup_error: str | None = None
+        self._skills_lookup_error_tooltip: str | None = None
         self._skills_loaded = False
 
     def on_mount(self) -> None:
@@ -52,25 +54,32 @@ class SkillsScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True)
     def _refresh_local_skills_context(self) -> None:
-        records, lookup_error = self._list_local_skills()
-        self.app.call_from_thread(self._apply_local_skills_context, records, lookup_error)
+        records, lookup_error, lookup_error_tooltip = self._list_local_skills()
+        self.app.call_from_thread(
+            self._apply_local_skills_context,
+            records,
+            lookup_error,
+            lookup_error_tooltip,
+        )
 
     def _apply_local_skills_context(
         self,
         records: tuple[Mapping[str, Any], ...],
         lookup_error: str | None = None,
+        lookup_error_tooltip: str | None = None,
     ) -> None:
         self._local_skill_records = records
         self._skills_lookup_error = lookup_error
+        self._skills_lookup_error_tooltip = lookup_error_tooltip
         self._skills_loaded = True
         if self.is_mounted:
             self.refresh(recompose=True)
 
-    def _list_local_skills(self) -> tuple[tuple[Mapping[str, Any], ...], str | None]:
+    def _list_local_skills(self) -> tuple[tuple[Mapping[str, Any], ...], str | None, str | None]:
         service = getattr(self.app_instance, "skills_scope_service", None)
         list_skills = getattr(service, "list_skills", None)
         if not callable(list_skills):
-            return (), SKILLS_SERVICE_UNAVAILABLE_COPY
+            return (), SKILLS_SERVICE_UNAVAILABLE_COPY, None
         try:
             result = list_skills(
                 mode="local",
@@ -91,17 +100,23 @@ class SkillsScreen(BaseAppScreen):
                 fallback=SKILLS_POLICY_DENIED_FALLBACK_COPY,
                 max_length=SKILL_TEXT_LIMITS["policy_message"],
             )
-            return (), policy_message
+            recovery_state = policy_denied_recovery_state(
+                exc,
+                unavailable_what="Attach local Skills to Console",
+                stable_selector="skills-service-error",
+                policy_message=policy_message,
+            )
+            return (), recovery_state.visible_copy, recovery_state.disabled_tooltip
         except Exception:
             logger.warning(
                 "Failed to load local Agent Skills for Skills destination.",
                 exc_info=True,
             )
-            return (), SKILLS_SERVICE_ERROR_COPY
+            return (), SKILLS_SERVICE_ERROR_COPY, None
 
         skills = result.get("skills") if isinstance(result, Mapping) else None
         records = tuple(record for record in tuple(skills or ()) if isinstance(record, Mapping))
-        return records, None
+        return records, None, None
 
     @staticmethod
     def _safe_skill_text(value: Any, fallback: str = "", *, max_length: int = 1000) -> str:
@@ -183,7 +198,10 @@ class SkillsScreen(BaseAppScreen):
                     )
                     attach_label = "Attach local Skills to Console"
                     attach_disabled = True
-                    attach_tooltip = "Skills service is unavailable; retry Skills later."
+                    attach_tooltip = (
+                        self._skills_lookup_error_tooltip
+                        or "Skills service is unavailable; retry Skills later."
+                    )
                 elif not self._local_skill_records:
                     yield Static(
                         "No local Agent Skills are installed yet.",

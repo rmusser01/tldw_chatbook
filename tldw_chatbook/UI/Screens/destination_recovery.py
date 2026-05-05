@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -50,3 +51,97 @@ class DestinationRecoveryState:
                 f"Owner: {self.authority_owner}.",
             )
         )
+
+
+def _clause(value: Any, fallback: str) -> str:
+    text = str(value or "").strip().rstrip(".!?")
+    return text or fallback
+
+
+def _policy_recovery_for_reason(reason_code: str | None) -> tuple[str, str, str]:
+    normalized_reason = str(reason_code or "").strip().lower()
+    if normalized_reason == "wrong_source":
+        return (
+            "Wrong source",
+            "Switch to the required source, then retry this workflow.",
+            "Source switch or Settings",
+        )
+    if normalized_reason in {"server_not_configured", "server_profile_missing"}:
+        return (
+            "Server not configured",
+            "Add an active server profile in Settings before retrying.",
+            "Settings",
+        )
+    if normalized_reason in {"server_unreachable", "server_unavailable"}:
+        return (
+            "Server unavailable",
+            "Check server availability, then retry this workflow.",
+            "Retry",
+        )
+    if normalized_reason in {
+        "server_auth_required",
+        "auth_required",
+        "credential_store_unavailable",
+        "server_credentials_unavailable",
+    }:
+        return (
+            "Server sign-in required",
+            "Reconnect or configure server credentials in Settings before retrying.",
+            "Settings",
+        )
+    if normalized_reason in {
+        "server_session_invalid",
+        "stale_authorization",
+        "profile_no_longer_authorized",
+    }:
+        return (
+            "Server session expired",
+            "Re-authenticate the active server profile before retrying.",
+            "Settings",
+        )
+    if normalized_reason == "capability_disabled":
+        return (
+            "Capability disabled",
+            "Enable this capability in Settings or the governing policy before retrying.",
+            "Settings or governing policy",
+        )
+    return (
+        "Policy denied",
+        "Review workspace policy or ask the authority owner to allow this action.",
+        "Workspace policy",
+    )
+
+
+def policy_denied_recovery_state(
+    exc: Any,
+    *,
+    unavailable_what: str,
+    stable_selector: str,
+    policy_message: str | None = None,
+) -> DestinationRecoveryState:
+    """Map a runtime-policy denial into visible destination recovery copy."""
+
+    status_label, next_action, recovery_action = _policy_recovery_for_reason(
+        getattr(exc, "reason_code", None)
+    )
+    why = _clause(
+        policy_message if policy_message is not None else getattr(exc, "user_message", None),
+        "Runtime policy blocked this action",
+    )
+    authority_owner = _clause(getattr(exc, "authority_owner", None), "runtime policy")
+    disabled_tooltip = " ".join(
+        (
+            DestinationRecoveryState._sentence(why),
+            DestinationRecoveryState._sentence(next_action),
+        )
+    )
+    return DestinationRecoveryState(
+        status_label=status_label,
+        unavailable_what=unavailable_what,
+        why=why,
+        next_action=next_action,
+        recovery_action=recovery_action,
+        authority_owner=authority_owner,
+        stable_selector=stable_selector,
+        disabled_tooltip=disabled_tooltip,
+    )

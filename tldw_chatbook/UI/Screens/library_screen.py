@@ -20,6 +20,7 @@ from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from .destination_recovery import policy_denied_recovery_state
 
 
 logger = logger.bind(module="LibraryScreen")
@@ -50,6 +51,7 @@ class LibraryScreen(BaseAppScreen):
             "conversations": True,
         }
         self._library_lookup_error: str | None = None
+        self._library_lookup_error_tooltip: str | None = None
         self._library_loaded = False
 
     def on_mount(self) -> None:
@@ -58,13 +60,20 @@ class LibraryScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True)
     def _refresh_local_source_snapshot(self) -> None:
-        records, counts, total_known, lookup_error = self._list_local_source_snapshot()
+        (
+            records,
+            counts,
+            total_known,
+            lookup_error,
+            lookup_error_tooltip,
+        ) = self._list_local_source_snapshot()
         self.app.call_from_thread(
             self._apply_local_source_snapshot,
             records,
             counts,
             total_known,
             lookup_error,
+            lookup_error_tooltip,
         )
 
     def _apply_local_source_snapshot(
@@ -73,11 +82,13 @@ class LibraryScreen(BaseAppScreen):
         counts: dict[str, int],
         total_known: dict[str, bool],
         lookup_error: str | None = None,
+        lookup_error_tooltip: str | None = None,
     ) -> None:
         self._local_source_records = records
         self._local_source_counts = counts
         self._local_source_total_known = total_known
         self._library_lookup_error = lookup_error
+        self._library_lookup_error_tooltip = lookup_error_tooltip
         self._library_loaded = True
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -143,6 +154,7 @@ class LibraryScreen(BaseAppScreen):
         dict[str, int],
         dict[str, bool],
         str | None,
+        str | None,
     ]:
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         media_service = getattr(self.app_instance, "media_reading_scope_service", None)
@@ -159,7 +171,7 @@ class LibraryScreen(BaseAppScreen):
         empty_counts = {"notes": 0, "media": 0, "conversations": 0}
         empty_total_known = {"notes": True, "media": True, "conversations": True}
         if not all(callable(call) for call in (list_notes, list_media, list_conversations)):
-            return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_UNAVAILABLE_COPY
+            return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_UNAVAILABLE_COPY, None
 
         try:
             notes_result = self._run_maybe_awaitable(
@@ -187,13 +199,25 @@ class LibraryScreen(BaseAppScreen):
             )
         except PolicyDeniedError as exc:
             policy_message = self._safe_text(exc.user_message, LIBRARY_SERVICE_ERROR_COPY)
-            return empty_records, empty_counts, empty_total_known, policy_message
+            recovery_state = policy_denied_recovery_state(
+                exc,
+                unavailable_what="Use Library sources in Console",
+                stable_selector="library-source-error",
+                policy_message=policy_message,
+            )
+            return (
+                empty_records,
+                empty_counts,
+                empty_total_known,
+                recovery_state.visible_copy,
+                recovery_state.disabled_tooltip,
+            )
         except Exception:
             logger.warning(
                 "Failed to load local Library source snapshot.",
                 exc_info=True,
             )
-            return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_ERROR_COPY
+            return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_ERROR_COPY, None
 
         notes, notes_count, notes_total_known = self._response_records_and_count(notes_result)
         media, media_count, media_total_known = self._response_records_and_count(media_result)
@@ -218,6 +242,7 @@ class LibraryScreen(BaseAppScreen):
                 "media": media_total_known,
                 "conversations": conversations_total_known,
             },
+            None,
             None,
         )
 
@@ -306,7 +331,10 @@ class LibraryScreen(BaseAppScreen):
                         id="library-source-error",
                     )
                     handoff_disabled = True
-                    handoff_tooltip = "Library source services are unavailable; retry Library later."
+                    handoff_tooltip = (
+                        self._library_lookup_error_tooltip
+                        or "Library source services are unavailable; retry Library later."
+                    )
                 elif not has_sources:
                     yield Static(
                         LIBRARY_EMPTY_COPY,

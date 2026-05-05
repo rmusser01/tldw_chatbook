@@ -20,6 +20,7 @@ from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from .destination_recovery import policy_denied_recovery_state
 
 
 logger = logger.bind(module="PersonasScreen")
@@ -43,6 +44,7 @@ class PersonasScreen(BaseAppScreen):
             "profiles": 0,
         }
         self._personas_lookup_error: str | None = None
+        self._personas_lookup_error_tooltip: str | None = None
         self._personas_loaded = False
 
     def on_mount(self) -> None:
@@ -51,18 +53,26 @@ class PersonasScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True)
     def _refresh_local_behavior_snapshot(self) -> None:
-        records, counts, lookup_error = self._list_local_behavior_snapshot()
-        self.app.call_from_thread(self._apply_local_behavior_snapshot, records, counts, lookup_error)
+        records, counts, lookup_error, lookup_error_tooltip = self._list_local_behavior_snapshot()
+        self.app.call_from_thread(
+            self._apply_local_behavior_snapshot,
+            records,
+            counts,
+            lookup_error,
+            lookup_error_tooltip,
+        )
 
     def _apply_local_behavior_snapshot(
         self,
         records: dict[str, tuple[Mapping[str, Any], ...]],
         counts: dict[str, int],
         lookup_error: str | None = None,
+        lookup_error_tooltip: str | None = None,
     ) -> None:
         self._local_behavior_records = records
         self._local_behavior_counts = counts
         self._personas_lookup_error = lookup_error
+        self._personas_lookup_error_tooltip = lookup_error_tooltip
         self._personas_loaded = True
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -129,7 +139,7 @@ class PersonasScreen(BaseAppScreen):
 
     def _list_local_behavior_snapshot(
         self,
-    ) -> tuple[dict[str, tuple[Mapping[str, Any], ...]], dict[str, int], str | None]:
+    ) -> tuple[dict[str, tuple[Mapping[str, Any], ...]], dict[str, int], str | None, str | None]:
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         list_characters = getattr(service, "list_characters", None)
         list_profiles = getattr(service, "list_persona_profiles", None)
@@ -139,7 +149,7 @@ class PersonasScreen(BaseAppScreen):
         }
         empty_counts = {"characters": 0, "profiles": 0}
         if not callable(list_characters) or not callable(list_profiles):
-            return empty_records, empty_counts, PERSONAS_SERVICE_UNAVAILABLE_COPY
+            return empty_records, empty_counts, PERSONAS_SERVICE_UNAVAILABLE_COPY, None
 
         try:
             characters_result = self._run_maybe_awaitable(
@@ -160,13 +170,19 @@ class PersonasScreen(BaseAppScreen):
             )
         except PolicyDeniedError as exc:
             policy_message = self._safe_text(exc.user_message, PERSONAS_SERVICE_ERROR_COPY)
-            return empty_records, empty_counts, policy_message
+            recovery_state = policy_denied_recovery_state(
+                exc,
+                unavailable_what="Attach Personas context to Console",
+                stable_selector="personas-service-error",
+                policy_message=policy_message,
+            )
+            return empty_records, empty_counts, recovery_state.visible_copy, recovery_state.disabled_tooltip
         except Exception:
             logger.warning(
                 "Failed to load local Personas behavior snapshot.",
                 exc_info=True,
             )
-            return empty_records, empty_counts, PERSONAS_SERVICE_ERROR_COPY
+            return empty_records, empty_counts, PERSONAS_SERVICE_ERROR_COPY, None
 
         characters, character_count = self._response_records_and_count(characters_result)
         profiles, profile_count = self._response_records_and_count(profiles_result)
@@ -179,6 +195,7 @@ class PersonasScreen(BaseAppScreen):
                 "characters": character_count,
                 "profiles": profile_count,
             },
+            None,
             None,
         )
 
@@ -241,7 +258,10 @@ class PersonasScreen(BaseAppScreen):
                         id="personas-service-error",
                     )
                     attach_disabled = True
-                    attach_tooltip = "Personas service is unavailable; retry Personas later."
+                    attach_tooltip = (
+                        self._personas_lookup_error_tooltip
+                        or "Personas service is unavailable; retry Personas later."
+                    )
                 elif not has_context:
                     yield Static(
                         PERSONAS_EMPTY_COPY,

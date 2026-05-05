@@ -2,6 +2,11 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+from tldw_chatbook.UI.Screens.destination_recovery import policy_denied_recovery_state
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ROADMAP = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md")
@@ -12,10 +17,16 @@ PHASE_5_TAXONOMY = Path(
 PHASE_5_DESTINATION_RECOVERY = Path(
     "Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-destination-blocker-recovery.md"
 )
+PHASE_5_RUNTIME_POLICY_RECOVERY = Path(
+    "Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-runtime-policy-recovery.md"
+)
 PHASE_5_PARENT_TASK = Path("backlog/tasks/task-6 - Phase-5-Capability-And-Recovery-System.md")
 PHASE_5_TAXONOMY_TASK = Path("backlog/tasks/task-6.1 - Phase-5.1-Create-shared-recovery-taxonomy.md")
 PHASE_5_DESTINATION_RECOVERY_TASK = Path(
     "backlog/tasks/task-6.2 - Phase-5.2-Apply-recovery-taxonomy-to-shell-destination-blockers.md"
+)
+PHASE_5_RUNTIME_POLICY_TASK = Path(
+    "backlog/tasks/task-6.3 - Phase-5.3-Apply-recovery-taxonomy-to-runtime-policy-blockers.md"
 )
 
 
@@ -68,6 +79,7 @@ def test_phase_five_recovery_taxonomy_is_tracked_from_roadmap_readme_and_tasks()
     parent_task = _text(PHASE_5_PARENT_TASK)
     child_task = _text(PHASE_5_TAXONOMY_TASK)
     destination_recovery_task = _text(PHASE_5_DESTINATION_RECOVERY_TASK)
+    runtime_policy_task = _text(PHASE_5_RUNTIME_POLICY_TASK)
 
     _assert_roadmap_tracks_phase_five_progress(roadmap)
     phase_five_row = _roadmap_phase_evidence_row(roadmap, "Phase 5")
@@ -79,18 +91,27 @@ def test_phase_five_recovery_taxonomy_is_tracked_from_roadmap_readme_and_tasks()
         roadmap,
         re.IGNORECASE,
     )
+    assert re.search(
+        r"Phase\s+5\.3:.*runtime-policy blockers.*`TASK-6\.3`",
+        roadmap,
+        re.IGNORECASE,
+    )
     assert "2026-05-05-shared-recovery-taxonomy.md" in roadmap
     assert "2026-05-05-destination-blocker-recovery.md" in roadmap
+    assert "2026-05-05-runtime-policy-recovery.md" in roadmap
 
     assert _status_line(readme) == "in-progress"
     assert "`TASK-6.1`" in readme
     assert "`TASK-6.2`" in readme
+    assert "`TASK-6.3`" in readme
     assert "2026-05-05-shared-recovery-taxonomy.md" in readme
     assert "2026-05-05-destination-blocker-recovery.md" in readme
+    assert "2026-05-05-runtime-policy-recovery.md" in readme
 
     assert "status: In Progress" in parent_task
     assert "TASK-6.1" in parent_task
     assert "TASK-6.2" in parent_task
+    assert "TASK-6.3" in parent_task
     assert "status: Done" in child_task
     for acceptance_criterion in range(1, 5):
         assert f"- [x] #{acceptance_criterion}" in child_task
@@ -99,6 +120,10 @@ def test_phase_five_recovery_taxonomy_is_tracked_from_roadmap_readme_and_tasks()
     for acceptance_criterion in range(1, 6):
         assert f"- [x] #{acceptance_criterion}" in destination_recovery_task
     assert "Implementation Notes" in destination_recovery_task
+    assert "status: Done" in runtime_policy_task
+    for acceptance_criterion in range(1, 6):
+        assert f"- [x] #{acceptance_criterion}" in runtime_policy_task
+    assert "Implementation Notes" in runtime_policy_task
 
 
 def test_phase_five_destination_recovery_evidence_records_applied_blockers():
@@ -112,6 +137,23 @@ def test_phase_five_destination_recovery_evidence_records_applied_blockers():
     assert "Console launch for Chatbook artifacts" in evidence
     assert "test_phase_five_destination_blockers_expose_taxonomy_recovery_fields" in evidence
     assert "13 passed" in evidence
+
+
+def test_phase_five_runtime_policy_recovery_evidence_records_applied_blockers():
+    evidence = _text(PHASE_5_RUNTIME_POLICY_RECOVERY)
+
+    assert "/Users/" not in evidence
+    assert "TASK-6.3" in evidence
+    assert "wrong_source" in evidence
+    assert "server_auth_required" in evidence
+    assert "server_session_invalid" in evidence
+    assert "authority_denied" in evidence
+    assert "Skills" in evidence
+    assert "Library" in evidence
+    assert "Personas" in evidence
+    assert "W+C" in evidence
+    assert "test_watchlists_collections_policy_denial_uses_runtime_recovery_taxonomy" in evidence
+    assert "4 passed" in evidence
 
 
 def test_phase_five_recovery_taxonomy_defines_required_contract_and_reason_mappings():
@@ -168,3 +210,73 @@ def test_phase_five_recovery_taxonomy_defines_required_contract_and_reason_mappi
         "phase-4-destination-service-adoption-closeout",
         "runtime-policy-domain-edge-contracts",
     ]
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "status_label", "next_action", "recovery_action"),
+    [
+        (
+            "wrong_source",
+            "Wrong source",
+            "Switch to the required source, then retry this workflow.",
+            "Source switch or Settings",
+        ),
+        (
+            "server_not_configured",
+            "Server not configured",
+            "Add an active server profile in Settings before retrying.",
+            "Settings",
+        ),
+        (
+            "server_auth_required",
+            "Server sign-in required",
+            "Reconnect or configure server credentials in Settings before retrying.",
+            "Settings",
+        ),
+        (
+            "server_session_invalid",
+            "Server session expired",
+            "Re-authenticate the active server profile before retrying.",
+            "Settings",
+        ),
+        (
+            "capability_disabled",
+            "Capability disabled",
+            "Enable this capability in Settings or the governing policy before retrying.",
+            "Settings or governing policy",
+        ),
+        (
+            "authority_denied",
+            "Policy denied",
+            "Review workspace policy or ask the authority owner to allow this action.",
+            "Workspace policy",
+        ),
+    ],
+)
+def test_phase_five_runtime_policy_recovery_helper_maps_reason_groups(
+    reason_code,
+    status_label,
+    next_action,
+    recovery_action,
+):
+    exc = PolicyDeniedError(
+        action_id="test.action",
+        reason_code=reason_code,
+        user_message="Policy message from service.",
+        effective_source="server",
+        authority_owner="active server",
+    )
+
+    recovery_state = policy_denied_recovery_state(
+        exc,
+        unavailable_what="Test workflow",
+        stable_selector="test-recovery",
+    )
+
+    assert recovery_state.status_label == status_label
+    assert recovery_state.why == "Policy message from service"
+    assert recovery_state.next_action == next_action
+    assert recovery_state.recovery_action == recovery_action
+    assert recovery_state.authority_owner == "active server"
+    assert "Policy message from service." in recovery_state.disabled_tooltip
+    assert next_action in recovery_state.disabled_tooltip

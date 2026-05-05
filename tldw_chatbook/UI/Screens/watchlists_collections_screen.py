@@ -18,6 +18,7 @@ from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from .destination_recovery import policy_denied_recovery_state
 
 
 logger = logger.bind(module="WatchlistsCollectionsScreen")
@@ -43,6 +44,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._watchlist_total_known = True
         self._collection_total_known = True
         self._wc_lookup_error: str | None = None
+        self._wc_lookup_error_tooltip: str | None = None
         self._wc_loaded = False
 
     def on_mount(self) -> None:
@@ -59,6 +61,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             watchlist_total_known,
             collection_total_known,
             lookup_error,
+            lookup_error_tooltip,
         ) = await self._list_local_wc_snapshot()
         self._apply_local_wc_snapshot(
             watchlists,
@@ -68,6 +71,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             watchlist_total_known,
             collection_total_known,
             lookup_error,
+            lookup_error_tooltip,
         )
 
     def _apply_local_wc_snapshot(
@@ -79,6 +83,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         watchlist_total_known: bool,
         collection_total_known: bool,
         lookup_error: str | None = None,
+        lookup_error_tooltip: str | None = None,
     ) -> None:
         self._local_watchlist_records = watchlists
         self._local_collection_records = collections
@@ -87,6 +92,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._watchlist_total_known = watchlist_total_known
         self._collection_total_known = collection_total_known
         self._wc_lookup_error = lookup_error
+        self._wc_lookup_error_tooltip = lookup_error_tooltip
         self._wc_loaded = True
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -141,13 +147,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         bool,
         bool,
         str | None,
+        str | None,
     ]:
         watchlist_service = getattr(self.app_instance, "watchlist_scope_service", None)
         collection_service = getattr(self.app_instance, "media_reading_scope_service", None)
         list_watch_items = getattr(watchlist_service, "list_watch_items", None)
         list_read_it_later = getattr(collection_service, "list_read_it_later", None)
         if not callable(list_watch_items) or not callable(list_read_it_later):
-            return (), (), 0, 0, True, True, WC_SERVICE_UNAVAILABLE_COPY
+            return (), (), 0, 0, True, True, WC_SERVICE_UNAVAILABLE_COPY, None
 
         try:
             watchlist_result = await list_watch_items(
@@ -162,13 +169,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
         except PolicyDeniedError as exc:
             policy_message = self._safe_text(exc.user_message, WC_SERVICE_ERROR_COPY)
-            return (), (), 0, 0, True, True, policy_message
+            recovery_state = policy_denied_recovery_state(
+                exc,
+                unavailable_what="Stage W+C context in Console",
+                stable_selector="wc-service-error",
+                policy_message=policy_message,
+            )
+            return (), (), 0, 0, True, True, recovery_state.visible_copy, recovery_state.disabled_tooltip
         except Exception:
             logger.debug(
                 "Failed to load local W+C snapshot.",
                 exc_info=True,
             )
-            return (), (), 0, 0, True, True, WC_SERVICE_ERROR_COPY
+            return (), (), 0, 0, True, True, WC_SERVICE_ERROR_COPY, None
 
         watchlists, watchlist_count, watchlist_total_known = self._response_records_and_count(watchlist_result)
         collections, collection_count, collection_total_known = self._response_records_and_count(collection_result)
@@ -179,6 +192,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             collection_count,
             watchlist_total_known,
             collection_total_known,
+            None,
             None,
         )
 
@@ -290,7 +304,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         id="wc-service-error",
                     )
                     attach_disabled = True
-                    attach_tooltip = "W+C services are unavailable; retry W+C before staging Console context."
+                    attach_tooltip = (
+                        self._wc_lookup_error_tooltip
+                        or "W+C services are unavailable; retry W+C before staging Console context."
+                    )
                 elif not self._has_local_wc_context():
                     yield Static(
                         WC_EMPTY_COPY,

@@ -142,6 +142,30 @@ class RaisingLibraryNotesScopeService:
         raise RuntimeError("notes unavailable")
 
 
+class PolicyDeniedLibraryNotesScopeService:
+    def __init__(
+        self,
+        *,
+        reason_code="wrong_source",
+        user_message="Server Library sources require server mode.",
+        effective_source="local",
+        authority_owner="active server",
+    ):
+        self.reason_code = reason_code
+        self.user_message = user_message
+        self.effective_source = effective_source
+        self.authority_owner = authority_owner
+
+    async def list_notes(self, **kwargs):
+        raise PolicyDeniedError(
+            action_id="library.sources.list",
+            reason_code=self.reason_code,
+            user_message=self.user_message,
+            effective_source=self.effective_source,
+            authority_owner=self.authority_owner,
+        )
+
+
 class StaticWatchlistsScopeService:
     def __init__(self, watch_items):
         self.watch_items = tuple(watch_items)
@@ -155,6 +179,30 @@ class StaticWatchlistsScopeService:
 class RaisingWatchlistsScopeService:
     async def list_watch_items(self, **kwargs):
         raise RuntimeError("watchlists unavailable")
+
+
+class PolicyDeniedWatchlistsScopeService:
+    def __init__(
+        self,
+        *,
+        reason_code="server_session_invalid",
+        user_message="The W+C server session has expired.",
+        effective_source="server",
+        authority_owner="active server",
+    ):
+        self.reason_code = reason_code
+        self.user_message = user_message
+        self.effective_source = effective_source
+        self.authority_owner = authority_owner
+
+    async def list_watch_items(self, **kwargs):
+        raise PolicyDeniedError(
+            action_id="wc.watchlists.list",
+            reason_code=self.reason_code,
+            user_message=self.user_message,
+            effective_source=self.effective_source,
+            authority_owner=self.authority_owner,
+        )
 
 
 class StaticReadItLaterScopeService:
@@ -183,14 +231,54 @@ class RaisingSkillsScopeService:
 
 
 class PolicyDeniedSkillsScopeService:
+    def __init__(
+        self,
+        *,
+        reason_code="authority_denied",
+        user_message="Local Skills are disabled by workspace policy.",
+        effective_source="local",
+        authority_owner="local",
+    ):
+        self.reason_code = reason_code
+        self.user_message = user_message
+        self.effective_source = effective_source
+        self.authority_owner = authority_owner
+
     async def list_skills(self, **kwargs):
         raise PolicyDeniedError(
             action_id="skills.list.local",
-            reason_code="authority_denied",
-            user_message="Local Skills are disabled by workspace policy.",
-            effective_source="local",
-            authority_owner="local",
+            reason_code=self.reason_code,
+            user_message=self.user_message,
+            effective_source=self.effective_source,
+            authority_owner=self.authority_owner,
         )
+
+
+class PolicyDeniedPersonasScopeService:
+    def __init__(
+        self,
+        *,
+        reason_code="server_auth_required",
+        user_message="Server Personas require sign-in.",
+        effective_source="server",
+        authority_owner="active server",
+    ):
+        self.reason_code = reason_code
+        self.user_message = user_message
+        self.effective_source = effective_source
+        self.authority_owner = authority_owner
+
+    async def list_characters(self, **kwargs):
+        raise PolicyDeniedError(
+            action_id="personas.characters.list",
+            reason_code=self.reason_code,
+            user_message=self.user_message,
+            effective_source=self.effective_source,
+            authority_owner=self.authority_owner,
+        )
+
+    async def list_persona_profiles(self, **kwargs):
+        return []
 
 
 class DestinationHarness(App):
@@ -267,6 +355,38 @@ async def _wait_for_wc_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
     raise AssertionError(f"Timed out waiting for W+C snapshot. Visible text: {_visible_text(screen)}")
 
 
+async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    terminal_selectors = (
+        "#library-source-error",
+        "#library-source-empty",
+        "#library-notes-summary",
+        "#library-media-summary",
+        "#library-conversations-summary",
+    )
+    while time.monotonic() < deadline:
+        if any(screen.query(selector) for selector in terminal_selectors):
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for Library snapshot. Visible text: {_visible_text(screen)}")
+
+
+async def _wait_for_skills_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    terminal_selectors = (
+        "#skills-service-error",
+        "#skills-empty-state",
+        "#skills-local-summary",
+    )
+    while time.monotonic() < deadline:
+        if any(screen.query(selector) for selector in terminal_selectors):
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for Skills snapshot. Visible text: {_visible_text(screen)}")
+
+
 async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -274,6 +394,28 @@ async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> Non
             return
         await pilot.pause()
     raise AssertionError("Timed out waiting for mock call")
+
+
+def _assert_policy_recovery_copy(
+    *,
+    visible_text: str,
+    button: Button,
+    status_label: str,
+    unavailable_what: str,
+    why: str,
+    next_action: str,
+    recovery_action: str,
+    authority_owner: str,
+) -> None:
+    assert status_label in visible_text
+    assert f"Unavailable: {unavailable_what}." in visible_text
+    assert f"Why: {why}." in visible_text
+    assert f"Next: {next_action}" in visible_text
+    assert f"Recovery: {recovery_action}." in visible_text
+    assert f"Owner: {authority_owner}." in visible_text
+    assert button.disabled is True
+    assert why in str(button.tooltip)
+    assert next_action in str(button.tooltip)
 
 
 @pytest.mark.parametrize(
@@ -389,6 +531,31 @@ async def test_watchlists_collections_service_failure_uses_recovery_copy():
         assert "W+C services unavailable; retry W+C later." in _visible_text(screen)
         assert button.disabled is True
         assert "W+C services are unavailable" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_watchlists_collections_policy_denial_uses_runtime_recovery_taxonomy():
+    app = _build_test_app()
+    app.watchlist_scope_service = PolicyDeniedWatchlistsScopeService()
+    app.media_reading_scope_service = StaticReadItLaterScopeService([])
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_wc_snapshot(screen, pilot)
+        error = screen.query_one("#wc-service-error", Static)
+        button = screen.query_one("#wc-attach-to-console", Button)
+
+        _assert_policy_recovery_copy(
+            visible_text=_static_text(error),
+            button=button,
+            status_label="Server session expired",
+            unavailable_what="Stage W+C context in Console",
+            why="The W+C server session has expired",
+            next_action="Re-authenticate the active server profile before retrying.",
+            recovery_action="Settings",
+            authority_owner="active server",
+        )
 
 
 @pytest.mark.asyncio
@@ -538,6 +705,30 @@ async def test_personas_destination_service_failure_uses_recovery_copy():
         assert "Personas service unavailable; retry Personas later." in _visible_text(screen)
         assert button.disabled is True
         assert "Personas service is unavailable" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_personas_policy_denial_uses_runtime_recovery_taxonomy():
+    app = _build_test_app()
+    app.character_persona_scope_service = PolicyDeniedPersonasScopeService()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+        error = screen.query_one("#personas-service-error", Static)
+        button = screen.query_one("#personas-attach-to-console", Button)
+
+        _assert_policy_recovery_copy(
+            visible_text=_static_text(error),
+            button=button,
+            status_label="Server sign-in required",
+            unavailable_what="Attach Personas context to Console",
+            why="Server Personas require sign-in",
+            next_action="Reconnect or configure server credentials in Settings before retrying.",
+            recovery_action="Settings",
+            authority_owner="active server",
+        )
 
 
 @pytest.mark.asyncio
@@ -736,6 +927,32 @@ async def test_library_destination_service_failure_uses_recovery_copy():
         assert "Library source services unavailable; retry Library later." in _visible_text(screen)
         assert button.disabled is True
         assert "Library source services are unavailable" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_library_policy_denial_uses_runtime_recovery_taxonomy():
+    app = _build_test_app()
+    app.notes_scope_service = PolicyDeniedLibraryNotesScopeService()
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        error = screen.query_one("#library-source-error", Static)
+        button = screen.query_one("#library-use-in-console", Button)
+
+        _assert_policy_recovery_copy(
+            visible_text=_static_text(error),
+            button=button,
+            status_label="Wrong source",
+            unavailable_what="Use Library sources in Console",
+            why="Server Library sources require server mode",
+            next_action="Switch to the required source, then retry this workflow.",
+            recovery_action="Source switch or Settings",
+            authority_owner="active server",
+        )
 
 
 @pytest.mark.asyncio
@@ -1105,12 +1322,20 @@ async def test_skills_destination_policy_denied_surfaces_policy_message():
     host = DestinationHarness(app, "skills")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
         button = screen.query_one("#skills-attach-to-console", Button)
 
-        assert "Local Skills are disabled by workspace policy." in _visible_text(screen)
-        assert button.disabled is True
+        _assert_policy_recovery_copy(
+            visible_text=_visible_text(screen),
+            button=button,
+            status_label="Policy denied",
+            unavailable_what="Attach local Skills to Console",
+            why="Local Skills are disabled by workspace policy",
+            next_action="Review workspace policy or ask the authority owner to allow this action.",
+            recovery_action="Workspace policy",
+            authority_owner="local",
+        )
         assert "Skills service unavailable; retry Skills later." not in _visible_text(screen)
 
 
