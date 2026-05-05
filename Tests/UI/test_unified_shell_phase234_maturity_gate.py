@@ -71,6 +71,19 @@ def _text(path: Path) -> str:
     return resolved_path.read_text(encoding="utf-8")
 
 
+def _assert_roadmap_status_tracks_current_phase_progress(roadmap_text: str) -> None:
+    status_match = re.search(r"^Status:\s*(.+)$", roadmap_text, re.MULTILINE)
+    assert status_match is not None
+    normalized_status = status_match.group(1).lower().replace("-", " ")
+
+    assert "phase 2" in normalized_status
+    assert "phase 3" in normalized_status
+    assert "phase 4" in normalized_status
+    assert "verified" in normalized_status
+    assert re.search(r"phase\s+5\s+in\s+progress", normalized_status)
+    assert re.search(r"phase\s+6\s+not\s+started", normalized_status)
+
+
 def _markdown_path(path: Path) -> str:
     relative_path = path.relative_to(REPO_ROOT) if path.is_absolute() else path
     return relative_path.as_posix()
@@ -90,7 +103,7 @@ def _extract_phase_metadata(text: str, phase_number: int) -> dict:
 def test_phase_two_three_four_roadmap_and_indexes_record_current_gate_status():
     roadmap_text = _text(ROADMAP)
 
-    assert "Status: Phase 2, Phase 3, and Phase 4 verified; Phase 5 in progress; Phase 6 not started" in roadmap_text
+    _assert_roadmap_status_tracks_current_phase_progress(roadmap_text)
 
     for phase_name, phase in PHASES.items():
         qa_row = (

@@ -14,7 +14,35 @@ PHASE_5_TAXONOMY_TASK = Path("backlog/tasks/task-6.1 - Phase-5.1-Create-shared-r
 
 
 def _text(path: Path) -> str:
-    return (REPO_ROOT / path).read_text(encoding="utf-8")
+    resolved_path = path if path.is_absolute() else REPO_ROOT / path
+    return resolved_path.read_text(encoding="utf-8")
+
+
+def _status_line(text: str) -> str:
+    status_match = re.search(r"^Status:\s*(.+)$", text, re.MULTILINE)
+    assert status_match is not None
+    return status_match.group(1).strip()
+
+
+def _assert_roadmap_tracks_phase_five_progress(roadmap: str) -> None:
+    normalized_status = _status_line(roadmap).lower().replace("-", " ")
+
+    assert "phase 2" in normalized_status
+    assert "phase 3" in normalized_status
+    assert "phase 4" in normalized_status
+    assert "verified" in normalized_status
+    assert re.search(r"phase\s+5\s+in\s+progress", normalized_status)
+    assert re.search(r"phase\s+6\s+not\s+started", normalized_status)
+
+
+def _roadmap_phase_evidence_row(text: str, phase_name: str) -> list[str]:
+    for line in text.splitlines():
+        if not line.startswith("|"):
+            continue
+        columns = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if columns and columns[0] == phase_name:
+            return columns
+    raise AssertionError(f"{phase_name} evidence row not found")
 
 
 def _taxonomy_metadata(text: str) -> dict:
@@ -34,12 +62,14 @@ def test_phase_five_recovery_taxonomy_is_tracked_from_roadmap_readme_and_tasks()
     parent_task = _text(PHASE_5_PARENT_TASK)
     child_task = _text(PHASE_5_TAXONOMY_TASK)
 
-    assert "Status: Phase 2, Phase 3, and Phase 4 verified; Phase 5 in progress; Phase 6 not started" in roadmap
-    assert "| Phase 5 | `Docs/superpowers/qa/unified-shell/phase-5/` | in-progress |" in roadmap
-    assert "Phase 5.1: Create shared recovery taxonomy - `TASK-6.1`" in roadmap
+    _assert_roadmap_tracks_phase_five_progress(roadmap)
+    phase_five_row = _roadmap_phase_evidence_row(roadmap, "Phase 5")
+    assert phase_five_row[1] == "`Docs/superpowers/qa/unified-shell/phase-5/`"
+    assert phase_five_row[2] == "in-progress"
+    assert re.search(r"Phase\s+5\.1:.*shared recovery taxonomy.*`TASK-6\.1`", roadmap, re.IGNORECASE)
     assert "2026-05-05-shared-recovery-taxonomy.md" in roadmap
 
-    assert "Status: in-progress" in readme
+    assert _status_line(readme) == "in-progress"
     assert "`TASK-6.1`" in readme
     assert "2026-05-05-shared-recovery-taxonomy.md" in readme
 
@@ -85,10 +115,18 @@ def test_phase_five_recovery_taxonomy_defines_required_contract_and_reason_mappi
     assert metadata["runtime_policy_reason_codes"] == [
         "wrong_source",
         "server_not_configured",
+        "server_profile_missing",
         "server_unreachable",
+        "server_unavailable",
         "server_auth_required",
+        "auth_required",
+        "credential_store_unavailable",
+        "server_credentials_unavailable",
         "server_session_invalid",
+        "stale_authorization",
+        "profile_no_longer_authorized",
         "authority_denied",
+        "permission_denied",
         "capability_disabled",
     ]
     assert metadata["destination_recovery_sources"] == [

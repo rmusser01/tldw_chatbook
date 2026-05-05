@@ -38,10 +38,18 @@ Base: `origin/dev` at `42b2ac1e`
   "runtime_policy_reason_codes": [
     "wrong_source",
     "server_not_configured",
+    "server_profile_missing",
     "server_unreachable",
+    "server_unavailable",
     "server_auth_required",
+    "auth_required",
+    "credential_store_unavailable",
+    "server_credentials_unavailable",
     "server_session_invalid",
+    "stale_authorization",
+    "profile_no_longer_authorized",
     "authority_denied",
+    "permission_denied",
     "capability_disabled"
   ],
   "destination_recovery_sources": [
@@ -80,9 +88,9 @@ Every blocked state that appears in a visible shell or destination control shoul
 | Canonical state | Maps from | Required recovery behavior |
 | --- | --- | --- |
 | `wrong_source` | `PolicyDecision.reason_code == "wrong_source"` | Name the required source and offer the source switch or existing route when available. |
-| `server_not_configured` | `PolicyDecision.reason_code == "server_not_configured"` or `ServerContextFailure.reason_code == "server_not_configured"` | Point to server setup or Settings; do not imply retry will work without configuration. |
+| `server_not_configured` | `PolicyDecision.reason_code == "server_not_configured"` or `ServerContextFailure.reason_code` in `["server_not_configured", "server_profile_missing"]` | Point to server setup or Settings; do not imply retry will work without configuration. |
 | `server_unreachable` | `server_unreachable`, `server_unavailable`, or request-time connectivity classification | Offer retry and preserve local alternatives when they exist. |
-| `server_auth_required` | `server_auth_required`, `auth_required`, or credential-missing context | Point to sign-in or credential setup; do not hide the server-owned workflow. |
+| `server_auth_required` | `server_auth_required`, `auth_required`, `credential_store_unavailable`, `server_credentials_unavailable`, or credential-missing context | Point to sign-in or credential setup; do not hide the server-owned workflow. |
 | `server_session_invalid` | `server_session_invalid`, `stale_authorization`, or `profile_no_longer_authorized` | Tell the user to re-authenticate or reconnect the active server profile. |
 | `policy_denied` | `authority_denied`, `permission_denied`, or workspace policy denial | State that policy blocks the action and identify the authority owner where possible. |
 | `capability_disabled` | `capability_disabled` or feature flag disabled | State that the feature is disabled and where it must be enabled. |
