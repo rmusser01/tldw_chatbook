@@ -123,7 +123,6 @@ class WorkflowsScreen(BaseAppScreen):
                     )
                 else:
                     yield Static("Console launch unavailable", classes="destination-section")
-                    yield Static("No workflow service is wired yet.", id="workflows-empty-state")
                     yield Static(
                         WORKFLOWS_EMPTY_CONSOLE_RECOVERY.visible_copy,
                         id=WORKFLOWS_EMPTY_CONSOLE_RECOVERY.stable_selector,

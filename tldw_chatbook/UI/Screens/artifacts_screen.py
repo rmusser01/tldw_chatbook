@@ -76,6 +76,14 @@ class ArtifactsScreen(BaseAppScreen):
         if self.is_mounted:
             self.refresh(recompose=True)
 
+    @property
+    def _blocked_chatbook_recovery_state(self) -> DestinationRecoveryState:
+        return (
+            ARTIFACTS_CHATBOOK_SERVICE_UNAVAILABLE_RECOVERY
+            if self._chatbook_lookup_error
+            else ARTIFACTS_EMPTY_CHATBOOK_RECOVERY
+        )
+
     @staticmethod
     def _text(value: Any, fallback: str = "") -> str:
         text = str(value or "").strip()
@@ -232,11 +240,7 @@ class ArtifactsScreen(BaseAppScreen):
                     )
                 else:
                     yield Static("Console launch unavailable", classes="destination-section")
-                    recovery_state = (
-                        ARTIFACTS_CHATBOOK_SERVICE_UNAVAILABLE_RECOVERY
-                        if self._chatbook_lookup_error
-                        else ARTIFACTS_EMPTY_CHATBOOK_RECOVERY
-                    )
+                    recovery_state = self._blocked_chatbook_recovery_state
                     yield Static(
                         recovery_state.visible_copy,
                         id=recovery_state.stable_selector,
@@ -257,13 +261,8 @@ class ArtifactsScreen(BaseAppScreen):
         event.stop()
         launch_kwargs = self._latest_chatbook_console_launch
         if launch_kwargs is None:
-            recovery_state = (
-                ARTIFACTS_CHATBOOK_SERVICE_UNAVAILABLE_RECOVERY
-                if self._chatbook_lookup_error
-                else ARTIFACTS_EMPTY_CHATBOOK_RECOVERY
-            )
             self.app_instance.notify(
-                recovery_state.disabled_tooltip,
+                self._blocked_chatbook_recovery_state.disabled_tooltip,
                 severity="warning",
             )
             return

@@ -1,6 +1,7 @@
 """Console live-work launch and staged-context handoff boundary tests."""
 
 import threading
+import time
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -201,6 +202,35 @@ class StaticLocalChatbookService:
         return list(self.chatbooks)[int(offset) : int(offset) + int(limit)]
 
 
+async def _wait_for_destination_recovery_state(
+    screen,
+    pilot,
+    *,
+    button_selector: str,
+    static_selector: str,
+    expected_tooltip: str,
+    expected_fragments: tuple[str, ...],
+    timeout: float = 2.0,
+) -> tuple[object, str]:
+    deadline = time.monotonic() + timeout
+    last_recovery_text = ""
+    while time.monotonic() < deadline:
+        if screen.query(button_selector) and screen.query(static_selector):
+            button = screen.query_one(button_selector)
+            last_recovery_text = str(screen.query_one(static_selector).renderable)
+            if (
+                button.disabled is True
+                and str(button.tooltip) == expected_tooltip
+                and all(fragment in last_recovery_text for fragment in expected_fragments)
+            ):
+                return button, last_recovery_text
+        await pilot.pause(0.02)
+    raise AssertionError(
+        "Destination recovery state did not become ready. "
+        f"selector={static_selector!r} last_text={last_recovery_text!r}"
+    )
+
+
 @pytest.mark.parametrize(
     (
         "route",
@@ -294,10 +324,15 @@ async def test_phase_five_destination_blockers_expose_taxonomy_recovery_fields(
     host = DestinationHarness(app, route)
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_console_screen(host)
-        button = screen.query_one(button_selector)
-        recovery_text = str(screen.query_one(static_selector).renderable)
+        button, recovery_text = await _wait_for_destination_recovery_state(
+            screen,
+            pilot,
+            button_selector=button_selector,
+            static_selector=static_selector,
+            expected_tooltip=expected_tooltip,
+            expected_fragments=expected_fragments,
+        )
 
         assert button.disabled is True
         assert str(button.tooltip) == expected_tooltip
