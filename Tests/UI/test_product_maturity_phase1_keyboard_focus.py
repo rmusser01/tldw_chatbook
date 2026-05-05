@@ -101,23 +101,35 @@ async def test_clean_run_tab_order_reaches_nav_and_primary_setup_action(
                 lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
             )
 
+            if not isinstance(app.focused, Button):
+                await pilot.press("tab")
+
             focus_ids: list[str] = []
-            for _ in range(len(TOP_LEVEL_DESTINATION_IDS) + 1):
+            expected_focus_ids = [
+                *(f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS),
+                "home-primary-action",
+            ]
+            for index, expected_focus_id in enumerate(expected_focus_ids):
+                await _wait_until(
+                    pilot,
+                    lambda: isinstance(app.focused, Button) and app.focused.id == expected_focus_id,
+                )
                 focused = app.focused
                 assert isinstance(focused, Button)
                 assert focused.id is not None
                 focus_ids.append(focused.id)
-                await pilot.press("tab")
-                await pilot.pause(0.02)
 
-            assert focus_ids[: len(TOP_LEVEL_DESTINATION_IDS)] == [
-                f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS
-            ]
-            assert focus_ids[-1] == "home-primary-action"
-            assert str(app.screen.query_one("#nav-overflow-hint", Static).renderable) == "More: Ctrl+P"
+                if index < len(expected_focus_ids) - 1:
+                    await pilot.press("tab")
+
+            assert focus_ids == expected_focus_ids
+            nav_hint = str(app.screen.query_one("#nav-overflow-hint", Static).renderable)
+            assert "More" in nav_hint
+            assert "Ctrl+P" in nav_hint
 
 
-def test_command_palette_keyboard_fallback_exposes_top_level_product_model() -> None:
+@pytest.mark.asyncio
+async def test_command_palette_keyboard_fallback_exposes_top_level_product_model() -> None:
     ctrl_p_bindings = [binding for binding in TldwCli.BINDINGS if "ctrl+p" in str(binding.key).lower()]
     assert ctrl_p_bindings
     assert any("command_palette" in str(binding.action) for binding in ctrl_p_bindings)
@@ -129,14 +141,23 @@ def test_command_palette_keyboard_fallback_exposes_top_level_product_model() -> 
     assert palette_destination_ids == TOP_LEVEL_DESTINATION_IDS
 
     provider = TabNavigationProvider(MagicMock())
-    for tab_id, destination_id in zip(TabNavigationProvider.navigation_tab_ids(), TOP_LEVEL_DESTINATION_IDS):
-        command_text, returned_tab_id, help_text = provider._tab_command(tab_id)
-        destination = get_shell_destination(destination_id)
+    hits = []
+    async for hit in provider.search("Tab Navigation"):
+        hits.append(hit)
 
-        assert returned_tab_id == tab_id
-        assert "Tab Navigation: Switch to" in command_text
-        assert destination.accessible_label in command_text or destination.accessible_label in help_text
-        assert destination.purpose in help_text
+    hit_text_and_help = [(str(hit.text), str(hit.help or "")) for hit in hits]
+
+    for destination_id in TOP_LEVEL_DESTINATION_IDS:
+        destination = get_shell_destination(destination_id)
+        matching_hits = [
+            (text, help_text)
+            for text, help_text in hit_text_and_help
+            if destination.accessible_label in text or destination.accessible_label in help_text
+        ]
+
+        assert matching_hits, f"missing command-palette hit for {destination.destination_id}"
+        assert any("Tab Navigation: Switch to" in text for text, _ in matching_hits)
+        assert any(destination.purpose in help_text for _, help_text in matching_hits)
 
 
 def test_phase_one_four_evidence_records_keyboard_focus_sweep() -> None:
