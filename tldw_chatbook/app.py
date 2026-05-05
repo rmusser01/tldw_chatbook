@@ -2085,6 +2085,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.home_active_work_adapter = LocalNotificationHomeActiveWorkAdapter(
             notification_service=self.client_notifications_service,
             watchlist_service=self.local_watchlists_service,
+            chatbook_service=self.local_chatbook_service,
         )
         self.notification_dispatch_service = NotificationDispatchService(
             store=self.client_notifications_db,

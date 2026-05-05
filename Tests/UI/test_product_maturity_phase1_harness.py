@@ -19,6 +19,7 @@ PROTOCOL = PHASE_1_ROOT / "walkthrough-protocol.md"
 TEMPLATE = PHASE_1_ROOT / "walkthrough-template.md"
 SMOKE = PHASE_1_ROOT / "2026-05-05-phase-1-1-harness-smoke.md"
 PHASE_2_3_EVIDENCE = PHASE_2_ROOT / "2026-05-05-phase-2-3-saved-chatbook-artifact-reopen-contract.md"
+PHASE_2_4_EVIDENCE = PHASE_2_ROOT / "2026-05-05-phase-2-4-home-chatbook-artifact-resume-contract.md"
 PHASE_1_2_PLAN = Path("Docs/superpowers/plans/2026-05-05-product-maturity-phase-1-2-first-run-walkthrough.md")
 BACKLOG_TASKS = Path("backlog/tasks")
 
@@ -195,6 +196,23 @@ def test_product_maturity_phase_two_three_evidence_links_task_and_tracker() -> N
     assert "Saved Chatbook Artifact Reopen Contract" in evidence
     assert "Home resume controls for saved artifacts" in evidence
     assert "Artifacts identifies Console-saved Chatbook artifact records" in task
+
+
+def test_product_maturity_phase_two_four_evidence_links_task_and_tracker() -> None:
+    tracker = _text(TRACKER)
+    readme = _text(PHASE_2_README)
+    evidence = _text(PHASE_2_4_EVIDENCE)
+    task = _task_text_by_id("TASK-9.4")
+
+    phase_two_row = _phase_row(tracker, "Phase 2: Core Agentic Loop")
+
+    assert "Phase 2.4" in tracker
+    assert "TASK-9.4" in phase_two_row[3]
+    assert PHASE_2_4_EVIDENCE.name in phase_two_row[4]
+    assert PHASE_2_4_EVIDENCE.name in readme
+    assert "Home Chatbook Artifact Resume Contract" in evidence
+    assert "closeout replay" in evidence
+    assert "Home active-work input includes the latest Console-saved Chatbook artifact" in task
 
 
 def test_phase_one_one_smoke_evidence_records_harness_only_boundary() -> None:
