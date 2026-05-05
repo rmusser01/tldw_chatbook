@@ -28,6 +28,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 
 - Phase 1: QA Baseline And Usability Guardrails - `TASK-8`
 - Phase 1.1: Canonical QA Harness - `TASK-8.1`
+- Phase 1.2: Clean First-Run Launch And Configuration Walkthrough - `TASK-8.2`
 - Phase 2: Core Agentic Loop - `TASK-9`
 - Phase 3: Knowledge And Study Workflows - `TASK-10`
 - Phase 4: Agent Configuration And Execution - `TASK-11`
@@ -44,7 +45,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 
 | Phase | Goal | Status | Backlog Tasks | QA Evidence | Residual Risk |
 | --- | --- | --- | --- | --- | --- |
-| Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | in_progress | `TASK-8`, Phase 1.1 (`TASK-8.1`) | `phase-1/` | Phase 1.1 is harness-only; product walkthroughs remain future Phase 1 gates. |
+| Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | in_progress | `TASK-8`, Phase 1.1 (`TASK-8.1`), Phase 1.2 (`TASK-8.2`) | `phase-1/` | Phase 1.2 is planned for clean first-run launch and configuration walkthrough evidence. |
 | Phase 2: Core Agentic Loop | Complete source/question to grounded Console to Artifact/Chatbook loop. | planned | `TASK-9` | not-started | Depends on Phase 1 QA baseline. |
 | Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | planned | `TASK-10` | not-started | Depends on Phase 2 core loop and later task slicing. |
 | Phase 4: Agent Configuration And Execution | Mature Personas, Skills, MCP, ACP, Schedules, and Workflows. | planned | `TASK-11` | not-started | Depends on service adapters and runtime readiness. |
@@ -58,3 +59,9 @@ Status: verified
 - `Docs/superpowers/qa/product-maturity/phase-1/walkthrough-protocol.md`
 - `Docs/superpowers/qa/product-maturity/phase-1/walkthrough-template.md`
 - `Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-1-harness-smoke.md`
+
+## Phase 1.2 Plan
+
+Status: planned
+
+- `Docs/superpowers/plans/2026-05-05-product-maturity-phase-1-2-first-run-walkthrough.md`

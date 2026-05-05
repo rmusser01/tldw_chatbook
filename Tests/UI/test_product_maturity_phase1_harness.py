@@ -16,6 +16,7 @@ PHASE_1_README = PHASE_1_ROOT / "README.md"
 PROTOCOL = PHASE_1_ROOT / "walkthrough-protocol.md"
 TEMPLATE = PHASE_1_ROOT / "walkthrough-template.md"
 SMOKE = PHASE_1_ROOT / "2026-05-05-phase-1-1-harness-smoke.md"
+PHASE_1_2_PLAN = Path("Docs/superpowers/plans/2026-05-05-product-maturity-phase-1-2-first-run-walkthrough.md")
 BACKLOG_TASKS = Path("backlog/tasks")
 
 TASK_ID_RE = re.compile(r"`(TASK-[0-9]+(?:\.[0-9]+)*)`")
@@ -79,7 +80,17 @@ def _phase_row(markdown: str, phase_title: str) -> list[str]:
 
 
 def test_product_maturity_phase_one_harness_files_exist() -> None:
-    for path in (SPEC, TRACKER, BACKLOG_DOC, QA_ROOT / "README.md", PHASE_1_README, PROTOCOL, TEMPLATE, SMOKE):
+    for path in (
+        SPEC,
+        TRACKER,
+        BACKLOG_DOC,
+        QA_ROOT / "README.md",
+        PHASE_1_README,
+        PROTOCOL,
+        TEMPLATE,
+        SMOKE,
+        PHASE_1_2_PLAN,
+    ):
         assert (REPO_ROOT / path).exists(), f"{path} should exist"
 
 
@@ -117,25 +128,50 @@ def test_product_maturity_tracker_links_phase_one_harness_and_tasks() -> None:
     assert str(PROTOCOL) in tracker
     assert str(TEMPLATE) in tracker
     assert str(SMOKE) in tracker
+    assert str(PHASE_1_2_PLAN) in tracker
     assert "Phase 1.1" in tracker
+    assert "Phase 1.2" in tracker
     assert "<PHASE_" not in tracker
 
     phase_one_row = _phase_row(tracker, "Phase 1: QA Baseline And Usability Guardrails")
     phase_one_task_ids = _task_ids_from_phase_row(phase_one_row)
-    assert len(phase_one_task_ids) == 2
-    phase_one_task_id = next(task_id for task_id in phase_one_task_ids if "." not in task_id)
-    phase_one_one_task_id = next(task_id for task_id in phase_one_task_ids if "." in task_id)
+    assert len(phase_one_task_ids) >= 2
+    phase_one_parent_ids = [task_id for task_id in phase_one_task_ids if "." not in task_id]
+    phase_one_child_ids = [task_id for task_id in phase_one_task_ids if "." in task_id]
+    assert len(phase_one_parent_ids) == 1
+    assert phase_one_child_ids
+    phase_one_task_id = phase_one_parent_ids[0]
     phase_one_task = _task_text_by_id(phase_one_task_id)
-    phase_one_one_task = _task_text_by_id(phase_one_one_task_id)
+    phase_one_child_tasks = [_task_text_by_id(task_id) for task_id in phase_one_child_ids]
 
     assert phase_one_row[2] in {"planned", "in_progress"}
     assert "Phase 1.1" in phase_one_row[3]
+    assert "Phase 1.2" in phase_one_row[3]
     assert "TASK-" in phase_one_row[3]
     assert "phase-1/" in phase_one_row[4]
 
     assert "QA walkthrough verifies the running app is usable" in phase_one_task
-    assert "Product-maturity QA protocol defines clean-run setup" in phase_one_one_task
-    assert "Harness smoke evidence states" in phase_one_one_task
+    assert any("Product-maturity QA protocol defines clean-run setup" in task for task in phase_one_child_tasks)
+    assert any("Harness smoke evidence states" in task for task in phase_one_child_tasks)
+    assert any("clean first-run launch" in task.lower() for task in phase_one_child_tasks)
+
+
+def test_product_maturity_phase_one_two_plan_scopes_first_run_walkthrough() -> None:
+    plan = _text(PHASE_1_2_PLAN)
+    readme = _text(PHASE_1_README)
+
+    assert "TASK-8.2" in plan
+    assert "Fresh HOME" in plan
+    assert "XDG_CONFIG_HOME" in plan
+    assert "running Textual app" in plan
+    assert "Home" in plan
+    assert "Console" in plan
+    assert "Library" in plan
+    assert "Settings" in plan
+    assert "not mark Phase 1 complete" in plan or "Do not mark Phase 1 complete" in plan
+    assert "Tests/UI/test_product_maturity_phase1_first_run.py" in plan
+    assert PHASE_1_2_PLAN.name in readme
+    assert "Phase 1.2 clean first-run status: planned" in readme
 
 
 def test_phase_one_one_smoke_evidence_records_harness_only_boundary() -> None:
