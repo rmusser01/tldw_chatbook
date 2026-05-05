@@ -1,7 +1,7 @@
 # Product Maturity Roadmap
 
 Date: 2026-05-05
-Status: Phase 1.1 verified; Phase 1 in progress
+Status: Phase 1.2 verified; Phase 1 in progress
 Source Branch: `dev`
 Source Spec: `Docs/superpowers/specs/2026-05-05-product-maturity-phased-roadmap-design.md`
 
@@ -14,6 +14,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 - Unified Shell Phase 0-6 are verified in `Docs/superpowers/trackers/unified-shell-maturity-roadmap.md`.
 - Product-maturity work starts with a QA baseline before new feature depth.
 - Phase 1.1 creates the reusable harness only; it does not complete the full first-run, focus, visual, empty-state, or core-loop audits.
+- Phase 1.2 verifies clean first-run launch and setup orientation only; broader Phase 1 gates remain open.
 
 ## Severity Policy
 
@@ -45,7 +46,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 
 | Phase | Goal | Status | Backlog Tasks | QA Evidence | Residual Risk |
 | --- | --- | --- | --- | --- | --- |
-| Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | in_progress | `TASK-8`, Phase 1.1 (`TASK-8.1`), Phase 1.2 (`TASK-8.2`) | `phase-1/` | Phase 1.2 is planned for clean first-run launch and configuration walkthrough evidence. |
+| Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | in_progress | `TASK-8`, Phase 1.1 (`TASK-8.1`), Phase 1.2 (`TASK-8.2`) | `phase-1/` | Remaining gates: top-level navigation smoke, keyboard/focus sweep, visual broken-state audit, empty/error/setup-state coverage, and narrow core-loop proof. |
 | Phase 2: Core Agentic Loop | Complete source/question to grounded Console to Artifact/Chatbook loop. | planned | `TASK-9` | not-started | Depends on Phase 1 QA baseline. |
 | Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | planned | `TASK-10` | not-started | Depends on Phase 2 core loop and later task slicing. |
 | Phase 4: Agent Configuration And Execution | Mature Personas, Skills, MCP, ACP, Schedules, and Workflows. | planned | `TASK-11` | not-started | Depends on service adapters and runtime readiness. |
@@ -60,8 +61,9 @@ Status: verified
 - `Docs/superpowers/qa/product-maturity/phase-1/walkthrough-template.md`
 - `Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-1-harness-smoke.md`
 
-## Phase 1.2 Plan
+## Phase 1.2 Evidence
 
-Status: planned
+Status: verified
 
 - `Docs/superpowers/plans/2026-05-05-product-maturity-phase-1-2-first-run-walkthrough.md`
+- `Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-2-first-run-walkthrough.md`
