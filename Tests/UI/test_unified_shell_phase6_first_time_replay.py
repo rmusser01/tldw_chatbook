@@ -226,12 +226,12 @@ def test_phase_six_first_time_replay_evidence_and_tracking_are_current() -> None
     assert phase_six_overview[2] == "in-progress"
     assert "TASK-7" in phase_six_overview[3]
     assert "TASK-7.1" in phase_six_overview[3]
-    assert "power-user and Nielsen closeout remain open" in phase_six_overview[5]
+    assert "Nielsen closeout remains open" in phase_six_overview[5]
 
     assert "status: In Progress" in parent_task
     assert "TASK-7.1" in parent_task
     assert "- [x] #1 First-time user walkthrough is replayed against the running app." in parent_task
-    assert "- [ ] #2 Power-user workflows are replayed against the running app." in parent_task
+    assert "- [x] #2 Power-user workflows are replayed against the running app." in parent_task
     assert "- [ ] #3 Nielsen heuristic closeout documents remaining defects and residual risks." in parent_task
 
     assert "status: Done" in first_time_task
