@@ -1,9 +1,10 @@
 ---
 id: TASK-5
 title: 'Phase 4: Destination Service Adoption'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-05-03 14:47'
+updated_date: '2026-05-05 00:19'
 labels:
   - unified-shell
   - phase-4
@@ -28,3 +29,11 @@ Turn top-level wrappers into useful product surfaces by adopting real services a
 - [ ] #3 Running-app QA verifies destination workflows rather than render-only behavior.
 - [ ] #4 Durable QA summaries exist under Docs/superpowers/qa/unified-shell/phase-4/.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Treat TASK-5.1 through TASK-5.5 as implemented destination service-adoption slices.
+2. Keep parent TASK-5 open until TASK-5.6 completes maturity-gate QA in the running app.
+3. Use TASK-5.6 to decide whether each top-level destination has a meaningful workflow or honest recovery state, and whether deeper service gaps need explicit follow-up blockers.
+<!-- SECTION:PLAN:END -->
