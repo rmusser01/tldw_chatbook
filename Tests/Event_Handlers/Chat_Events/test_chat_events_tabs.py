@@ -240,6 +240,7 @@ class TestChatEventsTabsHandlers:
 
         async def fake_original_handler(app_arg, event_arg):
             assert app_arg._current_chat_handoff_payload.title == "Plan"
+            app_arg.current_chat_worker = Mock()
 
         with patch.object(chat_events_tabs, "get_tab_state_manager", return_value=fake_state_manager):
             with patch(
@@ -254,6 +255,52 @@ class TestChatEventsTabsHandlers:
                 )
 
         assert session_data.handoff_payload.status == "sent"
+        assert getattr(mock_app, "_current_chat_handoff_payload", None) is None
+
+    @pytest.mark.asyncio
+    async def test_tab_send_preserves_handoff_payload_when_original_handler_does_not_dispatch(
+        self, mock_app, session_data, mock_config
+    ):
+        payload = ChatHandoffPayload(
+            source="search-rag",
+            item_type="search-result",
+            title="Local RAG result",
+            body="Grounded answer evidence",
+            metadata={"authority": "local-index"},
+        )
+        session_data.handoff_payload = payload
+
+        class FakeStateManager:
+            @asynccontextmanager
+            async def tab_context(self, tab_id):
+                yield self
+
+            get_tab_state = AsyncMock(return_value=None)
+            create_tab_state = AsyncMock()
+            update_tab_state = AsyncMock()
+
+        fake_state_manager = FakeStateManager()
+
+        async def fake_blocked_handler(app_arg, event_arg):
+            assert app_arg._current_chat_handoff_payload.title == "Local RAG result"
+            # Simulates validation or runtime setup recovery returning before run_worker().
+            app_arg.current_chat_worker = None
+            app_arg.set_current_chat_is_streaming(False)
+
+        with patch.object(chat_events_tabs, "get_tab_state_manager", return_value=fake_state_manager):
+            with patch(
+                "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed",
+                side_effect=fake_blocked_handler,
+            ):
+                event = Mock()
+                event.button = Mock(spec=Button)
+
+                await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(
+                    mock_app, event, session_data=session_data
+                )
+
+        assert session_data.handoff_payload is payload
+        assert session_data.handoff_payload.status == "staged"
         assert getattr(mock_app, "_current_chat_handoff_payload", None) is None
     
     @pytest.mark.skip(reason="Complex mocking of TabContext and state_manager required")

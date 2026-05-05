@@ -23,6 +23,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
     is_general_history_conversation,
     # ... import other handlers as you write tests for them
 )
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Utils.Emoji_Handling import (
     EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT, EMOJI_EDIT, FALLBACK_EDIT
 )
@@ -130,6 +131,45 @@ async def test_handle_chat_send_with_active_character(mock_chat_message_class, m
 
     wrapper_kwargs = mock_app.chat_wrapper.call_args.kwargs
     assert wrapper_kwargs['system_message'] == "You are TestChar."
+
+
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced')
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage')
+async def test_handle_chat_send_applies_staged_search_rag_context_to_provider_message(
+    mock_chat_message_class, mock_chat_message_enhanced_class, mock_ccl, mock_app
+):
+    """A staged Search/RAG handoff reaches the model-bound chat_wrapper message."""
+    mock_user_msg = MagicMock()
+    mock_ai_msg = MagicMock()
+    mock_chat_message_class.side_effect = [mock_user_msg, mock_ai_msg]
+    mock_chat_message_enhanced_class.side_effect = [mock_user_msg, mock_ai_msg]
+    mock_app._current_chat_handoff_payload = ChatHandoffPayload(
+        source="search-rag",
+        item_type="rag-result",
+        title="Local RAG result",
+        body="Grounded answer evidence",
+        content_ref="library://media/local-rag-result",
+        source_id="rag-result-42",
+        display_summary="Search/RAG evidence summary",
+        metadata={"authority": "local-index", "result_rank": 1},
+    )
+
+    with patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}):
+        await handle_chat_send_button_pressed(mock_app, MagicMock())
+
+    worker_lambda = mock_app.run_worker.call_args[0][0]
+    worker_lambda()
+
+    provider_message = mock_app.chat_wrapper.call_args.kwargs["message"]
+    assert "[Staged context]" in provider_message
+    assert "Source: search-rag" in provider_message
+    assert "Source ID: rag-result-42" in provider_message
+    assert "Content ref: library://media/local-rag-result" in provider_message
+    assert "- authority: local-index" in provider_message
+    assert "- result_rank: 1" in provider_message
+    assert "Grounded answer evidence" in provider_message
+    assert "[User prompt]\nUser message" in provider_message
 
 
 async def test_handle_new_conversation_button_pressed(mock_app):
