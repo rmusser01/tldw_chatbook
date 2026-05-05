@@ -1,6 +1,7 @@
 from pathlib import Path
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 ROADMAP = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md")
 
 PHASES = {
@@ -65,7 +66,13 @@ PARENT_TASK_FILES = {
 
 
 def _text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+    resolved_path = path if path.is_absolute() else REPO_ROOT / path
+    return resolved_path.read_text(encoding="utf-8")
+
+
+def _markdown_path(path: Path) -> str:
+    relative_path = path.relative_to(REPO_ROOT) if path.is_absolute() else path
+    return relative_path.as_posix()
 
 
 def test_phase_two_three_four_roadmap_and_indexes_mark_qa_needed():
@@ -80,7 +87,7 @@ def test_phase_two_three_four_roadmap_and_indexes_mark_qa_needed():
         )
         assert qa_row in roadmap_text
         assert phase["overview_row"] in roadmap_text
-        assert str(phase["closeout_doc"]) in roadmap_text
+        assert _markdown_path(phase["closeout_doc"]) in roadmap_text
         assert phase["closeout_task"] in roadmap_text
 
         readme_text = _text(phase["readme"])
