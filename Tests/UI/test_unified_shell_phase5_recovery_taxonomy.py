@@ -9,8 +9,14 @@ PHASE_5_README = Path("Docs/superpowers/qa/unified-shell/phase-5/README.md")
 PHASE_5_TAXONOMY = Path(
     "Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-shared-recovery-taxonomy.md"
 )
+PHASE_5_DESTINATION_RECOVERY = Path(
+    "Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-destination-blocker-recovery.md"
+)
 PHASE_5_PARENT_TASK = Path("backlog/tasks/task-6 - Phase-5-Capability-And-Recovery-System.md")
 PHASE_5_TAXONOMY_TASK = Path("backlog/tasks/task-6.1 - Phase-5.1-Create-shared-recovery-taxonomy.md")
+PHASE_5_DESTINATION_RECOVERY_TASK = Path(
+    "backlog/tasks/task-6.2 - Phase-5.2-Apply-recovery-taxonomy-to-shell-destination-blockers.md"
+)
 
 
 def _text(path: Path) -> str:
@@ -61,24 +67,51 @@ def test_phase_five_recovery_taxonomy_is_tracked_from_roadmap_readme_and_tasks()
     readme = _text(PHASE_5_README)
     parent_task = _text(PHASE_5_PARENT_TASK)
     child_task = _text(PHASE_5_TAXONOMY_TASK)
+    destination_recovery_task = _text(PHASE_5_DESTINATION_RECOVERY_TASK)
 
     _assert_roadmap_tracks_phase_five_progress(roadmap)
     phase_five_row = _roadmap_phase_evidence_row(roadmap, "Phase 5")
     assert phase_five_row[1] == "`Docs/superpowers/qa/unified-shell/phase-5/`"
     assert phase_five_row[2] == "in-progress"
     assert re.search(r"Phase\s+5\.1:.*shared recovery taxonomy.*`TASK-6\.1`", roadmap, re.IGNORECASE)
+    assert re.search(
+        r"Phase\s+5\.2:.*shell destination blockers.*`TASK-6\.2`",
+        roadmap,
+        re.IGNORECASE,
+    )
     assert "2026-05-05-shared-recovery-taxonomy.md" in roadmap
+    assert "2026-05-05-destination-blocker-recovery.md" in roadmap
 
     assert _status_line(readme) == "in-progress"
     assert "`TASK-6.1`" in readme
+    assert "`TASK-6.2`" in readme
     assert "2026-05-05-shared-recovery-taxonomy.md" in readme
+    assert "2026-05-05-destination-blocker-recovery.md" in readme
 
     assert "status: In Progress" in parent_task
     assert "TASK-6.1" in parent_task
+    assert "TASK-6.2" in parent_task
     assert "status: Done" in child_task
     for acceptance_criterion in range(1, 5):
         assert f"- [x] #{acceptance_criterion}" in child_task
     assert "Implementation Notes" in child_task
+    assert "status: Done" in destination_recovery_task
+    for acceptance_criterion in range(1, 6):
+        assert f"- [x] #{acceptance_criterion}" in destination_recovery_task
+    assert "Implementation Notes" in destination_recovery_task
+
+
+def test_phase_five_destination_recovery_evidence_records_applied_blockers():
+    evidence = _text(PHASE_5_DESTINATION_RECOVERY)
+
+    assert "/Users/" not in evidence
+    assert "TASK-6.2" in evidence
+    assert "ACP agent launch" in evidence
+    assert "Console follow for Schedules" in evidence
+    assert "Console launch for Workflows" in evidence
+    assert "Console launch for Chatbook artifacts" in evidence
+    assert "test_phase_five_destination_blockers_expose_taxonomy_recovery_fields" in evidence
+    assert "13 passed" in evidence
 
 
 def test_phase_five_recovery_taxonomy_defines_required_contract_and_reason_mappings():

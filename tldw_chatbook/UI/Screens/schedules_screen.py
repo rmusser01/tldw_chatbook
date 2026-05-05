@@ -12,9 +12,21 @@ from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
+from .destination_recovery import DestinationRecoveryState
 
 
 logger = logger.bind(module="SchedulesScreen")
+
+SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
+    status_label="Select an active run",
+    unavailable_what="Console follow for Schedules",
+    why="no active schedule run or reading digest output is available",
+    next_action="Start or select a schedule run before opening it in Console.",
+    recovery_action="Schedules",
+    authority_owner="local schedule data",
+    stable_selector="schedules-console-unavailable",
+    disabled_tooltip="Start or select a schedule run before opening it in Console.",
+)
 
 
 class SchedulesScreen(BaseAppScreen):
@@ -187,14 +199,14 @@ class SchedulesScreen(BaseAppScreen):
                 else:
                     yield Static("Console recovery unavailable", classes="destination-section")
                     yield Static(
-                        "No active schedule run is available for Console follow.",
-                        id="schedules-console-unavailable",
+                        SCHEDULES_EMPTY_CONSOLE_RECOVERY.visible_copy,
+                        id=SCHEDULES_EMPTY_CONSOLE_RECOVERY.stable_selector,
                     )
                     yield Button(
                         "Console recovery unavailable",
                         id="schedules-follow-in-console",
                         disabled=True,
-                        tooltip="Unavailable until Schedules has an active run with Console context.",
+                        tooltip=SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
                     )
 
     @on(Button.Pressed, "#schedules-follow-in-console")
@@ -228,6 +240,6 @@ class SchedulesScreen(BaseAppScreen):
             return
 
         self.app_instance.notify(
-            "No active schedule run is available for Console follow.",
+            SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
             severity="warning",
         )
