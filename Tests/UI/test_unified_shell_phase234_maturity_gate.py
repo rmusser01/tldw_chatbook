@@ -5,21 +5,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ROADMAP = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md")
-PHASE_2_CLOSEOUT_METADATA = re.compile(
-    r"<!-- PHASE_2_CLOSEOUT_METADATA:BEGIN -->\s*```json\s*(.*?)\s*```\s*"
-    r"<!-- PHASE_2_CLOSEOUT_METADATA:END -->",
-    re.DOTALL,
-)
-PHASE_3_CLOSEOUT_METADATA = re.compile(
-    r"<!-- PHASE_3_CLOSEOUT_METADATA:BEGIN -->\s*```json\s*(.*?)\s*```\s*"
-    r"<!-- PHASE_3_CLOSEOUT_METADATA:END -->",
-    re.DOTALL,
-)
-PHASE_4_CLOSEOUT_METADATA = re.compile(
-    r"<!-- PHASE_4_CLOSEOUT_METADATA:BEGIN -->\s*```json\s*(.*?)\s*```\s*"
-    r"<!-- PHASE_4_CLOSEOUT_METADATA:END -->",
-    re.DOTALL,
-)
 
 PHASES = {
     "Phase 2": {
@@ -91,21 +76,14 @@ def _markdown_path(path: Path) -> str:
     return relative_path.as_posix()
 
 
-def _phase_two_closeout_metadata(text: str) -> dict:
-    metadata_match = PHASE_2_CLOSEOUT_METADATA.search(text)
-    assert metadata_match is not None
-    return json.loads(metadata_match.group(1))
-
-
-def _phase_three_closeout_metadata(text: str) -> dict:
-    metadata_match = PHASE_3_CLOSEOUT_METADATA.search(text)
-    assert metadata_match is not None
-    return json.loads(metadata_match.group(1))
-
-
-def _phase_four_closeout_metadata(text: str) -> dict:
-    metadata_match = PHASE_4_CLOSEOUT_METADATA.search(text)
-    assert metadata_match is not None
+def _extract_phase_metadata(text: str, phase_number: int) -> dict:
+    metadata_pattern = re.compile(
+        rf"<!-- PHASE_{phase_number}_CLOSEOUT_METADATA:BEGIN -->\s*```json\s*(.*?)\s*```\s*"
+        rf"<!-- PHASE_{phase_number}_CLOSEOUT_METADATA:END -->",
+        re.DOTALL,
+    )
+    metadata_match = metadata_pattern.search(text)
+    assert metadata_match is not None, f"Metadata for Phase {phase_number} not found"
     return json.loads(metadata_match.group(1))
 
 
@@ -149,7 +127,7 @@ def test_phase_two_three_four_closeout_tasks_record_current_parent_status():
 def test_phase_two_closeout_doc_records_verified_workflows_and_task_completion():
     phase = PHASES["Phase 2"]
     closeout_text = _text(phase["closeout_doc"])
-    metadata = _phase_two_closeout_metadata(closeout_text)
+    metadata = _extract_phase_metadata(closeout_text, 2)
 
     assert "/Users/" not in closeout_text
     assert metadata["closeout_task"] == "TASK-4.8"
@@ -186,7 +164,7 @@ def test_phase_two_closeout_doc_records_verified_workflows_and_task_completion()
 def test_phase_three_closeout_doc_records_verified_workflows_and_task_completion():
     phase = PHASES["Phase 3"]
     closeout_text = _text(phase["closeout_doc"])
-    metadata = _phase_three_closeout_metadata(closeout_text)
+    metadata = _extract_phase_metadata(closeout_text, 3)
 
     assert "/Users/" not in closeout_text
     assert metadata["closeout_task"] == "TASK-3.11"
@@ -227,7 +205,7 @@ def test_phase_three_closeout_doc_records_verified_workflows_and_task_completion
 def test_phase_four_closeout_doc_records_verified_destinations_and_task_completion():
     phase = PHASES["Phase 4"]
     closeout_text = _text(phase["closeout_doc"])
-    metadata = _phase_four_closeout_metadata(closeout_text)
+    metadata = _extract_phase_metadata(closeout_text, 4)
 
     assert "/Users/" not in closeout_text
     assert metadata["closeout_task"] == "TASK-5.6"
