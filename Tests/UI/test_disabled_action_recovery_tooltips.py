@@ -4,9 +4,12 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Audio.transcription_history import TranscriptionEntry
+from tldw_chatbook.UI.STTS_Window import STTSWindow
+from tldw_chatbook.UI.Views.RAGSearch import search_rag_window as search_rag_module
+from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
 from tldw_chatbook.Widgets.chunking_templates_widget import ChunkingTemplatesWidget
 from tldw_chatbook.Widgets.template_selector import (
     TemplatePreviewWidget,
@@ -39,6 +42,17 @@ class _FakeScopeService:
 
     async def list_templates(self, *, mode, **kwargs):
         return list(self.templates)
+
+
+class _FakeAppInstance:
+    def __init__(self):
+        self.notifications = []
+
+    def notify(self, message, *args, **kwargs):
+        self.notifications.append((message, kwargs))
+
+    def get_authoritative_runtime_source(self):
+        return "local"
 
 
 class _ChunkingTemplatesTestApp(App):
@@ -78,6 +92,74 @@ def _assert_button_tooltips(root, expected_tooltips: dict[str, str]) -> None:
     for button_id, expected_tooltip in expected_tooltips.items():
         button = root.query_one(f"#{button_id}", Button)
         assert str(button.tooltip) == expected_tooltip
+
+
+def _static_text(static: Static) -> str:
+    return str(static.renderable)
+
+
+@pytest.mark.asyncio
+async def test_search_rag_missing_embeddings_dependency_exposes_phase_five_recovery(monkeypatch, tmp_path):
+    monkeypatch.setattr(search_rag_module, "get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setitem(search_rag_module.DEPENDENCIES_AVAILABLE, "embeddings_rag", False)
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.widget_helpers.alert_embeddings_not_available",
+        lambda widget: None,
+    )
+
+    widget = SearchRAGWindow(_FakeAppInstance())
+    app = _WidgetHost(widget)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        recovery = widget.query_one("#search-rag-dependency-missing", Static)
+        recovery_text = _static_text(recovery)
+        assert "Dependency missing" in recovery_text
+        assert "Unavailable: Search/RAG queries." in recovery_text
+        assert "Why: Missing optional dependencies: embeddings_rag." in recovery_text
+        assert 'Next: Install with pip install -e ".[embeddings_rag]" and restart.' in recovery_text
+        assert "Recovery: Settings > RAG." in recovery_text
+        assert "Owner: optional dependency." in recovery_text
+
+        search_input = widget.query_one("#search-query-input", Input)
+        search_button = widget.query_one("#search-button", Button)
+        assert search_input.disabled is True
+        assert search_button.disabled is True
+        assert widget.is_searching is False
+        assert "Search/RAG queries" in str(search_button.tooltip)
+        assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_stts_missing_speech_dependencies_expose_phase_five_recovery(monkeypatch):
+    import tldw_chatbook.UI.STTS_Window as stts_module
+
+    monkeypatch.setattr(stts_module, "check_tts_deps", lambda: None)
+    monkeypatch.setattr(stts_module, "check_stt_deps", lambda: None)
+    monkeypatch.setitem(stts_module.DEPENDENCIES_AVAILABLE, "tts_processing", False)
+    monkeypatch.setitem(stts_module.DEPENDENCIES_AVAILABLE, "stt_processing", False)
+
+    widget = STTSWindow(_FakeAppInstance())
+    app = _WidgetHost(widget)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        recovery = widget.query_one("#speech-capability-status", Static)
+        recovery_text = _static_text(recovery)
+        assert "Dependency missing" in recovery_text
+        assert "Unavailable: Local speech providers." in recovery_text
+        assert "Why: Missing optional dependencies: local_tts, transcription_faster_whisper, speech_recording." in recovery_text
+        assert (
+            'Next: Install with pip install "tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]" '
+            "and restart."
+        ) in recovery_text
+        assert "Recovery: Settings > Speech." in recovery_text
+        assert "Owner: optional dependency." in recovery_text
+        assert 'pip install "tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]"' in str(
+            recovery.tooltip
+        )
 
 
 @pytest.mark.asyncio

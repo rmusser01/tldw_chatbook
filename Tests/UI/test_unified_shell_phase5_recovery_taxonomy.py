@@ -1,11 +1,16 @@
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-from tldw_chatbook.UI.Screens.destination_recovery import policy_denied_recovery_state
+from tldw_chatbook.UI.Screens.destination_recovery import (
+    optional_dependency_recovery_state,
+    policy_denied_recovery_state,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -20,6 +25,9 @@ PHASE_5_DESTINATION_RECOVERY = Path(
 PHASE_5_RUNTIME_POLICY_RECOVERY = Path(
     "Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-runtime-policy-recovery.md"
 )
+PHASE_5_OPTIONAL_DEPENDENCY_RECOVERY = Path(
+    "Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-optional-dependency-recovery.md"
+)
 PHASE_5_PARENT_TASK = Path("backlog/tasks/task-6 - Phase-5-Capability-And-Recovery-System.md")
 PHASE_5_TAXONOMY_TASK = Path("backlog/tasks/task-6.1 - Phase-5.1-Create-shared-recovery-taxonomy.md")
 PHASE_5_DESTINATION_RECOVERY_TASK = Path(
@@ -27,6 +35,9 @@ PHASE_5_DESTINATION_RECOVERY_TASK = Path(
 )
 PHASE_5_RUNTIME_POLICY_TASK = Path(
     "backlog/tasks/task-6.3 - Phase-5.3-Apply-recovery-taxonomy-to-runtime-policy-blockers.md"
+)
+PHASE_5_OPTIONAL_DEPENDENCY_TASK = Path(
+    "backlog/tasks/task-6.4 - Phase-5.4-Apply-recovery-taxonomy-to-optional-dependency-blockers.md"
 )
 
 
@@ -80,6 +91,7 @@ def test_phase_five_recovery_taxonomy_is_tracked_from_roadmap_readme_and_tasks()
     child_task = _text(PHASE_5_TAXONOMY_TASK)
     destination_recovery_task = _text(PHASE_5_DESTINATION_RECOVERY_TASK)
     runtime_policy_task = _text(PHASE_5_RUNTIME_POLICY_TASK)
+    optional_dependency_task = _text(PHASE_5_OPTIONAL_DEPENDENCY_TASK)
 
     _assert_roadmap_tracks_phase_five_progress(roadmap)
     phase_five_row = _roadmap_phase_evidence_row(roadmap, "Phase 5")
@@ -96,22 +108,31 @@ def test_phase_five_recovery_taxonomy_is_tracked_from_roadmap_readme_and_tasks()
         roadmap,
         re.IGNORECASE,
     )
+    assert re.search(
+        r"Phase\s+5\.4:.*optional dependency blockers.*`TASK-6\.4`",
+        roadmap,
+        re.IGNORECASE,
+    )
     assert "2026-05-05-shared-recovery-taxonomy.md" in roadmap
     assert "2026-05-05-destination-blocker-recovery.md" in roadmap
     assert "2026-05-05-runtime-policy-recovery.md" in roadmap
+    assert "2026-05-05-optional-dependency-recovery.md" in roadmap
 
     assert _status_line(readme) == "in-progress"
     assert "`TASK-6.1`" in readme
     assert "`TASK-6.2`" in readme
     assert "`TASK-6.3`" in readme
+    assert "`TASK-6.4`" in readme
     assert "2026-05-05-shared-recovery-taxonomy.md" in readme
     assert "2026-05-05-destination-blocker-recovery.md" in readme
     assert "2026-05-05-runtime-policy-recovery.md" in readme
+    assert "2026-05-05-optional-dependency-recovery.md" in readme
 
     assert "status: In Progress" in parent_task
     assert "TASK-6.1" in parent_task
     assert "TASK-6.2" in parent_task
     assert "TASK-6.3" in parent_task
+    assert "TASK-6.4" in parent_task
     assert "status: Done" in child_task
     for acceptance_criterion in range(1, 5):
         assert f"- [x] #{acceptance_criterion}" in child_task
@@ -124,6 +145,10 @@ def test_phase_five_recovery_taxonomy_is_tracked_from_roadmap_readme_and_tasks()
     for acceptance_criterion in range(1, 6):
         assert f"- [x] #{acceptance_criterion}" in runtime_policy_task
     assert "Implementation Notes" in runtime_policy_task
+    assert "status: Done" in optional_dependency_task
+    for acceptance_criterion in range(1, 6):
+        assert f"- [x] #{acceptance_criterion}" in optional_dependency_task
+    assert "Implementation Notes" in optional_dependency_task
 
 
 def test_phase_five_destination_recovery_evidence_records_applied_blockers():
@@ -154,6 +179,18 @@ def test_phase_five_runtime_policy_recovery_evidence_records_applied_blockers():
     assert "W+C" in evidence
     assert "test_watchlists_collections_policy_denial_uses_runtime_recovery_taxonomy" in evidence
     assert "4 passed" in evidence
+
+
+def test_phase_five_optional_dependency_recovery_evidence_records_applied_blockers():
+    evidence = _text(PHASE_5_OPTIONAL_DEPENDENCY_RECOVERY)
+
+    assert "/Users/" not in evidence
+    assert "TASK-6.4" in evidence
+    assert "Search/RAG" in evidence
+    assert "Local speech" in evidence
+    assert "dependency_missing" in evidence
+    assert "test_search_rag_missing_embeddings_dependency_exposes_phase_five_recovery" in evidence
+    assert "test_stts_missing_speech_dependencies_expose_phase_five_recovery" in evidence
 
 
 def test_phase_five_recovery_taxonomy_defines_required_contract_and_reason_mappings():
@@ -303,6 +340,45 @@ def test_phase_five_recovery_copy_preserves_policy_message_terminal_punctuation(
     assert "Why: Allow this action?" in recovery_state.visible_copy
     assert "Owner: workspace policy!" in recovery_state.visible_copy
     assert "Allow this action?" in recovery_state.disabled_tooltip
+
+
+def test_phase_five_optional_dependency_recovery_helper_builds_required_fields():
+    recovery_state = optional_dependency_recovery_state(
+        unavailable_what="Search/RAG queries",
+        missing_dependencies=("torch", "sentence-transformers"),
+        install_target='pip install -e ".[embeddings_rag]"',
+        stable_selector="search-rag-dependency-missing",
+        recovery_action="Settings > RAG",
+    )
+
+    assert recovery_state.status_label == "Dependency missing"
+    assert recovery_state.unavailable_what == "Search/RAG queries"
+    assert recovery_state.why == "Missing optional dependencies: torch, sentence-transformers."
+    assert recovery_state.next_action == 'Install with pip install -e ".[embeddings_rag]" and restart.'
+    assert recovery_state.recovery_action == "Settings > RAG"
+    assert recovery_state.authority_owner == "optional dependency"
+    assert recovery_state.stable_selector == "search-rag-dependency-missing"
+    assert "Unavailable: Search/RAG queries." in recovery_state.visible_copy
+    assert "Why: Missing optional dependencies: torch, sentence-transformers." in recovery_state.visible_copy
+    assert 'Install with pip install -e ".[embeddings_rag]" and restart.' in recovery_state.disabled_tooltip
+
+
+def test_search_rag_window_imports_without_screens_recovery_cycle():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow; "
+            "print(SearchRAGWindow.__name__)",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "SearchRAGWindow" in result.stdout
 
 
 def test_service_backed_policy_destinations_use_async_workers_without_asyncio_run():
