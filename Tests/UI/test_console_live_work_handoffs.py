@@ -201,6 +201,110 @@ class StaticLocalChatbookService:
         return list(self.chatbooks)[int(offset) : int(offset) + int(limit)]
 
 
+@pytest.mark.parametrize(
+    (
+        "route",
+        "button_selector",
+        "static_selector",
+        "service_setup",
+        "expected_fragments",
+        "expected_tooltip",
+    ),
+    [
+        (
+            "acp",
+            "#acp-launch-agent",
+            "#acp-empty-state",
+            "default",
+            (
+                "Runtime not configured",
+                "Unavailable: ACP agent launch.",
+                "Why: no ACP-compatible runtime is configured.",
+                "Next: Configure an ACP runtime in Settings before launch.",
+                "Recovery: Settings.",
+                "Owner: local app runtime.",
+            ),
+            "Configure an ACP-compatible runtime in Settings before launching an ACP agent.",
+        ),
+        (
+            "schedules",
+            "#schedules-follow-in-console",
+            "#schedules-console-unavailable",
+            "empty-schedules",
+            (
+                "Select an active run",
+                "Unavailable: Console follow for Schedules.",
+                "Why: no active schedule run or reading digest output is available.",
+                "Next: Start or select a schedule run before opening it in Console.",
+                "Recovery: Schedules.",
+                "Owner: local schedule data.",
+            ),
+            "Start or select a schedule run before opening it in Console.",
+        ),
+        (
+            "workflows",
+            "#workflows-launch-in-console",
+            "#workflows-console-unavailable",
+            "empty-workflows",
+            (
+                "Select an active run",
+                "Unavailable: Console launch for Workflows.",
+                "Why: no active workflow run is available.",
+                "Next: Start or select a workflow run before opening it in Console.",
+                "Recovery: Workflows.",
+                "Owner: local workflow data.",
+            ),
+            "Start or select a workflow run before opening it in Console.",
+        ),
+        (
+            "artifacts",
+            "#artifacts-use-in-console",
+            "#artifacts-console-unavailable",
+            "empty-chatbooks",
+            (
+                "Select an artifact",
+                "Unavailable: Console launch for Chatbook artifacts.",
+                "Why: no local Chatbook artifact exists.",
+                "Next: Create or import a Chatbook artifact before opening it in Console.",
+                "Recovery: Artifacts.",
+                "Owner: local Chatbook service.",
+            ),
+            "Create or import a Chatbook artifact before opening it in Console.",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_phase_five_destination_blockers_expose_taxonomy_recovery_fields(
+    route,
+    button_selector,
+    static_selector,
+    service_setup,
+    expected_fragments,
+    expected_tooltip,
+):
+    app = _build_test_app()
+    if service_setup == "empty-schedules":
+        app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
+        app.local_media_reading_service = StaticReadingDigestService(())
+    elif service_setup == "empty-workflows":
+        app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
+    elif service_setup == "empty-chatbooks":
+        app.local_chatbook_service = StaticLocalChatbookService(())
+
+    host = DestinationHarness(app, route)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        button = screen.query_one(button_selector)
+        recovery_text = str(screen.query_one(static_selector).renderable)
+
+        assert button.disabled is True
+        assert str(button.tooltip) == expected_tooltip
+        for fragment in expected_fragments:
+            assert fragment in recovery_text
+
+
 class RaisingLocalChatbookService:
     async def list_chatbooks(self, *, q=None, limit=100, offset=0, **kwargs):
         raise RuntimeError("registry read failed")
@@ -678,17 +782,17 @@ async def test_schedules_destination_loads_console_follow_item_off_main_thread()
         (
             "schedules",
             "schedules-follow-in-console",
-            "No active schedule run is available for Console follow.",
+            "Unavailable: Console follow for Schedules.",
         ),
         (
             "workflows",
             "workflows-launch-in-console",
-            "No active workflow run is available for Console launch.",
+            "Unavailable: Console launch for Workflows.",
         ),
         (
             "acp",
             "acp-follow-in-console",
-            "Console follow is unavailable until ACP session payloads are wired.",
+            "Unavailable: Console follow for ACP sessions.",
         ),
     ],
 )
@@ -728,7 +832,8 @@ async def test_schedules_destination_keeps_console_follow_disabled_without_activ
 
         assert button.disabled is True
         assert str(button.label) == "Console recovery unavailable"
-        assert "No active schedule run is available for Console follow." in _screen_static_text(screen)
+        assert "Unavailable: Console follow for Schedules." in _screen_static_text(screen)
+        assert "Next: Start or select a schedule run before opening it in Console." in _screen_static_text(screen)
 
     app.open_active_home_item_in_console.assert_not_called()
 
@@ -866,7 +971,8 @@ async def test_workflows_destination_keeps_console_launch_disabled_without_activ
 
         assert button.disabled is True
         assert str(button.label) == "Console launch unavailable"
-        assert "No active workflow run is available for Console launch." in _screen_static_text(screen)
+        assert "Unavailable: Console launch for Workflows." in _screen_static_text(screen)
+        assert "Next: Start or select a workflow run before opening it in Console." in _screen_static_text(screen)
 
     app.open_active_home_item_in_console.assert_not_called()
 
@@ -1134,7 +1240,8 @@ async def test_schedules_destination_keeps_console_launch_disabled_without_diges
 
         assert button.disabled is True
         assert str(button.label) == "Console recovery unavailable"
-        assert "No active schedule run is available for Console follow." in _screen_static_text(screen)
+        assert "Unavailable: Console follow for Schedules." in _screen_static_text(screen)
+        assert "Next: Start or select a schedule run before opening it in Console." in _screen_static_text(screen)
         await pilot.click("#schedules-follow-in-console")
         await pilot.pause(0.1)
 
@@ -1240,7 +1347,10 @@ async def test_artifacts_destination_keeps_console_launch_disabled_without_chatb
 
         assert button.disabled is True
         assert str(button.label) == "Console launch unavailable"
-        assert "No local Chatbook artifact is available for Console launch." in _screen_static_text(screen)
+        assert "Unavailable: Console launch for Chatbook artifacts." in _screen_static_text(screen)
+        assert "Next: Create or import a Chatbook artifact before opening it in Console." in _screen_static_text(
+            screen
+        )
 
         await pilot.click("#artifacts-use-in-console")
         await pilot.pause(0.1)
@@ -1406,8 +1516,10 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from
         text = _screen_static_text(screen)
 
         assert button.disabled is True
-        assert "Chatbook service unavailable; retry Artifacts later." in text
-        assert "No local Chatbook artifact is available" not in text
+        assert "Unavailable: Console launch for Chatbook artifacts." in text
+        assert "Why: the local Chatbook service is unavailable." in text
+        assert "Next: Retry Artifacts after the local Chatbook service is available." in text
+        assert "Why: no local Chatbook artifact exists." not in text
 
         await pilot.click("#artifacts-use-in-console")
         await pilot.pause(0.1)

@@ -41,5 +41,5 @@ Systematize missing dependency, auth, server, runtime, and policy states so bloc
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Started Phase 5 with TASK-6.1, which defines the shared recovery taxonomy and tracking contract. Parent Phase 5 remains In Progress until later slices apply the taxonomy to blocker-state families and running-app QA verifies recovery paths.
+Started Phase 5 with TASK-6.1, which defines the shared recovery taxonomy and tracking contract. TASK-6.2 applies the taxonomy to the first shell destination blocker family: ACP runtime configuration, Schedules empty active-run, Workflows empty active-run, and Artifacts empty Chatbook states. Parent Phase 5 remains In Progress until later slices apply the taxonomy to remaining runtime-policy and optional-dependency blocker families and running-app QA verifies recovery paths.
 <!-- SECTION:NOTES:END -->

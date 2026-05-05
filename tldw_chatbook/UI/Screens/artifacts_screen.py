@@ -21,11 +21,32 @@ from textual.widgets import Button, Static
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from .destination_recovery import DestinationRecoveryState
 
 
 logger = logger.bind(module="ArtifactsScreen")
 CHATBOOK_SERVICE_ERROR_COPY = "Chatbook service unavailable; retry Artifacts later."
 DANGEROUS_TEXT_PATTERNS = ("javascript:", "onclick=", "onerror=")
+ARTIFACTS_EMPTY_CHATBOOK_RECOVERY = DestinationRecoveryState(
+    status_label="Select an artifact",
+    unavailable_what="Console launch for Chatbook artifacts",
+    why="no local Chatbook artifact exists",
+    next_action="Create or import a Chatbook artifact before opening it in Console.",
+    recovery_action="Artifacts",
+    authority_owner="local Chatbook service",
+    stable_selector="artifacts-console-unavailable",
+    disabled_tooltip="Create or import a Chatbook artifact before opening it in Console.",
+)
+ARTIFACTS_CHATBOOK_SERVICE_UNAVAILABLE_RECOVERY = DestinationRecoveryState(
+    status_label="Service unavailable",
+    unavailable_what="Console launch for Chatbook artifacts",
+    why="the local Chatbook service is unavailable",
+    next_action="Retry Artifacts after the local Chatbook service is available.",
+    recovery_action="Retry Artifacts",
+    authority_owner="local Chatbook service",
+    stable_selector="artifacts-console-unavailable",
+    disabled_tooltip="Retry Artifacts after the local Chatbook service is available.",
+)
 
 
 class ArtifactsScreen(BaseAppScreen):
@@ -211,22 +232,20 @@ class ArtifactsScreen(BaseAppScreen):
                     )
                 else:
                     yield Static("Console launch unavailable", classes="destination-section")
-                    unavailable_copy = self._chatbook_lookup_error or (
-                        "No local Chatbook artifact is available for Console launch."
+                    recovery_state = (
+                        ARTIFACTS_CHATBOOK_SERVICE_UNAVAILABLE_RECOVERY
+                        if self._chatbook_lookup_error
+                        else ARTIFACTS_EMPTY_CHATBOOK_RECOVERY
                     )
                     yield Static(
-                        unavailable_copy,
-                        id="artifacts-console-unavailable",
+                        recovery_state.visible_copy,
+                        id=recovery_state.stable_selector,
                     )
                     yield Button(
                         "Console launch unavailable",
                         id="artifacts-use-in-console",
                         disabled=True,
-                        tooltip=(
-                            "Unavailable while the local Chatbook service is unavailable."
-                            if self._chatbook_lookup_error
-                            else "Unavailable until a local Chatbook artifact exists."
-                        ),
+                        tooltip=recovery_state.disabled_tooltip,
                     )
 
     @on(Button.Pressed, "#artifacts-open-chatbooks")
@@ -238,8 +257,13 @@ class ArtifactsScreen(BaseAppScreen):
         event.stop()
         launch_kwargs = self._latest_chatbook_console_launch
         if launch_kwargs is None:
+            recovery_state = (
+                ARTIFACTS_CHATBOOK_SERVICE_UNAVAILABLE_RECOVERY
+                if self._chatbook_lookup_error
+                else ARTIFACTS_EMPTY_CHATBOOK_RECOVERY
+            )
             self.app_instance.notify(
-                self._chatbook_lookup_error or "No local Chatbook artifact is available for Console launch.",
+                recovery_state.disabled_tooltip,
                 severity="warning",
             )
             return

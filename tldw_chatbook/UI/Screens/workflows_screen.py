@@ -9,9 +9,21 @@ from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from ..Navigation.base_app_screen import BaseAppScreen
+from .destination_recovery import DestinationRecoveryState
 
 
 logger = _logger.bind(module="WorkflowsScreen")
+
+WORKFLOWS_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
+    status_label="Select an active run",
+    unavailable_what="Console launch for Workflows",
+    why="no active workflow run is available",
+    next_action="Start or select a workflow run before opening it in Console.",
+    recovery_action="Workflows",
+    authority_owner="local workflow data",
+    stable_selector="workflows-console-unavailable",
+    disabled_tooltip="Start or select a workflow run before opening it in Console.",
+)
 
 
 class WorkflowsScreen(BaseAppScreen):
@@ -113,14 +125,14 @@ class WorkflowsScreen(BaseAppScreen):
                     yield Static("Console launch unavailable", classes="destination-section")
                     yield Static("No workflow service is wired yet.", id="workflows-empty-state")
                     yield Static(
-                        "No active workflow run is available for Console launch.",
-                        id="workflows-console-unavailable",
+                        WORKFLOWS_EMPTY_CONSOLE_RECOVERY.visible_copy,
+                        id=WORKFLOWS_EMPTY_CONSOLE_RECOVERY.stable_selector,
                     )
                     yield Button(
                         "Console launch unavailable",
                         id="workflows-launch-in-console",
                         disabled=True,
-                        tooltip="Unavailable until Workflows can pass actionable execution context to Console.",
+                        tooltip=WORKFLOWS_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
                     )
 
     @on(Button.Pressed, "#workflows-launch-in-console")
@@ -129,7 +141,7 @@ class WorkflowsScreen(BaseAppScreen):
         target_id = self._latest_console_follow_item_id
         if not target_id:
             self.app_instance.notify(
-                "No active workflow run is available for Console launch.",
+                WORKFLOWS_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
                 severity="warning",
             )
             return
