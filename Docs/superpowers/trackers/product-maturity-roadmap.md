@@ -1,7 +1,7 @@
 # Product Maturity Roadmap
 
 Date: 2026-05-05
-Status: Phase 1.5 verified; Phase 1 in progress
+Status: Phase 1.6 verified; Phase 1 in progress
 Source Branch: `dev`
 Source Spec: `Docs/superpowers/specs/2026-05-05-product-maturity-phased-roadmap-design.md`
 
@@ -18,6 +18,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 - Phase 1.3 verifies top-level destination reachability only; keyboard/focus, visual, empty/error/setup, and core-loop gates remain open.
 - Phase 1.4 verifies keyboard reachability and fallback affordances only; visual, empty/error/setup, and core-loop gates remain open.
 - Phase 1.5 verifies visual/chrome integrity across the supported size matrix only; empty/error/setup and core-loop gates remain open.
+- Phase 1.6 verifies empty/error/setup-state coverage only; the narrow core-loop proof remains open.
 
 ## Severity Policy
 
@@ -36,6 +37,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 - Phase 1.3: Top-Level Navigation Smoke Walkthrough - `TASK-8.3`
 - Phase 1.4: Keyboard And Focus Sweep - `TASK-8.4`
 - Phase 1.5: Visual Broken-State Audit - `TASK-8.5`
+- Phase 1.6: Empty/Error/Setup State Coverage - `TASK-8.6`
 - Phase 2: Core Agentic Loop - `TASK-9`
 - Phase 3: Knowledge And Study Workflows - `TASK-10`
 - Phase 4: Agent Configuration And Execution - `TASK-11`
@@ -52,7 +54,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 
 | Phase | Goal | Status | Backlog Tasks | QA Evidence | Residual Risk |
 | --- | --- | --- | --- | --- | --- |
-| Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | in_progress | `TASK-8`, Phase 1.1 (`TASK-8.1`), Phase 1.2 (`TASK-8.2`), Phase 1.3 (`TASK-8.3`), Phase 1.4 (`TASK-8.4`), Phase 1.5 (`TASK-8.5`) | `phase-1/` | Remaining gates: empty/error/setup-state coverage and narrow core-loop proof. |
+| Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | in_progress | `TASK-8`, Phase 1.1 (`TASK-8.1`), Phase 1.2 (`TASK-8.2`), Phase 1.3 (`TASK-8.3`), Phase 1.4 (`TASK-8.4`), Phase 1.5 (`TASK-8.5`), Phase 1.6 (`TASK-8.6`) | `phase-1/` | Remaining gate: narrow core-loop proof. |
 | Phase 2: Core Agentic Loop | Complete source/question to grounded Console to Artifact/Chatbook loop. | planned | `TASK-9` | not-started | Depends on Phase 1 QA baseline. |
 | Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | planned | `TASK-10` | not-started | Depends on Phase 2 core loop and later task slicing. |
 | Phase 4: Agent Configuration And Execution | Mature Personas, Skills, MCP, ACP, Schedules, and Workflows. | planned | `TASK-11` | not-started | Depends on service adapters and runtime readiness. |
@@ -91,3 +93,9 @@ Status: verified
 Status: verified
 
 - `Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-5-visual-broken-state-audit.md`
+
+## Phase 1.6 Evidence
+
+Status: verified
+
+- `Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-6-empty-error-setup-states.md`

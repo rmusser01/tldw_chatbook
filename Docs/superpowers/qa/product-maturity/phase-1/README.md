@@ -46,3 +46,11 @@ Phase 1.5 visual broken-state status: verified
 - `2026-05-05-phase-1-5-visual-broken-state-audit.md`
 
 Phase 1.5 verifies clean-run visual/chrome integrity across compact, laptop, and large terminal sizes for every top-level destination. It does not complete the full empty/error/setup-state or core-loop audits.
+
+Phase 1.6 evidence:
+
+Phase 1.6 empty/error/setup status: verified
+
+- `2026-05-05-phase-1-6-empty-error-setup-states.md`
+
+Phase 1.6 verifies clean-run setup blockers, missing optional dependencies, service-unavailable states, and local runtime blockers. It does not complete the narrow core-loop proof gate.
