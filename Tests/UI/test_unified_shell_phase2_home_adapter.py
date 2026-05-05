@@ -50,7 +50,7 @@ def test_phase_two_home_adapter_is_linked_from_index_roadmap_and_task():
     roadmap_text = ROADMAP.read_text(encoding="utf-8")
     assert "TASK-4.1" in roadmap_text
     assert evidence_name in roadmap_text
-    assert "| Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | in-progress |" in roadmap_text
+    assert "| Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | verified |" in roadmap_text
 
     task_text = TASK_4_1.read_text(encoding="utf-8")
     assert "status: Done" in task_text
