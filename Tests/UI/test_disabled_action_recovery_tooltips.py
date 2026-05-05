@@ -126,6 +126,7 @@ async def test_search_rag_missing_embeddings_dependency_exposes_phase_five_recov
         search_button = widget.query_one("#search-button", Button)
         assert search_input.disabled is True
         assert search_button.disabled is True
+        assert widget.is_searching is False
         assert "Search/RAG queries" in str(search_button.tooltip)
         assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
 

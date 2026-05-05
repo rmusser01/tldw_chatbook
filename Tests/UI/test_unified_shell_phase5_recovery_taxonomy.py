@@ -1,5 +1,7 @@
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -359,6 +361,24 @@ def test_phase_five_optional_dependency_recovery_helper_builds_required_fields()
     assert "Unavailable: Search/RAG queries." in recovery_state.visible_copy
     assert "Why: Missing optional dependencies: torch, sentence-transformers." in recovery_state.visible_copy
     assert 'Install with pip install -e ".[embeddings_rag]" and restart.' in recovery_state.disabled_tooltip
+
+
+def test_search_rag_window_imports_without_screens_recovery_cycle():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow; "
+            "print(SearchRAGWindow.__name__)",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "SearchRAGWindow" in result.stdout
 
 
 def test_service_backed_policy_destinations_use_async_workers_without_asyncio_run():

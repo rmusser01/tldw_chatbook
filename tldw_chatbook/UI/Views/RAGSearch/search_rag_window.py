@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Optional, List, Dict, Any, Tuple
 import asyncio
 from datetime import datetime
 from html import escape as html_escape
+from inspect import isawaitable
 from pathlib import Path
 import json
 
@@ -28,7 +29,7 @@ from rich.text import Text
 from loguru import logger
 
 # Local imports
-from ...Screens.destination_recovery import optional_dependency_recovery_state
+from ...destination_recovery import optional_dependency_recovery_state
 from .search_history_dropdown import SearchHistoryDropdown
 from .search_result import SearchResult
 from .saved_searches_panel import SavedSearchesPanel
@@ -498,17 +499,21 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
 
     async def on_mount(self) -> None:
         """Called when the widget is mounted"""
+        parent_on_mount = getattr(super(), "on_mount", None)
+        if callable(parent_on_mount):
+            result = parent_on_mount()
+            if isawaitable(result):
+                await result
+
         # Check if embeddings/RAG dependencies are available
         if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
             from ....Utils.widget_helpers import alert_embeddings_not_available
             recovery_state = self._missing_embeddings_recovery_state()
             # Show alert after a short delay to ensure UI is ready
             self.set_timer(0.1, lambda: alert_embeddings_not_available(self))
-            # Disable search functionality
-            self.is_searching = True  # Prevent searches
             try:
                 results_list = self.query_one("#results-list-enhanced")
-                results_list.remove_children()
+                await results_list.remove_children()
                 await results_list.mount(
                     Static(
                         recovery_state.visible_copy,

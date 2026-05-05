@@ -30,13 +30,14 @@ Apply the Phase 5 recovery taxonomy to visible optional-dependency blockers so u
 - Focused green verification after implementation: `python -m pytest Tests/UI/test_disabled_action_recovery_tooltips.py Tests/UI/test_unified_shell_phase5_recovery_taxonomy.py -q -k "missing_embeddings or missing_speech or optional_dependency_recovery_helper"`
 - Focused green result: `3 passed`
 - Affected UI and tracking verification: `python -m pytest Tests/UI/test_destination_shells.py Tests/UI/test_disabled_action_recovery_tooltips.py Tests/UI/test_unified_shell_phase5_recovery_taxonomy.py -q`
-- Affected verification result: `92 passed`
+- Affected verification result after PR review fixes: `93 passed`
 
 ## Regression Coverage
 
 - `test_search_rag_missing_embeddings_dependency_exposes_phase_five_recovery`
 - `test_stts_missing_speech_dependencies_expose_phase_five_recovery`
 - `test_phase_five_optional_dependency_recovery_helper_builds_required_fields`
+- `test_search_rag_window_imports_without_screens_recovery_cycle`
 
 ## Residual Risk
 
