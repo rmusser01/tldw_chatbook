@@ -1,8 +1,8 @@
 # Unified Shell Maturity Roadmap
 
 Date: 2026-05-05
-Status: Phase 2, Phase 3, and Phase 4 verified; Phase 5 and Phase 6 not started
-Source Branch: `origin/dev` at `4e025bf9` plus `codex/unified-shell-phase4-destination-closeout`
+Status: Phase 2, Phase 3, and Phase 4 verified; Phase 5 in progress; Phase 6 not started
+Source Branch: `origin/dev` at `42b2ac1e` plus `codex/unified-shell-phase5-recovery-taxonomy`
 
 ## Purpose
 
@@ -37,7 +37,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 - Library now surfaces a local source snapshot from notes, media, and conversations and can stage concrete source context into Console; full Library-native detail views, embedded Import/Export, and embedded Search/RAG remain future work.
 - Personas now surfaces a local behavior snapshot from characters and persona profiles and can stage concrete behavior context into Console; detail, edit, import/export, archetypes, exemplars, dictionaries, and lore remain future work.
 - W+C now surfaces a local monitored-source and saved-collection snapshot from `watchlist_scope_service` and `media_reading_scope_service` and can stage concrete W+C context into Console; full detail, edit, import/export, feed WebSub, alert-rule, retry/backoff, and server collection-feed UX remain future work.
-- Phase 2, Phase 3, and Phase 4 implementation and maturity-gate replays are verified. Phase 5 and Phase 6 remain open for shared recovery patterns and full first-time/power-user audit replay.
+- Phase 2, Phase 3, and Phase 4 implementation and maturity-gate replays are verified. Phase 5 is in progress with a shared recovery taxonomy; Phase 6 remains open for full first-time/power-user audit replay.
 
 ## Definition Of Done
 
@@ -107,6 +107,7 @@ Initial child tasks:
 - Phase 4.4: Adopt Personas service in Personas destination - `TASK-5.4`
 - Phase 4.5: Adopt W+C services in W+C destination - `TASK-5.5`
 - Phase 4.6: Replay destination service-adoption maturity gate - `TASK-5.6`
+- Phase 5.1: Create shared recovery taxonomy - `TASK-6.1`
 
 ## QA Evidence Index
 
@@ -117,7 +118,7 @@ Initial child tasks:
 | Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | verified |
 | Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | verified |
 | Phase 4 | `Docs/superpowers/qa/unified-shell/phase-4/` | verified |
-| Phase 5 | `Docs/superpowers/qa/unified-shell/phase-5/` | not-started |
+| Phase 5 | `Docs/superpowers/qa/unified-shell/phase-5/` | in-progress |
 | Phase 6 | `Docs/superpowers/qa/unified-shell/phase-6/` | not-started |
 
 ## Phase Overview
@@ -129,7 +130,7 @@ Initial child tasks:
 | Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | verified | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6`, `TASK-4.7`, `TASK-4.8` | `phase-2/` | Schedule and agent-service adapters remain future work; Phase 2 is verified for explicit Home adapter behavior, local W+C/notification flows, and recoverable unavailable states. |
 | Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | verified | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, `TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9`, `TASK-3.10`, `TASK-3.11` | `phase-3/` | ACP, MCP, and durable live event streams remain future work; Phase 3 is verified for implemented Console source launch, follow, status, and recovery flows. |
 | Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | verified | `TASK-5`, `TASK-5.1`, `TASK-5.2`, `TASK-5.3`, `TASK-5.4`, `TASK-5.5`, `TASK-5.6` | `phase-4/` | Full CRUD/server-parity depth remains future work; Phase 4 is verified for destination ownership, concrete local workflows, Console staging, and honest recovery states. |
-| Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | not-started | `TASK-6` | `phase-5/` | Shared taxonomy not yet extracted. |
+| Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | in-progress | `TASK-6`, `TASK-6.1` | `phase-5/` | Shared recovery taxonomy is defined; remaining blocker-state families still need application and running-app QA. |
 | Phase 6: Audit Replay And Closeout | Prove shell works for first-time and power users. | not-started | `TASK-7` | `phase-6/` | Depends on prior phases and running-app QA. |
 
 ## Phase 1.1 QA Harness Evidence
@@ -315,6 +316,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-5.6` replays destination service-adoption workflows in the running app and closes `TASK-5` as verified:
 
 - `Docs/superpowers/qa/unified-shell/phase-4/2026-05-05-phase-4-destination-service-adoption-closeout.md`
+
+## Phase 5.1 Shared Recovery Taxonomy
+
+`TASK-6.1` defines the shell-level recovery taxonomy that later Phase 5 slices must apply to blocked dependency, auth, server, runtime, policy, service, and selection states:
+
+- `Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-shared-recovery-taxonomy.md`
 
 ## Phase 0: Canonical Tracking
 
