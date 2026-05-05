@@ -1,8 +1,8 @@
 # Unified Shell Maturity Roadmap
 
 Date: 2026-05-05
-Status: Phase 2, Phase 3, and Phase 4 need maturity-gate QA
-Source Branch: `origin/dev` at `5d178698` plus `codex/unified-shell-phase234-closeout`
+Status: Phase 2 verified; Phase 3 and Phase 4 need maturity-gate QA
+Source Branch: `origin/dev` at `32ac2bdc` plus `codex/unified-shell-phase2-home-closeout`
 
 ## Purpose
 
@@ -37,7 +37,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 - Library now surfaces a local source snapshot from notes, media, and conversations and can stage concrete source context into Console; full Library-native detail views, embedded Import/Export, and embedded Search/RAG remain future work.
 - Personas now surfaces a local behavior snapshot from characters and persona profiles and can stage concrete behavior context into Console; detail, edit, import/export, archetypes, exemplars, dictionaries, and lore remain future work.
 - W+C now surfaces a local monitored-source and saved-collection snapshot from `watchlist_scope_service` and `media_reading_scope_service` and can stage concrete W+C context into Console; full detail, edit, import/export, feed WebSub, alert-rule, retry/backoff, and server collection-feed UX remain future work.
-- Phase 2, Phase 3, and Phase 4 implementation slices are merged, but the parent phases remain open until `TASK-4.8`, `TASK-3.11`, and `TASK-5.6` replay running-app maturity-gate QA and prove workflows are not render-only or click-only behavior.
+- Phase 2 implementation and maturity-gate replay are verified. Phase 3 and Phase 4 implementation slices are merged, but their parent phases remain open until `TASK-3.11` and `TASK-5.6` replay running-app maturity-gate QA and prove workflows are not render-only or click-only behavior.
 
 ## Definition Of Done
 
@@ -114,7 +114,7 @@ Initial child tasks:
 | --- | --- | --- |
 | Phase 0 | `Docs/superpowers/qa/unified-shell/phase-0/` | verified |
 | Phase 1 | `Docs/superpowers/qa/unified-shell/phase-1/` | verified |
-| Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | qa-needed |
+| Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | verified |
 | Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | qa-needed |
 | Phase 4 | `Docs/superpowers/qa/unified-shell/phase-4/` | qa-needed |
 | Phase 5 | `Docs/superpowers/qa/unified-shell/phase-5/` | not-started |
@@ -126,7 +126,7 @@ Initial child tasks:
 | --- | --- | --- | --- | --- | --- |
 | Phase 0: Canonical Tracking | Make remaining work trackable. | verified | `TASK-1`, `TASK-1.1`, `TASK-1.2` | `phase-0/` | Product UI workflows are out of scope for Phase 0. |
 | Phase 1: Shell Contract Complete | Remove false shell affordances and prove shell usability. | verified | `TASK-2`, `TASK-2.1`, `TASK-2.2`, `TASK-2.3`, `TASK-2.4` | `phase-1/` | Live service workflows remain intentionally deferred to Phases 2-6. |
-| Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | qa-needed | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6`, `TASK-4.7`, `TASK-4.8` | `phase-2/` | Implementation slices are merged, but `TASK-4.8` must replay running-app QA before the parent phase can be verified. |
+| Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | verified | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6`, `TASK-4.7`, `TASK-4.8` | `phase-2/` | Schedule and agent-service adapters remain future work; Phase 2 is verified for explicit Home adapter behavior, local W+C/notification flows, and recoverable unavailable states. |
 | Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | qa-needed | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, `TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9`, `TASK-3.10`, `TASK-3.11` | `phase-3/` | Implementation slices are merged, but `TASK-3.11` must replay running-app QA before the parent phase can be verified. |
 | Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | qa-needed | `TASK-5`, `TASK-5.1`, `TASK-5.2`, `TASK-5.3`, `TASK-5.4`, `TASK-5.5`, `TASK-5.6` | `phase-4/` | Implementation slices are merged, but `TASK-5.6` must replay running-app QA before the parent phase can be verified. |
 | Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | not-started | `TASK-6` | `phase-5/` | Shared taxonomy not yet extracted. |
@@ -204,9 +204,9 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 
 ## Phase 2.8 Home Operational-Control Maturity-Gate QA
 
-`TASK-4.8` must replay Home operational-control workflows in the running app before `TASK-4` can be verified:
+`TASK-4.8` replays Home operational-control workflows in the running app and closes `TASK-4` as verified:
 
-- Planned evidence path: `Docs/superpowers/qa/unified-shell/phase-2/2026-05-05-phase-2-home-operational-control-closeout.md`
+- `Docs/superpowers/qa/unified-shell/phase-2/2026-05-05-phase-2-home-operational-control-closeout.md`
 
 ## Phase 3.1 Console Live-Work Launch Contract Evidence
 

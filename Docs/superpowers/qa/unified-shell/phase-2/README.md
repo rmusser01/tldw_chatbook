@@ -1,6 +1,6 @@
 # Phase 2 QA Evidence
 
-Status: qa-needed
+Status: verified
 
 This directory contains durable QA summaries for Phase 2 Home operational-control work.
 
@@ -13,9 +13,8 @@ This directory contains durable QA summaries for Phase 2 Home operational-contro
 - `2026-05-03-home-notification-review-routing.md` - `TASK-4.5` Home notification review CTA routing into the existing inbox.
 - `2026-05-03-home-local-watchlist-run-snapshot.md` - `TASK-4.6` local W+C watchlist run snapshot state for Home active work.
 - `2026-05-03-home-local-watchlist-run-details.md` - `TASK-4.7` Home local W+C watchlist run detail routing into the W+C runs surface.
+- `2026-05-05-phase-2-home-operational-control-closeout.md` - `TASK-4.8` running-app QA replay for Home operational-control completion.
 
-## Pending Maturity-Gate QA
+## Closeout
 
-- `2026-05-05-phase-2-home-operational-control-closeout.md` - planned `TASK-4.8` running-app QA replay for Home operational-control completion.
-
-Do not mark Phase 2 verified until Home approve, reject, pause, resume, retry, and open-detail workflows are verified against real service-backed adapters or explicitly recoverable unavailable states.
+Phase 2 is verified for Home operational-control completion because Home approve, reject, pause, resume, retry, open-detail, notification review, and Console handoff workflows are verified against real local adapters or explicitly recoverable unavailable states.
