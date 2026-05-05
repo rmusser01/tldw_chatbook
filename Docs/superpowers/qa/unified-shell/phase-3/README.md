@@ -1,6 +1,6 @@
 # Phase 3 QA Evidence
 
-Status: qa-needed
+Status: verified
 
 This directory contains durable QA summaries for Phase 3 Console live-work hub slices.
 
@@ -17,9 +17,8 @@ This directory contains durable QA summaries for Phase 3 Console live-work hub s
 - `2026-05-03-rag-search-console-launch.md` - `TASK-3.8` Search/RAG result Console launch producer for selected retrieved evidence.
 - `2026-05-03-artifacts-chatbook-console-launch.md` - `TASK-3.9` Artifacts destination Console launch producer for the latest local Chatbook artifact.
 - `2026-05-03-workflows-console-launch.md` - `TASK-3.10` Workflows destination Console launch producer for active workflow runs.
+- `2026-05-05-phase-3-console-live-work-closeout.md` - `TASK-3.11` running-app QA replay for Console live-work hub completion.
 
-## Pending Maturity-Gate QA
+## Closeout
 
-- `2026-05-05-phase-3-console-live-work-closeout.md` - planned `TASK-3.11` running-app QA replay for Console live-work hub completion.
-
-Do not mark Phase 3 verified until launch, follow, status, and recovery flows are verified in the running app against workflows, schedules, ACP, MCP, RAG, artifacts, and active-work source adapters.
+Phase 3 is verified for Console live-work hub completion because launch, follow, status, and recovery flows are verified in the running app against implemented Workflows, Schedules, Search/RAG, Artifacts, W+C, and Home active-work source adapters. ACP, MCP, and deeper event streams remain explicit recoverable gaps rather than false live controls.

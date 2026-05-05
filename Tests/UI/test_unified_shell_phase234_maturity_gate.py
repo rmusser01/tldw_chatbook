@@ -10,6 +10,11 @@ PHASE_2_CLOSEOUT_METADATA = re.compile(
     r"<!-- PHASE_2_CLOSEOUT_METADATA:END -->",
     re.DOTALL,
 )
+PHASE_3_CLOSEOUT_METADATA = re.compile(
+    r"<!-- PHASE_3_CLOSEOUT_METADATA:BEGIN -->\s*```json\s*(.*?)\s*```\s*"
+    r"<!-- PHASE_3_CLOSEOUT_METADATA:END -->",
+    re.DOTALL,
+)
 
 PHASES = {
     "Phase 2": {
@@ -33,7 +38,7 @@ PHASES = {
     },
     "Phase 3": {
         "qa_dir": "phase-3",
-        "status": "qa-needed",
+        "status": "verified",
         "parent_task": "TASK-3",
         "closeout_task": "TASK-3.11",
         "parent_task_file": Path("backlog/tasks/task-3 - Phase-3-Console-Live-Work-Hub.md"),
@@ -46,9 +51,9 @@ PHASES = {
         ),
         "overview_row": (
             "| Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | "
-            "qa-needed |"
+            "verified |"
         ),
-        "task_status": "To Do",
+        "task_status": "Done",
     },
     "Phase 4": {
         "qa_dir": "phase-4",
@@ -87,10 +92,16 @@ def _phase_two_closeout_metadata(text: str) -> dict:
     return json.loads(metadata_match.group(1))
 
 
+def _phase_three_closeout_metadata(text: str) -> dict:
+    metadata_match = PHASE_3_CLOSEOUT_METADATA.search(text)
+    assert metadata_match is not None
+    return json.loads(metadata_match.group(1))
+
+
 def test_phase_two_three_four_roadmap_and_indexes_record_current_gate_status():
     roadmap_text = _text(ROADMAP)
 
-    assert "Status: Phase 2 verified; Phase 3 and Phase 4 need maturity-gate QA" in roadmap_text
+    assert "Status: Phase 2 and Phase 3 verified; Phase 4 needs maturity-gate QA" in roadmap_text
 
     for phase_name, phase in PHASES.items():
         qa_row = (
@@ -158,4 +169,45 @@ def test_phase_two_closeout_doc_records_verified_workflows_and_task_completion()
     assert "status: Done" in task_text
     assert "- [x] #1" in task_text
     assert "- [x] #3" in task_text
+    assert "Implementation Notes" in task_text
+
+
+def test_phase_three_closeout_doc_records_verified_workflows_and_task_completion():
+    phase = PHASES["Phase 3"]
+    closeout_text = _text(phase["closeout_doc"])
+    metadata = _phase_three_closeout_metadata(closeout_text)
+
+    assert "/Users/" not in closeout_text
+    assert metadata["closeout_task"] == "TASK-3.11"
+    assert metadata["parent_task"] == "TASK-3"
+    assert metadata["decision"] == "verified"
+    assert metadata["verified_sources"] == [
+        "home-active-work",
+        "watchlists-collections",
+        "schedules",
+        "rag-search",
+        "artifacts",
+        "workflows",
+    ]
+    assert metadata["verified_recovery_sources"] == [
+        "acp",
+        "mcp",
+        "event-streams",
+    ]
+    assert metadata["source_readiness"]["acp"] == "not_wired_recoverable"
+    assert metadata["source_readiness"]["mcp"] == "not_wired_recoverable"
+    assert metadata["final_focused_replay_result"]["failed"] == 0
+    assert metadata["final_focused_replay_result"]["passed"] > 0
+    assert metadata["final_broader_replay_result"]["failed"] == 0
+    assert metadata["final_broader_replay_result"]["passed"] >= metadata["final_focused_replay_result"]["passed"]
+
+    parent_text = _text(phase["parent_task_file"])
+    assert "status: Done" in parent_text
+    for acceptance_criterion in range(1, 5):
+        assert f"- [x] #{acceptance_criterion}" in parent_text
+
+    task_text = _text(phase["task_file"])
+    assert "status: Done" in task_text
+    for acceptance_criterion in range(1, 5):
+        assert f"- [x] #{acceptance_criterion}" in task_text
     assert "Implementation Notes" in task_text
