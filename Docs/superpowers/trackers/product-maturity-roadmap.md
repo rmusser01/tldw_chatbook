@@ -1,7 +1,7 @@
 # Product Maturity Roadmap
 
 Date: 2026-05-05
-Status: Phase 1 verified; Phase 2.1 verified
+Status: Phase 1 verified; Phase 2.2 verified
 Source Branch: `dev`
 Source Spec: `Docs/superpowers/specs/2026-05-05-product-maturity-phased-roadmap-design.md`
 
@@ -21,6 +21,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 - Phase 1.6 verifies empty/error/setup-state coverage only.
 - Phase 1.7 verifies the remaining narrow core-loop proof gate: Search/RAG result context can stage into Console with visible local source authority.
 - Phase 2.1 verifies the first core-agentic-loop contract: staged Search/RAG context reaches the model-bound Console request and remains staged when send is blocked before generation starts.
+- Phase 2.2 verifies the next core-agentic-loop contract: completed assistant responses can create local Chatbook artifact records with bounded Console provenance and recoverable failure notifications.
 
 ## Severity Policy
 
@@ -43,6 +44,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 - Phase 1.7: Narrow Core-Loop Proof - `TASK-8.7`
 - Phase 2: Core Agentic Loop - `TASK-9`
 - Phase 2.1: Grounded Console Response Contract - `TASK-9.1`
+- Phase 2.2: Console Chatbook Artifact Save Contract - `TASK-9.2`
 - Phase 3: Knowledge And Study Workflows - `TASK-10`
 - Phase 4: Agent Configuration And Execution - `TASK-11`
 - Phase 5: Server-Parity And Live Integrations - `TASK-12`
@@ -54,13 +56,14 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 | --- | --- | --- |
 | Phase 1 | `Docs/superpowers/qa/product-maturity/phase-1/` | verified |
 | Phase 2.1 | `Docs/superpowers/qa/product-maturity/phase-2/2026-05-05-phase-2-1-grounded-console-response-contract.md` | verified |
+| Phase 2.2 | `Docs/superpowers/qa/product-maturity/phase-2/2026-05-05-phase-2-2-console-chatbook-artifact-save-contract.md` | verified |
 
 ## Phase Overview
 
 | Phase | Goal | Status | Backlog Tasks | QA Evidence | Residual Risk |
 | --- | --- | --- | --- | --- | --- |
 | Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | verified | `TASK-8`, Phase 1.1 (`TASK-8.1`), Phase 1.2 (`TASK-8.2`), Phase 1.3 (`TASK-8.3`), Phase 1.4 (`TASK-8.4`), Phase 1.5 (`TASK-8.5`), Phase 1.6 (`TASK-8.6`), Phase 1.7 (`TASK-8.7`) | `phase-1/` | Closed; full grounded generation and Artifact/Chatbook persistence move to Phase 2. |
-| Phase 2: Core Agentic Loop | Complete source/question to grounded Console to Artifact/Chatbook loop. | in-progress | `TASK-9`, Phase 2.1 (`TASK-9.1`) | `phase-2/2026-05-05-phase-2-1-grounded-console-response-contract.md` | Grounded request contract verified; Artifact/Chatbook save, reopen, and Home resume remain. |
+| Phase 2: Core Agentic Loop | Complete source/question to grounded Console to Artifact/Chatbook loop. | in-progress | `TASK-9`, Phase 2.1 (`TASK-9.1`), Phase 2.2 (`TASK-9.2`) | `phase-2/2026-05-05-phase-2-1-grounded-console-response-contract.md`, `phase-2/2026-05-05-phase-2-2-console-chatbook-artifact-save-contract.md` | Grounded request and local Chatbook artifact save contracts verified; newly saved artifact visibility, reopen, and Home resume remain. |
 | Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | planned | `TASK-10` | not-started | Depends on Phase 2 core loop and later task slicing. |
 | Phase 4: Agent Configuration And Execution | Mature Personas, Skills, MCP, ACP, Schedules, and Workflows. | planned | `TASK-11` | not-started | Depends on service adapters and runtime readiness. |
 | Phase 5: Server-Parity And Live Integrations | Close high-value `tldw_server2` parity gaps. | planned | `TASK-12` | not-started | Requires parity inventory. |
@@ -116,3 +119,9 @@ Status: verified
 Status: verified
 
 - `Docs/superpowers/qa/product-maturity/phase-2/2026-05-05-phase-2-1-grounded-console-response-contract.md`
+
+## Phase 2.2 Evidence
+
+Status: verified
+
+- `Docs/superpowers/qa/product-maturity/phase-2/2026-05-05-phase-2-2-console-chatbook-artifact-save-contract.md`
