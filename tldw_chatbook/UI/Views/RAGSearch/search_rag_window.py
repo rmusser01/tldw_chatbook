@@ -28,6 +28,7 @@ from rich.text import Text
 from loguru import logger
 
 # Local imports
+from ...Screens.destination_recovery import optional_dependency_recovery_state
 from .search_history_dropdown import SearchHistoryDropdown
 from .search_result import SearchResult
 from .saved_searches_panel import SavedSearchesPanel
@@ -486,27 +487,42 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                 yield DataTable(id="index-stats-table", classes="index-stats-table")
         
 
-    def on_mount(self) -> None:
+    def _missing_embeddings_recovery_state(self):
+        return optional_dependency_recovery_state(
+            unavailable_what="Search/RAG queries",
+            missing_dependencies=("embeddings_rag",),
+            install_target='pip install -e ".[embeddings_rag]"',
+            stable_selector="search-rag-dependency-missing",
+            recovery_action="Settings > RAG",
+        )
+
+    async def on_mount(self) -> None:
         """Called when the widget is mounted"""
         # Check if embeddings/RAG dependencies are available
         if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
             from ....Utils.widget_helpers import alert_embeddings_not_available
-            recovery_copy = (
-                'Search/RAG requires optional embeddings dependencies. '
-                'Install them with pip install -e ".[embeddings_rag]" and restart.'
-            )
+            recovery_state = self._missing_embeddings_recovery_state()
             # Show alert after a short delay to ensure UI is ready
             self.set_timer(0.1, lambda: alert_embeddings_not_available(self))
             # Disable search functionality
             self.is_searching = True  # Prevent searches
             try:
+                results_list = self.query_one("#results-list-enhanced")
+                results_list.remove_children()
+                await results_list.mount(
+                    Static(
+                        recovery_state.visible_copy,
+                        id=recovery_state.stable_selector,
+                        classes="search-empty-state search-recovery-state",
+                    )
+                )
                 search_input = self.query_one("#search-query-input", Input)
                 search_input.disabled = True
                 search_input.placeholder = "Embeddings not available - install dependencies"
-                search_input.tooltip = recovery_copy
+                search_input.tooltip = recovery_state.disabled_tooltip
                 search_button = self.query_one("#search-button", Button)
                 search_button.disabled = True
-                search_button.tooltip = recovery_copy
+                search_button.tooltip = recovery_state.disabled_tooltip
             except NoMatches:
                 pass
         

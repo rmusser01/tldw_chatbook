@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 
 @dataclass(frozen=True)
@@ -147,6 +147,60 @@ def policy_denied_recovery_state(
     )
     return DestinationRecoveryState(
         status_label=status_label,
+        unavailable_what=unavailable_what,
+        why=why,
+        next_action=next_action,
+        recovery_action=recovery_action,
+        authority_owner=authority_owner,
+        stable_selector=stable_selector,
+        disabled_tooltip=disabled_tooltip,
+    )
+
+
+def _dependency_names(missing_dependencies: Iterable[str] | str) -> str:
+    if isinstance(missing_dependencies, str):
+        dependencies = [missing_dependencies]
+    else:
+        dependencies = [str(dependency).strip() for dependency in missing_dependencies]
+    dependencies = [dependency for dependency in dependencies if dependency]
+    return ", ".join(dependencies) or "required optional dependency"
+
+
+def optional_dependency_recovery_state(
+    *,
+    unavailable_what: str,
+    missing_dependencies: Iterable[str] | str,
+    install_target: str,
+    stable_selector: str,
+    recovery_action: str,
+    authority_owner: str = "optional dependency",
+) -> DestinationRecoveryState:
+    """Build recovery copy for a missing optional dependency blocker.
+
+    Args:
+        unavailable_what: Specific workflow or control blocked by the missing dependency.
+        missing_dependencies: Missing package, extra, or feature names.
+        install_target: User-facing install command or setup target.
+        stable_selector: Stable widget selector for the rendered recovery state.
+        recovery_action: Target setup area or action.
+        authority_owner: Owner of the blocker.
+
+    Returns:
+        Destination recovery state with dependency-specific visible copy and tooltip.
+    """
+
+    dependency_names = _dependency_names(missing_dependencies)
+    why = f"Missing optional dependencies: {dependency_names}."
+    next_action = f"Install with {install_target} and restart."
+    disabled_tooltip = " ".join(
+        (
+            DestinationRecoveryState._sentence(unavailable_what),
+            DestinationRecoveryState._sentence(why),
+            DestinationRecoveryState._sentence(next_action),
+        )
+    )
+    return DestinationRecoveryState(
+        status_label="Dependency missing",
         unavailable_what=unavailable_what,
         why=why,
         next_action=next_action,
