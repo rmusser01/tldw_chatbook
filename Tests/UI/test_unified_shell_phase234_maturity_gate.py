@@ -15,6 +15,11 @@ PHASE_3_CLOSEOUT_METADATA = re.compile(
     r"<!-- PHASE_3_CLOSEOUT_METADATA:END -->",
     re.DOTALL,
 )
+PHASE_4_CLOSEOUT_METADATA = re.compile(
+    r"<!-- PHASE_4_CLOSEOUT_METADATA:BEGIN -->\s*```json\s*(.*?)\s*```\s*"
+    r"<!-- PHASE_4_CLOSEOUT_METADATA:END -->",
+    re.DOTALL,
+)
 
 PHASES = {
     "Phase 2": {
@@ -57,7 +62,7 @@ PHASES = {
     },
     "Phase 4": {
         "qa_dir": "phase-4",
-        "status": "qa-needed",
+        "status": "verified",
         "parent_task": "TASK-5",
         "closeout_task": "TASK-5.6",
         "parent_task_file": Path("backlog/tasks/task-5 - Phase-4-Destination-Service-Adoption.md"),
@@ -70,9 +75,9 @@ PHASES = {
         ),
         "overview_row": (
             "| Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | "
-            "qa-needed |"
+            "verified |"
         ),
-        "task_status": "To Do",
+        "task_status": "Done",
     },
 }
 
@@ -98,10 +103,16 @@ def _phase_three_closeout_metadata(text: str) -> dict:
     return json.loads(metadata_match.group(1))
 
 
+def _phase_four_closeout_metadata(text: str) -> dict:
+    metadata_match = PHASE_4_CLOSEOUT_METADATA.search(text)
+    assert metadata_match is not None
+    return json.loads(metadata_match.group(1))
+
+
 def test_phase_two_three_four_roadmap_and_indexes_record_current_gate_status():
     roadmap_text = _text(ROADMAP)
 
-    assert "Status: Phase 2 and Phase 3 verified; Phase 4 needs maturity-gate QA" in roadmap_text
+    assert "Status: Phase 2, Phase 3, and Phase 4 verified; Phase 5 and Phase 6 not started" in roadmap_text
 
     for phase_name, phase in PHASES.items():
         qa_row = (
@@ -196,6 +207,54 @@ def test_phase_three_closeout_doc_records_verified_workflows_and_task_completion
     ]
     assert metadata["source_readiness"]["acp"] == "not_wired_recoverable"
     assert metadata["source_readiness"]["mcp"] == "not_wired_recoverable"
+    assert metadata["final_focused_replay_result"]["failed"] == 0
+    assert metadata["final_focused_replay_result"]["passed"] > 0
+    assert metadata["final_broader_replay_result"]["failed"] == 0
+    assert metadata["final_broader_replay_result"]["passed"] >= metadata["final_focused_replay_result"]["passed"]
+
+    parent_text = _text(phase["parent_task_file"])
+    assert "status: Done" in parent_text
+    for acceptance_criterion in range(1, 5):
+        assert f"- [x] #{acceptance_criterion}" in parent_text
+
+    task_text = _text(phase["task_file"])
+    assert "status: Done" in task_text
+    for acceptance_criterion in range(1, 5):
+        assert f"- [x] #{acceptance_criterion}" in task_text
+    assert "Implementation Notes" in task_text
+
+
+def test_phase_four_closeout_doc_records_verified_destinations_and_task_completion():
+    phase = PHASES["Phase 4"]
+    closeout_text = _text(phase["closeout_doc"])
+    metadata = _phase_four_closeout_metadata(closeout_text)
+
+    assert "/Users/" not in closeout_text
+    assert metadata["closeout_task"] == "TASK-5.6"
+    assert metadata["parent_task"] == "TASK-5"
+    assert metadata["decision"] == "verified"
+    assert metadata["verified_destinations"] == [
+        "mcp",
+        "skills",
+        "library",
+        "personas",
+        "watchlists-collections",
+        "schedules",
+        "workflows",
+        "artifacts",
+        "settings",
+    ]
+    assert metadata["verified_recovery_destinations"] == ["acp"]
+    assert metadata["destination_readiness"]["mcp"] == "connected"
+    assert metadata["destination_readiness"]["skills"] == "connected"
+    assert metadata["destination_readiness"]["library"] == "connected"
+    assert metadata["destination_readiness"]["personas"] == "connected"
+    assert metadata["destination_readiness"]["watchlists-collections"] == "connected"
+    assert metadata["destination_readiness"]["schedules"] == "connected_or_recoverable"
+    assert metadata["destination_readiness"]["workflows"] == "connected_or_recoverable"
+    assert metadata["destination_readiness"]["artifacts"] == "connected_or_recoverable"
+    assert metadata["destination_readiness"]["settings"] == "connected"
+    assert metadata["destination_readiness"]["acp"] == "runtime_not_configured_recoverable"
     assert metadata["final_focused_replay_result"]["failed"] == 0
     assert metadata["final_focused_replay_result"]["passed"] > 0
     assert metadata["final_broader_replay_result"]["failed"] == 0
