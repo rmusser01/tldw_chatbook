@@ -1,7 +1,7 @@
 # Product Maturity Phased Roadmap Design
 
 Date: 2026-05-05
-Status: User-approved design, pending spec review and implementation planning
+Status: User-approved design; spec review approved; pending implementation planning
 Primary Repo: `tldw_chatbook`
 Source Baseline: `dev` at `9c4b3bf0` (`Close Phase 6 Nielsen shell audit (#246)`)
 Related Specs:
@@ -100,6 +100,19 @@ Backlog.md should track execution after this spec is accepted:
 - child tasks should include "QA walkthrough verifies the running app is usable" as acceptance criteria.
 - phase completion requires evidence, not just task status.
 
+## Severity Mapping
+
+Product-maturity QA should keep the existing Unified Shell defect taxonomy and map P0/P1 closure rules to it:
+
+| Priority | Taxonomy | Meaning | Phase Exit Rule |
+| --- | --- | --- | --- |
+| P0 | `blocker` | Prevents basic use, traps the user, corrupts or loses user work, or makes a required workflow impossible. | Must be fixed before the phase or gate can close. |
+| P1 | `workflow-degradation` | Breaks or seriously slows a core workflow but leaves a workaround. | Must be fixed before phase close unless explicitly accepted with owner, rationale, and follow-up task. |
+| P2 | `recoverability` | A blocked or error state exists, but recovery copy, ownership, or next action is unclear. | Can remain only with documented residual risk and a scoped follow-up. |
+| P3 | `polish` | Visual, wording, density, or minor interaction issue that does not block completion. | Can remain as backlog polish if it does not hide status, source authority, or recovery action. |
+
+QA evidence should use one taxonomy label per defect and may also include the P-level when useful for release decisions.
+
 ## Product Model
 
 The roadmap should preserve this product model:
@@ -116,6 +129,12 @@ The roadmap should preserve this product model:
 - **ACP**: separate agent/session protocol runtime and live agent collaboration model.
 - **Skills**: Agent Skills-compatible capability packs built around `SKILL.md`, bundled resources, validation, import, and attachment to Console/workflows.
 - **Settings**: global configuration, providers, privacy, runtime policy, optional dependencies, and diagnostics.
+
+Workspaces and Collections must not become duplicate grouping concepts:
+
+- **Workspaces** define broad user context and scope across sources, chats, notes, artifacts, study outputs, settings, and long-running work.
+- **Collections** define reusable source sets inside W+C/Library that can feed RAG, study generation, schedules, workflows, and monitoring.
+- A source can belong to a workspace and one or more collections, but implementation plans must identify which surface owns create, edit, and review actions for each grouping type.
 
 ## Phase Roadmap
 
@@ -142,6 +161,13 @@ PR-sized gates:
 - Visual broken-state audit for clipped panels, unreadable labels, low-contrast states, and misleading disabled controls.
 - Empty/error/setup-state coverage for missing API keys, optional dependencies, server connections, and local runtime blockers.
 - Narrow core-loop proof: one source or query can reach Console and produce a recoverable output or honest blocker.
+
+First execution boundary:
+
+- The first implementation plan should cover roadmap task setup plus **Phase 1.1: Canonical Product-Maturity QA Harness** only.
+- Phase 1.1 should create the reusable clean-run protocol, QA evidence template, severity mapping, selected terminal-size matrix, and one smoke command or test entry point.
+- Phase 1.1 should not attempt to complete the full first-run, focus, visual, empty-state, and core-loop audits in one PR.
+- Later Phase 1 child tasks should each own one independently reviewable gate from the list above.
 
 Done when:
 
@@ -350,6 +376,18 @@ Suggested phase labels:
 - Which terminal sizes should be mandatory for visual QA?
 - Which five power-user workflows should become recurring release replay tests?
 
+## Planning Decisions Required Before Phase 1 Execution
+
+Resolve these before creating implementation tasks beyond the Phase 1 parent and Phase 1.1 harness task:
+
+| Decision | Recommended Default | Why It Matters |
+| --- | --- | --- |
+| Canonical clean-run harness | Fresh `HOME`/`XDG_*` run using the existing Textual test pilot where possible, with manual terminal replay when visual/focus behavior cannot be proven in tests. | Prevents app-state leakage and makes first-run regressions reproducible. |
+| Phase 1 core-loop proof | Library or Search/RAG source/query stages context into Console and either produces a grounded answer path or an honest missing-runtime blocker. | Anchors QA in the product center without overloading Phase 1 with full feature depth. |
+| Terminal-size matrix | Minimum supported compact size, common laptop terminal, and large power-user workspace. | Prevents layouts that only work on the developer's current terminal dimensions. |
+| Recurring power-user workflows | Grounded answer, study loop, agent run, monitoring loop, and recovery loop from the workflow matrix. | Keeps later QA tied to repeated expert usage, not shallow navigation. |
+| Severity policy | Use the P0/P1/P2/P3 mapping in this spec. | Ensures the team knows which findings block phase completion. |
+
 ## Transition Criteria To Implementation Planning
 
 Proceed to implementation planning only after:
@@ -357,4 +395,4 @@ Proceed to implementation planning only after:
 - this spec is reviewed and accepted.
 - any spec-review issues are resolved.
 - the first Backlog.md parent/child task set is approved.
-- Phase 1 scope is narrowed to a small first PR.
+- Phase 1 scope is narrowed to roadmap task setup plus Phase 1.1 only.
