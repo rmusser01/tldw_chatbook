@@ -4,7 +4,7 @@ title: 'Product Maturity Phase 2.2: Console Chatbook Artifact Save Contract'
 status: Done
 assignee: []
 created_date: '2026-05-05 21:30'
-updated_date: '2026-05-05 21:36'
+updated_date: '2026-05-05 21:56'
 labels:
   - product-maturity
   - phase-2-core-agentic-loop
@@ -42,4 +42,6 @@ Prove Console can create a local Chatbook artifact record from a completed assis
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented assistant-only save-to-artifact actions in ChatMessage and ChatMessageEnhanced. Routed the action through app.local_chatbook_service.create_chatbook with bounded Console provenance metadata and recoverable notifications for missing service or create failures. Added focused red-green regressions for widget affordance, success, missing-service, and failure paths, plus Phase 2.2 QA evidence and tracker updates.
+
+PR review remediation moved Chatbook artifact creation onto a Textual thread worker with call_from_thread notifications, excluded System messages from save eligibility, removed raw message content from artifact-action logging, and preserved valid falsey provenance values. Added red-green regressions for all four review items.
 <!-- SECTION:NOTES:END -->

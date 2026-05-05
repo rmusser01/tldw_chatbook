@@ -1,6 +1,8 @@
 # /tests/Event_Handlers/Chat_Events/test_chat_events.py
 # Unit tests for chat event handlers using mocked components
 
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,6 +22,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
     handle_chat_new_conversation_button_pressed,
     handle_chat_save_current_chat_button_pressed,
     handle_chat_load_character_button_pressed,
+    _console_chatbook_artifact_metadata,
     is_general_history_conversation,
     # ... import other handlers as you write tests for them
 )
@@ -336,12 +339,13 @@ async def test_handle_chat_action_button_pressed_edit_and_save(mock_ccl, mock_te
     assert EMOJI_EDIT in mock_button.label or FALLBACK_EDIT in mock_button.label
 
 
-async def test_handle_chat_action_button_pressed_saves_ai_message_as_chatbook_artifact(mock_app):
-    """Assistant message artifact save routes through the local Chatbook service."""
+async def test_handle_chat_action_button_pressed_schedules_chatbook_artifact_worker(mock_app):
+    """Assistant artifact save schedules disk work off the UI handler path."""
     mock_app.local_chatbook_service = MagicMock()
     mock_app.local_chatbook_service.create_chatbook = AsyncMock(
         return_value={"id": "artifact-1", "name": "Important answer"}
     )
+    mock_app.call_from_thread = MagicMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     mock_app.current_chat_conversation_id = "conv-123"
     mock_app.current_provider = "OpenAI"
     mock_app.current_model = "gpt-4.1"
@@ -354,6 +358,13 @@ async def test_handle_chat_action_button_pressed_saves_ai_message_as_chatbook_ar
     mock_action_widget.remove = AsyncMock()
 
     await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
+
+    mock_app.local_chatbook_service.create_chatbook.assert_not_called()
+    mock_app.run_worker.assert_called_once()
+    worker_callable = mock_app.run_worker.call_args.args[0]
+    assert mock_app.run_worker.call_args.kwargs["thread"] is True
+    assert mock_app.run_worker.call_args.kwargs["name"] == "console-chatbook-artifact-save"
+    await asyncio.to_thread(worker_callable)
 
     mock_app.local_chatbook_service.create_chatbook.assert_awaited_once()
     create_kwargs = mock_app.local_chatbook_service.create_chatbook.await_args.kwargs
@@ -371,7 +382,8 @@ async def test_handle_chat_action_button_pressed_saves_ai_message_as_chatbook_ar
     assert len(create_kwargs["metadata"]["content"]) == 20000
     assert create_kwargs["metadata"]["content_truncated"] is True
     mock_action_widget.remove.assert_not_awaited()
-    mock_app.notify.assert_called_with(
+    mock_app.call_from_thread.assert_called_with(
+        mock_app.notify,
         "Saved response as Chatbook artifact: Important answer",
         severity="information",
         timeout=4,
@@ -403,6 +415,7 @@ async def test_handle_chat_action_button_pressed_reports_chatbook_create_failure
     """Create failures notify the user without deleting the source response."""
     mock_app.local_chatbook_service = MagicMock()
     mock_app.local_chatbook_service.create_chatbook = AsyncMock(side_effect=RuntimeError("disk full"))
+    mock_app.call_from_thread = MagicMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     mock_button = MagicMock(spec=Button, classes=["artifact-button"])
     mock_action_widget = MagicMock(spec=ChatMessage)
     mock_action_widget.has_class.return_value = True
@@ -413,12 +426,78 @@ async def test_handle_chat_action_button_pressed_reports_chatbook_create_failure
 
     await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
 
+    worker_callable = mock_app.run_worker.call_args.args[0]
+    await asyncio.to_thread(worker_callable)
+
     mock_action_widget.remove.assert_not_awaited()
-    mock_app.notify.assert_called_with(
+    mock_app.call_from_thread.assert_called_with(
+        mock_app.notify,
         "Failed to save Chatbook artifact: disk full",
         severity="error",
         timeout=7,
     )
+
+
+async def test_handle_chat_action_button_pressed_rejects_system_artifact_save(mock_app):
+    """System/error bubbles are not assistant artifacts even when styled as -ai."""
+    mock_app.local_chatbook_service = MagicMock()
+    mock_app.local_chatbook_service.create_chatbook = AsyncMock()
+    mock_button = MagicMock(spec=Button, classes=["artifact-button"])
+    mock_action_widget = MagicMock(spec=ChatMessage)
+    mock_action_widget.has_class.return_value = True
+    mock_action_widget.message_text = "System setup warning"
+    mock_action_widget.role = "System"
+    mock_action_widget.message_id_internal = "msg-system"
+    mock_action_widget.remove = AsyncMock()
+
+    await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
+
+    mock_app.run_worker.assert_not_called()
+    mock_app.local_chatbook_service.create_chatbook.assert_not_called()
+    mock_action_widget.remove.assert_not_awaited()
+    mock_app.notify.assert_called_with(
+        "Only assistant responses can be saved as Chatbook artifacts.",
+        severity="warning",
+        timeout=5,
+    )
+
+
+async def test_handle_chat_action_button_pressed_does_not_log_message_content(mock_app):
+    """Artifact action logs must not include untrusted chat content snippets."""
+    mock_app.local_chatbook_service = MagicMock()
+    mock_app.local_chatbook_service.create_chatbook = AsyncMock(return_value={"id": "artifact-1"})
+    mock_button = MagicMock(spec=Button, classes=["artifact-button"])
+    mock_action_widget = MagicMock(spec=ChatMessage)
+    mock_action_widget.has_class.return_value = True
+    mock_action_widget.message_text = "sk-test-secret-1234567890 should not enter logs"
+    mock_action_widget.role = "Assistant"
+    mock_action_widget.message_id_internal = "msg-secret"
+
+    with patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.logging.info") as mock_log_info:
+        await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
+
+    assert "sk-test-secret" not in repr(mock_log_info.call_args_list)
+
+
+async def test_console_chatbook_artifact_metadata_preserves_falsey_simple_values(mock_app):
+    """Valid numeric/boolean provenance should not be dropped by truthiness checks."""
+    mock_app.current_chat_conversation_id = 0
+    mock_app.current_provider = False
+    mock_app.current_model = ""
+    mock_action_widget = MagicMock(spec=ChatMessage)
+    mock_action_widget.message_id_internal = 0
+
+    metadata = _console_chatbook_artifact_metadata(
+        mock_app,
+        mock_action_widget,
+        "Short answer",
+        "Assistant",
+    )
+
+    assert metadata["conversation_id"] == 0
+    assert metadata["message_id"] == 0
+    assert metadata["provider"] is False
+    assert "model" not in metadata
 
 
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.load_character_and_image')

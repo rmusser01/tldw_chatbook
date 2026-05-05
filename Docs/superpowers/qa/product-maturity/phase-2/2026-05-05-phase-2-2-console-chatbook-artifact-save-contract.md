@@ -91,6 +91,66 @@ Result:
 
 - Passed with no whitespace errors.
 
+## PR Review Remediation
+
+Qodo review on PR #256 identified four follow-up issues:
+
+- Artifact creation ran inline on the chat action handler path.
+- `System` messages inherited the `-ai` style class and could expose/save artifacts.
+- The artifact action log line included a raw `message_text` snippet.
+- Optional metadata used a truthiness check that dropped valid `0` and `False` values.
+
+Review-fix red run:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_action_button_pressed_schedules_chatbook_artifact_worker Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_action_button_pressed_reports_chatbook_create_failure Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_action_button_pressed_rejects_system_artifact_save Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_action_button_pressed_does_not_log_message_content Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_console_chatbook_artifact_metadata_preserves_falsey_simple_values Tests/Widgets/test_chat_message_artifact_actions.py -q
+```
+
+Result:
+
+- `7 failed, 4 passed, 2 warnings in 3.01s`.
+- Failures matched the review issues.
+
+Review-fix focused green run:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_action_button_pressed_schedules_chatbook_artifact_worker Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_action_button_pressed_reports_chatbook_create_failure Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_action_button_pressed_rejects_system_artifact_save Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_action_button_pressed_does_not_log_message_content Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_console_chatbook_artifact_metadata_preserves_falsey_simple_values Tests/Widgets/test_chat_message_artifact_actions.py -q
+```
+
+Result:
+
+- `11 passed, 1 warning in 2.79s`.
+
+Review-fix broader verification:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Event_Handlers/Chat_Events/test_chat_events.py Tests/Widgets/test_chat_message_enhanced.py Tests/Widgets/test_chat_message_artifact_actions.py -q
+```
+
+Result:
+
+- `43 passed, 6 warnings in 11.71s`.
+
+Adjacent verification after review fixes:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_keeps_console_launch_disabled_without_chatbooks Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_launches_latest_local_chatbook_in_console Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_sanitizes_chatbook_metadata_before_console_launch Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbook Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_distinguishes_chatbook_service_failure_from_empty_state Tests/UI/test_product_maturity_phase1_harness.py::test_product_maturity_tracker_links_phase_one_harness_and_tasks -q
+```
+
+Result:
+
+- `6 passed, 1 warning in 10.06s`.
+
+Post-remediation diff hygiene:
+
+```bash
+git diff --check
+```
+
+Result:
+
+- Passed with no whitespace errors.
+
 ## Defects Fixed
 
 - `workflow-degradation`: Console assistant responses had no visible path to create a Chatbook artifact, so the Phase 2 loop stopped at generated text.

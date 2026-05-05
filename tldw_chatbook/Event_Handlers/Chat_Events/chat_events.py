@@ -3,6 +3,7 @@
 #
 # Imports
 import logging
+import asyncio
 import inspect
 import json
 import os
@@ -95,6 +96,13 @@ def _simple_metadata_value(value: Any) -> Optional[Union[str, int, float, bool]]
     return None
 
 
+def _is_console_chatbook_artifact_eligible(
+    action_widget: Union[ChatMessage, ChatMessageEnhanced],
+    message_role: str,
+) -> bool:
+    return action_widget.has_class("-ai") and str(message_role or "").strip().lower() != "system"
+
+
 def _console_chatbook_artifact_title(message_text: str) -> str:
     for line in str(message_text or "").splitlines():
         title = " ".join(line.strip().lstrip("#>*-` ").split())
@@ -121,6 +129,9 @@ def _console_chatbook_artifact_metadata(
     message_role: str,
 ) -> dict[str, Any]:
     content = str(message_text or "")
+    conversation_id = getattr(app, "current_chat_conversation_id", None)
+    if conversation_id is None:
+        conversation_id = getattr(app, "current_conversation_id", None)
     metadata: dict[str, Any] = {
         "artifact_source": "console",
         "artifact_kind": "assistant-response",
@@ -129,17 +140,26 @@ def _console_chatbook_artifact_metadata(
         "content_truncated": len(content) > MAX_CONSOLE_CHATBOOK_ARTIFACT_CONTENT_CHARS,
     }
     optional_values = {
-        "conversation_id": getattr(app, "current_chat_conversation_id", None)
-        or getattr(app, "current_conversation_id", None),
+        "conversation_id": conversation_id,
         "message_id": getattr(action_widget, "message_id_internal", None),
         "provider": getattr(app, "current_provider", None),
         "model": getattr(app, "current_model", None),
     }
     for key, value in optional_values.items():
         simple_value = _simple_metadata_value(value)
-        if simple_value:
-            metadata[key] = simple_value
+        if simple_value is None:
+            continue
+        if isinstance(simple_value, str) and not simple_value.strip():
+            continue
+        metadata[key] = simple_value
     return metadata
+
+
+def _run_console_chatbook_create(create_chatbook: Any, payload: dict[str, Any]) -> Any:
+    result = create_chatbook(**payload)
+    if inspect.isawaitable(result):
+        return asyncio.run(result)
+    return result
 
 
 async def _save_console_chatbook_artifact(
@@ -148,7 +168,7 @@ async def _save_console_chatbook_artifact(
     message_text: str,
     message_role: str,
 ) -> None:
-    if not action_widget.has_class("-ai"):
+    if not _is_console_chatbook_artifact_eligible(action_widget, message_role):
         app.notify("Only assistant responses can be saved as Chatbook artifacts.", severity="warning", timeout=5)
         return
 
@@ -159,20 +179,39 @@ async def _save_console_chatbook_artifact(
         return
 
     title = _console_chatbook_artifact_title(message_text)
-    try:
-        result = create_chatbook(
-            name=title,
-            description=_console_chatbook_artifact_description(message_text),
-            tags=["console", "artifact"],
-            categories=["Console", "Artifacts"],
-            metadata=_console_chatbook_artifact_metadata(app, action_widget, message_text, message_role),
-        )
-        if inspect.isawaitable(result):
-            await result
-        app.notify(f"Saved response as Chatbook artifact: {title}", severity="information", timeout=4)
-    except Exception as exc:
-        loguru_logger.error("Failed to save Console response as Chatbook artifact: %s", exc, exc_info=True)
-        app.notify(f"Failed to save Chatbook artifact: {exc}", severity="error", timeout=7)
+    payload = {
+        "name": title,
+        "description": _console_chatbook_artifact_description(message_text),
+        "tags": ["console", "artifact"],
+        "categories": ["Console", "Artifacts"],
+        "metadata": _console_chatbook_artifact_metadata(app, action_widget, message_text, message_role),
+    }
+
+    def save_worker() -> None:
+        try:
+            _run_console_chatbook_create(create_chatbook, payload)
+            app.call_from_thread(
+                app.notify,
+                f"Saved response as Chatbook artifact: {title}",
+                severity="information",
+                timeout=4,
+            )
+        except Exception as exc:
+            loguru_logger.error("Failed to save Console response as Chatbook artifact", exc_info=True)
+            app.call_from_thread(
+                app.notify,
+                f"Failed to save Chatbook artifact: {exc}",
+                severity="error",
+                timeout=7,
+            )
+
+    app.run_worker(
+        save_worker,
+        name="console-chatbook-artifact-save",
+        group="chat-artifacts",
+        description="Save Console response as Chatbook artifact",
+        thread=True,
+    )
 
 ########################################################################################################################
 #
@@ -1224,7 +1263,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         app.set_timer(1.5, lambda: setattr(button, "label", get_char(EMOJI_COPY, FALLBACK_COPY)))
 
     elif "artifact-button" in button_classes:
-        logging.info("Action: Save artifact clicked for %s message: '%s...'", message_role, message_text[:50])
+        logging.info("Action: Save artifact clicked for %s message", message_role)
         await _save_console_chatbook_artifact(app, action_widget, message_text, message_role)
 
     elif "note-button" in button_classes:

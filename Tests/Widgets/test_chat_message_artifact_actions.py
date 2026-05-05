@@ -39,3 +39,17 @@ async def test_user_messages_do_not_expose_save_artifact_action(widget_pilot, wi
         await pilot.pause()
 
         assert not widget.query("#save-artifact")
+
+
+@pytest.mark.parametrize("widget_class", [ChatMessage, ChatMessageEnhanced])
+async def test_system_messages_do_not_expose_save_artifact_action(widget_pilot, widget_class):
+    async with await widget_pilot(
+        widget_class,
+        message="System status",
+        role="System",
+    ) as pilot:
+        widget = pilot.app.test_widget
+        await pilot.pause()
+
+        assert widget.has_class("-ai")
+        assert not widget.query("#save-artifact")
