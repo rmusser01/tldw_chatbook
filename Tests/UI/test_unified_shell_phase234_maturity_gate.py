@@ -90,7 +90,7 @@ def _extract_phase_metadata(text: str, phase_number: int) -> dict:
 def test_phase_two_three_four_roadmap_and_indexes_record_current_gate_status():
     roadmap_text = _text(ROADMAP)
 
-    assert "Status: Phase 2, Phase 3, and Phase 4 verified; Phase 5 and Phase 6 not started" in roadmap_text
+    assert "Status: Phase 2, Phase 3, and Phase 4 verified; Phase 5 in progress; Phase 6 not started" in roadmap_text
 
     for phase_name, phase in PHASES.items():
         qa_row = (
