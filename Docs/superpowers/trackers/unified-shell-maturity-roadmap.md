@@ -1,8 +1,8 @@
 # Unified Shell Maturity Roadmap
 
 Date: 2026-05-05
-Status: Phase 2, Phase 3, Phase 4, and Phase 5 verified; Phase 6 in progress
-Source Branch: `origin/dev` at `1261b1cb` plus `codex/unified-shell-phase6-power-user-replay`
+Status: Phase 2, Phase 3, Phase 4, and Phase 5 verified; Phase 6 verified
+Source Branch: `origin/dev` at `768de83c` plus `codex/unified-shell-phase6-nielsen-closeout`
 
 ## Purpose
 
@@ -37,7 +37,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 - Library now surfaces a local source snapshot from notes, media, and conversations and can stage concrete source context into Console; full Library-native detail views, embedded Import/Export, and embedded Search/RAG remain future work.
 - Personas now surfaces a local behavior snapshot from characters and persona profiles and can stage concrete behavior context into Console; detail, edit, import/export, archetypes, exemplars, dictionaries, and lore remain future work.
 - W+C now surfaces a local monitored-source and saved-collection snapshot from `watchlist_scope_service` and `media_reading_scope_service` and can stage concrete W+C context into Console; full detail, edit, import/export, feed WebSub, alert-rule, retry/backoff, and server collection-feed UX remain future work.
-- Phase 2, Phase 3, Phase 4, and Phase 5 implementation and maturity-gate replays are verified. Phase 5 recovery coverage includes shell destination blockers, representative runtime-policy denials, and representative optional-dependency blockers; Phase 6 has first-time and power-user replays recorded and remains open for Nielsen audit replay.
+- Phase 2, Phase 3, Phase 4, Phase 5, and Phase 6 implementation and maturity-gate replays are verified. Phase 5 recovery coverage includes shell destination blockers, representative runtime-policy denials, and representative optional-dependency blockers; Phase 6 has first-time power-user and Nielsen audit replay evidence recorded.
 
 ## Definition Of Done
 
@@ -114,6 +114,7 @@ Initial child tasks:
 - Phase 5.5: Replay capability recovery maturity gate - `TASK-6.5`
 - Phase 6.1: Replay first-time user walkthrough - `TASK-7.1`
 - Phase 6.2: Replay power-user workflows - `TASK-7.2`
+- Phase 6.3: Replay Nielsen heuristic closeout - `TASK-7.3`
 
 ## QA Evidence Index
 
@@ -125,7 +126,7 @@ Initial child tasks:
 | Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | verified |
 | Phase 4 | `Docs/superpowers/qa/unified-shell/phase-4/` | verified |
 | Phase 5 | `Docs/superpowers/qa/unified-shell/phase-5/` | verified |
-| Phase 6 | `Docs/superpowers/qa/unified-shell/phase-6/` | in-progress |
+| Phase 6 | `Docs/superpowers/qa/unified-shell/phase-6/` | verified |
 
 ## Phase Overview
 
@@ -137,7 +138,7 @@ Initial child tasks:
 | Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | verified | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, `TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9`, `TASK-3.10`, `TASK-3.11` | `phase-3/` | ACP, MCP, and durable live event streams remain future work; Phase 3 is verified for implemented Console source launch, follow, status, and recovery flows. |
 | Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | verified | `TASK-5`, `TASK-5.1`, `TASK-5.2`, `TASK-5.3`, `TASK-5.4`, `TASK-5.5`, `TASK-5.6` | `phase-4/` | Full CRUD/server-parity depth remains future work; Phase 4 is verified for destination ownership, concrete local workflows, Console staging, and honest recovery states. |
 | Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | verified | `TASK-6`, `TASK-6.1`, `TASK-6.2`, `TASK-6.3`, `TASK-6.4`, `TASK-6.5` | `phase-5/` | Recovery taxonomy is verified for destination blockers, runtime-policy denials, and optional-dependency blockers; live server/auth and full optional-extra execution remain residual risk. |
-| Phase 6: Audit Replay And Closeout | Prove shell works for first-time and power users. | in-progress | `TASK-7`, `TASK-7.1`, `TASK-7.2` | `phase-6/` | First-time and power-user replays are recorded; Nielsen closeout remains open. |
+| Phase 6: Audit Replay And Closeout | Prove shell works for first-time and power users. | verified | `TASK-7`, `TASK-7.1`, `TASK-7.2`, `TASK-7.3` | `phase-6/` | Phase 6 shell audit replay is verified; service-depth and live-path risks remain tracked for future work. |
 
 ## Phase 1.1 QA Harness Evidence
 
@@ -364,6 +365,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-7.2` replays fast repeated workflows against the running Textual app, covering configured Home-to-Console launch, Console live-work readiness, Library Search/RAG, Library Import/Export, and W+C live-work follow-through:
 
 - `Docs/superpowers/qa/unified-shell/phase-6/2026-05-05-phase-6-2-power-user-workflow-replay.md`
+
+## Phase 6.3 Nielsen Heuristic Closeout
+
+`TASK-7.3` replays the Unified Shell against Nielsen heuristics from a senior UX perspective and closes Phase 6 as verified while preserving residual service-depth and live-path risks:
+
+- `Docs/superpowers/qa/unified-shell/phase-6/2026-05-05-phase-6-3-nielsen-heuristic-closeout.md`
 
 ## Phase 0: Canonical Tracking
 
