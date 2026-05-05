@@ -4,8 +4,8 @@
 
 - Date: 2026-05-05
 - Branch: codex/product-maturity-phase1-1
-- Commit:
-- Python version: not executed in this evidence slice
+- Commit: 0e3d093e
+- Python version: Python 3.9.6
 - Runtime source: documentation/test harness
 - Config/home directory: not applicable
 
@@ -49,8 +49,9 @@
 
 ## Evidence
 
-- Test commands: `python3 -m pytest Tests/UI/test_product_maturity_phase1_harness.py -q`
-- Related PRs or commits:
+- Test commands: `python3 -m pytest Tests/UI/test_product_maturity_phase1_harness.py -q` -> 5 passed
+- Diff hygiene: `git diff --check` -> no output
+- Related PRs or commits: `abe83f6e`, `0e3d093e`
 
 ## Residual Risk
 

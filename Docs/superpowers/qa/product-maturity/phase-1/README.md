@@ -6,6 +6,8 @@ Phase 1 establishes QA baselines and usability guardrails before additional prod
 
 Phase 1.1 evidence:
 
+Phase 1.1 harness status: verified
+
 - `walkthrough-protocol.md`
 - `walkthrough-template.md`
 - `2026-05-05-phase-1-1-harness-smoke.md`
