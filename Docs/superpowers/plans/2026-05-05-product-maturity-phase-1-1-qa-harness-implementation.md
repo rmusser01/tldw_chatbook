@@ -152,7 +152,39 @@ git commit -m "Add product maturity backlog anchors"
 
 Expected: commit succeeds with only new Backlog task files.
 
-## Task 2: Add Failing Harness Contract Test
+## Task 2: Move Phase 1.1 Backlog Task Into Progress
+
+**Files:**
+- Modify: `backlog/tasks/task-<phase-1-1-id> - Product-Maturity-Phase-1.1-Canonical-QA-Harness.md`
+
+- [ ] **Step 1: Set the Phase 1.1 child task to In Progress**
+
+Use Backlog MCP `task_edit` or the CLI to set only the Phase 1.1 child task to `In Progress`. Do not move the Phase 1 parent task to `Done`.
+
+- [ ] **Step 2: Add the mandatory Backlog implementation plan**
+
+Add this implementation plan to the Phase 1.1 child task:
+
+```text
+1. Add the focused product-maturity QA harness regression test and confirm it fails before harness docs exist.
+2. Create the product-maturity tracker, QA evidence root, Phase 1 protocol, template, README, and harness smoke evidence.
+3. Run the focused harness test and adjacent Unified Shell QA protocol regression.
+4. Update Phase 1.1 tracker and evidence status after verification.
+5. Mark Phase 1.1 acceptance criteria complete with implementation notes while leaving Phase 1 open.
+```
+
+- [ ] **Step 3: Commit Backlog in-progress state**
+
+Run:
+
+```bash
+git add backlog/tasks
+git commit -m "Start product maturity Phase 1.1 QA harness task"
+```
+
+Expected: commit succeeds with only the Phase 1.1 task state and implementation plan changed.
+
+## Task 3: Add Failing Harness Contract Test
 
 **Files:**
 - Create: `Tests/UI/test_product_maturity_phase1_harness.py`
@@ -279,6 +311,7 @@ def test_product_maturity_tracker_links_phase_one_harness_and_tasks() -> None:
     phase_one_row = _phase_row(tracker, "Phase 1: QA Baseline And Usability Guardrails")
     assert phase_one_row[2] in {"planned", "in_progress"}
     assert "Phase 1.1" in phase_one_row[3]
+    assert "TASK-" in phase_one_row[3]
     assert "phase-1/" in phase_one_row[4]
 
     assert "QA walkthrough verifies the running app is usable" in phase_one_task
@@ -308,7 +341,12 @@ python3 -m pytest Tests/UI/test_product_maturity_phase1_harness.py -q
 
 Expected: FAIL because `Docs/superpowers/trackers/product-maturity-roadmap.md`, product-maturity QA docs, and Backlog pointer doc do not exist yet.
 
-- [ ] **Step 3: Commit failing test**
+## Task 4: Commit Failing Harness Contract Test
+
+**Files:**
+- Create: `Tests/UI/test_product_maturity_phase1_harness.py`
+
+- [ ] **Step 1: Commit failing test**
 
 Run:
 
@@ -319,7 +357,7 @@ git commit -m "Add product maturity QA harness contract test"
 
 Expected: commit succeeds with one new test file.
 
-## Task 3: Create Product-Maturity Tracker And QA Harness Docs
+## Task 5: Create Product-Maturity Tracker And QA Harness Docs
 
 **Files:**
 - Create: `Docs/superpowers/trackers/product-maturity-roadmap.md`
@@ -417,7 +455,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 
 | Phase | Goal | Status | Backlog Tasks | QA Evidence | Residual Risk |
 | --- | --- | --- | --- | --- | --- |
-| Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | planned | `<PHASE_1_TASK_ID>`, `<PHASE_1_1_TASK_ID>` | `phase-1/` | Phase 1.1 is harness-only; product walkthroughs remain future Phase 1 gates. |
+| Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | in_progress | `<PHASE_1_TASK_ID>`, Phase 1.1 (`<PHASE_1_1_TASK_ID>`) | `phase-1/` | Phase 1.1 is harness-only; product walkthroughs remain future Phase 1 gates. |
 | Phase 2: Core Agentic Loop | Complete source/question to grounded Console to Artifact/Chatbook loop. | planned | `<PHASE_2_TASK_ID>` | not-started | Depends on Phase 1 QA baseline. |
 | Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | planned | `<PHASE_3_TASK_ID>` | not-started | Depends on Phase 2 core loop and later task slicing. |
 | Phase 4: Agent Configuration And Execution | Mature Personas, Skills, MCP, ACP, Schedules, and Workflows. | planned | `<PHASE_4_TASK_ID>` | not-started | Depends on service adapters and runtime readiness. |
@@ -767,7 +805,7 @@ git commit -m "Add product maturity QA harness docs"
 
 Expected: commit succeeds with new product-maturity docs.
 
-## Task 4: Close Phase 1.1 Backlog Task
+## Task 6: Close Phase 1.1 Backlog Task
 
 **Files:**
 - Modify: `backlog/tasks/task-<phase-1-1-id> - Product-Maturity-Phase-1.1-Canonical-QA-Harness.md`
@@ -817,6 +855,7 @@ Use Backlog MCP `task_edit` or the CLI:
 
 - check every Phase 1.1 acceptance criterion.
 - add implementation notes summarizing tracker, protocol, template, smoke evidence, and test coverage.
+- document any deviation from the Backlog implementation plan if one occurred.
 - set only the Phase 1.1 child task to `Done`.
 - do not mark the Phase 1 parent done.
 
@@ -842,7 +881,7 @@ git commit -m "Verify product maturity Phase 1.1 QA harness"
 
 Expected: commit succeeds.
 
-## Task 5: Final Branch Verification
+## Task 7: Final Branch Verification
 
 **Files:**
 - No new files.
