@@ -66,7 +66,7 @@ def _assert_roadmap_tracks_phase_five_progress(roadmap: str) -> None:
     assert "phase 4" in normalized_status
     assert "verified" in normalized_status
     assert re.search(r"phase\s+5\s+verified", normalized_status)
-    assert re.search(r"phase\s+6\s+in\s+progress", normalized_status)
+    assert re.search(r"phase\s+6\s+verified", normalized_status)
 
 
 def _roadmap_phase_evidence_row(text: str, phase_name: str) -> list[str]:

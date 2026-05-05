@@ -178,28 +178,28 @@ def test_phase_six_power_user_replay_evidence_and_tracking_are_current() -> None
     assert "running Textual app" in evidence
     assert "Tests/UI/test_unified_shell_phase6_power_user_replay.py" in evidence
 
-    assert _status_line(readme) == "in-progress"
+    assert _status_line(readme) == "verified"
     assert PHASE_6_POWER_USER_EVIDENCE.name in readme
     assert "TASK-7.2" in readme
 
     normalized_status = _status_line(roadmap).lower().replace("-", " ")
-    assert re.search(r"phase\s+6\s+in\s+progress", normalized_status)
-    assert _phase_evidence_row(roadmap, "Phase 6")[2] == "in-progress"
+    assert re.search(r"phase\s+6\s+verified", normalized_status)
+    assert _phase_evidence_row(roadmap, "Phase 6")[2] == "verified"
     assert str(PHASE_6_POWER_USER_EVIDENCE).replace("\\", "/") in roadmap
     assert "Phase 6.2: Replay power-user workflows - `TASK-7.2`" in roadmap
     phase_six_overview = _phase_overview_row(roadmap, "Phase 6: Audit Replay And Closeout")
-    assert phase_six_overview[2] == "in-progress"
+    assert phase_six_overview[2] == "verified"
     assert "TASK-7" in phase_six_overview[3]
     assert "TASK-7.1" in phase_six_overview[3]
     assert "TASK-7.2" in phase_six_overview[3]
-    assert "Nielsen closeout remains open" in phase_six_overview[5]
+    assert "service-depth and live-path risks remain tracked" in phase_six_overview[5]
 
-    assert "status: In Progress" in parent_task
+    assert "status: Done" in parent_task
     assert "TASK-7.2" in parent_task
     assert "- [x] #1 First-time user walkthrough is replayed against the running app." in parent_task
     assert "- [x] #2 Power-user workflows are replayed against the running app." in parent_task
-    assert "- [ ] #3 Nielsen heuristic closeout documents remaining defects and residual risks." in parent_task
-    assert "- [ ] #4 Durable QA summaries exist under Docs/superpowers/qa/unified-shell/phase-6/." in parent_task
+    assert "- [x] #3 Nielsen heuristic closeout documents remaining defects and residual risks." in parent_task
+    assert "- [x] #4 Durable QA summaries exist under Docs/superpowers/qa/unified-shell/phase-6/." in parent_task
 
     assert "status: Done" in power_user_task
     for acceptance_criterion in range(1, 5):
