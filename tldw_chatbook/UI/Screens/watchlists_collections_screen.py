@@ -18,7 +18,7 @@ from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
-from .destination_recovery import policy_denied_recovery_state
+from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 
 
 logger = logger.bind(module="WatchlistsCollectionsScreen")
@@ -44,7 +44,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._watchlist_total_known = True
         self._collection_total_known = True
         self._wc_lookup_error: str | None = None
-        self._wc_lookup_error_tooltip: str | None = None
+        self._wc_lookup_recovery_state: DestinationRecoveryState | None = None
         self._wc_loaded = False
 
     def on_mount(self) -> None:
@@ -61,7 +61,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             watchlist_total_known,
             collection_total_known,
             lookup_error,
-            lookup_error_tooltip,
+            recovery_state,
         ) = await self._list_local_wc_snapshot()
         self._apply_local_wc_snapshot(
             watchlists,
@@ -71,7 +71,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             watchlist_total_known,
             collection_total_known,
             lookup_error,
-            lookup_error_tooltip,
+            recovery_state,
         )
 
     def _apply_local_wc_snapshot(
@@ -83,7 +83,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         watchlist_total_known: bool,
         collection_total_known: bool,
         lookup_error: str | None = None,
-        lookup_error_tooltip: str | None = None,
+        recovery_state: DestinationRecoveryState | None = None,
     ) -> None:
         self._local_watchlist_records = watchlists
         self._local_collection_records = collections
@@ -92,7 +92,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._watchlist_total_known = watchlist_total_known
         self._collection_total_known = collection_total_known
         self._wc_lookup_error = lookup_error
-        self._wc_lookup_error_tooltip = lookup_error_tooltip
+        self._wc_lookup_recovery_state = recovery_state
         self._wc_loaded = True
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -147,7 +147,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         bool,
         bool,
         str | None,
-        str | None,
+        DestinationRecoveryState | None,
     ]:
         watchlist_service = getattr(self.app_instance, "watchlist_scope_service", None)
         collection_service = getattr(self.app_instance, "media_reading_scope_service", None)
@@ -175,7 +175,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 stable_selector="wc-service-error",
                 policy_message=policy_message,
             )
-            return (), (), 0, 0, True, True, recovery_state.visible_copy, recovery_state.disabled_tooltip
+            return (), (), 0, 0, True, True, recovery_state.visible_copy, recovery_state
         except Exception:
             logger.debug(
                 "Failed to load local W+C snapshot.",
@@ -299,14 +299,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     attach_disabled = True
                     attach_tooltip = "Stage local W+C context after the local snapshot loads."
                 elif self._wc_lookup_error:
+                    recovery_state = self._wc_lookup_recovery_state
                     yield Static(
                         self._wc_lookup_error,
-                        id="wc-service-error",
+                        id=(
+                            recovery_state.stable_selector
+                            if recovery_state is not None
+                            else "wc-service-error"
+                        ),
                     )
                     attach_disabled = True
                     attach_tooltip = (
-                        self._wc_lookup_error_tooltip
-                        or "W+C services are unavailable; retry W+C before staging Console context."
+                        recovery_state.disabled_tooltip
+                        if recovery_state is not None
+                        else "W+C services are unavailable; retry W+C before staging Console context."
                     )
                 elif not self._has_local_wc_context():
                     yield Static(

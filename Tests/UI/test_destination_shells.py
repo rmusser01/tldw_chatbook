@@ -19,6 +19,7 @@ from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
+from tldw_chatbook.UI.Screens.destination_recovery import DestinationRecoveryState
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
@@ -387,6 +388,16 @@ async def _wait_for_skills_snapshot(screen, pilot, *, timeout: float = 2.0) -> N
     raise AssertionError(f"Timed out waiting for Skills snapshot. Visible text: {_visible_text(screen)}")
 
 
+async def _wait_for_selector(screen, pilot, selector: str, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if screen.query(selector):
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for {selector}. Visible text: {_visible_text(screen)}")
+
+
 async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -416,6 +427,19 @@ def _assert_policy_recovery_copy(
     assert button.disabled is True
     assert why in str(button.tooltip)
     assert next_action in str(button.tooltip)
+
+
+def _custom_policy_recovery_state(exc, *, unavailable_what, stable_selector, policy_message=None):
+    return DestinationRecoveryState(
+        status_label="Custom policy state",
+        unavailable_what=unavailable_what,
+        why=policy_message or exc.user_message,
+        next_action="Use the custom recovery target.",
+        recovery_action="Custom recovery",
+        authority_owner=exc.authority_owner,
+        stable_selector=f"custom-{stable_selector}",
+        disabled_tooltip="Custom policy tooltip.",
+    )
 
 
 @pytest.mark.parametrize(
@@ -556,6 +580,27 @@ async def test_watchlists_collections_policy_denial_uses_runtime_recovery_taxono
             recovery_action="Settings",
             authority_owner="active server",
         )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_collections_policy_denial_uses_recovery_state_selector(monkeypatch):
+    monkeypatch.setattr(
+        wc_screen_module,
+        "policy_denied_recovery_state",
+        _custom_policy_recovery_state,
+    )
+    app = _build_test_app()
+    app.watchlist_scope_service = PolicyDeniedWatchlistsScopeService()
+    app.media_reading_scope_service = StaticReadItLaterScopeService([])
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#custom-wc-service-error")
+        button = screen.query_one("#wc-attach-to-console", Button)
+
+        assert "Custom policy state" in _visible_text(screen)
+        assert button.tooltip == "Custom policy tooltip."
 
 
 @pytest.mark.asyncio
@@ -729,6 +774,26 @@ async def test_personas_policy_denial_uses_runtime_recovery_taxonomy():
             recovery_action="Settings",
             authority_owner="active server",
         )
+
+
+@pytest.mark.asyncio
+async def test_personas_policy_denial_uses_recovery_state_selector(monkeypatch):
+    monkeypatch.setattr(
+        personas_screen_module,
+        "policy_denied_recovery_state",
+        _custom_policy_recovery_state,
+    )
+    app = _build_test_app()
+    app.character_persona_scope_service = PolicyDeniedPersonasScopeService()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#custom-personas-service-error")
+        button = screen.query_one("#personas-attach-to-console", Button)
+
+        assert "Custom policy state" in _visible_text(screen)
+        assert button.tooltip == "Custom policy tooltip."
 
 
 @pytest.mark.asyncio
@@ -953,6 +1018,28 @@ async def test_library_policy_denial_uses_runtime_recovery_taxonomy():
             recovery_action="Source switch or Settings",
             authority_owner="active server",
         )
+
+
+@pytest.mark.asyncio
+async def test_library_policy_denial_uses_recovery_state_selector(monkeypatch):
+    monkeypatch.setattr(
+        library_screen_module,
+        "policy_denied_recovery_state",
+        _custom_policy_recovery_state,
+    )
+    app = _build_test_app()
+    app.notes_scope_service = PolicyDeniedLibraryNotesScopeService()
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#custom-library-source-error")
+        button = screen.query_one("#library-use-in-console", Button)
+
+        assert "Custom policy state" in _visible_text(screen)
+        assert button.tooltip == "Custom policy tooltip."
 
 
 @pytest.mark.asyncio
@@ -1337,6 +1424,26 @@ async def test_skills_destination_policy_denied_surfaces_policy_message():
             authority_owner="local",
         )
         assert "Skills service unavailable; retry Skills later." not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_skills_policy_denial_uses_recovery_state_selector(monkeypatch):
+    monkeypatch.setattr(
+        skills_screen_module,
+        "policy_denied_recovery_state",
+        _custom_policy_recovery_state,
+    )
+    app = _build_test_app()
+    app.skills_scope_service = PolicyDeniedSkillsScopeService()
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#custom-skills-service-error")
+        button = screen.query_one("#skills-attach-to-console", Button)
+
+        assert "Custom policy state" in _visible_text(screen)
+        assert button.tooltip == "Custom policy tooltip."
 
 
 @pytest.mark.asyncio

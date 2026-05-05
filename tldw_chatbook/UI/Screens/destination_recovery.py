@@ -44,17 +44,17 @@ class DestinationRecoveryState:
         return "\n".join(
             (
                 self.status_label,
-                f"Unavailable: {self.unavailable_what}.",
-                f"Why: {self.why}.",
+                f"Unavailable: {self._sentence(self.unavailable_what)}",
+                f"Why: {self._sentence(self.why)}",
                 f"Next: {self._sentence(self.next_action)}",
-                f"Recovery: {self.recovery_action}.",
-                f"Owner: {self.authority_owner}.",
+                f"Recovery: {self._sentence(self.recovery_action)}",
+                f"Owner: {self._sentence(self.authority_owner)}",
             )
         )
 
 
 def _clause(value: Any, fallback: str) -> str:
-    text = str(value or "").strip().rstrip(".!?")
+    text = str(value or "").strip()
     return text or fallback
 
 
@@ -119,7 +119,17 @@ def policy_denied_recovery_state(
     stable_selector: str,
     policy_message: str | None = None,
 ) -> DestinationRecoveryState:
-    """Map a runtime-policy denial into visible destination recovery copy."""
+    """Map a runtime-policy denial into visible destination recovery copy.
+
+    Args:
+        exc: Runtime-policy denial object with reason, message, and owner fields.
+        unavailable_what: Specific workflow or control blocked by the denial.
+        stable_selector: Stable widget selector for the rendered recovery state.
+        policy_message: Optional sanitized policy message to prefer over `exc`.
+
+    Returns:
+        Destination recovery state with taxonomy-aligned visible copy and tooltip.
+    """
 
     status_label, next_action, recovery_action = _policy_recovery_for_reason(
         getattr(exc, "reason_code", None)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 from collections.abc import Mapping
 from typing import Any
@@ -19,7 +18,7 @@ from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
-from .destination_recovery import policy_denied_recovery_state
+from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 
 
 logger = logger.bind(module="SkillsScreen")
@@ -45,37 +44,34 @@ class SkillsScreen(BaseAppScreen):
         super().__init__(app_instance, "skills", **kwargs)
         self._local_skill_records: tuple[Mapping[str, Any], ...] = ()
         self._skills_lookup_error: str | None = None
-        self._skills_lookup_error_tooltip: str | None = None
+        self._skills_lookup_recovery_state: DestinationRecoveryState | None = None
         self._skills_loaded = False
 
     def on_mount(self) -> None:
         super().on_mount()
         self._refresh_local_skills_context()
 
-    @work(exclusive=True, thread=True)
-    def _refresh_local_skills_context(self) -> None:
-        records, lookup_error, lookup_error_tooltip = self._list_local_skills()
-        self.app.call_from_thread(
-            self._apply_local_skills_context,
-            records,
-            lookup_error,
-            lookup_error_tooltip,
-        )
+    @work(exclusive=True)
+    async def _refresh_local_skills_context(self) -> None:
+        records, lookup_error, recovery_state = await self._list_local_skills()
+        self._apply_local_skills_context(records, lookup_error, recovery_state)
 
     def _apply_local_skills_context(
         self,
         records: tuple[Mapping[str, Any], ...],
         lookup_error: str | None = None,
-        lookup_error_tooltip: str | None = None,
+        recovery_state: DestinationRecoveryState | None = None,
     ) -> None:
         self._local_skill_records = records
         self._skills_lookup_error = lookup_error
-        self._skills_lookup_error_tooltip = lookup_error_tooltip
+        self._skills_lookup_recovery_state = recovery_state
         self._skills_loaded = True
         if self.is_mounted:
             self.refresh(recompose=True)
 
-    def _list_local_skills(self) -> tuple[tuple[Mapping[str, Any], ...], str | None, str | None]:
+    async def _list_local_skills(
+        self,
+    ) -> tuple[tuple[Mapping[str, Any], ...], str | None, DestinationRecoveryState | None]:
         service = getattr(self.app_instance, "skills_scope_service", None)
         list_skills = getattr(service, "list_skills", None)
         if not callable(list_skills):
@@ -88,7 +84,7 @@ class SkillsScreen(BaseAppScreen):
                 include_hidden=False,
             )
             if inspect.isawaitable(result):
-                result = asyncio.run(result)
+                result = await result
         except PolicyDeniedError as exc:
             logger.info(
                 "Runtime policy denied local Agent Skills listing.",
@@ -106,7 +102,7 @@ class SkillsScreen(BaseAppScreen):
                 stable_selector="skills-service-error",
                 policy_message=policy_message,
             )
-            return (), recovery_state.visible_copy, recovery_state.disabled_tooltip
+            return (), recovery_state.visible_copy, recovery_state
         except Exception:
             logger.warning(
                 "Failed to load local Agent Skills for Skills destination.",
@@ -192,15 +188,21 @@ class SkillsScreen(BaseAppScreen):
                     attach_disabled = True
                     attach_tooltip = "Stage local skill context after Skills finishes loading."
                 elif self._skills_lookup_error:
+                    recovery_state = self._skills_lookup_recovery_state
                     yield Static(
                         self._skills_lookup_error,
-                        id="skills-service-error",
+                        id=(
+                            recovery_state.stable_selector
+                            if recovery_state is not None
+                            else "skills-service-error"
+                        ),
                     )
                     attach_label = "Attach local Skills to Console"
                     attach_disabled = True
                     attach_tooltip = (
-                        self._skills_lookup_error_tooltip
-                        or "Skills service is unavailable; retry Skills later."
+                        recovery_state.disabled_tooltip
+                        if recovery_state is not None
+                        else "Skills service is unavailable; retry Skills later."
                     )
                 elif not self._local_skill_records:
                     yield Static(

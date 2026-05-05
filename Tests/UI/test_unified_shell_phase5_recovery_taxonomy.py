@@ -274,9 +274,46 @@ def test_phase_five_runtime_policy_recovery_helper_maps_reason_groups(
     )
 
     assert recovery_state.status_label == status_label
-    assert recovery_state.why == "Policy message from service"
+    assert recovery_state.why == "Policy message from service."
     assert recovery_state.next_action == next_action
     assert recovery_state.recovery_action == recovery_action
     assert recovery_state.authority_owner == "active server"
     assert "Policy message from service." in recovery_state.disabled_tooltip
     assert next_action in recovery_state.disabled_tooltip
+
+
+def test_phase_five_recovery_copy_preserves_policy_message_terminal_punctuation():
+    exc = PolicyDeniedError(
+        action_id="test.action",
+        reason_code="authority_denied",
+        user_message="Allow this action?",
+        effective_source="server",
+        authority_owner="workspace policy!",
+    )
+
+    recovery_state = policy_denied_recovery_state(
+        exc,
+        unavailable_what="Test workflow!",
+        stable_selector="test-recovery",
+    )
+
+    assert recovery_state.why == "Allow this action?"
+    assert recovery_state.authority_owner == "workspace policy!"
+    assert "Unavailable: Test workflow!" in recovery_state.visible_copy
+    assert "Why: Allow this action?" in recovery_state.visible_copy
+    assert "Owner: workspace policy!" in recovery_state.visible_copy
+    assert "Allow this action?" in recovery_state.disabled_tooltip
+
+
+def test_service_backed_policy_destinations_use_async_workers_without_asyncio_run():
+    screen_paths = [
+        Path("tldw_chatbook/UI/Screens/library_screen.py"),
+        Path("tldw_chatbook/UI/Screens/personas_screen.py"),
+        Path("tldw_chatbook/UI/Screens/skills_screen.py"),
+    ]
+
+    for screen_path in screen_paths:
+        source = _text(screen_path)
+        assert "thread=True" not in source, screen_path
+        assert "asyncio.run" not in source, screen_path
+        assert "_run_maybe_awaitable" not in source, screen_path
