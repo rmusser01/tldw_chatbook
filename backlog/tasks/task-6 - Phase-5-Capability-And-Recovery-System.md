@@ -1,10 +1,10 @@
 ---
 id: TASK-6
 title: 'Phase 5: Capability And Recovery System'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-03 14:47'
-updated_date: '2026-05-05 02:32'
+updated_date: '2026-05-05 05:25'
 labels:
   - unified-shell
   - phase-5
@@ -24,10 +24,10 @@ Systematize missing dependency, auth, server, runtime, and policy states so bloc
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Shared capability-state taxonomy exists and is applied to remaining blocker states.
-- [ ] #2 Blocked states tell users what is unavailable, why, and what to do next.
-- [ ] #3 Running-app QA verifies understandable recovery paths.
-- [ ] #4 Durable QA summaries exist under Docs/superpowers/qa/unified-shell/phase-5/.
+- [x] #1 Shared capability-state taxonomy exists and is applied to remaining blocker states.
+- [x] #2 Blocked states tell users what is unavailable, why, and what to do next.
+- [x] #3 Running-app QA verifies understandable recovery paths.
+- [x] #4 Durable QA summaries exist under Docs/superpowers/qa/unified-shell/phase-5/.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -41,5 +41,5 @@ Systematize missing dependency, auth, server, runtime, and policy states so bloc
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Started Phase 5 with TASK-6.1, which defines the shared recovery taxonomy and tracking contract. TASK-6.2 applies the taxonomy to the first shell destination blocker family: ACP runtime configuration, Schedules empty active-run, Workflows empty active-run, and Artifacts empty Chatbook states. TASK-6.3 applies the taxonomy to representative runtime-policy denials in Skills, Library, Personas, and W+C. TASK-6.4 applies the taxonomy to representative optional-dependency blockers in Search/RAG and local speech. Parent Phase 5 remains In Progress until final running-app QA verifies recovery paths.
+Completed Phase 5 recovery closeout through TASK-6.5. TASK-6.1 defines the shared recovery taxonomy, TASK-6.2 applies it to shell destination blockers, TASK-6.3 applies it to runtime-policy denials, TASK-6.4 applies it to optional-dependency blockers, and TASK-6.5 replays maturity-gate QA. The verified recovery fields cover what is unavailable why it is unavailable next action recovery target authority owner stable selector and disabled tooltip copy. Phase 5 is verified; live server/auth execution and full optional-extra runtime coverage remain Phase 6 or future service-depth residual risk.
 <!-- SECTION:NOTES:END -->

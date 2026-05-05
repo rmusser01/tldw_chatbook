@@ -28,6 +28,9 @@ PHASE_5_RUNTIME_POLICY_RECOVERY = Path(
 PHASE_5_OPTIONAL_DEPENDENCY_RECOVERY = Path(
     "Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-optional-dependency-recovery.md"
 )
+PHASE_5_CLOSEOUT = Path(
+    "Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-phase-5-capability-recovery-closeout.md"
+)
 PHASE_5_PARENT_TASK = Path("backlog/tasks/task-6 - Phase-5-Capability-And-Recovery-System.md")
 PHASE_5_TAXONOMY_TASK = Path("backlog/tasks/task-6.1 - Phase-5.1-Create-shared-recovery-taxonomy.md")
 PHASE_5_DESTINATION_RECOVERY_TASK = Path(
@@ -38,6 +41,9 @@ PHASE_5_RUNTIME_POLICY_TASK = Path(
 )
 PHASE_5_OPTIONAL_DEPENDENCY_TASK = Path(
     "backlog/tasks/task-6.4 - Phase-5.4-Apply-recovery-taxonomy-to-optional-dependency-blockers.md"
+)
+PHASE_5_CLOSEOUT_TASK = Path(
+    "backlog/tasks/task-6.5 - Phase-5.5-Replay-capability-recovery-maturity-gate.md"
 )
 
 
@@ -59,7 +65,7 @@ def _assert_roadmap_tracks_phase_five_progress(roadmap: str) -> None:
     assert "phase 3" in normalized_status
     assert "phase 4" in normalized_status
     assert "verified" in normalized_status
-    assert re.search(r"phase\s+5\s+in\s+progress", normalized_status)
+    assert re.search(r"phase\s+5\s+verified", normalized_status)
     assert re.search(r"phase\s+6\s+not\s+started", normalized_status)
 
 
@@ -84,6 +90,17 @@ def _taxonomy_metadata(text: str) -> dict:
     return json.loads(metadata_match.group(1))
 
 
+def _phase_five_closeout_metadata(text: str) -> dict:
+    metadata_match = re.search(
+        r"<!-- PHASE_5_CLOSEOUT_METADATA:BEGIN -->\s*```json\s*(.*?)\s*```\s*"
+        r"<!-- PHASE_5_CLOSEOUT_METADATA:END -->",
+        text,
+        re.DOTALL,
+    )
+    assert metadata_match is not None
+    return json.loads(metadata_match.group(1))
+
+
 def test_phase_five_recovery_taxonomy_is_tracked_from_roadmap_readme_and_tasks():
     roadmap = _text(ROADMAP)
     readme = _text(PHASE_5_README)
@@ -96,7 +113,7 @@ def test_phase_five_recovery_taxonomy_is_tracked_from_roadmap_readme_and_tasks()
     _assert_roadmap_tracks_phase_five_progress(roadmap)
     phase_five_row = _roadmap_phase_evidence_row(roadmap, "Phase 5")
     assert phase_five_row[1] == "`Docs/superpowers/qa/unified-shell/phase-5/`"
-    assert phase_five_row[2] == "in-progress"
+    assert phase_five_row[2] == "verified"
     assert re.search(r"Phase\s+5\.1:.*shared recovery taxonomy.*`TASK-6\.1`", roadmap, re.IGNORECASE)
     assert re.search(
         r"Phase\s+5\.2:.*shell destination blockers.*`TASK-6\.2`",
@@ -113,26 +130,35 @@ def test_phase_five_recovery_taxonomy_is_tracked_from_roadmap_readme_and_tasks()
         roadmap,
         re.IGNORECASE,
     )
+    assert re.search(
+        r"Phase\s+5\.5:.*capability recovery maturity gate.*`TASK-6\.5`",
+        roadmap,
+        re.IGNORECASE,
+    )
     assert "2026-05-05-shared-recovery-taxonomy.md" in roadmap
     assert "2026-05-05-destination-blocker-recovery.md" in roadmap
     assert "2026-05-05-runtime-policy-recovery.md" in roadmap
     assert "2026-05-05-optional-dependency-recovery.md" in roadmap
+    assert "2026-05-05-phase-5-capability-recovery-closeout.md" in roadmap
 
-    assert _status_line(readme) == "in-progress"
+    assert _status_line(readme) == "verified"
     assert "`TASK-6.1`" in readme
     assert "`TASK-6.2`" in readme
     assert "`TASK-6.3`" in readme
     assert "`TASK-6.4`" in readme
+    assert "`TASK-6.5`" in readme
     assert "2026-05-05-shared-recovery-taxonomy.md" in readme
     assert "2026-05-05-destination-blocker-recovery.md" in readme
     assert "2026-05-05-runtime-policy-recovery.md" in readme
     assert "2026-05-05-optional-dependency-recovery.md" in readme
+    assert "2026-05-05-phase-5-capability-recovery-closeout.md" in readme
 
-    assert "status: In Progress" in parent_task
+    assert "status: Done" in parent_task
     assert "TASK-6.1" in parent_task
     assert "TASK-6.2" in parent_task
     assert "TASK-6.3" in parent_task
     assert "TASK-6.4" in parent_task
+    assert "TASK-6.5" in parent_task
     assert "status: Done" in child_task
     for acceptance_criterion in range(1, 5):
         assert f"- [x] #{acceptance_criterion}" in child_task
@@ -191,6 +217,65 @@ def test_phase_five_optional_dependency_recovery_evidence_records_applied_blocke
     assert "dependency_missing" in evidence
     assert "test_search_rag_missing_embeddings_dependency_exposes_phase_five_recovery" in evidence
     assert "test_stts_missing_speech_dependencies_expose_phase_five_recovery" in evidence
+
+
+def test_phase_five_closeout_doc_records_verified_recovery_paths_and_task_completion():
+    closeout = _text(PHASE_5_CLOSEOUT)
+    metadata = _phase_five_closeout_metadata(closeout)
+
+    assert "/Users/" not in closeout
+    assert metadata["closeout_task"] == "TASK-6.5"
+    assert metadata["parent_task"] == "TASK-6"
+    assert metadata["decision"] == "verified"
+    assert metadata["verified_recovery_families"] == [
+        "destination-blockers",
+        "runtime-policy",
+        "optional-dependencies",
+    ]
+    assert metadata["verified_blocked_states"] == [
+        "runtime_not_configured",
+        "empty_selection",
+        "wrong_source",
+        "server_auth_required",
+        "server_session_invalid",
+        "policy_denied",
+        "dependency_missing",
+    ]
+    assert metadata["required_recovery_fields"] == [
+        "status_label",
+        "unavailable_what",
+        "why",
+        "next_action",
+        "recovery_action",
+        "authority_owner",
+        "stable_selector",
+        "disabled_tooltip",
+    ]
+    assert metadata["final_focused_replay_result"]["failed"] == 0
+    assert metadata["final_focused_replay_result"]["passed"] > 0
+    assert metadata["final_broader_replay_result"]["failed"] == 0
+    assert metadata["final_broader_replay_result"]["passed"] >= metadata["final_focused_replay_result"]["passed"]
+
+    readme = _text(PHASE_5_README)
+    roadmap = _text(ROADMAP)
+    parent_task = _text(PHASE_5_PARENT_TASK)
+    closeout_task = _text(PHASE_5_CLOSEOUT_TASK)
+
+    assert _status_line(readme) == "verified"
+    assert PHASE_5_CLOSEOUT.name in readme
+    assert _roadmap_phase_evidence_row(roadmap, "Phase 5")[2] == "verified"
+    assert str(PHASE_5_CLOSEOUT).replace("\\", "/") in roadmap
+    assert "TASK-6.5" in roadmap
+
+    assert "status: Done" in parent_task
+    assert "TASK-6.5" in parent_task
+    for acceptance_criterion in range(1, 5):
+        assert f"- [x] #{acceptance_criterion}" in parent_task
+
+    assert "status: Done" in closeout_task
+    for acceptance_criterion in range(1, 5):
+        assert f"- [x] #{acceptance_criterion}" in closeout_task
+    assert "Implementation Notes" in closeout_task
 
 
 def test_phase_five_recovery_taxonomy_defines_required_contract_and_reason_mappings():

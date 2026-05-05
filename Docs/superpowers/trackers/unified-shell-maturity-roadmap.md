@@ -1,8 +1,8 @@
 # Unified Shell Maturity Roadmap
 
 Date: 2026-05-05
-Status: Phase 2, Phase 3, and Phase 4 verified; Phase 5 in progress; Phase 6 not started
-Source Branch: `origin/dev` at `73e430c5` plus `codex/unified-shell-phase5-optional-dependency-recovery`
+Status: Phase 2, Phase 3, Phase 4, and Phase 5 verified; Phase 6 not started
+Source Branch: `origin/dev` at `9d1cfe50` plus `codex/unified-shell-phase5-closeout`
 
 ## Purpose
 
@@ -37,7 +37,7 @@ Track remaining Unified Shell work in one place so rendered screens, clickable b
 - Library now surfaces a local source snapshot from notes, media, and conversations and can stage concrete source context into Console; full Library-native detail views, embedded Import/Export, and embedded Search/RAG remain future work.
 - Personas now surfaces a local behavior snapshot from characters and persona profiles and can stage concrete behavior context into Console; detail, edit, import/export, archetypes, exemplars, dictionaries, and lore remain future work.
 - W+C now surfaces a local monitored-source and saved-collection snapshot from `watchlist_scope_service` and `media_reading_scope_service` and can stage concrete W+C context into Console; full detail, edit, import/export, feed WebSub, alert-rule, retry/backoff, and server collection-feed UX remain future work.
-- Phase 2, Phase 3, and Phase 4 implementation and maturity-gate replays are verified. Phase 5 is in progress with a shared recovery taxonomy applied to shell destination blockers, representative runtime-policy denials, and representative optional-dependency blockers; Phase 6 remains open for full first-time/power-user audit replay.
+- Phase 2, Phase 3, Phase 4, and Phase 5 implementation and maturity-gate replays are verified. Phase 5 recovery coverage includes shell destination blockers, representative runtime-policy denials, and representative optional-dependency blockers; Phase 6 remains open for full first-time/power-user audit replay.
 
 ## Definition Of Done
 
@@ -111,6 +111,7 @@ Initial child tasks:
 - Phase 5.2: Apply recovery taxonomy to shell destination blockers - `TASK-6.2`
 - Phase 5.3: Apply recovery taxonomy to runtime-policy blockers - `TASK-6.3`
 - Phase 5.4: Apply recovery taxonomy to optional dependency blockers - `TASK-6.4`
+- Phase 5.5: Replay capability recovery maturity gate - `TASK-6.5`
 
 ## QA Evidence Index
 
@@ -121,7 +122,7 @@ Initial child tasks:
 | Phase 2 | `Docs/superpowers/qa/unified-shell/phase-2/` | verified |
 | Phase 3 | `Docs/superpowers/qa/unified-shell/phase-3/` | verified |
 | Phase 4 | `Docs/superpowers/qa/unified-shell/phase-4/` | verified |
-| Phase 5 | `Docs/superpowers/qa/unified-shell/phase-5/` | in-progress |
+| Phase 5 | `Docs/superpowers/qa/unified-shell/phase-5/` | verified |
 | Phase 6 | `Docs/superpowers/qa/unified-shell/phase-6/` | not-started |
 
 ## Phase Overview
@@ -133,7 +134,7 @@ Initial child tasks:
 | Phase 2: Home Operational Control | Make Home a real dashboard/control surface. | verified | `TASK-4`, `TASK-4.1`, `TASK-4.2`, `TASK-4.3`, `TASK-4.4`, `TASK-4.5`, `TASK-4.6`, `TASK-4.7`, `TASK-4.8` | `phase-2/` | Schedule and agent-service adapters remain future work; Phase 2 is verified for explicit Home adapter behavior, local W+C/notification flows, and recoverable unavailable states. |
 | Phase 3: Console Live Work Hub | Make Console the live-agent control surface. | verified | `TASK-3`, `TASK-3.1`, `TASK-3.2`, `TASK-3.3`, `TASK-3.4`, `TASK-3.5`, `TASK-3.6`, `TASK-3.7`, `TASK-3.8`, `TASK-3.9`, `TASK-3.10`, `TASK-3.11` | `phase-3/` | ACP, MCP, and durable live event streams remain future work; Phase 3 is verified for implemented Console source launch, follow, status, and recovery flows. |
 | Phase 4: Destination Service Adoption | Turn wrappers into useful product surfaces. | verified | `TASK-5`, `TASK-5.1`, `TASK-5.2`, `TASK-5.3`, `TASK-5.4`, `TASK-5.5`, `TASK-5.6` | `phase-4/` | Full CRUD/server-parity depth remains future work; Phase 4 is verified for destination ownership, concrete local workflows, Console staging, and honest recovery states. |
-| Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | in-progress | `TASK-6`, `TASK-6.1`, `TASK-6.2`, `TASK-6.3`, `TASK-6.4` | `phase-5/` | Shared recovery taxonomy is defined and applied to ACP, Schedules, Workflows, Artifacts, representative runtime-policy destination blockers, and representative optional-dependency blockers; final running-app closeout QA still remains. |
+| Phase 5: Capability And Recovery System | Systematize unavailable and blocked states. | verified | `TASK-6`, `TASK-6.1`, `TASK-6.2`, `TASK-6.3`, `TASK-6.4`, `TASK-6.5` | `phase-5/` | Recovery taxonomy is verified for destination blockers, runtime-policy denials, and optional-dependency blockers; live server/auth and full optional-extra execution remain residual risk. |
 | Phase 6: Audit Replay And Closeout | Prove shell works for first-time and power users. | not-started | `TASK-7` | `phase-6/` | Depends on prior phases and running-app QA. |
 
 ## Phase 1.1 QA Harness Evidence
@@ -343,6 +344,12 @@ Initial audit result: W+C, Schedules, Workflows, and ACP had false Console-launc
 `TASK-6.4` applies the taxonomy to visible optional-dependency blockers in Search/RAG embeddings and local speech dependency states:
 
 - `Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-optional-dependency-recovery.md`
+
+## Phase 5.5 Capability Recovery Closeout
+
+`TASK-6.5` replays the Phase 5 capability and recovery maturity gate after the taxonomy, destination, runtime-policy, and optional-dependency blocker slices:
+
+- `Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-phase-5-capability-recovery-closeout.md`
 
 ## Phase 0: Canonical Tracking
 
