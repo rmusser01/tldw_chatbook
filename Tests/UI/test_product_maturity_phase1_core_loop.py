@@ -24,6 +24,14 @@ TASK = Path("backlog/tasks/task-8.7 - Product-Maturity-Phase-1.7-Narrow-Core-Loo
 
 
 def _text(path: Path) -> str:
+    """Read a repository-relative text fixture.
+
+    Args:
+        path: Repository-relative path to read.
+
+    Returns:
+        UTF-8 decoded file contents.
+    """
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
@@ -35,6 +43,18 @@ async def _wait_until(
     interval_seconds: float = 0.05,
     context: str,
 ) -> None:
+    """Wait for an async Textual pilot condition to become true.
+
+    Args:
+        pilot: Textual test pilot driving the running app.
+        condition: Zero-argument predicate that returns true when ready.
+        timeout_seconds: Maximum time to wait before failing.
+        interval_seconds: Delay between event-loop polls.
+        context: Human-readable state being awaited for failure messages.
+
+    Raises:
+        AssertionError: If the condition is still false after the timeout.
+    """
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         if condition():
@@ -47,6 +67,11 @@ async def _wait_until(
 
 
 def _core_loop_payload() -> ChatHandoffPayload:
+    """Build the deterministic Search/RAG handoff payload used by Phase 1.7.
+
+    Returns:
+        Handoff payload that stages a local RAG result into Console.
+    """
     return ChatHandoffPayload(
         source="search-rag",
         item_type="rag-result",
@@ -66,10 +91,23 @@ def _core_loop_payload() -> ChatHandoffPayload:
 
 
 def _test_cli_setting(section: str, key: str, default=None):
+    """Return deterministic settings for the running-app core-loop test.
+
+    Args:
+        section: Config section name requested by the app.
+        key: Config key requested by the app.
+        default: Caller-provided fallback value.
+
+    Returns:
+        Test-pinned setting value for relevant chat/splash keys, otherwise
+        the caller default.
+    """
     if section == "splash_screen" and key == "enabled":
         return False
     if section == "chat_defaults" and key == "enable_tabs":
         return True
+    if section == "chat_defaults" and key == "max_tabs":
+        return 10
     return default
 
 
@@ -83,6 +121,10 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
     with (
         patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
         patch("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", side_effect=_test_cli_setting),
+        patch(
+            "tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.get_cli_setting",
+            side_effect=_test_cli_setting,
+        ),
     ):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
