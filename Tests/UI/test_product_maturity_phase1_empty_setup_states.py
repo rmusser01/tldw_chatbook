@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -83,6 +84,12 @@ def _test_cli_setting(section: str, key: str, default=None):
     return default
 
 
+def _test_chat_window_setting(section: str, key: str, default=None):
+    if section == "chat_defaults" and key == "enable_tabs":
+        return False
+    return _test_cli_setting(section, key, default)
+
+
 def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for env_var, path_name in (
         ("HOME", "home"),
@@ -93,6 +100,15 @@ def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
         path = tmp_path / path_name
         path.mkdir(parents=True, exist_ok=True)
         monkeypatch.setenv(env_var, str(path))
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[chat_defaults]\n"
+        'provider = "OpenAI"\n'
+        'model = "gpt-4o"\n'
+        "enable_tabs = false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
 
 
 def _build_clean_setup_state_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -125,7 +141,8 @@ async def _wait_until(
     while time.monotonic() < deadline:
         if condition():
             return
-        await pilot.pause(interval_seconds)
+        await pilot.pause()
+        await asyncio.sleep(interval_seconds)
     if condition():
         return
     raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s for {context}")
@@ -138,7 +155,10 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
 ) -> None:
     app = _build_clean_setup_state_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with (
+        patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
+        patch("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", side_effect=_test_chat_window_setting),
+    ):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,

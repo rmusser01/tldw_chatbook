@@ -33,11 +33,11 @@ Initial red run:
 - Runtime empty/error/setup checks passed after aligning the clean-run Console expectation to the app's actual default OpenAI missing API key state.
 - Evidence and tracker assertions failed because Phase 1.6 evidence and closeout links did not exist yet.
 
-Final focused verification:
+Final focused verification after PR review fixes:
 
-- `Tests/UI/test_product_maturity_phase1_empty_setup_states.py -q`: 8 passed, 1 warning in 9.82s.
-- Phase 1 product-maturity sweep including Phase 1.1-1.6 tests: 40 passed, 1 warning in 23.39s.
-- Adjacent recovery regressions for Search/RAG optional dependency and Library/Personas/W+C/Skills service unavailable states: 5 passed, 1 warning in 7.32s.
+- `Tests/UI/test_product_maturity_phase1_empty_setup_states.py -q`: 8 passed, 1 warning in 8.35s.
+- Phase 1 product-maturity sweep including Phase 1.1-1.6 tests: 40 passed, 1 warning in 20.16s.
+- Adjacent recovery regressions for Search/RAG optional dependency and Library/Personas/W+C/Skills service unavailable states: 5 passed, 1 warning in 5.70s.
 
 ## Manual Walkthrough
 
