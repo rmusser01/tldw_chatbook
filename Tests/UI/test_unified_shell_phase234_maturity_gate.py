@@ -203,11 +203,11 @@ def test_phase_three_closeout_doc_records_verified_workflows_and_task_completion
 
     parent_text = _text(phase["parent_task_file"])
     assert "status: Done" in parent_text
-    assert "- [x] #1" in parent_text
-    assert "- [x] #4" in parent_text
+    for acceptance_criterion in range(1, 5):
+        assert f"- [x] #{acceptance_criterion}" in parent_text
 
     task_text = _text(phase["task_file"])
     assert "status: Done" in task_text
-    assert "- [x] #1" in task_text
-    assert "- [x] #4" in task_text
+    for acceptance_criterion in range(1, 5):
+        assert f"- [x] #{acceptance_criterion}" in task_text
     assert "Implementation Notes" in task_text
