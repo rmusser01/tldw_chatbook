@@ -1,6 +1,6 @@
 # Phase 4 QA Evidence
 
-Status: qa-needed
+Status: verified
 
 This directory contains durable QA summaries for Phase 4 destination service adoption slices.
 
@@ -11,9 +11,8 @@ This directory contains durable QA summaries for Phase 4 destination service ado
 - `2026-05-04-library-source-service-adoption.md` - `TASK-5.3` Library destination adoption of local notes, media, and conversation source snapshots plus concrete Console context staging.
 - `2026-05-04-personas-service-adoption.md` - `TASK-5.4` Personas destination adoption of local character and persona profile snapshots plus concrete Console context staging.
 - `2026-05-04-wc-service-adoption.md` - `TASK-5.5` W+C destination adoption of local watchlist source and saved collection snapshots plus concrete Console context staging.
+- `2026-05-05-phase-4-destination-service-adoption-closeout.md` - `TASK-5.6` running-app QA replay for destination service-adoption completion.
 
-## Pending Maturity-Gate QA
+## Closeout
 
-- `2026-05-05-phase-4-destination-service-adoption-closeout.md` - planned `TASK-5.6` running-app QA replay for destination service-adoption completion.
-
-Do not mark Phase 4 verified until Skills, MCP, ACP, Library, Workflows, Schedules, Personas, Artifacts, W+C, and Settings destination workflows are verified through running-app QA evidence or honest recovery states.
+Phase 4 is verified because Skills, MCP, ACP, Library, Workflows, Schedules, Personas, Artifacts, W+C, and Settings destination workflows are covered by running-app QA evidence or honest recovery states.
