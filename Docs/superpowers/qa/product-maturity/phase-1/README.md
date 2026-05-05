@@ -30,3 +30,11 @@ Phase 1.3 top-level navigation status: verified
 - `2026-05-05-phase-1-3-navigation-smoke.md`
 
 Phase 1.3 verifies clean-run reachability for all top-level shell destinations. It does not complete the full keyboard/focus, visual broken-state, empty/error/setup-state, or core-loop audits.
+
+Phase 1.4 evidence:
+
+Phase 1.4 keyboard/focus status: verified
+
+- `2026-05-05-phase-1-4-keyboard-focus.md`
+
+Phase 1.4 verifies clean-run keyboard reachability for top-level navigation and the first-run setup action. It does not complete the full visual broken-state, empty/error/setup-state, or core-loop audits.
