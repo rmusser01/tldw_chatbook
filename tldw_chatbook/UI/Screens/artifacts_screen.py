@@ -123,6 +123,58 @@ class ArtifactsScreen(BaseAppScreen):
         return text or None
 
     @classmethod
+    def _safe_metadata_value(cls, value: Any, *, max_length: int = 1000) -> str | int | float | bool | None:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value
+        text = cls._safe_text(value, max_length=max_length)
+        return text or None
+
+    @classmethod
+    def _console_saved_artifact_payload(cls, metadata: Any) -> dict[str, Any]:
+        if not isinstance(metadata, Mapping):
+            return {}
+
+        artifact_source = cls._safe_metadata_value(metadata.get("artifact_source"), max_length=128)
+        artifact_kind = cls._safe_metadata_value(metadata.get("artifact_kind"), max_length=128)
+        if str(artifact_source or "").strip().lower() != "console":
+            return {}
+        if str(artifact_kind or "").strip().lower() != "assistant-response":
+            return {}
+
+        payload: dict[str, Any] = {
+            "artifact_source": artifact_source,
+            "artifact_kind": artifact_kind,
+        }
+        for key in ("conversation_id", "message_id", "message_role", "provider", "model"):
+            if (safe_value := cls._safe_metadata_value(metadata.get(key), max_length=256)) is not None:
+                payload[key] = safe_value
+
+        if (content_preview := cls._safe_metadata_value(metadata.get("content"), max_length=1000)) is not None:
+            payload["content_preview"] = content_preview
+        content_truncated = metadata.get("content_truncated")
+        if isinstance(content_truncated, bool):
+            payload["content_truncated"] = content_truncated
+        elif "content_preview" in payload:
+            payload["content_truncated"] = False
+        return payload
+
+    @staticmethod
+    def _console_saved_artifact_provenance(payload: Mapping[str, Any]) -> str | None:
+        if str(payload.get("artifact_source") or "").strip().lower() != "console":
+            return None
+        provider = str(payload.get("provider") or "").strip()
+        model = str(payload.get("model") or "").strip()
+        if provider and model:
+            return f"Saved from Console assistant response via {provider} / {model}."
+        if provider:
+            return f"Saved from Console assistant response via {provider}."
+        if model:
+            return f"Saved from Console assistant response using {model}."
+        return "Saved from Console assistant response."
+
+    @classmethod
     def _datetime_sort_key(cls, value: Any) -> float:
         text = cls._text(value)
         if not text:
@@ -166,6 +218,7 @@ class ArtifactsScreen(BaseAppScreen):
             "categories": cls._csv(record.get("categories")),
             "updated_at": cls._safe_text(record.get("updated_at")),
         }
+        payload.update(cls._console_saved_artifact_payload(record.get("metadata")))
         return {
             "source": "artifacts",
             "title": title,
@@ -220,6 +273,8 @@ class ArtifactsScreen(BaseAppScreen):
                     title = str(launch_kwargs["title"])
                     payload = launch_kwargs.get("payload") or {}
                     description = str(payload.get("description") or "").strip()
+                    provenance = self._console_saved_artifact_provenance(payload)
+                    content_preview = str(payload.get("content_preview") or "").strip()
                     yield Static("Console launch available", classes="destination-section")
                     yield Static(
                         Text.from_markup(
@@ -232,6 +287,16 @@ class ArtifactsScreen(BaseAppScreen):
                         yield Static(
                             Text.from_markup(escape_markup(description)),
                             id="artifacts-chatbook-description",
+                        )
+                    if provenance:
+                        yield Static(
+                            Text.from_markup(escape_markup(provenance)),
+                            id="artifacts-chatbook-provenance",
+                        )
+                    if content_preview:
+                        yield Static(
+                            Text.from_markup(f"Preview: {escape_markup(content_preview)}"),
+                            id="artifacts-chatbook-content-preview",
                         )
                     yield Button(
                         Text.from_markup(f"Launch {escape_markup(title)} in Console"),
