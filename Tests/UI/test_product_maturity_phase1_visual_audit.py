@@ -6,6 +6,7 @@ import re
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -15,6 +16,11 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
 from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
+if TYPE_CHECKING:
+    from textual.pilot import Pilot
+
+    from tldw_chatbook.app import TldwCli
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE = Path("Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-5-visual-broken-state-audit.md")
@@ -22,11 +28,26 @@ TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_1_README = Path("Docs/superpowers/qa/product-maturity/phase-1/README.md")
 TASK = Path("backlog/tasks/task-8.5 - Product-Maturity-Phase-1.5-Visual-Broken-State-Audit.md")
 TOP_LEVEL_DESTINATION_IDS = tuple(destination.destination_id for destination in SHELL_DESTINATION_ORDER)
+DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
+    "home": ("#home-dashboard",),
+    "console": ("#console-live-work-source-readiness", "#chat-window"),
+    "library": ("#library-shell",),
+    "artifacts": ("#artifacts-shell",),
+    "personas": ("#personas-shell",),
+    "watchlists_collections": ("#watchlists-collections-shell",),
+    "schedules": ("#schedules-shell",),
+    "workflows": ("#workflows-shell",),
+    "mcp": ("#mcp-shell", "#unified-mcp-panel"),
+    "acp": ("#acp-shell",),
+    "skills": ("#skills-shell",),
+    "settings": ("#settings-shell",),
+}
 TERMINAL_SIZE_MATRIX = (
     ("compact", (100, 32)),
     ("laptop", (140, 40)),
     ("large", (180, 50)),
 )
+MIN_VALID_SVG_LENGTH = 1_000
 BROKEN_TEXT_PATTERNS = (
     "Traceback",
     "Unhandled exception",
@@ -71,7 +92,7 @@ def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
         monkeypatch.setenv(env_var, str(path))
 
 
-def _build_clean_visual_audit_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def _build_clean_visual_audit_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> "TldwCli":
     _prepare_clean_environment(monkeypatch, tmp_path)
     app = _build_test_app()
     app.app_config["_first_run"] = True
@@ -79,7 +100,7 @@ def _build_clean_visual_audit_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     return app
 
 
-def _screen_text(app) -> str:
+def _screen_text(app: "TldwCli") -> str:
     content = app.screen.query_one("#screen-content")
     pieces: list[str] = []
     for widget in content.query(Static):
@@ -89,7 +110,17 @@ def _screen_text(app) -> str:
     return "\n".join(piece for piece in pieces if piece.strip())
 
 
-def _has_visual_chrome(app) -> bool:
+def _assert_destination_body_mounted(app: "TldwCli", destination_id: str, size_label: str) -> None:
+    selectors = DESTINATION_BODY_SELECTORS[destination_id]
+    content = app.screen.query_one("#screen-content")
+    missing_selectors = [selector for selector in selectors if not list(content.query(selector))]
+    assert not missing_selectors, (
+        f"{destination_id} missing primary body selector(s) at {size_label}: "
+        f"{', '.join(missing_selectors)}"
+    )
+
+
+def _has_visual_chrome(app: "TldwCli") -> bool:
     nav_bars = list(app.screen.query(MainNavigationBar))
     if not nav_bars or not list(app.screen.query("#screen-content")):
         return False
@@ -98,11 +129,12 @@ def _has_visual_chrome(app) -> bool:
 
 
 async def _wait_until(
-    pilot,
+    pilot: "Pilot",
     condition: Callable[[], bool],
     *,
     timeout_seconds: float = 10.0,
     interval_seconds: float = 0.05,
+    context: str | None = None,
 ) -> None:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
@@ -111,15 +143,17 @@ async def _wait_until(
         await pilot.pause(interval_seconds)
     if condition():
         return
-    raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s")
+    context_suffix = f" for {context}" if context else ""
+    raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s{context_suffix}")
 
 
-def _assert_visual_snapshot_is_healthy(app, destination_id: str, size_label: str) -> None:
+def _assert_visual_snapshot_is_healthy(app: "TldwCli", destination_id: str, size_label: str) -> None:
     nav_bar = app.screen.query_one(MainNavigationBar)
     nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(Button))
     assert nav_ids == TOP_LEVEL_DESTINATION_IDS
     assert nav_bar.query_one(f"#nav-{destination_id}", Button).has_class("is-active")
     assert "Ctrl+P" in str(app.screen.query_one("#nav-overflow-hint", Static).renderable)
+    _assert_destination_body_mounted(app, destination_id, size_label)
 
     text = _screen_text(app)
     svg = app.export_screenshot(title=f"Phase 1.5 {size_label} {destination_id}", simplify=True)
@@ -127,7 +161,7 @@ def _assert_visual_snapshot_is_healthy(app, destination_id: str, size_label: str
     assert text.strip(), f"{destination_id} rendered empty content at {size_label}"
     assert "<svg" in svg
     assert "</svg>" in svg
-    assert len(svg) > 1_000
+    assert len(svg) > MIN_VALID_SVG_LENGTH
     for broken_text in BROKEN_TEXT_PATTERNS:
         assert broken_text not in text
         assert broken_text not in svg
@@ -147,9 +181,12 @@ async def test_clean_run_top_level_visual_snapshots_survive_terminal_size(
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
+            _initial_screen_name, initial_tab, initial_screen_class = app._resolve_screen_navigation_target("home")
+            assert initial_screen_class is not None
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                lambda: app.current_tab == initial_tab and isinstance(app.screen, initial_screen_class),
+                context=f"{size_label}:home:initial",
             )
 
             for destination in SHELL_DESTINATION_ORDER:
@@ -164,12 +201,21 @@ async def test_clean_run_top_level_visual_snapshots_survive_terminal_size(
                         pilot,
                         lambda expected_tab=expected_tab, expected_screen_class=expected_screen_class: (
                             app.current_tab == expected_tab
-                            and app.screen.__class__.__name__ == expected_screen_class.__name__
+                            and isinstance(app.screen, expected_screen_class)
                         ),
+                        context=f"{size_label}:{destination.destination_id}:navigation",
                     )
-                await _wait_until(pilot, lambda: _has_visual_chrome(app))
+                await _wait_until(
+                    pilot,
+                    lambda: _has_visual_chrome(app),
+                    context=f"{size_label}:{destination.destination_id}:chrome",
+                )
 
                 _assert_visual_snapshot_is_healthy(app, destination.destination_id, size_label)
+
+
+def test_visual_audit_destination_body_selectors_cover_top_level_destinations() -> None:
+    assert set(DESTINATION_BODY_SELECTORS) == set(TOP_LEVEL_DESTINATION_IDS)
 
 
 def test_phase_one_five_evidence_records_visual_broken_state_audit() -> None:
