@@ -116,7 +116,7 @@ def apply_current_handoff_context(app: "TldwCli", message_text: str) -> str:
 def _tabbed_chat_selector(app: "TldwCli", selector: str) -> str:
     """Map legacy chat selectors to the active tab-specific widgets."""
     current_tab_id = getattr(app, "_current_chat_tab_id", None)
-    if current_tab_id and selector in {"#chat-input", "#chat-log"}:
+    if isinstance(current_tab_id, str) and current_tab_id and selector in {"#chat-input", "#chat-log"}:
         return f"{selector}-{current_tab_id}"
     return selector
 
