@@ -1,6 +1,6 @@
 # Product Maturity Phase 1 QA
 
-Status: in_progress
+Status: verified
 
 Phase 1 establishes QA baselines and usability guardrails before additional product-depth work.
 
@@ -54,3 +54,11 @@ Phase 1.6 empty/error/setup status: verified
 - `2026-05-05-phase-1-6-empty-error-setup-states.md`
 
 Phase 1.6 verifies clean-run setup blockers, missing optional dependencies, service-unavailable states, and local runtime blockers. It does not complete the narrow core-loop proof gate.
+
+Phase 1.7 evidence:
+
+Phase 1.7 narrow core-loop proof status: verified
+
+- `2026-05-05-phase-1-7-core-loop-proof.md`
+
+Phase 1.7 verifies that a Search/RAG result can reach Console as staged context with visible local source authority and a review-before-send draft prompt. This closes the Phase 1 QA baseline. Full grounded generation, Artifact/Chatbook persistence, and reopen/resume move to Phase 2.

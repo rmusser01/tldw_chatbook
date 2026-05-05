@@ -144,9 +144,10 @@ def test_product_maturity_tracker_links_phase_one_harness_and_tasks() -> None:
     phase_one_task = _task_text_by_id(phase_one_task_id)
     phase_one_child_tasks = [_task_text_by_id(task_id) for task_id in phase_one_child_ids]
 
-    assert phase_one_row[2] in {"planned", "in_progress"}
+    assert phase_one_row[2] in {"planned", "in_progress", "verified"}
     assert "Phase 1.1" in phase_one_row[3]
     assert "Phase 1.2" in phase_one_row[3]
+    assert "Phase 1.7" in phase_one_row[3]
     assert "TASK-" in phase_one_row[3]
     assert "phase-1/" in phase_one_row[4]
 
@@ -154,6 +155,7 @@ def test_product_maturity_tracker_links_phase_one_harness_and_tasks() -> None:
     assert any("Product-maturity QA protocol defines clean-run setup" in task for task in phase_one_child_tasks)
     assert any("Harness smoke evidence states" in task for task in phase_one_child_tasks)
     assert any("clean first-run launch" in task.lower() for task in phase_one_child_tasks)
+    assert any("Narrow Core Loop Proof" in task for task in phase_one_child_tasks)
 
 
 def test_product_maturity_phase_one_two_plan_scopes_first_run_walkthrough() -> None:
