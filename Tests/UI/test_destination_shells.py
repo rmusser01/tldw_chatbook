@@ -30,6 +30,7 @@ from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens import personas_screen as personas_screen_module
 from tldw_chatbook.UI.Screens import skills_screen as skills_screen_module
+from tldw_chatbook.UI.Screens import watchlists_collections_screen as wc_screen_module
 
 
 SCREEN_BY_ROUTE = {
@@ -57,6 +58,9 @@ PHASE4_LIBRARY_ADOPTION_EVIDENCE = Path(
 )
 PHASE4_PERSONAS_ADOPTION_EVIDENCE = Path(
     "Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-personas-service-adoption.md"
+)
+PHASE4_WC_ADOPTION_EVIDENCE = Path(
+    "Docs/superpowers/qa/unified-shell/phase-4/2026-05-04-wc-service-adoption.md"
 )
 
 
@@ -136,6 +140,31 @@ class StaticLibraryConversationScopeService:
 class RaisingLibraryNotesScopeService:
     async def list_notes(self, **kwargs):
         raise RuntimeError("notes unavailable")
+
+
+class StaticWatchlistsScopeService:
+    def __init__(self, watch_items):
+        self.watch_items = tuple(watch_items)
+        self.calls = []
+
+    async def list_watch_items(self, **kwargs):
+        self.calls.append(kwargs)
+        return list(self.watch_items)
+
+
+class RaisingWatchlistsScopeService:
+    async def list_watch_items(self, **kwargs):
+        raise RuntimeError("watchlists unavailable")
+
+
+class StaticReadItLaterScopeService:
+    def __init__(self, items):
+        self.items = tuple(items)
+        self.calls = []
+
+    async def list_read_it_later(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"items": list(self.items), "total": len(self.items)}
 
 
 class StaticSkillsScopeService:
@@ -222,6 +251,22 @@ async def _wait_for_personas_snapshot(screen, pilot, *, timeout: float = 2.0) ->
     raise AssertionError(f"Timed out waiting for Personas snapshot. Visible text: {_visible_text(screen)}")
 
 
+async def _wait_for_wc_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    terminal_selectors = (
+        "#wc-service-error",
+        "#wc-empty-state",
+        "#wc-watchlists-summary",
+        "#wc-collections-summary",
+    )
+    while time.monotonic() < deadline:
+        if any(screen.query(selector) for selector in terminal_selectors):
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for W+C snapshot. Visible text: {_visible_text(screen)}")
+
+
 async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -268,6 +313,141 @@ async def test_watchlists_collections_uses_compact_title_and_clear_sections():
         visible_text = _visible_text(screen)
         assert "Watchlists" in visible_text
         assert "Collections" in visible_text
+
+
+@pytest.mark.asyncio
+async def test_watchlists_collections_lists_local_snapshot_from_services():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService(
+        [
+            {"title": "Research feeds", "id": 1, "record_id": "local:subscription:1"},
+            {"name": "Vendor changelogs", "id": 2, "record_id": "local:subscription:2"},
+        ]
+    )
+    app.media_reading_scope_service = StaticReadItLaterScopeService(
+        [
+            {"title": "Saved article", "id": 10, "record_id": "local:media:10"},
+        ]
+    )
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_wc_snapshot(screen, pilot)
+        text = _visible_text(screen)
+        button = screen.query_one("#wc-attach-to-console", Button)
+
+        assert "Local W+C snapshot" in text
+        assert "Watchlists (showing up to 5): 2" in text
+        assert "Collections: 1" in text
+        assert "Research feeds" in text
+        assert "Vendor changelogs" in text
+        assert "Saved article" in text
+        assert button.disabled is False
+
+    assert app.watchlist_scope_service.calls[0] == {
+        "runtime_backend": "local",
+        "limit": getattr(wc_screen_module, "WC_LOCAL_PAGE_SIZE", None),
+        "offset": 0,
+    }
+    assert app.media_reading_scope_service.calls[0] == {
+        "mode": "local",
+        "limit": getattr(wc_screen_module, "WC_LOCAL_PAGE_SIZE", None),
+        "offset": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_watchlists_collections_empty_state_disables_console_attach():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    app.media_reading_scope_service = StaticReadItLaterScopeService([])
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_wc_snapshot(screen, pilot)
+        button = screen.query_one("#wc-attach-to-console", Button)
+
+        assert "No local Watchlists or Collections are available yet." in _visible_text(screen)
+        assert button.disabled is True
+        assert "Stage local W+C context" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_watchlists_collections_service_failure_uses_recovery_copy():
+    app = _build_test_app()
+    app.watchlist_scope_service = RaisingWatchlistsScopeService()
+    app.media_reading_scope_service = StaticReadItLaterScopeService([])
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_wc_snapshot(screen, pilot)
+        button = screen.query_one("#wc-attach-to-console", Button)
+
+        assert "W+C services unavailable; retry W+C later." in _visible_text(screen)
+        assert button.disabled is True
+        assert "W+C services are unavailable" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_watchlists_collections_attach_to_console_uses_listed_context():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService(
+        [{"title": "Research feeds", "id": 1, "record_id": "local:subscription:1"}]
+    )
+    app.media_reading_scope_service = StaticReadItLaterScopeService(
+        [{"title": "Saved article", "id": 10, "record_id": "local:media:10"}]
+    )
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_wc_snapshot(screen, pilot)
+        await pilot.click("#wc-attach-to-console")
+        await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
+
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert isinstance(payload, ChatHandoffPayload)
+    assert payload.source == "watchlists_collections"
+    assert payload.item_type == "wc-context"
+    assert payload.title == "Local W+C snapshot"
+    assert "Research feeds" in payload.body
+    assert "Saved article" in payload.body
+    assert payload.metadata["watchlist_count"] == 1
+    assert payload.metadata["collection_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_watchlists_collections_preserves_safe_comparison_titles_and_rejects_dangerous_text():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService(
+        [{"title": "Model A < Model B > Baseline", "id": 1}]
+    )
+    app.media_reading_scope_service = StaticReadItLaterScopeService(
+        [{"title": "javascript:alert(1)", "id": 10}]
+    )
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_wc_snapshot(screen, pilot)
+        text = _visible_text(screen)
+
+        assert "Model A < Model B > Baseline" in text
+        assert "javascript:alert(1)" not in text
+        assert "alert(1)" not in text
+
+        await pilot.click("#wc-attach-to-console")
+        await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
+
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert "Model A < Model B > Baseline" in payload.body
+    assert "javascript:alert(1)" not in payload.body
+    assert "alert(1)" not in payload.body
 
 
 @pytest.mark.asyncio
@@ -607,6 +787,20 @@ def test_library_destination_service_adoption_tracking_evidence_exists():
     assert "TASK-5.3" in evidence
     assert "Phase 4.3: Adopt Library source services in Library destination - `TASK-5.3`" in roadmap
     assert "notes_scope_service" in task
+    assert "media_reading_scope_service" in task
+
+
+def test_wc_service_adoption_tracking_evidence_exists():
+    evidence = PHASE4_WC_ADOPTION_EVIDENCE.read_text(encoding="utf-8")
+    roadmap = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text(encoding="utf-8")
+    task = Path(
+        "backlog/tasks/task-5.5 - Phase-4.5-Adopt-WC-services-in-WC-destination.md"
+    ).read_text(encoding="utf-8")
+
+    assert "Phase 4.5 W+C Service Adoption" in evidence
+    assert "TASK-5.5" in evidence
+    assert "Phase 4.5: Adopt W+C services in W+C destination - `TASK-5.5`" in roadmap
+    assert "watchlist_scope_service" in task
     assert "media_reading_scope_service" in task
 
 
