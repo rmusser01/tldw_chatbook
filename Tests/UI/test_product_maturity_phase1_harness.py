@@ -239,6 +239,8 @@ def test_product_maturity_phase_two_closeout_evidence_links_parent_task_and_trac
     assert "P0/P1" in evidence
     assert "Exit Decision" in evidence
     assert "Tests/UI/test_product_maturity_phase1_harness.py" in evidence
+    assert "/Users/" not in evidence
+    assert ".venv/bin/python -m pytest" in evidence
 
     assert "Product Maturity Phase 2.5: Core Loop Closeout Replay" in closeout_task
     assert "- [x] #1" in closeout_task
