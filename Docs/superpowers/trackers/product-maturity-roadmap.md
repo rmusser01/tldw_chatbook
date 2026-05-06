@@ -1,7 +1,7 @@
 # Product Maturity Roadmap
 
 Date: 2026-05-06
-Status: Phase 1 verified; Phase 2 verified; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified
+Status: Phase 1 verified; Phase 2 verified; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified; Phase 3.3 verified
 Source Branch: `dev`
 Source Spec: `Docs/superpowers/specs/2026-05-05-product-maturity-phased-roadmap-design.md`
 Layout Contract Spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`
@@ -29,6 +29,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 - Phase 3.0 verifies the required design gate before additional Phase 3 Knowledge/Study visual rewrites: destination layout and IA contracts must be approved for affected screens or deviations must be reviewed.
 - Phase 3.1 verifies the first Knowledge/Study entry contract: Library visibly routes users to Study Dashboard, Flashcards, and Quizzes while preserving the requested Study section.
 - Phase 3.2 verifies Library-originated Study entry preserves visible source context in Study without changing deck or quiz service scope away from global or workspace.
+- Phase 3.3 verifies the Library destination layout shell against the approved contract: mode bar, source browser, detail, inspector, authority, and existing Library actions remain visible across compact, default, and large terminal sizes.
 
 ## Severity Policy
 
@@ -59,6 +60,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 - Phase 3.0: Destination Layout And IA Contracts - `TASK-10.0`
 - Phase 3.1: Library Study Entry - `TASK-10.1`
 - Phase 3.2: Library Source Study Context - `TASK-10.2`
+- Phase 3.3: Library Contract Layout Shell - `TASK-10.3`
 - Phase 4: Agent Configuration And Execution - `TASK-11`
 - Phase 5: Server-Parity And Live Integrations - `TASK-12`
 - Phase 6: Release Hardening And Documentation - `TASK-13`
@@ -76,6 +78,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 | Phase 3.0 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md` | verified |
 | Phase 3.1 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-1-library-study-entry.md` | verified |
 | Phase 3.2 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-2-library-source-study-context.md` | verified |
+| Phase 3.3 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-3-library-contract-layout.md` | verified |
 
 ## Phase Overview
 
@@ -83,7 +86,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 | --- | --- | --- | --- | --- | --- |
 | Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | verified | `TASK-8`, Phase 1.1 (`TASK-8.1`), Phase 1.2 (`TASK-8.2`), Phase 1.3 (`TASK-8.3`), Phase 1.4 (`TASK-8.4`), Phase 1.5 (`TASK-8.5`), Phase 1.6 (`TASK-8.6`), Phase 1.7 (`TASK-8.7`) | `phase-1/` | Closed; full grounded generation and Artifact/Chatbook persistence move to Phase 2. |
 | Phase 2: Core Agentic Loop | Complete source/question to grounded Console to Artifact/Chatbook loop. | verified | `TASK-9`, Phase 2.1 (`TASK-9.1`), Phase 2.2 (`TASK-9.2`), Phase 2.3 (`TASK-9.3`), Phase 2.4 (`TASK-9.4`), Phase 2.5 (`TASK-9.5`) | `phase-2/2026-05-05-phase-2-1-grounded-console-response-contract.md`, `phase-2/2026-05-05-phase-2-2-console-chatbook-artifact-save-contract.md`, `phase-2/2026-05-05-phase-2-3-saved-chatbook-artifact-reopen-contract.md`, `phase-2/2026-05-05-phase-2-4-home-chatbook-artifact-resume-contract.md`, `phase-2/2026-05-06-phase-2-5-core-loop-closeout-replay.md` | Closed for the local core loop; live provider generation, full `.chatbook` export packaging, and full artifact history picking remain later-phase risks. |
-| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified | `TASK-10`, Phase 3.0 (`TASK-10.0`), Phase 3.1 (`TASK-10.1`), Phase 3.2 (`TASK-10.2`) | `phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md`, `phase-3/2026-05-06-phase-3-1-library-study-entry.md`, `phase-3/2026-05-06-phase-3-2-library-source-study-context.md` | Layout contracts, Library Study entry, and Library source context are verified; actual source-selected study generation, Workspaces, Collections, and deeper Import/Export/Search/RAG study flows remain. |
+| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified; Phase 3.3 verified | `TASK-10`, Phase 3.0 (`TASK-10.0`), Phase 3.1 (`TASK-10.1`), Phase 3.2 (`TASK-10.2`), Phase 3.3 (`TASK-10.3`) | `phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md`, `phase-3/2026-05-06-phase-3-1-library-study-entry.md`, `phase-3/2026-05-06-phase-3-2-library-source-study-context.md`, `phase-3/2026-05-06-phase-3-3-library-contract-layout.md` | Layout contracts, Library Study entry, Library source context, and the Library contract layout shell are verified; actual source-selected study generation, Workspaces, Collections, and deeper Import/Export/Search/RAG study flows remain. |
 | Phase 4: Agent Configuration And Execution | Mature Personas, Skills, MCP, ACP, Schedules, and Workflows. | planned | `TASK-11` | not-started | Depends on service adapters and runtime readiness. |
 | Phase 5: Server-Parity And Live Integrations | Close high-value `tldw_server2` parity gaps. | planned | `TASK-12` | not-started | Requires parity inventory. |
 | Phase 6: Release Hardening And Documentation | Reach release-candidate usability. | planned | `TASK-13` | not-started | Depends on earlier phase evidence. |
@@ -180,3 +183,9 @@ Status: verified
 Status: verified
 
 - `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-2-library-source-study-context.md`
+
+## Phase 3.3 Evidence
+
+Status: verified
+
+- `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-3-library-contract-layout.md`

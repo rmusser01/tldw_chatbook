@@ -12,7 +12,7 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -307,6 +307,16 @@ class LibraryScreen(BaseAppScreen):
 
     def compose_content(self) -> ComposeResult:
         has_sources = self._has_local_sources()
+        status_label = (
+            "Loading"
+            if not self._library_loaded
+            else "Blocked"
+            if self._library_lookup_error
+            else "Ready"
+        )
+        handoff_disabled = True
+        handoff_tooltip = "Stage Library source context after Library finishes loading."
+
         with Vertical(id="library-shell"):
             yield Static("Library", id="library-title", classes="ds-destination-header")
             yield Static(
@@ -314,96 +324,128 @@ class LibraryScreen(BaseAppScreen):
                 id="library-purpose",
                 classes="destination-purpose",
             )
-            with Vertical(id="library-sections", classes="ds-panel"):
-                yield Button("Open Notes", id="library-open-notes", tooltip="Open saved notes and workspaces.")
-                yield Button("Open Media", id="library-open-media", tooltip="Open ingested media and transcripts.")
-                yield Button(
-                    "Open Conversations",
-                    id="library-open-conversations",
-                    tooltip="Open saved conversation browsing inside Library.",
-                )
-                yield Button(
-                    "Import/Export Sources",
-                    id="library-open-import-export",
-                    tooltip="Open source import and export tools.",
-                )
-                yield Button("Search/RAG", id="library-open-search", tooltip="Search or ask over indexed sources.")
-                yield Static("Knowledge workflow", classes="destination-section")
-                yield Static(
-                    "Turn Library material into study sessions, flashcards, and quizzes.",
-                    id="library-study-purpose",
-                )
-                yield Button(
-                    "Study Dashboard",
-                    id="library-open-study",
-                    tooltip="Open the Study dashboard for due cards, decks, quizzes, and resume actions.",
-                )
-                yield Button(
-                    "Flashcards",
-                    id="library-open-flashcards",
-                    tooltip="Open flashcards for selected or imported Library material.",
-                )
-                yield Button(
-                    "Quizzes",
-                    id="library-open-quizzes",
-                    tooltip="Open quizzes for selected or imported Library material.",
-                )
-                yield Static("Local Library snapshot", classes="destination-section")
-                if not self._library_loaded:
+            yield Static(
+                f"Library | Sources, imports, Search/RAG, Workspaces, Study | {status_label} | Local",
+                id="library-status-row",
+                classes="destination-status-row",
+            )
+            with Horizontal(id="library-mode-bar", classes="ds-panel"):
+                yield Static("Modes:", id="library-mode-label", classes="destination-section")
+                yield Static("Sources", id="library-mode-sources", classes="library-mode-chip")
+                yield Static("Search/RAG", id="library-mode-search", classes="library-mode-chip")
+                yield Static("Import/Export", id="library-mode-import-export", classes="library-mode-chip")
+                yield Static("Workspaces", id="library-mode-workspaces", classes="library-mode-chip")
+                yield Static("Study", id="library-mode-study", classes="library-mode-chip")
+                yield Static("Flashcards", id="library-mode-flashcards", classes="library-mode-chip")
+                yield Static("Quizzes", id="library-mode-quizzes", classes="library-mode-chip")
+
+            with Horizontal(id="library-contract-grid", classes="ds-panel"):
+                with Vertical(id="library-source-browser", classes="library-region"):
+                    yield Static("Source Browser", classes="destination-section")
+                    yield Button("Open Notes", id="library-open-notes", tooltip="Open saved notes and workspaces.")
+                    yield Button("Open Media", id="library-open-media", tooltip="Open ingested media and transcripts.")
+                    yield Button(
+                        "Open Conversations",
+                        id="library-open-conversations",
+                        tooltip="Open saved conversation browsing inside Library.",
+                    )
+                    yield Button(
+                        "Import/Export Sources",
+                        id="library-open-import-export",
+                        tooltip="Open source import and export tools.",
+                    )
+                    yield Button("Search/RAG", id="library-open-search", tooltip="Search or ask over indexed sources.")
                     yield Static(
-                        "Loading local Library sources...",
-                        id="library-source-loading",
+                        "Workspaces: all local sources until workspace scoping is selected.",
+                        id="library-workspace-scope",
                     )
-                    handoff_disabled = True
-                    handoff_tooltip = "Stage Library source context after Library finishes loading."
-                elif self._library_lookup_error:
-                    recovery_state = self._library_lookup_recovery_state
-                    yield Static(
-                        self._library_lookup_error,
-                        id=(
-                            recovery_state.stable_selector
-                            if recovery_state is not None
-                            else "library-source-error"
-                        ),
-                    )
-                    handoff_disabled = True
-                    handoff_tooltip = (
-                        recovery_state.disabled_tooltip
-                        if recovery_state is not None
-                        else "Library source services are unavailable; retry Library later."
-                    )
-                elif not has_sources:
-                    yield Static(
-                        LIBRARY_EMPTY_COPY,
-                        id="library-source-empty",
-                    )
-                    handoff_disabled = True
-                    handoff_tooltip = "Stage Library source context after adding notes, media, or conversations."
-                else:
-                    for source_type, label, widget_id in (
-                        ("notes", "Notes", "library-notes-summary"),
-                        ("media", "Media", "library-media-summary"),
-                        ("conversations", "Conversations", "library-conversations-summary"),
-                    ):
+
+                with Vertical(id="library-source-detail", classes="library-region"):
+                    yield Static("Source Detail / Search Results", classes="destination-section")
+                    yield Static("Local Library snapshot", classes="destination-section")
+                    if not self._library_loaded:
                         yield Static(
-                            self._source_count_label(source_type, label),
-                            id=widget_id,
+                            "Loading local Library sources...",
+                            id="library-source-loading",
                         )
-                        for index, record in enumerate(self._local_source_records[source_type]):
+                    elif self._library_lookup_error:
+                        recovery_state = self._library_lookup_recovery_state
+                        yield Static(
+                            self._library_lookup_error,
+                            id=(
+                                recovery_state.stable_selector
+                                if recovery_state is not None
+                                else "library-source-error"
+                            ),
+                        )
+                        handoff_tooltip = (
+                            recovery_state.disabled_tooltip
+                            if recovery_state is not None
+                            else "Library source services are unavailable; retry Library later."
+                        )
+                    elif not has_sources:
+                        yield Static(
+                            LIBRARY_EMPTY_COPY,
+                            id="library-source-empty",
+                        )
+                        handoff_tooltip = "Stage Library source context after adding notes, media, or conversations."
+                    else:
+                        for source_type, label, widget_id in (
+                            ("notes", "Notes", "library-notes-summary"),
+                            ("media", "Media", "library-media-summary"),
+                            ("conversations", "Conversations", "library-conversations-summary"),
+                        ):
                             yield Static(
-                                Text.from_markup(
-                                    escape_markup(self._source_title(source_type, record))
-                                ),
-                                id=f"library-{source_type}-source-{index}",
+                                self._source_count_label(source_type, label),
+                                id=widget_id,
                             )
-                    handoff_disabled = False
-                    handoff_tooltip = "Stage Library source context in Console."
-                yield Button(
-                    "Use in Console",
-                    id="library-use-in-console",
-                    disabled=handoff_disabled,
-                    tooltip=handoff_tooltip,
-                )
+                            for index, record in enumerate(self._local_source_records[source_type]):
+                                yield Static(
+                                    Text.from_markup(
+                                        escape_markup(self._source_title(source_type, record))
+                                    ),
+                                    id=f"library-{source_type}-source-{index}",
+                                )
+                        handoff_disabled = False
+                        handoff_tooltip = "Stage Library source context in Console."
+
+                with Vertical(id="library-source-inspector", classes="library-region"):
+                    yield Static("Source Inspector", classes="destination-section")
+                    yield Static("Authority: local", id="library-source-authority")
+                    yield Static(
+                        "Search/RAG: query selected Library sources or stage evidence in Console.",
+                        id="library-rag-entry-point",
+                    )
+                    yield Static("Knowledge workflow", classes="destination-section")
+                    yield Static(
+                        "Turn Library material into study sessions, flashcards, and quizzes.",
+                        id="library-study-purpose",
+                    )
+                    yield Static(
+                        "Study generation entry uses the visible Library source snapshot.",
+                        id="library-study-generation-entry",
+                    )
+                    yield Button(
+                        "Study Dashboard",
+                        id="library-open-study",
+                        tooltip="Open the Study dashboard for due cards, decks, quizzes, and resume actions.",
+                    )
+                    yield Button(
+                        "Flashcards",
+                        id="library-open-flashcards",
+                        tooltip="Open flashcards for selected or imported Library material.",
+                    )
+                    yield Button(
+                        "Quizzes",
+                        id="library-open-quizzes",
+                        tooltip="Open quizzes for selected or imported Library material.",
+                    )
+                    yield Button(
+                        "Use in Console",
+                        id="library-use-in-console",
+                        disabled=handoff_disabled,
+                        tooltip=handoff_tooltip,
+                    )
 
     @on(Button.Pressed, "#library-open-notes")
     def open_notes(self) -> None:
