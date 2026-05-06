@@ -9,7 +9,7 @@ import toml
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Container
+from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 from textual.events import Key
 from textual import on
@@ -210,13 +210,90 @@ class ChatScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
         pending_launch = self._consume_pending_console_launch()
-        if pending_launch:
-            yield from self._render_console_live_work_status_card(pending_launch)
-        else:
-            yield from self._render_console_live_work_source_readiness()
-        # Create and yield the chat window container
-        self.chat_window = ChatWindowEnhanced(self.app_instance, id="chat-window", classes="window")
-        yield self.chat_window
+        with Vertical(id="console-shell"):
+            yield Static("Console", id="console-title", classes="ds-destination-header")
+            yield Static(
+                "Agent workbench for chat, source handoffs, live runs, and control actions.",
+                id="console-purpose",
+                classes="destination-purpose",
+            )
+            yield Static(
+                "Console | Agentic control surface | Chat-first | Local runtime",
+                id="console-status-row",
+                classes="destination-status-row",
+            )
+            yield Static(
+                "Mode: Chat + agent control | Context: staged sources | Runs: live work",
+                id="console-mode-bar",
+                classes="ds-panel",
+            )
+            with Vertical(id="console-workspace-grid", classes="ds-panel") as workspace_grid:
+                workspace_grid.styles.height = "1fr"
+                with Horizontal(id="console-context-row"):
+                    with Vertical(
+                        id="console-staged-context-tray",
+                        classes="console-region",
+                    ) as staged_context:
+                        staged_context.styles.width = "1fr"
+                        yield Static(
+                            "Staged Context",
+                            id="console-staged-context-title",
+                            classes="destination-section",
+                        )
+                        if pending_launch is not None:
+                            yield Static(
+                                (
+                                    f"Staged: {pending_launch.title}\n"
+                                    f"Source: {pending_launch.source}\n"
+                                    f"Status: {pending_launch.status}"
+                                ),
+                                id="console-staged-context-summary",
+                            )
+                        else:
+                            yield Static(
+                                (
+                                    "No live work item is staged.\n"
+                                    "Attach sources from Library, W+C, Schedules, "
+                                    "Artifacts, or RAG."
+                                ),
+                                id="console-staged-context-summary",
+                            )
+                    with Vertical(
+                        id="console-run-inspector",
+                        classes="console-region",
+                    ) as run_inspector:
+                        run_inspector.styles.width = "1fr"
+                        yield Static(
+                            "Run Inspector",
+                            id="console-run-inspector-title",
+                            classes="destination-section",
+                        )
+                        if pending_launch:
+                            yield from self._render_console_live_work_status_card(pending_launch)
+                        else:
+                            yield from self._render_console_live_work_source_readiness()
+                with Vertical(id="console-transcript-region", classes="console-region"):
+                    yield Static(
+                        "Transcript",
+                        id="console-transcript-title",
+                        classes="destination-section",
+                    )
+                    self.chat_window = ChatWindowEnhanced(
+                        self.app_instance,
+                        id="chat-window",
+                        classes="window",
+                    )
+                    yield self.chat_window
+                with Vertical(id="console-composer-region", classes="console-region"):
+                    yield Static(
+                        "Composer",
+                        id="console-composer-title",
+                        classes="destination-section",
+                    )
+                    yield Static(
+                        "Gate 1 keeps the existing chat composer in the transcript surface.",
+                        id="console-composer-summary",
+                    )
     
     def on_mount(self) -> None:
         """Run diagnostics when first mounted (only once)."""
