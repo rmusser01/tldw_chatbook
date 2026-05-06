@@ -51,3 +51,43 @@ async def test_local_chatbook_service_lists_with_query_limit_and_offset(tmp_path
     results = await service.list_chatbooks(q="pack", limit=1, offset=1)
 
     assert [item["name"] for item in results] == ["Beta Pack"]
+
+
+@pytest.mark.asyncio
+async def test_local_chatbook_service_home_artifact_snapshot_lists_latest_console_saved_artifacts(tmp_path):
+    service = LocalChatbookService(db_paths={}, registry_path=tmp_path / "chatbooks.json")
+    await service.create_chatbook(
+        name="Generic Pack",
+        description="Imported pack",
+        metadata={"artifact_source": "import"},
+    )
+    older = await service.create_chatbook(
+        name="Older Console Answer",
+        description="Saved from Console assistant response.",
+        metadata={
+            "artifact_source": "console",
+            "artifact_kind": "assistant-response",
+            "message_id": "msg-old",
+            "content": "Older saved answer.",
+            "content_truncated": False,
+        },
+    )
+    newer = await service.create_chatbook(
+        name="Newer Console Answer",
+        description="Saved from Console assistant response.",
+        metadata={
+            "artifact_source": "console",
+            "artifact_kind": "assistant-response",
+            "message_id": "msg-new",
+            "content": "Newer saved answer.",
+            "content_truncated": False,
+        },
+    )
+
+    snapshot = service.list_home_artifact_snapshot(limit=2)
+
+    assert [record["chatbook_id"] for record in snapshot] == [
+        newer["chatbook_id"],
+        older["chatbook_id"],
+    ]
+    assert snapshot[0]["metadata"]["message_id"] == "msg-new"

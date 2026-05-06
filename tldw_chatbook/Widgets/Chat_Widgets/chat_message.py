@@ -191,6 +191,8 @@ class ChatMessage(Widget):
                     thumb_down_label = "👎✓" if self.feedback == "2;" else "👎"
                     yield Button(thumb_up_label, classes="action-button thumb-up-button", id="thumb-up", tooltip="Mark as helpful")
                     yield Button(thumb_down_label, classes="action-button thumb-down-button", id="thumb-down", tooltip="Mark as unhelpful")
+                    if str(self.role or "").strip().lower() != "system":
+                        yield Button("💾", classes="action-button artifact-button", id="save-artifact", tooltip="Save response as Chatbook artifact")
                     yield Button("🔄", classes="action-button regenerate-button", id="regenerate", tooltip="Regenerate response") # Emoji for regenerate
                     yield Button("↪️", id="continue-response-button", classes="action-button continue-button", tooltip="Continue response")
 

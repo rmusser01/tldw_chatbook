@@ -209,6 +209,40 @@ def test_dashboard_summary_exposes_active_work_item_context_and_targets():
     assert controls_by_id["home-open-in-console"].target_id == "run-1"
 
 
+def test_dashboard_summary_keeps_chatbook_artifact_reachable_when_mixed_with_watchlist_run():
+    dashboard = summarize_home_dashboard(
+        HomeDashboardInput(
+            model_ready=True,
+            has_library_content=True,
+            active_work_items=(
+                HomeActiveWorkItem(
+                    item_id="local:watchlist_run:5",
+                    title="Daily feed",
+                    source="W+C",
+                    status="running",
+                    detail_route="watchlists",
+                    console_available=True,
+                ),
+                HomeActiveWorkItem(
+                    item_id="local:chatbook:77",
+                    title="Grounded Answer",
+                    source="Artifacts",
+                    status="ready",
+                    detail_route="artifacts",
+                    console_available=True,
+                ),
+            ),
+        )
+    )
+
+    controls_by_id = {control.control_id: control for control in dashboard.controls}
+    assert controls_by_id["home-open-details"].target_id == "local:watchlist_run:5"
+    assert controls_by_id["home-open-in-console"].target_id == "local:watchlist_run:5"
+    assert controls_by_id["home-open-chatbook-details"].target_id == "local:chatbook:77"
+    assert controls_by_id["home-open-chatbook-details"].target_route == "artifacts"
+    assert controls_by_id["home-open-chatbook-in-console"].target_id == "local:chatbook:77"
+
+
 def test_dashboard_item_statuses_gate_matching_controls():
     dashboard = summarize_home_dashboard(
         HomeDashboardInput(

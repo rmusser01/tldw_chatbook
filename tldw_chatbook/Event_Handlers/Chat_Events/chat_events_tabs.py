@@ -69,6 +69,18 @@ async def _sync_session_state(state_manager, session_data: ChatSessionData, **up
     else:
         await state_manager.update_tab_state(session_data.tab_id, **updates)
 
+
+def _chat_send_started(app: 'TldwCli', starting_worker: object, starting_streaming: bool) -> bool:
+    """Return True only after the wrapped send path dispatches generation work."""
+    current_worker = getattr(app, "current_chat_worker", None)
+    if current_worker is not None and current_worker is not starting_worker:
+        return True
+    try:
+        current_streaming = bool(app.get_current_chat_is_streaming())
+    except Exception:
+        current_streaming = bool(getattr(app, "current_chat_is_streaming", False))
+    return current_streaming and not starting_streaming
+
 # Note: get_widget_id_for_session and get_tab_specific_widget_ids functions removed
 # These are now handled by the TabContext class
 
@@ -138,7 +150,13 @@ async def handle_chat_send_button_pressed_with_tabs(app: 'TldwCli', event: Butto
                 app._current_chat_handoff_payload = None
 
             # Call the original handler
+            starting_worker = getattr(app, "current_chat_worker", None)
+            try:
+                starting_streaming = bool(app.get_current_chat_is_streaming())
+            except Exception:
+                starting_streaming = bool(getattr(app, "current_chat_is_streaming", False))
             await chat_events.handle_chat_send_button_pressed(app, event)
+            send_started = _chat_send_started(app, starting_worker, starting_streaming)
             
             # Update session data after handler completes
             if session_data:
@@ -149,7 +167,7 @@ async def handle_chat_send_button_pressed_with_tabs(app: 'TldwCli', event: Butto
                 # Mark unsaved changes if message was sent
                 session_data.has_unsaved_changes = True
 
-                if session_data.handoff_payload and session_data.handoff_payload.status != "sent":
+                if send_started and session_data.handoff_payload and session_data.handoff_payload.status != "sent":
                     session_data.handoff_payload.status = "sent"
             
     finally:
