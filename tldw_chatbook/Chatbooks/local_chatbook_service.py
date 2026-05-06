@@ -130,6 +130,42 @@ class LocalChatbookService:
             ]
         return records[int(offset) : int(offset) + int(limit)]
 
+    @staticmethod
+    def _is_console_saved_artifact(record: dict[str, Any]) -> bool:
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        return (
+            str(metadata.get("artifact_source") or "").strip().lower() == "console"
+            and str(metadata.get("artifact_kind") or "").strip().lower() == "assistant-response"
+        )
+
+    @classmethod
+    def _home_artifact_sort_key(cls, record: dict[str, Any]) -> tuple[float, int]:
+        timestamp = str(record.get("updated_at") or record.get("created_at") or "").strip()
+        try:
+            normalized = timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            timestamp_value = parsed.timestamp()
+        except (TypeError, ValueError):
+            timestamp_value = 0.0
+        try:
+            chatbook_id = int(record.get("chatbook_id") or record.get("id") or 0)
+        except (TypeError, ValueError):
+            chatbook_id = 0
+        return timestamp_value, chatbook_id
+
+    def list_home_artifact_snapshot(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Return latest Console-saved Chatbook artifacts for synchronous Home rendering."""
+        registry = self._load_registry()
+        records = [
+            self._record_copy(record)
+            for record in registry["records"]
+            if self._is_console_saved_artifact(record)
+        ]
+        records.sort(key=self._home_artifact_sort_key, reverse=True)
+        return records[: int(limit)]
+
     async def get_chatbook(self, chatbook_id: int | str) -> dict[str, Any]:
         registry = self._load_registry()
         return self._record_copy(self._find_record(registry, chatbook_id))

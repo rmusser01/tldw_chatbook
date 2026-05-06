@@ -1,6 +1,6 @@
 """Home dashboard screen for the master shell."""
 
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Static
@@ -23,11 +23,15 @@ HOME_CONTROL_METHODS = {
     "home-retry": "retry_active_home_item",
     "home-open-details": "open_active_home_item_details",
     "home-open-in-console": "open_active_home_item_in_console",
+    "home-open-chatbook-details": "open_active_home_item_details",
+    "home-open-chatbook-in-console": "open_active_home_item_in_console",
 }
 
 HOME_CONTROL_METHODS_WITH_TARGET_ROUTE = {
     "home-open-details",
     "home-open-in-console",
+    "home-open-chatbook-details",
+    "home-open-chatbook-in-console",
 }
 
 
@@ -37,6 +41,23 @@ class HomeScreen(BaseAppScreen):
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "home", **kwargs)
         self._current_dashboard: HomeDashboard | None = None
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self._refresh_home_chatbook_artifact_snapshot()
+
+    @work(exclusive=True, thread=True)
+    def _refresh_home_chatbook_artifact_snapshot(self) -> None:
+        adapter = getattr(self.app_instance, "home_active_work_adapter", None)
+        refresh_snapshot = getattr(adapter, "refresh_chatbook_artifact_snapshot", None)
+        if not callable(refresh_snapshot):
+            return
+        refresh_snapshot()
+        self.app.call_from_thread(self._refresh_after_chatbook_artifact_snapshot)
+
+    def _refresh_after_chatbook_artifact_snapshot(self) -> None:
+        if self.is_mounted:
+            self.refresh(recompose=True)
 
     def _build_dashboard_input(self) -> HomeDashboardInput:
         test_override = getattr(self.app_instance, "_home_dashboard_test_input", None)

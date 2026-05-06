@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from html import escape as html_escape
+from pathlib import Path
+from threading import RLock
 from typing import Any, Mapping, Protocol, runtime_checkable
 
 from loguru import logger
+from rich.markup import escape
 
+from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+from tldw_chatbook.Utils.path_validation import validate_path
 from .dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 
 
@@ -24,6 +31,11 @@ _HOME_WATCHLIST_RUN_STATUSES = frozenset(
         "error",
     }
 )
+_MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS = 1000
+_MAX_CHATBOOK_FILE_PATH_CHARS = 2000
+_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS = 1000
+_MAX_CHATBOOK_METADATA_TEXT_CHARS = 256
+_DANGEROUS_TEXT_PATTERNS = ("<script", "</script", "javascript:", "onclick=", "onerror=")
 
 
 class HomeControlAction(StrEnum):
@@ -153,9 +165,36 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         *,
         notification_service: Any | None = None,
         watchlist_service: Any | None = None,
+        chatbook_service: Any | None = None,
     ):
         self.notification_service = notification_service
         self.watchlist_service = watchlist_service
+        self.chatbook_service = chatbook_service
+        self._chatbook_artifact_snapshot: tuple[Mapping[str, Any], ...] = ()
+        self._chatbook_artifact_snapshot_lock = RLock()
+
+    def refresh_chatbook_artifact_snapshot(self, *, limit: int = 20) -> None:
+        """Refresh cached local Chatbook artifacts off the Home compose path."""
+        if self.chatbook_service is None:
+            self._set_chatbook_artifact_snapshot(())
+            return
+        list_snapshot = getattr(self.chatbook_service, "list_home_artifact_snapshot", None)
+        if not callable(list_snapshot):
+            self._set_chatbook_artifact_snapshot(())
+            return
+        try:
+            records = list_snapshot(limit=limit)
+        except Exception as e:
+            logger.warning(f"Failed to fetch local Chatbook artifacts for Home: {e}")
+            self._set_chatbook_artifact_snapshot(())
+            return
+        self._set_chatbook_artifact_snapshot(
+            tuple(record for record in records if isinstance(record, Mapping))
+        )
+
+    def _set_chatbook_artifact_snapshot(self, records: tuple[Mapping[str, Any], ...]) -> None:
+        with self._chatbook_artifact_snapshot_lock:
+            self._chatbook_artifact_snapshot = records
 
     def build_dashboard_input(
         self,
@@ -170,7 +209,12 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         return replace(
             dashboard_input,
             notification_count=self._unread_notification_count(),
-            active_work_items=tuple(self._local_watchlist_run_items()),
+            active_work_items=tuple(
+                [
+                    *self._local_watchlist_run_items(),
+                    *self._local_chatbook_artifact_items(),
+                ]
+            ),
         )
 
     def handle_control(
@@ -207,6 +251,35 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                         status=str(_mapping_value(run, "status") or "pending").strip().lower(),
                         recovery="Review the W+C run details or retry from W+C.",
                         action_label="Open W+C run",
+                    ),
+                )
+        if action is HomeControlAction.OPEN_DETAILS and _is_local_chatbook_id(target_id):
+            record = self._local_chatbook_artifact_by_id(str(target_id))
+            if record is not None:
+                title = self._chatbook_title(record)
+                return HomeControlResult(
+                    action=action,
+                    status=HomeControlResultStatus.HANDLED,
+                    message=f"Opening Artifacts for {title}.",
+                    target_route=target_route or "artifacts",
+                    target_id=target_id,
+                )
+        if action is HomeControlAction.OPEN_IN_CONSOLE and _is_local_chatbook_id(target_id):
+            record = self._local_chatbook_artifact_by_id(str(target_id))
+            if record is not None:
+                title = self._chatbook_title(record)
+                return HomeControlResult(
+                    action=action,
+                    status=HomeControlResultStatus.HANDLED,
+                    message=f"Opening Console for {title}.",
+                    target_id=target_id,
+                    console_launch=HomeConsoleLaunch(
+                        source="artifacts",
+                        title=title,
+                        payload=self._chatbook_console_payload(record, str(target_id)),
+                        status="ready",
+                        recovery="Review this Chatbook artifact in Console or return to Home.",
+                        action_label="Open Chatbook artifact",
                     ),
                 )
         return super().handle_control(
@@ -263,6 +336,24 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             )
         return items
 
+    def _local_chatbook_artifact_items(self) -> list[HomeActiveWorkItem]:
+        items: list[HomeActiveWorkItem] = []
+        for record in self._local_chatbook_artifacts()[:1]:
+            item_id = self._local_chatbook_item_id(record)
+            if not item_id:
+                continue
+            items.append(
+                HomeActiveWorkItem(
+                    item_id=item_id,
+                    title=self._chatbook_title(record),
+                    source="Artifacts",
+                    status="ready",
+                    detail_route="artifacts",
+                    console_available=True,
+                )
+            )
+        return items
+
     def _local_watchlist_run_by_id(self, target_id: str) -> Any | None:
         if self.watchlist_service is None:
             return None
@@ -273,6 +364,20 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             return None
         return next(
             (run for run in runs if self._local_watchlist_run_item_id(run) == target_id),
+            None,
+        )
+
+    def _local_chatbook_artifacts(self) -> list[Any]:
+        with self._chatbook_artifact_snapshot_lock:
+            return list(self._chatbook_artifact_snapshot)
+
+    def _local_chatbook_artifact_by_id(self, target_id: str) -> Any | None:
+        return next(
+            (
+                record
+                for record in self._local_chatbook_artifacts()
+                if self._local_chatbook_item_id(record) == target_id
+            ),
             None,
         )
 
@@ -302,6 +407,44 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             or "Watchlist run"
         )
 
+    @staticmethod
+    def _local_chatbook_item_id(record: Any) -> str:
+        chatbook_id = _mapping_value(record, "chatbook_id") or _mapping_value(record, "id")
+        return f"local:chatbook:{chatbook_id}" if chatbook_id not in (None, "") else ""
+
+    @staticmethod
+    def _chatbook_title(record: Any) -> str:
+        return _safe_payload_text(
+            _mapping_value(record, "name") or _mapping_value(record, "title"),
+            fallback="Untitled Chatbook",
+            max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS,
+        )
+
+    @classmethod
+    def _chatbook_console_payload(cls, record: Any, target_id: str) -> Mapping[str, Any]:
+        chatbook_id = _mapping_value(record, "chatbook_id") or _mapping_value(record, "id")
+        payload: dict[str, Any] = {
+            "target_id": target_id,
+            "chatbook_id": chatbook_id,
+            "record_id": _safe_payload_text(
+                _mapping_value(record, "id"),
+                max_length=_MAX_CHATBOOK_METADATA_TEXT_CHARS,
+            ),
+            "file_path": _safe_file_path(_mapping_value(record, "file_path")),
+            "description": _safe_payload_text(
+                _mapping_value(record, "description"),
+                max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS,
+            ),
+            "tags": _csv(_mapping_value(record, "tags")),
+            "categories": _csv(_mapping_value(record, "categories")),
+            "updated_at": _safe_payload_text(
+                _mapping_value(record, "updated_at"),
+                max_length=_MAX_CHATBOOK_METADATA_TEXT_CHARS,
+            ),
+        }
+        payload.update(_console_metadata_payload(_mapping_value(record, "metadata")))
+        return payload
+
 
 def _notification_is_unread(notification: Any) -> bool:
     if isinstance(notification, Mapping):
@@ -317,3 +460,106 @@ def _mapping_value(value: Any, key: str) -> Any:
 
 def _is_local_watchlist_run_id(value: str | None) -> bool:
     return bool(value and str(value).startswith("local:watchlist_run:"))
+
+
+def _is_local_chatbook_id(value: str | None) -> bool:
+    return bool(value and str(value).startswith("local:chatbook:"))
+
+
+def _csv(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS) or None
+    if isinstance(value, (list, tuple)):
+        text = ", ".join(
+            _safe_payload_text(item, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS)
+            for item in value
+            if str(item).strip()
+        )
+        text = _safe_payload_text(text, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS)
+        return text or None
+    return _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS) or None
+
+
+def _safe_payload_text(
+    value: Any,
+    *,
+    fallback: str = "",
+    max_length: int = _MAX_CHATBOOK_PAYLOAD_TEXT_CHARS,
+    single_line: bool = True,
+) -> str:
+    text = sanitize_string(str(value or ""), max_length=max_length).strip()
+    if single_line:
+        text = " ".join(text.split())
+    if not text:
+        return fallback
+    if not validate_text_input(text, max_length=max_length, allow_html=False):
+        for pattern in _DANGEROUS_TEXT_PATTERNS:
+            replacement = pattern.rstrip(":=").replace("=", "")
+            text = re.sub(re.escape(pattern), replacement, text, flags=re.IGNORECASE)
+        if not validate_text_input(text, max_length=max_length, allow_html=False):
+            return fallback
+    return escape(html_escape(text, quote=False))
+
+
+def _safe_metadata_value(value: Any, *, max_length: int = _MAX_CHATBOOK_METADATA_TEXT_CHARS) -> Any | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    text = _safe_payload_text(value, max_length=max_length)
+    return text or None
+
+
+def _safe_file_path(value: Any) -> str | None:
+    text = sanitize_string(str(value or ""), max_length=_MAX_CHATBOOK_FILE_PATH_CHARS).strip()
+    if not text:
+        return None
+    text = " ".join(text.split())
+    try:
+        path = Path(text).expanduser()
+        base_directory = path.parent if path.is_absolute() else Path.cwd()
+        validated = validate_path(path, base_directory)
+    except ValueError:
+        logger.warning(f"Rejected unsafe Chatbook artifact file path for Home payload: {text!r}")
+        return None
+    return _safe_payload_text(
+        str(validated),
+        max_length=_MAX_CHATBOOK_FILE_PATH_CHARS,
+    ) or None
+
+
+def _console_metadata_payload(metadata: Any) -> dict[str, Any]:
+    if not isinstance(metadata, Mapping):
+        return {}
+    artifact_source = _safe_metadata_value(metadata.get("artifact_source"), max_length=128)
+    artifact_kind = _safe_metadata_value(metadata.get("artifact_kind"), max_length=128)
+    if str(artifact_source or "").strip().lower() != "console":
+        return {}
+    if str(artifact_kind or "").strip().lower() != "assistant-response":
+        return {}
+
+    payload: dict[str, Any] = {
+        "artifact_source": artifact_source,
+        "artifact_kind": artifact_kind,
+    }
+    for key in ("conversation_id", "message_id", "message_role", "provider", "model"):
+        value = _safe_metadata_value(metadata.get(key))
+        if value is not None:
+            payload[key] = value
+    if metadata.get("content") is not None:
+        content = sanitize_string(
+            str(metadata.get("content")),
+            max_length=_MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS,
+        )
+        payload["content_preview"] = _safe_payload_text(
+            content,
+            max_length=_MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS,
+            single_line=False,
+        )
+        payload["content_truncated"] = (
+            bool(metadata.get("content_truncated"))
+            or len(str(metadata.get("content"))) > _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS
+        )
+    return payload

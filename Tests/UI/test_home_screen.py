@@ -372,6 +372,101 @@ async def test_home_active_work_item_controls_pass_target_id_to_runtime_hooks():
     )
 
 
+@pytest.mark.asyncio
+async def test_home_saved_chatbook_artifact_resume_controls_pass_artifact_target():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:chatbook:77",
+                title="Grounded Answer",
+                source="Artifacts",
+                status="ready",
+                detail_route="artifacts",
+                console_available=True,
+            ),
+        ),
+    )
+    app.open_active_home_item_details = Mock()
+    app.open_active_home_item_in_console = Mock()
+    host = HomeHarness(app, [])
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        home = _active_home_screen(host)
+
+        active_work_text = str(home.query_one("#home-active-work-body").renderable)
+        assert "Grounded Answer" in active_work_text
+        assert "Artifacts" in active_work_text
+        assert "ready" in active_work_text
+
+        await pilot.click("#home-open-details")
+        await pilot.pause(0.1)
+        await pilot.click("#home-open-in-console")
+        await pilot.pause(0.1)
+
+    app.open_active_home_item_details.assert_called_once_with(
+        target_id="local:chatbook:77",
+        target_route="artifacts",
+    )
+    app.open_active_home_item_in_console.assert_called_once_with(
+        target_id="local:chatbook:77",
+        target_route="chat",
+    )
+
+
+@pytest.mark.asyncio
+async def test_home_mixed_active_work_exposes_chatbook_artifact_resume_controls():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:5",
+                title="Daily Feed",
+                source="W+C",
+                status="running",
+                detail_route="watchlists",
+                console_available=True,
+            ),
+            HomeActiveWorkItem(
+                item_id="local:chatbook:77",
+                title="Grounded Answer",
+                source="Artifacts",
+                status="ready",
+                detail_route="artifacts",
+                console_available=True,
+            ),
+        ),
+    )
+    app.open_active_home_item_details = Mock()
+    app.open_active_home_item_in_console = Mock()
+    host = HomeHarness(app, [])
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        home = _active_home_screen(host)
+
+        assert len(home.query("#home-open-chatbook-details")) == 1
+        assert len(home.query("#home-open-chatbook-in-console")) == 1
+        await pilot.click("#home-open-chatbook-details")
+        await pilot.pause(0.1)
+        await pilot.click("#home-open-chatbook-in-console")
+        await pilot.pause(0.1)
+
+    app.open_active_home_item_details.assert_called_once_with(
+        target_id="local:chatbook:77",
+        target_route="artifacts",
+    )
+    app.open_active_home_item_in_console.assert_called_once_with(
+        target_id="local:chatbook:77",
+        target_route="chat",
+    )
+
+
 def test_app_detail_hook_delegates_to_adapter_and_navigates_handled_route():
     app = _build_test_app()
     adapter = RecordingHomeActiveWorkAdapter(
