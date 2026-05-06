@@ -332,6 +332,31 @@ Done when:
 - Library keeps its current contract layout and gains actionable mode/selection behavior for the next Knowledge/Study slice.
 - QA walkthrough verifies that the app is usable, not merely renderable.
 
+### Gate 1.5: Console Internals Decomposition
+
+Screen: `Console`.
+
+Why: Gate 1 is allowed to wrap the existing `ChatWindowEnhanced` surface for compatibility. That cannot be the end state. The product center must look and behave like one coherent agentic Console, not a new shell wrapped around an out-of-place legacy Chat implementation.
+
+Done when:
+
+- `ChatWindowEnhanced` has been decomposed or replaced by Console-native components for provider/model controls, staged context, transcript/event stream, composer, tools, approvals, RAG controls, artifact/Chatbook save controls, and recovery states.
+- Existing chat behavior remains compatible: basic chat, tabs/session state, provider/model selection, streaming/non-streaming fallback, handoffs, RAG-related controls, tool-call visibility, and persona/character attachment paths still work or have documented replacements.
+- Visual and interaction QA verifies that the Console internals fit the agentic terminal design system and no longer look like a legacy embedded screen.
+
+### Gate 1.6: Library-Native Search/RAG Workflow
+
+Screen: `Library`, with Console handoff.
+
+Why: Gate 1 is allowed to make `Search/RAG` mode selectable inside Library. That cannot be the end state. Library must support a real retrieval workflow that can answer inside Library and hand evidence into Console.
+
+Done when:
+
+- Library Search/RAG mode includes source selection, query input, retrieval status, evidence/results list, citations/provenance where available, and clear empty/error/setup recovery states.
+- Users can start from Library Search/RAG and continue into Console with staged evidence and source authority preserved.
+- Users can start from Console and invoke RAG against Library sources with visible retrieval state and cited evidence.
+- QA verifies retrieval usability rather than only selector presence or route navigation.
+
 ### Gate 2: Knowledge Inputs, Outputs, And Behavior
 
 Screens: `Artifacts`, `Personas`, `W+C`, `Skills`.

@@ -27,6 +27,12 @@ Excluded:
 - Full Search/RAG implementation inside Library.
 - Rebuilding Artifacts, Personas, W+C, Schedules, Workflows, MCP, ACP, Skills, or Settings. Those belong to Gate 2 and Gate 3 follow-up plans.
 
+Required deferred follow-up gates:
+
+- **Gate 1.5: Console internals decomposition and `ChatWindowEnhanced` replacement.** Gate 1 may frame the existing chat surface inside the Console shell for compatibility, but the legacy `ChatWindowEnhanced` implementation must be decomposed and replaced in a later required gate. That gate owns visual fit, keyboard flow, provider/model controls, transcript rendering, composer behavior, staged context, RAG controls, tool calls, approvals, artifacts/Chatbook save controls, and parity with existing chat features.
+- **Gate 1.6: Library-native Search/RAG workflow.** Gate 1 may make Library's Search/RAG mode selectable, but the full Search/RAG implementation must be delivered in a later required gate. That gate owns source selection, RAG query input, retrieval status, evidence/results list, citations/provenance, failure/setup recovery, and handoff into Console with staged evidence.
+- These gates should be planned and tracked before broad Gate 2 destination rewrites, because Console usability and Library retrieval are core-loop dependencies.
+
 ## File Structure
 
 ### Create
@@ -825,6 +831,7 @@ sed -n '1,220p' Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit
 Confirm:
 
 - Gate 1 did not accidentally expand into Gate 2 or Gate 3.
+- Gate 1.5 and Gate 1.6 remain explicitly documented as required follow-up gates rather than optional cleanup.
 - `Console` still uses route id `chat`.
 - `Library` still owns Study, Flashcards, Quizzes, Search/RAG, Import/Export, Notes, Media, and Conversations.
 - `Home` controls still route through existing adapter methods.
