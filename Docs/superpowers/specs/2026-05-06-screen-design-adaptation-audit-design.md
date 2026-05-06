@@ -1,16 +1,16 @@
 # Screen Design Adaptation Audit
 
 Date: 2026-05-06
-Status: Design audit and implementation gate
+Status: Design audit and implementation gate; Gate 1 implementation verified
 Primary Repo: `tldw_chatbook`
-Current Base: `origin/dev` at `6d4389fa` (`Verify Phase 3.3 Library contract layout (#263)`)
+Current Base: `origin/dev` at `75879521` (`Add post-UX product roadmap handoff (#264)`)
 Scope: Current top-level destination screens after the Phase 3.3 Library contract merge
 
 ## Summary
 
 The current shell has the approved top-level information architecture and a verified global navigation model. It does not yet have fully adapted screen designs for every destination.
 
-`Library` is the only destination that substantially follows the approved destination layout grammar today. `Home` and `Console` have meaningful foundations but still need structural adaptation. Most other destinations are honest wrapper or skeleton screens: they explain ownership, expose some recovery states, and preserve route compatibility, but they are not yet designed as complete usable destination screens.
+Gate 1 now verifies the core product-loop adaptation for `Home`, `Console`, and `Library`: Home has dashboard regions and selected-item inspector, Console has agentic shell contract regions around the existing chat surface, and Library modes are actionable. Most other destinations are honest wrapper or skeleton screens: they explain ownership, expose some recovery states, and preserve route compatibility, but they are not yet designed as complete usable destination screens.
 
 This document should be used as the screen-design gate before deeper feature work continues. A screen should not be considered product-mature just because it renders, has clickable buttons, or passes shallow navigation tests. It must expose a usable layout, clear state, recoverable failure modes, and correct Console handoff behavior.
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from textual.app import App
 from textual.widgets import Button, Static
@@ -18,6 +20,24 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-3/"
+    "2026-05-06-gate-1-core-product-loop-screen-adaptation.md"
+)
+AUDIT = Path("Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-design.md")
+TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
+PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
+TASK_10 = Path("backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md")
+TASK_10_5 = Path(
+    "backlog/tasks/task-10.5 - Product-Maturity-Phase-3.5-Core-Product-Loop-Screen-Adaptation.md"
+)
+
+
+def _text(path: Path) -> str:
+    return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
 def _static_text(widget: Static) -> str:
@@ -153,3 +173,36 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         text = _visible_text(screen)
         assert "Search/RAG mode" in text
         assert "Ask in Console" in text or "Use in Console" in text
+
+
+def test_gate1_core_loop_screen_adaptation_evidence_is_tracked() -> None:
+    evidence = _text(EVIDENCE)
+    audit = _text(AUDIT)
+    tracker = _text(TRACKER)
+    readme = _text(PHASE_3_README)
+    task = _text(TASK_10_5)
+    parent = _text(TASK_10)
+
+    for heading in (
+        "## Scope",
+        "## Walkthrough",
+        "## Verification",
+        "## Defects",
+        "## Exit Decision",
+    ):
+        assert heading in evidence
+    for selector in (
+        "#home-dashboard-grid",
+        "#console-workspace-grid",
+        "#library-mode-bar",
+    ):
+        assert selector in evidence
+    assert EVIDENCE.name in readme
+    assert EVIDENCE.name in tracker
+    assert "Gate 1" in audit
+    assert "TASK-10.5" in tracker
+    assert "TASK-10.5" in parent
+    assert "status: Done" in task
+    for ac_number in range(1, 6):
+        assert f"- [x] #{ac_number}" in task
+    assert "## Implementation Notes" in task
