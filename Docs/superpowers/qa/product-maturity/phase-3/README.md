@@ -19,3 +19,4 @@ Phase 3.0 records destination layout and IA contracts before additional Phase 3 
 - `2026-05-06-phase-3-0-destination-layout-contracts.md`
 - `2026-05-06-phase-3-1-library-study-entry.md`
 - `2026-05-06-phase-3-2-library-source-study-context.md`
+- `2026-05-06-phase-3-3-library-contract-layout.md`
