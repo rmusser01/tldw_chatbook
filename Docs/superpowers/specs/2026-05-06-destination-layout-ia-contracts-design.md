@@ -1,7 +1,7 @@
 # Destination Layout And IA Contracts Design
 
 Date: 2026-05-06
-Status: User-approved design; pending spec review
+Status: User-approved design; spec review approved; implementation verified
 Primary Repo: `tldw_chatbook`
 Scope: Phase 3.0 design gate for top-level destination layouts, major subflows, Textual-native ASCII wireframes, and non-binding image-generation reference briefs.
 
@@ -941,7 +941,7 @@ Required behavior: Workspaces define broad user context and scope. They do not r
 +----------------------+--------------------------------------+------------------+
 ```
 
-Required behavior: the existing `study` route is Library-owned. Library can route to Study Dashboard, Flashcards, or Quizzes with the requested section preserved, and Study must expose the active source/workspace scope instead of becoming an unrelated top-level destination.
+Required behavior: the existing `study`, Study Dashboard, Flashcards, and Quizzes surfaces are Library-owned. Library can route to Study Dashboard, Flashcards, or Quizzes with the requested section preserved, and Study must expose the active source/workspace scope instead of becoming an unrelated top-level destination.
 
 ### Library: Flashcards
 

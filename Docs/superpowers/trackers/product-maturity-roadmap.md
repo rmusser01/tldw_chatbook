@@ -1,7 +1,7 @@
 # Product Maturity Roadmap
 
 Date: 2026-05-06
-Status: Phase 1 verified; Phase 2 verified; Phase 3.1 verified
+Status: Phase 1 verified; Phase 2 verified; Phase 3.0 verified; Phase 3.1 verified
 Source Branch: `dev`
 Source Spec: `Docs/superpowers/specs/2026-05-05-product-maturity-phased-roadmap-design.md`
 Layout Contract Spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`
@@ -26,8 +26,8 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 - Phase 2.3 verifies the next core-agentic-loop contract: Console-saved Chatbook artifact records can be recognized in Artifacts and reopened into Console with visible saved-response provenance.
 - Phase 2.4 verifies the next core-agentic-loop contract: Home can surface a Console-saved Chatbook artifact as resumable work and route it to Artifacts or Console.
 - Phase 2.5 verifies the complete local core-loop closeout: source/question context can reach Console, save to a Chatbook artifact, reopen through Artifacts, and resume from Home without manual state reconstruction.
+- Phase 3.0 verifies the required design gate before additional Phase 3 Knowledge/Study visual rewrites: destination layout and IA contracts are approved for affected screens and deviations must be reviewed.
 - Phase 3.1 verifies the first Knowledge/Study entry contract: Library visibly routes users to Study Dashboard, Flashcards, and Quizzes while preserving the requested Study section.
-- Phase 3.0 is now the required design gate before additional Phase 3 Knowledge/Study visual rewrites: destination layout and IA contracts must be approved for affected screens or deviations must be reviewed.
 
 ## Severity Policy
 
@@ -71,6 +71,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 | Phase 2.3 | `Docs/superpowers/qa/product-maturity/phase-2/2026-05-05-phase-2-3-saved-chatbook-artifact-reopen-contract.md` | verified |
 | Phase 2.4 | `Docs/superpowers/qa/product-maturity/phase-2/2026-05-05-phase-2-4-home-chatbook-artifact-resume-contract.md` | verified |
 | Phase 2.5 | `Docs/superpowers/qa/product-maturity/phase-2/2026-05-06-phase-2-5-core-loop-closeout-replay.md` | verified |
+| Phase 3.0 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md` | verified |
 | Phase 3.1 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-1-library-study-entry.md` | verified |
 
 ## Phase Overview
@@ -79,7 +80,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 | --- | --- | --- | --- | --- | --- |
 | Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | verified | `TASK-8`, Phase 1.1 (`TASK-8.1`), Phase 1.2 (`TASK-8.2`), Phase 1.3 (`TASK-8.3`), Phase 1.4 (`TASK-8.4`), Phase 1.5 (`TASK-8.5`), Phase 1.6 (`TASK-8.6`), Phase 1.7 (`TASK-8.7`) | `phase-1/` | Closed; full grounded generation and Artifact/Chatbook persistence move to Phase 2. |
 | Phase 2: Core Agentic Loop | Complete source/question to grounded Console to Artifact/Chatbook loop. | verified | `TASK-9`, Phase 2.1 (`TASK-9.1`), Phase 2.2 (`TASK-9.2`), Phase 2.3 (`TASK-9.3`), Phase 2.4 (`TASK-9.4`), Phase 2.5 (`TASK-9.5`) | `phase-2/2026-05-05-phase-2-1-grounded-console-response-contract.md`, `phase-2/2026-05-05-phase-2-2-console-chatbook-artifact-save-contract.md`, `phase-2/2026-05-05-phase-2-3-saved-chatbook-artifact-reopen-contract.md`, `phase-2/2026-05-05-phase-2-4-home-chatbook-artifact-resume-contract.md`, `phase-2/2026-05-06-phase-2-5-core-loop-closeout-replay.md` | Closed for the local core loop; live provider generation, full `.chatbook` export packaging, and full artifact history picking remain later-phase risks. |
-| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 prerequisite planned | `TASK-10`, Phase 3.0 (`TASK-10.2`), Phase 3.1 (`TASK-10.1`) | `phase-3/2026-05-06-phase-3-1-library-study-entry.md`; Phase 3.0 evidence pending | Library Study entry is verified; before additional Phase 3 visual rewrites, destination layout and IA contracts must be approved. Source-selected study generation, Workspaces, Collections, and deeper Import/Export/Search/RAG study flows remain. |
+| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 verified; Phase 3.1 verified | `TASK-10`, Phase 3.0 (`TASK-10.2`), Phase 3.1 (`TASK-10.1`) | `phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md`, `phase-3/2026-05-06-phase-3-1-library-study-entry.md` | Layout contracts and Library Study entry are verified; actual source-selected study generation, Workspaces, Collections, and deeper Import/Export/Search/RAG study flows remain. |
 | Phase 4: Agent Configuration And Execution | Mature Personas, Skills, MCP, ACP, Schedules, and Workflows. | planned | `TASK-11` | not-started | Depends on service adapters and runtime readiness. |
 | Phase 5: Server-Parity And Live Integrations | Close high-value `tldw_server2` parity gaps. | planned | `TASK-12` | not-started | Requires parity inventory. |
 | Phase 6: Release Hardening And Documentation | Reach release-candidate usability. | planned | `TASK-13` | not-started | Depends on earlier phase evidence. |
@@ -158,6 +159,12 @@ Status: verified
 Status: verified
 
 - `Docs/superpowers/qa/product-maturity/phase-2/2026-05-06-phase-2-5-core-loop-closeout-replay.md`
+
+## Phase 3.0 Evidence
+
+Status: verified
+
+- `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md`
 
 ## Phase 3.1 Evidence
 
