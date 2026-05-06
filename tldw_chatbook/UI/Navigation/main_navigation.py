@@ -91,6 +91,15 @@ class MainNavigationBar(Container):
     """
 
     def __init__(self, active: str = "chat", active_route: str | None = None, **kwargs):
+        """Initialize the navigation bar with destination and route state.
+
+        Args:
+            active: Current screen or destination used to highlight the owning
+                top-level destination.
+            active_route: Canonical active route when the highlighted
+                destination owns a subroute. When omitted, `active` is used.
+            **kwargs: Additional Textual container keyword arguments.
+        """
         super().__init__(**kwargs)
         resolved_active = resolve_shell_route(active)
         self.active_destination_id = resolved_active.destination_id
