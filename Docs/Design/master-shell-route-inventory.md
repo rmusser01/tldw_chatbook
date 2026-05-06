@@ -12,7 +12,7 @@ This inventory maps current routes and UI surfaces onto the approved master shel
 | --- | --- | --- | --- | --- |
 | Home | `home` | new | Home | New default for first-run users |
 | Console | `chat` | `ChatScreen` | Console | Route remains `chat`; live work stores `pending_console_launch` and opens Console |
-| Library | `notes`, `media`, `ingest`, `search`, `conversation`, conversation browsing | `LibraryScreen` plus legacy screens | Library | Wrapper exposes Workspaces and links to source routes; staged source context uses Chat handoff payloads |
+| Library | `notes`, `media`, `ingest`, `search`, `conversation`, `study` | `LibraryScreen` plus legacy screens | Library | Wrapper exposes Workspaces, Study Dashboard, Flashcards, Quizzes, conversation browsing, and source routes; staged source context uses Chat handoff payloads |
 | Artifacts | `chatbooks` | `ArtifactsScreen` plus `ChatbooksScreen` | Artifacts | Wrapper owns Chatbooks and generated/portable outputs; staged artifacts use Chat handoff payloads |
 | Personas | `ccp`, character/persona/prompt/lore subviews | `PersonasScreen` plus `ConversationScreen` | Personas | Personas owns behavior and identity management; staged persona context uses Chat handoff payloads |
 | W+C | `subscriptions` plus collections services | `WatchlistsCollectionsScreen` plus `SubscriptionScreen` | W+C | Wrapper separates Watchlists from Collections and can follow live work in Console |
@@ -32,7 +32,7 @@ This inventory maps current routes and UI surfaces onto the approved master shel
 | Tools/settings route | `tools_settings` | MCP | Keep as legacy MCP alias, not global Settings |
 | Models shortcut | `llm` alias and `llm_management` tab ID | Legacy direct command | Keep alias to `TAB_LLM` until a later Models/MCP decision |
 | Subscription route | `subscription`, `subscriptions` | W+C | Keep both aliases |
-| Study route | `study` | Legacy direct command | Keep Flashcards and Quizzes discoverable through command palette/help until a later Study destination decision |
+| Study route | `study` | Library | Keep route searchable as a Library-owned Study Dashboard, Flashcards, and Quizzes entry; do not create a separate top-level Study destination |
 
 ## Import/Export Boundary
 
@@ -59,4 +59,4 @@ Current runtime chrome ownership is still screen-wrapper based through `BaseAppS
 - ACP launch remains an honest unavailable/capability state until an ACP runtime is configured.
 - Workflow runtime execution is not implemented in the shell wrapper; the wrapper exposes ownership and Console launch boundaries only.
 - Rich MCP management still lives in the existing Unified MCP panel/service surface; the top-level MCP wrapper prevents `tools_settings` from acting as global Settings.
-- Library sub-surfaces remain linked to legacy Notes, Media, Ingest, Search/RAG, and conversation screens until those screens are split into Library-native views.
+- Library sub-surfaces remain linked to legacy Notes, Media, Ingest, Search/RAG, conversation, and Study screens until those screens are split into Library-native views.

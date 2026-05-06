@@ -30,6 +30,7 @@ def test_legacy_routes_resolve_to_master_destinations():
         "media": ("library", "media"),
         "ingest": ("library", "ingest"),
         "search": ("library", "search"),
+        "study": ("library", "study"),
         "chatbooks": ("artifacts", "chatbooks"),
         "ccp": ("personas", "ccp"),
         "conversation": ("library", "conversation"),
