@@ -59,6 +59,7 @@ class StudyScreen(BaseAppScreen):
         "course": "Create course outlines and study sequences.",
         "learning_map": "Open the learning map for relationships across study material.",
     }
+    _VALID_INITIAL_SECTIONS = frozenset({"dashboard", *_SECTION_TO_VIEW.keys()})
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "study", **kwargs)
@@ -74,6 +75,7 @@ class StudyScreen(BaseAppScreen):
         self._dashboard_due_count: int = 0
         self._recent_deck_titles: list[str] = []
         self._recent_quiz_titles: list[str] = []
+        self._pending_initial_section = self._consume_pending_initial_section()
 
     @property
     def current_scope(self) -> StudyScopeState:
@@ -174,6 +176,22 @@ class StudyScreen(BaseAppScreen):
             return None
         self.app_instance.pending_study_scope_context = None
         return pending
+
+    def _consume_pending_initial_section(self) -> Optional[str]:
+        pending = getattr(self.app_instance, "pending_study_initial_section", None)
+        if pending is None:
+            return None
+        self.app_instance.pending_study_initial_section = None
+        normalized = str(pending or "").strip()
+        if normalized in self._VALID_INITIAL_SECTIONS:
+            return normalized
+        return None
+
+    def _apply_pending_initial_section(self) -> None:
+        if self._pending_initial_section is None:
+            return
+        self.current_section = self._pending_initial_section
+        self._pending_initial_section = None
 
     def _current_scope_context(self) -> StudyScopeContext:
         return self.scope_state.as_context()
@@ -626,6 +644,7 @@ class StudyScreen(BaseAppScreen):
         if self.current_study_session:
             if hasattr(study_window, 'restore_session'):
                 await study_window.restore_session(self.current_study_session)
+        self._apply_pending_initial_section()
         self._apply_section_layout()
         self.sync_shell_from_window()
 

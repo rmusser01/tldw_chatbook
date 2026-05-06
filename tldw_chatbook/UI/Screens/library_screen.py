@@ -309,6 +309,26 @@ class LibraryScreen(BaseAppScreen):
                     tooltip="Open source import and export tools.",
                 )
                 yield Button("Search/RAG", id="library-open-search", tooltip="Search or ask over indexed sources.")
+                yield Static("Knowledge workflow", classes="destination-section")
+                yield Static(
+                    "Turn Library material into study sessions, flashcards, and quizzes.",
+                    id="library-study-purpose",
+                )
+                yield Button(
+                    "Study Dashboard",
+                    id="library-open-study",
+                    tooltip="Open the Study dashboard for due cards, decks, quizzes, and resume actions.",
+                )
+                yield Button(
+                    "Flashcards",
+                    id="library-open-flashcards",
+                    tooltip="Open flashcards for selected or imported Library material.",
+                )
+                yield Button(
+                    "Quizzes",
+                    id="library-open-quizzes",
+                    tooltip="Open quizzes for selected or imported Library material.",
+                )
                 yield Static("Local Library snapshot", classes="destination-section")
                 if not self._library_loaded:
                     yield Static(
@@ -385,6 +405,25 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-open-search")
     def open_search(self) -> None:
         self.post_message(NavigateToScreen("search"))
+
+    def _open_study_section(self, initial_section: str = "dashboard") -> None:
+        open_study_screen = getattr(self.app_instance, "open_study_screen", None)
+        if callable(open_study_screen):
+            open_study_screen(initial_section=initial_section)
+            return
+        self.post_message(NavigateToScreen("study"))
+
+    @on(Button.Pressed, "#library-open-study")
+    def open_study(self) -> None:
+        self._open_study_section("dashboard")
+
+    @on(Button.Pressed, "#library-open-flashcards")
+    def open_flashcards(self) -> None:
+        self._open_study_section("flashcards")
+
+    @on(Button.Pressed, "#library-open-quizzes")
+    def open_quizzes(self) -> None:
+        self._open_study_section("quizzes")
 
     @on(Button.Pressed, "#library-use-in-console")
     def use_in_console(self, event: Button.Pressed) -> None:

@@ -1396,6 +1396,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.pending_chat_handoff: Optional[ChatHandoffPayload] = None
         self.pending_console_launch: Optional[ConsoleLiveWorkLaunch | Dict[str, Any]] = None
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
+        self.pending_study_initial_section: Optional[str] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
         self.home_active_work_adapter = UnavailableHomeActiveWorkAdapter()
         self.loguru_logger = loguru_logger
@@ -1640,8 +1641,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             app_config=self.app_config,
         )
 
-    def open_study_screen(self, scope_context: Optional[StudyScopeContext] = None) -> None:
+    def open_study_screen(
+        self,
+        scope_context: Optional[StudyScopeContext] = None,
+        *,
+        initial_section: Optional[str] = None,
+    ) -> None:
         self.pending_study_scope_context = scope_context
+        self.pending_study_initial_section = initial_section
         self.post_message(NavigateToScreen(TAB_STUDY))
 
     def open_notes_workspace(
