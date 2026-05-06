@@ -168,7 +168,7 @@ def test_phase30_tracker_records_layout_contract_gate() -> None:
 
     assert "Layout Contract Spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`" in tracker
     assert "Phase 3.0: Destination Layout And IA Contracts - `TASK-10.2`" in tracker
-    assert "destination layout and IA contracts must be approved" in tracker
+    assert "destination layout and IA contracts are approved" in tracker
 
 
 def test_phase30_qa_evidence_is_verified() -> None:
