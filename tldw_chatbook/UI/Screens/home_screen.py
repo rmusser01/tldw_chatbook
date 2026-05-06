@@ -2,7 +2,7 @@
 
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Home.dashboard_state import (
@@ -41,6 +41,7 @@ class HomeScreen(BaseAppScreen):
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "home", **kwargs)
         self._current_dashboard: HomeDashboard | None = None
+        self._current_dashboard_input: HomeDashboardInput | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -73,8 +74,27 @@ class HomeScreen(BaseAppScreen):
 
     def compose_content(self) -> ComposeResult:
         """Compose the Home dashboard route."""
-        dashboard = summarize_home_dashboard(self._build_dashboard_input())
+        dashboard_input = self._build_dashboard_input()
+        dashboard = summarize_home_dashboard(dashboard_input)
         self._current_dashboard = dashboard
+        self._current_dashboard_input = dashboard_input
+
+        sections = {section.section_id: section for section in dashboard.sections}
+
+        def section_text(section_id: str) -> str:
+            section = sections.get(section_id)
+            return "\n".join(section.lines) if section is not None else ""
+
+        selected_item = self._selected_home_item(dashboard_input)
+        selected_item_copy = (
+            f"{selected_item.title}\n"
+            f"Source: {selected_item.source}\n"
+            f"Status: {selected_item.status}\n"
+            f"Target: {selected_item.detail_route}"
+            if selected_item is not None
+            else "No active work selected."
+        )
+        next_action_copy = f"{dashboard.next_action.label}\n{dashboard.next_action.reason}"
 
         with Vertical(id="home-dashboard"):
             yield Static("Home", id="home-title", classes="ds-destination-header")
@@ -83,15 +103,56 @@ class HomeScreen(BaseAppScreen):
                 id="home-purpose",
                 classes="destination-purpose",
             )
-            for section in dashboard.sections:
-                section_id = section.section_id.replace("_", "-")
-                yield Static(section.title, id=f"home-{section_id}", classes="ds-panel")
-                yield Static("\n".join(section.lines), id=f"home-{section_id}-body")
+            yield Static(
+                (
+                    "Home | Status, notifications, active work | "
+                    f"{'Ready' if dashboard_input.model_ready else 'Blocked'} | Local"
+                ),
+                id="home-status-row",
+                classes="destination-status-row",
+            )
+            yield Static("Status", id="home-status", classes="ds-panel")
+            yield Static(section_text("status"), id="home-status-body")
+            yield Static(
+                "Scope: All modules | Filter: Needs attention / Running / Recent",
+                id="home-scope-filter-row",
+                classes="ds-panel",
+            )
+            with Horizontal(id="home-dashboard-grid", classes="ds-panel") as dashboard_grid:
+                dashboard_grid.styles.height = 18
+                dashboard_grid.styles.min_height = 18
+                with Vertical(id="home-attention-queue", classes="home-dashboard-region"):
+                    yield Static("Attention Queue", id="home-attention", classes="ds-panel")
+                    yield Static(section_text("attention"), id="home-attention-body")
+                with Vertical(id="home-active-work-region", classes="home-dashboard-region"):
+                    yield Static("Active Work", id="home-active-work", classes="ds-panel")
+                    yield Static(section_text("active_work"), id="home-active-work-body")
+                    for control in dashboard.controls:
+                        control_button = Button(
+                            control.label,
+                            id=control.control_id,
+                            classes="ds-toolbar",
+                        )
+                        control_button.styles.height = 1
+                        control_button.styles.min_height = 1
+                        yield control_button
+                with Vertical(id="home-inspector", classes="home-dashboard-region"):
+                    yield Static(
+                        "Selected item",
+                        id="home-selected-item-title",
+                        classes="destination-section",
+                    )
+                    yield Static(selected_item_copy, id="home-selected-item-body")
+            with Vertical(id="home-next-actions-region", classes="ds-panel"):
+                yield Static("Next Best Action", id="home-next-best-action", classes="ds-panel")
+                yield Static(next_action_copy, id="home-next-best-action-body")
+                yield Button(dashboard.next_action.label, id="home-primary-action")
+            with Vertical(id="home-recent-work-region", classes="ds-panel"):
+                yield Static("Recent Work", id="home-recent-work", classes="ds-panel")
+                yield Static(section_text("recent_work"), id="home-recent-work-body")
 
-            yield Button(dashboard.next_action.label, id="home-primary-action")
-
-            for control in dashboard.controls:
-                yield Button(control.label, id=control.control_id, classes="ds-toolbar")
+    def _selected_home_item(self, dashboard_input: HomeDashboardInput):
+        return dashboard_input.active_work_items[0] if dashboard_input.active_work_items else None
 
     @on(Button.Pressed)
     def handle_home_button(self, event: Button.Pressed) -> None:

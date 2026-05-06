@@ -103,6 +103,36 @@
     color: $ds-text-primary;
 }
 
+.home-dashboard-region,
+.console-region,
+.library-region {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+}
+
+#home-dashboard-grid {
+    height: 18;
+    min-height: 18;
+}
+
+.home-dashboard-region {
+    min-height: 0;
+}
+
+#home-active-work-region .ds-toolbar {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0;
+    border: none;
+}
+
+.library-mode-chip {
+    width: auto;
+    min-width: 10;
+}
+
 .ds-shortcut-bar {
     dock: bottom;
     height: 1;
