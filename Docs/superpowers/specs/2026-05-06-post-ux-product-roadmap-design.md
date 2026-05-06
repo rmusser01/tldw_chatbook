@@ -1,7 +1,7 @@
 # Post-UX Product Roadmap Design
 
 Date: 2026-05-06
-Status: User-approved design; pending written-spec review
+Status: User-approved design; review fixes applied
 Primary Repo: `tldw_chatbook`
 Source Branch: `dev`
 Related Roadmaps:
@@ -23,7 +23,7 @@ The roadmap has one canonical spine with three aligned views:
 
 The roadmap sequencing is:
 
-1. Reliability and product confidence.
+1. Post-UX reliability and product confidence.
 2. Complete workflow value.
 3. Server parity and live integrations.
 4. Release hardening and distribution.
@@ -46,11 +46,11 @@ The product promise is not "chat with documents." It is "turn a personal knowled
 
 ## Canonical Spine
 
-### 1. Reliability Baseline
+### 1. Post-UX Reliability Rebaseline
 
-Prove the completed UX/UI is dependable.
+Prove the completed UX/UI is dependable without reopening already-verified product-maturity work.
 
-The user should be able to launch from a clean state, navigate top-level surfaces, understand setup requirements, recover from blocked states, use keyboard-first flows, and trust that layout and authority labels remain stable across supported terminal sizes.
+The user should be able to launch from a clean state, navigate top-level surfaces, understand setup requirements, recover from blocked states, use keyboard-first flows, and trust that layout and authority labels remain stable across supported terminal sizes. Existing Product Maturity Phase 1 and Phase 2 evidence should be reused as the baseline; new work only verifies deltas introduced by the completed UX/UI and layout-contract work unless regressions are found.
 
 ### 2. Workflow Value
 
@@ -101,42 +101,81 @@ Parity and live integrations come third because server-backed capabilities shoul
 - Do not chase `tldw_server2` parity unless the capability improves a real local Chatbook workflow.
 - Do not publish roadmap dates or delivery commitments before execution evidence supports them.
 
+## Relationship To Existing Roadmaps
+
+This spec is a post-UX planning overlay. It does not supersede the current product-maturity tracker by default.
+
+Current tracker state:
+
+- Product Maturity Phase 1 is verified for QA baseline and usability guardrails.
+- Product Maturity Phase 2 is verified for the local core agentic loop.
+- Product Maturity Phase 3 is in progress.
+- `TASK-10.2` is the current Phase 3.0 destination layout and IA contract gate.
+- `TASK-11`, `TASK-12`, and `TASK-13` remain planned parent tasks for agent execution, server parity/live integrations, and release hardening.
+
+Verified work reuse rule:
+
+- Do not recreate Product Maturity Phase 1 or Phase 2 child tasks unless the post-UX replay finds a regression.
+- Reuse existing QA evidence as the pre-UX baseline.
+- Record new post-UX QA only for changed screens, changed workflows, changed layout contracts, and discovered regressions.
+- When a verified workflow is rechecked after UX/UI completion, label it as `revalidated`, not newly completed.
+
+Operational handoff rule:
+
+- Before creating new child tasks from this roadmap, update or explicitly supersede `Docs/superpowers/trackers/product-maturity-roadmap.md` with a mapping from this post-UX roadmap to current `TASK-10` through `TASK-13`.
+- If this roadmap changes the meaning or order of existing parent tasks, edit those task descriptions and acceptance criteria before adding new child tasks.
+- If this roadmap only refines sequencing under existing parent tasks, create children under the existing task hierarchy rather than creating parallel roadmap phases.
+
 ## Execution View
 
 Execution should be staged as PR-sized gates under the canonical spine. Each gate must prove a running-app workflow, not merely add UI.
 
-### Stage 1: Reliability Baseline
+### Stage 1: Post-UX Reliability Rebaseline
 
-Goal: make the completed UX/UI work trustworthy.
+Goal: prove the completed UX/UI work did not regress the already-verified reliability and core-loop baseline.
 
 Primary gates:
 
-- Clean first-run replay after the UX/UI work lands.
-- Compact, default, and large terminal layout verification.
-- Keyboard/focus sweep for top-level destinations and major subflows.
-- Empty/error/setup-state coverage for providers, local runtimes, server connection, optional dependencies, and missing sources.
-- Recovery taxonomy pass proving cause, impact, owner, and next action are visible.
-- Regression harness update so future product work reuses the same QA evidence pattern.
+- Reconcile the completed UX/UI and layout-contract changes against the existing product-maturity tracker.
+- Re-run the minimum clean first-run replay needed to compare against verified Phase 1 evidence.
+- Re-run compact, default, and large terminal checks only for changed destinations and high-risk shared shell regions.
+- Re-run keyboard/focus checks for changed navigation, destination headers, mode bars, inspectors, and primary actions.
+- Re-run empty/error/setup-state checks only where UX/UI changes touched provider, runtime, server, optional dependency, missing-source, or recovery presentation.
+- Update the regression harness only when the completed UX/UI work introduced new reusable test seams.
 
 Exit criteria:
 
-- A fresh user can launch, navigate, understand blocked states, and complete at least one local source-to-Console proof.
+- A fresh user can still launch, navigate, understand blocked states, and complete the existing local source-to-Console proof.
+- Existing Product Maturity Phase 1 and Phase 2 evidence is linked as the baseline, and post-UX evidence records only deltas or regressions.
 - P0/P1 usability defects are fixed or explicitly accepted with owner and follow-up.
 - QA evidence is tracked in the repo and connected to the affected roadmap gate.
 
 ### Stage 2: Workflow Value
 
-Goal: complete the product's core loops.
+Goal: complete remaining product loops in execution lanes that map cleanly to existing Product Maturity Phases 3 and 4.
 
-Primary gates:
+Stage 2A: Source, Knowledge, And Artifact Loops
 
 - Grounded Answer Loop: Library/Search/RAG source selection stages evidence into Console and preserves authority through answer/save.
 - Source-to-Artifact Loop: Console output saves as a Chatbook or artifact, reopens from Artifacts, and resumes from Home.
 - Knowledge Organization Loop: Workspaces and Collections clearly separate broad user context from reusable source sets.
 - Study Loop: flashcards and quizzes can be generated from selected sources or Console outputs and reused later.
+
+Stage 2A maps primarily to Product Maturity Phase 3 (`TASK-10`). Existing Phase 2 core-loop contracts should be revalidated after UX/UI changes, not reimplemented, unless the rebaseline finds regressions.
+
+Stage 2B: Controlled Agent Configuration And Run Loops
+
 - Agent Run Loop: Personas, Skills, MCP/ACP readiness, Schedules, and Workflows can configure and launch controlled work into Console.
+- Runtime readiness, tool/resource readiness, approval state, and failure recovery remain visible before and during launch.
+
+Stage 2B maps primarily to Product Maturity Phase 4 (`TASK-11`).
+
+Stage 2C: Monitoring And Cross-Loop Recovery
+
 - Monitoring Loop: W+C and Schedules surface changed, running, or failed work in Home and Console.
 - Recovery Loop: missing provider/runtime/server/dependency states remain understandable and recoverable across all loops.
+
+Stage 2C spans Product Maturity Phases 3 and 4 where monitoring or recovery is part of a concrete workflow, and it should not become a standalone rewrite of every unavailable state.
 
 Exit criteria:
 
@@ -248,9 +287,10 @@ The three roadmap views must stay aligned through these rules:
 After the current UX/UI work completes, the next roadmap work should produce:
 
 1. A reconciled post-UX baseline note confirming which UX/UI and layout-contract gates are complete.
-2. An updated execution tracker that starts Stage 1 Reliability Baseline from that post-UX baseline.
-3. Backlog parent/child tasks for the first reliability gates only.
-4. A public roadmap page or README section derived from this spec's public roadmap view.
+2. An updated or explicitly superseded product-maturity tracker mapping this roadmap to `TASK-10`, `TASK-11`, `TASK-12`, and `TASK-13`.
+3. A Stage 1 post-UX rebaseline task only if the tracker mapping shows it is needed as a distinct PR-sized gate.
+4. Backlog child tasks under the existing parent hierarchy, not a parallel phase tree.
+5. A public roadmap page or README section derived from this spec's public roadmap view.
 
 ## Risks And Mitigations
 
@@ -269,5 +309,6 @@ Move from this design into implementation planning only after:
 
 - the current UX/UI work is confirmed complete.
 - this spec is reviewed and accepted.
-- Stage 1 Reliability Baseline is narrowed to the first PR-sized task set.
+- the product-maturity tracker is updated or explicitly superseded with a mapping from this roadmap to current `TASK-10` through `TASK-13`.
+- Stage 1 Post-UX Reliability Rebaseline is narrowed to changed screens, changed workflows, changed layout contracts, or discovered regressions.
 - the public roadmap text is accepted as directional and non-committal.
