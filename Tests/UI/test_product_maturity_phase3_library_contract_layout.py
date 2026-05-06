@@ -9,6 +9,7 @@ from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
+    PolicyDeniedLibraryNotesScopeService,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
     StaticLibraryNotesScopeService,
@@ -67,7 +68,9 @@ def _seed_library_sources(app) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", [(90, 32), (140, 42), (180, 50)])
-async def test_library_contract_layout_regions_survive_terminal_sizes(terminal_size) -> None:
+async def test_library_contract_layout_regions_survive_terminal_sizes(
+    terminal_size: tuple[int, int],
+) -> None:
     app = _build_test_app()
     _seed_library_sources(app)
     host = DestinationHarness(app, "library")
@@ -121,6 +124,42 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(terminal_s
             assert str(button.label) == label
 
 
+@pytest.mark.asyncio
+async def test_library_status_row_preserves_unavailable_taxonomy() -> None:
+    app = _build_test_app()
+    app.notes_scope_service = None
+    app.media_reading_scope_service = None
+    app.chat_conversation_scope_service = None
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        status_row = _rendered_static_text(screen.query_one("#library-status-row", Static))
+
+    assert "Unavailable" in status_row
+    assert "Blocked" not in status_row
+
+
+@pytest.mark.asyncio
+async def test_library_status_row_preserves_policy_recovery_status() -> None:
+    app = _build_test_app()
+    app.notes_scope_service = PolicyDeniedLibraryNotesScopeService()
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        status_row = _rendered_static_text(screen.query_one("#library-status-row", Static))
+
+    assert "Wrong source" in status_row
+    assert "Blocked" not in status_row
+
+
 def test_phase_3_3_library_contract_layout_evidence_is_tracked() -> None:
     tracker = _text(TRACKER)
     readme = _text(PHASE_3_README)
@@ -132,14 +171,32 @@ def test_phase_3_3_library_contract_layout_evidence_is_tracked() -> None:
     assert "TASK-10.3" in tracker
     assert PHASE_3_3_EVIDENCE.name in tracker
     assert PHASE_3_3_EVIDENCE.name in readme
-    assert "Library Contract Layout Shell" in evidence
-    assert "compact default and large terminal sizes" in evidence
-    assert "No P0/P1 defects found" in evidence
+    for heading in (
+        "## Scope",
+        "## Evidence",
+        "## Walkthrough",
+        "## Functional Result",
+        "## Verification",
+        "## Defects",
+        "## Residual Risk",
+        "## Exit Decision",
+    ):
+        assert heading in evidence
+    for terminal_size in ("90x32", "140x42", "180x50"):
+        assert terminal_size in evidence
+    for selector in (
+        "#library-status-row",
+        "#library-mode-bar",
+        "#library-contract-grid",
+        "#library-source-browser",
+        "#library-source-detail",
+        "#library-source-inspector",
+    ):
+        assert selector in evidence
     assert "Tests/UI/test_product_maturity_phase3_library_contract_layout.py" in evidence
     assert "status: In Progress" in parent_task
     assert "TASK-10.3" in parent_task
-    assert "Library destination now exposes the approved Phase 3.0 layout shell" in parent_task
-    assert "Product Maturity Phase 3.3: Library Contract Layout Shell" in task
+    assert "TASK-10.3" in task
     assert "status: Done" in task
     for ac_number in range(1, 6):
         assert f"- [x] #{ac_number}" in task

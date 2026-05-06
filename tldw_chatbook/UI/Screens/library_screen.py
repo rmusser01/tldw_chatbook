@@ -305,15 +305,20 @@ class LibraryScreen(BaseAppScreen):
             return_hint=MATERIAL_SOURCE_LIBRARY,
         )
 
+    def _status_label(self) -> str:
+        if not self._library_loaded:
+            return "Loading"
+        if self._library_lookup_recovery_state is not None:
+            return self._library_lookup_recovery_state.status_label
+        if self._library_lookup_error is None:
+            return "Ready"
+        if "unavailable" in self._library_lookup_error.lower():
+            return "Unavailable"
+        return "Blocked"
+
     def compose_content(self) -> ComposeResult:
         has_sources = self._has_local_sources()
-        status_label = (
-            "Loading"
-            if not self._library_loaded
-            else "Blocked"
-            if self._library_lookup_error
-            else "Ready"
-        )
+        status_label = self._status_label()
         handoff_disabled = True
         handoff_tooltip = "Stage Library source context after Library finishes loading."
 
