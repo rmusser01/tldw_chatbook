@@ -88,6 +88,48 @@ async def test_master_shell_navigation_routes_to_primary_route():
 
 
 @pytest.mark.asyncio
+async def test_active_destination_subroute_can_return_to_primary_route():
+    events = []
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="library", active_route="study")
+
+        def on_navigate_to_screen(self, message):
+            events.append(message.screen_name)
+
+    app = TestApp()
+
+    async with app.run_test(size=(180, 20)) as pilot:
+        await pilot.pause(0.1)
+        app.query_one("#nav-library", Button).press()
+        await pilot.pause(0.1)
+
+    assert events == ["library"]
+
+
+@pytest.mark.asyncio
+async def test_active_destination_primary_route_still_noops():
+    events = []
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="library", active_route="library")
+
+        def on_navigate_to_screen(self, message):
+            events.append(message.screen_name)
+
+    app = TestApp()
+
+    async with app.run_test(size=(180, 20)) as pilot:
+        await pilot.pause(0.1)
+        app.query_one("#nav-library", Button).press()
+        await pilot.pause(0.1)
+
+    assert events == []
+
+
+@pytest.mark.asyncio
 async def test_every_visible_master_shell_nav_destination_resolves():
     from Tests.UI.test_screen_navigation import _build_test_app
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER

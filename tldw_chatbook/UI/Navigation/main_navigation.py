@@ -90,9 +90,12 @@ class MainNavigationBar(Container):
     }
     """
 
-    def __init__(self, active: str = "chat", **kwargs):
+    def __init__(self, active: str = "chat", active_route: str | None = None, **kwargs):
         super().__init__(**kwargs)
-        self.active_screen = resolve_shell_route(active).destination_id
+        resolved_active = resolve_shell_route(active)
+        self.active_destination_id = resolved_active.destination_id
+        self.active_route = resolve_shell_route(active_route or active).canonical_route
+        self.active_screen = self.active_destination_id
 
     def compose(self) -> ComposeResult:
         """Compose the navigation bar from master-shell destination metadata."""
@@ -107,7 +110,7 @@ class MainNavigationBar(Container):
                     classes="nav-button",
                     tooltip=destination.tooltip,
                 )
-                if destination.destination_id == self.active_screen:
+                if destination.destination_id == self.active_destination_id:
                     button.add_class("is-active")
                 yield button
         yield Static("More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint")
@@ -123,15 +126,21 @@ class MainNavigationBar(Container):
         destination = get_shell_destination(destination_id)
         screen_name = destination.primary_route
         
-        # Don't navigate if already on this screen
-        if destination.destination_id == self.active_screen:
+        # A destination-owned subroute may highlight the same top-level destination;
+        # clicking the destination should still return to its primary route.
+        if (
+            destination.destination_id == self.active_destination_id
+            and screen_name == self.active_route
+        ):
             return
         
         # Update active state
         for button in self.query(".nav-button"):
             button.remove_class("is-active")
         event.button.add_class("is-active")
-        self.active_screen = destination.destination_id
+        self.active_destination_id = destination.destination_id
+        self.active_route = screen_name
+        self.active_screen = self.active_destination_id
         
         # Post navigation message to app
         self.post_message(NavigateToScreen(screen_name))
