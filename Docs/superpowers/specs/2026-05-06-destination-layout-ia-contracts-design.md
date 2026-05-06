@@ -243,6 +243,40 @@ Destinations should not become alternate live-run consoles. When live work start
 
 Legacy routes remain searchable and routable during migration. The owner destination defines the future layout contract.
 
+## Approved Manual Wireframe Decisions
+
+The following screen-level layout choices were approved in the manual wireframe pass and supersede earlier rough concept sketches where they differ:
+
+| Destination | Approved layout model |
+| --- | --- |
+| Home | Command Center |
+| Console | Agent Workbench with optional Zen Mode |
+| Library | Source Workbench |
+| Artifacts | Output Registry |
+| Personas | Behavior Profile Workbench |
+| W+C | Dual-Tab Operations Workbench |
+| Schedules | Timing Control Board |
+| Workflows | Procedure Builder Workbench |
+| MCP | Protocol Control Plane with collapsible server/tool tree |
+| ACP | Agent Runtime Console |
+| Skills | Skill Package Workbench |
+| Settings | Global Preferences Workbench |
+
+Shared grammar for adapted destination screens:
+
+```text
+Header/status row
+Mode/filter/category row
+Primary list/tree | Detail/workspace | Inspector/actions
+Footer shortcuts/status
+```
+
+Exceptions:
+
+- Home uses dashboard regions instead of a strict list/detail/inspector structure.
+- Console Zen Mode collapses side panes but keeps critical status visible.
+- Settings uses categories instead of operational modes.
+
 ## Destination Contracts
 
 ### Home
@@ -266,14 +300,19 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 | Home | System status, notifications, active work | Ready | Local | New Console  |
 +--------------------------------------------------------------------------------+
-| Scope: All modules | Filter: Needs attention / Running / Recent                |
-+----------------------+-------------------------------+-------------------------+
-| Attention Queue      | Active Work                   | Inspector               |
-| ! Provider missing   | RUN Watchlist: daily papers   | Selected item           |
-| ! 2 approvals        | PAUSED Workflow: digest       | Owner / impact          |
-| i New artifact       | WAIT ACP runtime              | Approve Pause Retry     |
-+----------------------+-------------------------------+-------------------------+
-| Next Best Actions: Configure provider | Review approvals | Resume Chatbook       |
+| Model Ready | RAG Missing | MCP Ready | 2 active | 1 needs approval         |
++----------------------+--------------------------+---------------------------+
+| Attention Queue      | Active Work              | Selected Item             |
+| > Approval needed    | > Daily papers running   | Daily papers              |
+|   Failed schedule    |   RAG Summary Chatbook   | Status: running           |
+|   3 unread alerts    |   Quiz generation paused | Source: W+C               |
+|                      | [Approve] [Reject]       | [Open details]            |
+|                      | [Pause] [Retry]          | [Open in Console]         |
++----------------------+--------------------------+---------------------------+
+| Next Best Action: Review pending approval                                     |
+| Recent: RAG Summary Chatbook | Research notes | Last Console session         |
++--------------------------------------------------------------------------------+
+| Footer: Up/Down select | Enter open | A approve | P pause | R retry | / search |
 +--------------------------------------------------------------------------------+
 ```
 
@@ -299,6 +338,7 @@ QA checks:
 - Home shows status from more than one module without hiding the selected item's action target.
 - A mixed active-work scenario preserves access to both watchlist/run controls and Chatbook artifact resume controls.
 - Compact terminal still exposes Home, Console, and active-work recovery actions.
+- Home must remain useful for returning users as a lightweight status and control center, not only as first-run onboarding.
 
 ### Console
 
@@ -331,6 +371,27 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 ```
 
+Optional Zen Mode:
+
+```text
++--------------------------------------------------------------------------------+
+| Console Zen | Chat/RAG | 3 sources | 1 approval | local/qwen | Exit Zen         |
++--------------------------------------------------------------------------------+
+| Transcript / Event Stream                                                       |
+|                                                                                |
+| User: summarize staged sources                                                  |
+| Assistant: reading Library evidence...                                          |
+| Tool: search complete                                                           |
+| Approval required: save Chatbook artifact                                       |
++--------------------------------------------------------------------------------+
+| Ask or command...                                             [Send] [Save CB]  |
++--------------------------------------------------------------------------------+
+| Footer: Z exit zen | C context | I inspector | A approval | Esc cancel         |
++--------------------------------------------------------------------------------+
+```
+
+Zen Mode collapses staged context and run inspector into slim side rails or toggled overlays. It never hides blocked/approval status, staged source count, active mode, model/persona, or save-Chatbook affordances.
+
 Primary actions:
 
 - send message/run command.
@@ -353,6 +414,7 @@ QA checks:
 - Staged sources remain visible before send.
 - User can remove or change staged source role before send.
 - Blocked generation shows cause and setup/retry path.
+- The final Console must replace or decompose `ChatWindowEnhanced`; wrapping the legacy screen is only a compatibility bridge.
 
 ### Library
 
@@ -376,14 +438,34 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 | Modes: Sources Search/RAG Import/Export Workspaces Study Flashcards Quizzes    |
 +----------------------+--------------------------------------+------------------+
-| Source Browser       | Source Detail / Search Results        | Source Inspector |
-| Notes                | Title, content preview, chunks        | Authority: local |
-| Media                | RAG query and evidence list           | Use in Console   |
-| Conversations        | Study generation entry                | Generate Study   |
+| Source Browser       | Source Detail / Mode Workspace        | Source Inspector |
+| Scope: Workspace All | Title: Research Note                  | Authority: local |
+| Notes                | Type: note | indexed: yes             | Indexed: yes     |
+| > Research Note      | Preview / chunks / transcript         | Tags: ai, paper  |
+|   Meeting Summary    | Search/RAG panel appears here         | Actions:         |
+| Media                | when mode is Search/RAG               | Ask in Console   |
+| Conversations        | Study entry shows flashcards/quizzes  | Generate Cards   |
+|                      |                                      | Generate Quiz    |
 +----------------------+--------------------------------------+------------------+
 | Footer: / search | Enter open | C stage in Console | I import | E export       |
 +--------------------------------------------------------------------------------+
 ```
+
+Search/RAG mode uses the same three-pane shell:
+
+```text
++--------------------------------------------------------------------------------+
+| Library | Search/RAG | Ready | Local index                                      |
++--------------------------------------------------------------------------------+
+| Source Scope         | RAG Query + Evidence                  | Retrieval Control|
+| [x] Research Note    | Ask: "What changed since last week?"  | Index: ready     |
+| [x] Papers folder    | [Run Search] [Ask with RAG]           | Top K: 8         |
+| [ ] Conversations    | Results: chunks, scores, citations    | Citations: on    |
+| Saved Searches       | Answer draft / evidence preview       | Open in Console  |
++--------------------------------------------------------------------------------+
+```
+
+Study remains a Library-owned umbrella mode or section. Flashcards and Quizzes remain visible as child modes/actions so study workflows are discoverable without creating a top-level Study destination.
 
 Primary actions:
 
@@ -409,6 +491,7 @@ QA checks:
 - Import/Export appears under Library and does not blur with Artifact export.
 - Study entry points make Flashcards and Quizzes visible without creating a top-level Study destination.
 - The existing `study` route and Study Dashboard remain Library-owned and preserve section routing from Library.
+- Library exports source material and retrieval evidence; generated outputs and bundles belong in Artifacts.
 
 ### Artifacts
 
@@ -431,12 +514,28 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 | Types: All Chatbooks Reports Datasets Drafts Exports | Sort: Recent            |
 +----------------------+--------------------------------------+------------------+
-| Artifact List        | Artifact Preview                     | Provenance       |
-| Chatbook: RAG answer | Saved response and source summary    | Created in Console|
-| Report: run output   | Export/package status                | Reopen Console   |
-| Dataset: extracted   |                                      | Export / Bundle  |
+| Artifact List        | Artifact Preview / Detail            | Provenance       |
+| > Chatbook: RAG Q&A  | Title: RAG Q&A                       | Created: Console |
+|   Report: run output | Type: Chatbook                       | Model: local/qwen|
+|   Dataset: extracted | Status: ready                        | Sources: 8 chunks|
+|   Draft: blog outline| Saved answer / source summary        | Workspace: AI    |
+|   Export: bundle.zip |                                      | Reopen Console   |
+|                      |                                      | Export / Bundle  |
 +----------------------+--------------------------------------+------------------+
 | Footer: Enter preview | C reopen in Console | X export | B bundle             |
++--------------------------------------------------------------------------------+
+```
+
+Empty state:
+
+```text
++--------------------------------------------------------------------------------+
+| Artifacts | No generated outputs yet | Local                                    |
++--------------------------------------------------------------------------------+
+| Artifacts are saved outputs: Chatbooks, reports, datasets, drafts, exports.     |
+| Create one by saving a Console answer, exporting a workflow result, or bundling |
+| selected Library evidence.                                                      |
+| [Open Console] [Open Library] [Import Artifact]                                 |
 +--------------------------------------------------------------------------------+
 ```
 
@@ -462,6 +561,7 @@ QA checks:
 - Chatbooks are visible as first-class artifacts.
 - Artifact source provenance is visible before reopen/export.
 - Artifacts are not presented as raw source material.
+- Artifacts export generated outputs; source import/export remains under Library.
 
 ### Personas
 
@@ -536,11 +636,29 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 | Tabs: Watchlists Collections | Filter: Running Failed Recent Alerts            |
 +----------------------+--------------------------------------+------------------+
-| Watch/Collection List| Detail / Items / Runs                 | Status Inspector |
-| Watch: arxiv papers  | Latest run, scraped items, outputs   | Retry/backoff    |
-| Collection: reading  | Highlights, saved searches, feeds   | Follow Console   |
+| Watchlist List       | Detail / Items / Runs                 | Status Inspector |
+| > Daily papers       | Source: arxiv query                   | State: running   |
+|   Security feeds     | Schedule: every 6h                    | Last run: 10:42  |
+|   Blog monitor       | Latest run: fetched 14 items          | Retry/backoff    |
+| Alerts               | Output: 1 Chatbook artifact saved     | Follow Console   |
+|                      | 2 items staged to Library             | Pause / Retry    |
 +----------------------+--------------------------------------+------------------+
-| Footer: N new | R run | C follow in Console | A alerts | X export           |
+| Footer: N new | R run/retry | C follow Console | A alerts | L send to Library |
++--------------------------------------------------------------------------------+
+```
+
+Collections tab uses the same layout with collection-focused labels:
+
+```text
++--------------------------------------------------------------------------------+
+| W+C | Collections | Ready | Local                                               |
++--------------------------------------------------------------------------------+
+| Collection List      | Items / Highlights / Saved Searches   | Collection Info  |
+| > Reading Queue      | > paper.pdf                           | Items: 42        |
+|   AI papers          |   transcript.md                       | Highlights: 8    |
+|   Project Sources    |   blog article                        | Saved searches: 3|
+| Saved Searches       | Highlights and note links             | Use in Library   |
+| Archive              |                                      | Ask in Console   |
 +--------------------------------------------------------------------------------+
 ```
 
@@ -567,6 +685,7 @@ QA checks:
 - Watchlists and Collections are visibly distinct.
 - Run history and retry/backoff are visible for watchlists.
 - Collection items can feed Library/RAG or Console without becoming Artifacts by default.
+- Watchlist outputs become Artifacts only when explicitly saved or exported.
 
 ### Schedules
 
@@ -587,13 +706,32 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 | Schedules | When work runs | Ready | Local/Server                              |
 +--------------------------------------------------------------------------------+
-| Filter: Active Paused Failed Upcoming | Scope: All Workflows/Watchlists        |
+| Filter: Active Paused Failed Upcoming | Scope: All Workflows W+C Library       |
 +----------------------+--------------------------------------+------------------+
 | Schedule List        | Schedule Detail / Upcoming Runs       | Controls         |
-| Daily digest         | Cron, next run, last run, target      | Pause Resume     |
-| Weekly review        | History and missed-run recovery       | Retry Open Run   |
+| > Morning digest     | Target: W+C / reading digest          | State: active    |
+|   Weekly review      | Trigger: every weekday 07:00          | Next: 07:00      |
+|   Paper scan         | Timezone: local                       | Last: success    |
+|   Broken workflow    | Upcoming: 07:00 today, 09:00 today    | Pause / Run Now  |
+|                      |                                      | Open Console     |
 +----------------------+--------------------------------------+------------------+
+| Run History: 10:42 success | yesterday failed: model unavailable | Retry ready     |
 | Footer: N new | Space pause/resume | R retry | C open run in Console          |
++--------------------------------------------------------------------------------+
+```
+
+Failed/missed state:
+
+```text
++--------------------------------------------------------------------------------+
+| Schedules | Failed | 1 needs recovery                                           |
++--------------------------------------------------------------------------------+
+| Schedule List        | Failure Detail                       | Recovery          |
+| > Broken workflow    | Last run failed at 02:00             | Cause: model off  |
+|                      | Target: Workflow / nightly summary   | Impact: no report |
+|                      |                                      | Retry             |
+|                      |                                      | Open Console      |
+|                      |                                      | Pause schedule    |
 +--------------------------------------------------------------------------------+
 ```
 
@@ -619,6 +757,7 @@ QA checks:
 - User can distinguish schedule timing from workflow procedure.
 - Pause/resume/retry are reachable and target the selected schedule.
 - Failed schedule states explain cause and recovery.
+- Editing timing belongs in Schedules; editing workflow steps belongs in Workflows.
 
 ### Workflows
 
@@ -641,11 +780,29 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 | Modes: Browse Build Runs Templates | Filter: Draft Active Failed               |
 +----------------------+--------------------------------------+------------------+
-| Workflow List        | Builder / Run Detail                  | Run Inspector    |
-| Research digest      | Step 1 sources -> Step 2 summarize   | Inputs ready     |
-| Code audit           | Approvals and output targets         | Tools ready      |
+| Workflow List        | Builder / Run Detail                  | Readiness        |
+| > Research digest    | Step 1: Select Library sources        | Inputs: ready    |
+|   Code audit         | Step 2: Search/RAG                    | Tools: 3 ready   |
+|   Meeting summary    | Step 3: Summarize                     | Persona: analyst |
+|   Draft generator    | Step 4: Save Chatbook artifact        | Skills: 2 linked |
+| Templates            | Approval point: before file/export    | Approvals: 1     |
+| Recent runs          | Dry run: last passed 10:41            | Dry Run / Launch |
 +----------------------+--------------------------------------+------------------+
 | Footer: N new | D dry run | C launch/follow in Console | A approvals       |
++--------------------------------------------------------------------------------+
+```
+
+Runs mode:
+
+```text
++--------------------------------------------------------------------------------+
+| Workflows | Runs | 1 active | Local                                             |
++--------------------------------------------------------------------------------+
+| Workflow Runs        | Run Detail / Step Progress            | Recovery          |
+| > Research digest    | Step 1 done                           | Status: blocked   |
+|   Code audit failed  | Step 2 blocked: RAG index missing     | Impact: no output |
+|                      | Step 3 pending                        | Open Console      |
+|                      |                                      | Retry Step        |
 +--------------------------------------------------------------------------------+
 ```
 
@@ -671,6 +828,7 @@ QA checks:
 - User can tell "what runs" here and "when it runs" belongs in Schedules.
 - Dry-run/readiness is visible before launch.
 - Approval points and output targets are visible.
+- Schedules may trigger workflows, but workflow procedure editing stays here.
 
 ### MCP
 
@@ -684,6 +842,7 @@ Binding regions:
 - selected tool/server detail.
 - permissions/auth/readiness inspector.
 - test/recover controls.
+- collapsible server/tool tree with `PgUp` / `PgDn` paging.
 
 ```text
 +--------------------------------------------------------------------------------+
@@ -693,16 +852,39 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 | Modes: Servers Tools Resources Permissions Audit | Filter: Blocked Ready       |
 +----------------------+--------------------------------------+------------------+
-| Server/Tool List     | Tool Or Server Detail                 | Readiness        |
-| filesystem           | Schema, auth, risk, last test         | Auth: ok         |
-| browser              | Resource inventory                    | Permission: ask  |
+| Server / Tool Tree   | Tool Or Server Detail                 | Readiness        |
+| v filesystem         | filesystem.read_file                  | Server: connected|
+|   > read_file        | Schema: path, max_bytes               | Auth: ok         |
+|     write_file       | Resource access: workspace only       | Permission: ask  |
+|     list_directory   | Last test: passed                     | Risk: file read  |
+| > github             | Example payload / result preview      | Approval: needed |
+| v browser            |                                      | Test / Audit     |
 +----------------------+--------------------------------------+------------------+
 | Footer: T test | P permissions | C use/follow in Console | L audit           |
 +--------------------------------------------------------------------------------+
 ```
 
+Left pane behavior:
+
+```text
++--------------------------------------+
+| Server / Tool Tree - PgUp/PgDn page  |
+| v filesystem              connected  |
+|   > read_file             ask        |
+|     write_file            approval   |
+|     list_directory        ready      |
+| > github                  auth req   |
+| v browser                 connected  |
+|     navigate              ready      |
+|     screenshot            ask        |
+|     click                 ask        |
+| > memory                  connected  |
++--------------------------------------+
+```
+
 Primary actions:
 
+- expand/collapse server tool groups.
 - test tool/server.
 - manage permission.
 - inspect audit.
@@ -721,6 +903,8 @@ Create a Textual-native terminal UI concept for the MCP destination. Show MCP se
 QA checks:
 
 - `tools_settings` resolves as MCP, not global Settings.
+- Servers are the primary grouping, and tools appear under each server in collapsible lists.
+- `PgUp` and `PgDn` page through long server/tool trees.
 - Tool readiness and permission status are visible before use.
 - Blocked tools show owner, impact, and recovery.
 
@@ -746,16 +930,35 @@ Binding regions:
 | Modes: Agents Sessions Runtimes Compatibility | Filter: Ready Blocked         |
 +----------------------+--------------------------------------+------------------+
 | Agent/Session List   | Session Detail / Runtime Setup        | Compatibility    |
-| No runtime configured| Diffs, terminal, files when ready     | Missing runtime  |
-|                      | Recovery setup steps                  | Configure        |
+| Agents               | Runtime: not configured               | ACP version: n/a |
+| > Codex local        | Required: ACP-compatible runtime      | Terminal: missing|
+|   Gemini CLI         | Setup steps                           | Diffs unavailable|
+|   Custom agent       | 1. Configure runtime path             | Files unavailable|
+| Sessions             | 2. Verify agent executable            | Setup Runtime    |
+|   No active sessions | 3. Start session                      | Launch Agent     |
+|                      |                                      | Follow Console   |
 +----------------------+--------------------------------------+------------------+
 | Footer: N agent | R resume | C follow in Console | S setup runtime           |
 +--------------------------------------------------------------------------------+
 ```
 
+Configured/session state:
+
+```text
++--------------------------------------------------------------------------------+
+| ACP | Sessions | 1 active | Local runtime                                      |
++--------------------------------------------------------------------------------+
+| Sessions             | Session Detail                        | Runtime State     |
+| > refactor-ui        | Agent: Codex local                    | Terminal: active  |
+|   docs-update        | Workspace: tldw_chatbook              | Diff: 8 files     |
+|                      | Last action: edited screens           | Files: writable   |
+|                      | Resume / Open Diff / Follow Console   | Pause / Stop      |
++--------------------------------------------------------------------------------+
+```
+
 Primary actions:
 
-- configure runtime.
+- configure runtime inside ACP.
 - discover/install agent.
 - launch/resume/follow session.
 
@@ -774,6 +977,8 @@ QA checks:
 - Runtime-unconfigured state is honest and recoverable.
 - ACP and MCP purposes remain visibly distinct.
 - Launch/follow enters Console for live work.
+- ACP owns runtime setup UI; Settings may hold only global defaults that affect ACP.
+- Follow-in-Console is disabled with a target-specific reason until session payloads exist.
 
 ### Skills
 
@@ -796,11 +1001,32 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 | Modes: Installed Discover Import Validate Attach | Filter: Valid Broken        |
 +----------------------+--------------------------------------+------------------+
-| Skill List           | SKILL.md / Files / Instructions       | Validation       |
-| pdf-processing       | name, description, allowed-tools      | Frontmatter ok   |
-| code-review          | scripts, references, assets           | Attach targets   |
+| Skill List / Tree    | SKILL.md / Files / Instructions       | Validation       |
+| > pdf-processing     | ---                                  | Frontmatter: ok  |
+|   code-review        | name: pdf-processing                  | Name matches dir |
+|   data-analysis      | description: Extract PDFs...          | Desc: ok         |
+|   broken-skill       | allowed-tools: Bash(git:*) Read       | Compatibility ok |
+| v pdf-processing     | ---                                  | Allowed tools: 2 |
+|   SKILL.md           | Instructions preview                  | Scripts: 1       |
+|   scripts/           | scripts/extract.py                    | References: 2    |
+|   references/        | references/REFERENCE.md               | Assets: 1        |
+|   assets/            |                                      | Attach targets   |
 +----------------------+--------------------------------------+------------------+
 | Footer: I import | V validate | E edit | C attach to Console | X export       |
++--------------------------------------------------------------------------------+
+```
+
+Broken validation state:
+
+```text
++--------------------------------------------------------------------------------+
+| Skills | Validate | Broken                                                     |
++--------------------------------------------------------------------------------+
+| Skill List           | SKILL.md                             | Validation        |
+| > PDF-Processing     | name: PDF-Processing                  | Invalid name      |
+|                      | description: Helps with PDFs          | Uppercase banned  |
+|                      |                                      | Dir mismatch      |
+|                      |                                      | Edit / Revalidate |
 +--------------------------------------------------------------------------------+
 ```
 
@@ -826,6 +1052,7 @@ QA checks:
 - User can identify valid vs invalid skills before attachment.
 - `SKILL.md` frontmatter and bundled directories are visible.
 - Attachment targets are explicit and recoverable when incompatible.
+- Discovery must not make the screen feel like a marketplace by default; local installed/validated skills are primary.
 
 ### Settings
 
@@ -848,10 +1075,16 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 | Categories: Providers Models Storage Privacy Appearance Diagnostics            |
 +----------------------+--------------------------------------+------------------+
-| Category List        | Setting Form / Diagnostic Detail      | Impact           |
-| Providers            | API keys, model defaults, app config  | Affects Console  |
-| Storage              | Paths, backups, encryption            | Test / Revert    |
+| Category List        | Setting Form / Diagnostic Detail      | Impact / Status  |
+| > Providers          | OpenAI API key: ********              | Affects Console  |
+|   Models             | Default provider: local               | RAG: no impact   |
+|   Storage            | Default model: qwen                   | Saved: yes       |
+|   Privacy            | Test provider / Save / Revert         | Validation: ok   |
+|   Appearance         |                                      | Config path      |
+|   Diagnostics        |                                      | Reload available |
 +----------------------+--------------------------------------+------------------+
+| Boundary: MCP tools, ACP runtimes, Skills, Personas, Schedules, and Workflows  |
+| are configured in their own destinations unless setting a global default.       |
 | Footer: S save | R revert | T test | D diagnostics                         |
 +--------------------------------------------------------------------------------+
 ```
@@ -877,6 +1110,7 @@ QA checks:
 - Settings does not duplicate task-specific configuration owned by MCP, ACP, Skills, Personas, Schedules, or Workflows.
 - Validation errors are local to the setting and include recovery.
 - Provider readiness explains downstream Console impact.
+- Raw config editing may exist as an advanced path, not the default Settings experience.
 
 ## Major Subflow Contracts
 
