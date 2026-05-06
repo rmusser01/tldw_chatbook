@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from html import escape as html_escape
+from pathlib import Path
+from threading import RLock
 from typing import Any, Mapping, Protocol, runtime_checkable
 
 from loguru import logger
+from rich.markup import escape
 
+from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+from tldw_chatbook.Utils.path_validation import validate_path
 from .dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 
 
@@ -25,6 +32,10 @@ _HOME_WATCHLIST_RUN_STATUSES = frozenset(
     }
 )
 _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS = 1000
+_MAX_CHATBOOK_FILE_PATH_CHARS = 2000
+_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS = 1000
+_MAX_CHATBOOK_METADATA_TEXT_CHARS = 256
+_DANGEROUS_TEXT_PATTERNS = ("<script", "</script", "javascript:", "onclick=", "onerror=")
 
 
 class HomeControlAction(StrEnum):
@@ -159,6 +170,31 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         self.notification_service = notification_service
         self.watchlist_service = watchlist_service
         self.chatbook_service = chatbook_service
+        self._chatbook_artifact_snapshot: tuple[Mapping[str, Any], ...] = ()
+        self._chatbook_artifact_snapshot_lock = RLock()
+
+    def refresh_chatbook_artifact_snapshot(self, *, limit: int = 20) -> None:
+        """Refresh cached local Chatbook artifacts off the Home compose path."""
+        if self.chatbook_service is None:
+            self._set_chatbook_artifact_snapshot(())
+            return
+        list_snapshot = getattr(self.chatbook_service, "list_home_artifact_snapshot", None)
+        if not callable(list_snapshot):
+            self._set_chatbook_artifact_snapshot(())
+            return
+        try:
+            records = list_snapshot(limit=limit)
+        except Exception as e:
+            logger.warning(f"Failed to fetch local Chatbook artifacts for Home: {e}")
+            self._set_chatbook_artifact_snapshot(())
+            return
+        self._set_chatbook_artifact_snapshot(
+            tuple(record for record in records if isinstance(record, Mapping))
+        )
+
+    def _set_chatbook_artifact_snapshot(self, records: tuple[Mapping[str, Any], ...]) -> None:
+        with self._chatbook_artifact_snapshot_lock:
+            self._chatbook_artifact_snapshot = records
 
     def build_dashboard_input(
         self,
@@ -332,17 +368,8 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         )
 
     def _local_chatbook_artifacts(self) -> list[Any]:
-        if self.chatbook_service is None:
-            return []
-        list_snapshot = getattr(self.chatbook_service, "list_home_artifact_snapshot", None)
-        if not callable(list_snapshot):
-            return []
-        try:
-            records = list_snapshot(limit=20)
-        except Exception as e:
-            logger.warning(f"Failed to fetch local Chatbook artifacts for Home: {e}")
-            return []
-        return [record for record in records if isinstance(record, Mapping)]
+        with self._chatbook_artifact_snapshot_lock:
+            return list(self._chatbook_artifact_snapshot)
 
     def _local_chatbook_artifact_by_id(self, target_id: str) -> Any | None:
         return next(
@@ -387,10 +414,10 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
 
     @staticmethod
     def _chatbook_title(record: Any) -> str:
-        return str(
-            _mapping_value(record, "name")
-            or _mapping_value(record, "title")
-            or "Untitled Chatbook"
+        return _safe_payload_text(
+            _mapping_value(record, "name") or _mapping_value(record, "title"),
+            fallback="Untitled Chatbook",
+            max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS,
         )
 
     @classmethod
@@ -399,12 +426,21 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         payload: dict[str, Any] = {
             "target_id": target_id,
             "chatbook_id": chatbook_id,
-            "record_id": str(_mapping_value(record, "id") or ""),
-            "file_path": str(_mapping_value(record, "file_path") or ""),
-            "description": str(_mapping_value(record, "description") or ""),
+            "record_id": _safe_payload_text(
+                _mapping_value(record, "id"),
+                max_length=_MAX_CHATBOOK_METADATA_TEXT_CHARS,
+            ),
+            "file_path": _safe_file_path(_mapping_value(record, "file_path")),
+            "description": _safe_payload_text(
+                _mapping_value(record, "description"),
+                max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS,
+            ),
             "tags": _csv(_mapping_value(record, "tags")),
             "categories": _csv(_mapping_value(record, "categories")),
-            "updated_at": str(_mapping_value(record, "updated_at") or ""),
+            "updated_at": _safe_payload_text(
+                _mapping_value(record, "updated_at"),
+                max_length=_MAX_CHATBOOK_METADATA_TEXT_CHARS,
+            ),
         }
         payload.update(_console_metadata_payload(_mapping_value(record, "metadata")))
         return payload
@@ -434,34 +470,96 @@ def _csv(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
-        return value
+        return _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS) or None
     if isinstance(value, (list, tuple)):
-        text = ", ".join(str(item) for item in value if str(item).strip())
+        text = ", ".join(
+            _safe_payload_text(item, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS)
+            for item in value
+            if str(item).strip()
+        )
+        text = _safe_payload_text(text, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS)
         return text or None
-    return str(value)
+    return _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS) or None
+
+
+def _safe_payload_text(
+    value: Any,
+    *,
+    fallback: str = "",
+    max_length: int = _MAX_CHATBOOK_PAYLOAD_TEXT_CHARS,
+    single_line: bool = True,
+) -> str:
+    text = sanitize_string(str(value or ""), max_length=max_length).strip()
+    if single_line:
+        text = " ".join(text.split())
+    if not text:
+        return fallback
+    if not validate_text_input(text, max_length=max_length, allow_html=False):
+        for pattern in _DANGEROUS_TEXT_PATTERNS:
+            replacement = pattern.rstrip(":=").replace("=", "")
+            text = re.sub(re.escape(pattern), replacement, text, flags=re.IGNORECASE)
+        if not validate_text_input(text, max_length=max_length, allow_html=False):
+            return fallback
+    return escape(html_escape(text, quote=False))
+
+
+def _safe_metadata_value(value: Any, *, max_length: int = _MAX_CHATBOOK_METADATA_TEXT_CHARS) -> Any | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    text = _safe_payload_text(value, max_length=max_length)
+    return text or None
+
+
+def _safe_file_path(value: Any) -> str | None:
+    text = sanitize_string(str(value or ""), max_length=_MAX_CHATBOOK_FILE_PATH_CHARS).strip()
+    if not text:
+        return None
+    text = " ".join(text.split())
+    try:
+        path = Path(text).expanduser()
+        base_directory = path.parent if path.is_absolute() else Path.cwd()
+        validated = validate_path(path, base_directory)
+    except ValueError:
+        logger.warning(f"Rejected unsafe Chatbook artifact file path for Home payload: {text!r}")
+        return None
+    return _safe_payload_text(
+        str(validated),
+        max_length=_MAX_CHATBOOK_FILE_PATH_CHARS,
+    ) or None
 
 
 def _console_metadata_payload(metadata: Any) -> dict[str, Any]:
     if not isinstance(metadata, Mapping):
         return {}
-    if str(metadata.get("artifact_source") or "").strip().lower() != "console":
+    artifact_source = _safe_metadata_value(metadata.get("artifact_source"), max_length=128)
+    artifact_kind = _safe_metadata_value(metadata.get("artifact_kind"), max_length=128)
+    if str(artifact_source or "").strip().lower() != "console":
         return {}
-    if str(metadata.get("artifact_kind") or "").strip().lower() != "assistant-response":
+    if str(artifact_kind or "").strip().lower() != "assistant-response":
         return {}
 
     payload: dict[str, Any] = {
-        "artifact_source": "console",
-        "artifact_kind": "assistant-response",
+        "artifact_source": artifact_source,
+        "artifact_kind": artifact_kind,
     }
     for key in ("conversation_id", "message_id", "message_role", "provider", "model"):
-        value = metadata.get(key)
+        value = _safe_metadata_value(metadata.get(key))
         if value is not None:
             payload[key] = value
     if metadata.get("content") is not None:
-        content = str(metadata.get("content"))
-        payload["content_preview"] = content[:_MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS]
+        content = sanitize_string(
+            str(metadata.get("content")),
+            max_length=_MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS,
+        )
+        payload["content_preview"] = _safe_payload_text(
+            content,
+            max_length=_MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS,
+            single_line=False,
+        )
         payload["content_truncated"] = (
             bool(metadata.get("content_truncated"))
-            or len(content) > _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS
+            or len(str(metadata.get("content"))) > _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS
         )
     return payload

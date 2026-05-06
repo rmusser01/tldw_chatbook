@@ -262,6 +262,7 @@ def test_local_notification_adapter_maps_console_saved_chatbook_to_active_work()
 
     service = FakeChatbookService()
     adapter = LocalNotificationHomeActiveWorkAdapter(chatbook_service=service)
+    adapter.refresh_chatbook_artifact_snapshot()
 
     dashboard_input = adapter.build_dashboard_input(
         providers_models={"OpenAI": ["gpt-4.1"]},
@@ -306,6 +307,7 @@ def test_local_notification_adapter_maps_only_latest_console_saved_chatbook_to_a
     adapter = LocalNotificationHomeActiveWorkAdapter(
         chatbook_service=FakeChatbookService()
     )
+    adapter.refresh_chatbook_artifact_snapshot()
 
     dashboard_input = adapter.build_dashboard_input(
         providers_models={"OpenAI": ["gpt-4.1"]},
@@ -347,6 +349,7 @@ def test_local_notification_adapter_opens_console_saved_chatbook_details_and_con
     adapter = LocalNotificationHomeActiveWorkAdapter(
         chatbook_service=FakeChatbookService()
     )
+    adapter.refresh_chatbook_artifact_snapshot()
 
     detail_result = adapter.handle_control(
         HomeControlAction.OPEN_DETAILS,
@@ -373,11 +376,15 @@ def test_local_notification_adapter_opens_console_saved_chatbook_details_and_con
         "Review this Chatbook artifact in Console or return to Home."
     )
     assert console_result.console_launch.action_label == "Open Chatbook artifact"
+    assert console_result.console_launch.payload is not None
+    assert console_result.console_launch.payload["file_path"].endswith(
+        "/grounded-answer.chatbook"
+    )
     assert console_result.console_launch.payload == {
         "target_id": "local:chatbook:77",
         "chatbook_id": 77,
         "record_id": "77",
-        "file_path": "/tmp/grounded-answer.chatbook",
+        "file_path": console_result.console_launch.payload["file_path"],
         "description": "Saved from Console assistant response.",
         "tags": "console, artifact",
         "categories": "Console, Artifacts",
@@ -416,6 +423,7 @@ def test_local_notification_adapter_bounds_console_saved_chatbook_preview():
     adapter = LocalNotificationHomeActiveWorkAdapter(
         chatbook_service=FakeChatbookService()
     )
+    adapter.refresh_chatbook_artifact_snapshot()
 
     result = adapter.handle_control(
         HomeControlAction.OPEN_IN_CONSOLE,
@@ -428,6 +436,129 @@ def test_local_notification_adapter_bounds_console_saved_chatbook_preview():
     assert payload is not None
     assert payload["content_preview"] == "x" * 1000
     assert payload["content_truncated"] is True
+
+
+def test_local_notification_adapter_sanitizes_console_saved_chatbook_payload_text():
+    class FakeChatbookService:
+        def list_home_artifact_snapshot(self, *, limit=20):
+            return [
+                {
+                    "chatbook_id": 77,
+                    "id": "77",
+                    "name": "Unsafe Answer",
+                    "description": "<script>alert('x')</script>\nDescription",
+                    "file_path": "../../secret.chatbook",
+                    "tags": ["safe", "<script>tag</script>"],
+                    "categories": ["Console\nArtifacts"],
+                    "metadata": {
+                        "artifact_source": "console",
+                        "artifact_kind": "assistant-response",
+                        "provider": "OpenAI\n<script>",
+                        "model": "gpt-4.1",
+                        "content": "<script>alert('x')</script>\nGrounded answer body.",
+                        "content_truncated": False,
+                    },
+                },
+            ]
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        chatbook_service=FakeChatbookService()
+    )
+    adapter.refresh_chatbook_artifact_snapshot()
+
+    result = adapter.handle_control(
+        HomeControlAction.OPEN_IN_CONSOLE,
+        target_id="local:chatbook:77",
+        target_route="chat",
+    )
+
+    assert result.console_launch is not None
+    payload = result.console_launch.payload
+    assert payload is not None
+    assert payload["file_path"] is None
+    assert "<script" not in str(payload["description"]).lower()
+    assert "<script" not in str(payload["tags"]).lower()
+    assert "\n" not in str(payload["categories"])
+    assert "<script" not in str(payload.get("provider", "")).lower()
+    assert "<script" not in str(payload["content_preview"]).lower()
+
+
+def test_local_notification_adapter_bounds_console_saved_chatbook_payload_fields():
+    class FakeChatbookService:
+        def list_home_artifact_snapshot(self, *, limit=20):
+            return [
+                {
+                    "chatbook_id": 77,
+                    "id": "77",
+                    "name": "Large Answer",
+                    "description": "d" * 1500,
+                    "file_path": f"/tmp/{'f' * 2500}.chatbook",
+                    "tags": ["t" * 1500],
+                    "categories": ["c" * 1500],
+                    "metadata": {
+                        "artifact_source": "console",
+                        "artifact_kind": "assistant-response",
+                        "provider": "p" * 300,
+                        "model": "m" * 300,
+                        "content": "body",
+                    },
+                },
+            ]
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        chatbook_service=FakeChatbookService()
+    )
+    adapter.refresh_chatbook_artifact_snapshot()
+
+    result = adapter.handle_control(
+        HomeControlAction.OPEN_IN_CONSOLE,
+        target_id="local:chatbook:77",
+        target_route="chat",
+    )
+
+    assert result.console_launch is not None
+    payload = result.console_launch.payload
+    assert payload is not None
+    assert len(str(payload["description"])) <= 1000
+    assert len(str(payload["file_path"])) <= 2000
+    assert len(str(payload["tags"])) <= 1000
+    assert len(str(payload["categories"])) <= 1000
+    assert len(str(payload["provider"])) <= 256
+    assert len(str(payload["model"])) <= 256
+
+
+def test_local_notification_adapter_dashboard_build_uses_cached_chatbook_snapshot():
+    class FakeChatbookService:
+        def __init__(self):
+            self.calls = 0
+
+        def list_home_artifact_snapshot(self, *, limit=20):
+            self.calls += 1
+            return [
+                {
+                    "chatbook_id": 77,
+                    "name": "Grounded Answer",
+                    "metadata": {
+                        "artifact_source": "console",
+                        "artifact_kind": "assistant-response",
+                    },
+                },
+            ]
+
+    service = FakeChatbookService()
+    adapter = LocalNotificationHomeActiveWorkAdapter(chatbook_service=service)
+    adapter.refresh_chatbook_artifact_snapshot()
+    assert service.calls == 1
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert service.calls == 1
+    assert [item.item_id for item in dashboard_input.active_work_items] == [
+        "local:chatbook:77"
+    ]
 
 
 def test_local_notification_adapter_fails_closed_when_chatbook_snapshot_unavailable():
@@ -451,6 +582,7 @@ def test_local_notification_adapter_fails_closed_when_chatbook_snapshot_unavaila
         watchlist_service=FakeWatchlistsService(),
         chatbook_service=BrokenChatbookService(),
     )
+    adapter.refresh_chatbook_artifact_snapshot()
 
     dashboard_input = adapter.build_dashboard_input(
         providers_models={"OpenAI": ["gpt-4.1"]},

@@ -138,6 +138,7 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
     running_item = _first_item_for_status(state, _RUNNING_STATUSES)
     paused_item = _first_item_for_status(state, _PAUSED_STATUSES)
     failed_item = _first_item_for_status(state, _FAILED_STATUSES)
+    chatbook_item = _first_chatbook_artifact_item(state)
     detail_item = (
         approval_item
         or failed_item
@@ -224,6 +225,26 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
                     console_item.item_id if console_item else None,
                 )
             )
+            if chatbook_item is not None and chatbook_item != console_item:
+                controls.append(
+                    HomeControl(
+                        "home-open-chatbook-in-console",
+                        "Open Chatbook in Console",
+                        "chat",
+                        "chatbook_console",
+                        chatbook_item.item_id,
+                    )
+                )
+        if chatbook_item is not None and chatbook_item != detail_item:
+            controls.append(
+                HomeControl(
+                    "home-open-chatbook-details",
+                    "Open Chatbook details",
+                    chatbook_item.detail_route,
+                    "chatbook_details",
+                    chatbook_item.item_id,
+                )
+            )
     return tuple(controls)
 
 
@@ -272,6 +293,17 @@ def _first_item_for_status(
     statuses: frozenset[str],
 ) -> HomeActiveWorkItem | None:
     return next((item for item in state.active_work_items if _normalized_status(item) in statuses), None)
+
+
+def _first_chatbook_artifact_item(state: HomeDashboardInput) -> HomeActiveWorkItem | None:
+    return next(
+        (
+            item
+            for item in state.active_work_items
+            if item.item_id.startswith("local:chatbook:")
+        ),
+        None,
+    )
 
 
 def _pending_approval_count(state: HomeDashboardInput) -> int:

@@ -71,6 +71,22 @@ Result:
 
 - `49 passed, 8 warnings in 26.93s`.
 
+PR review fix verification:
+
+```bash
+.venv/bin/python -m pytest Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/Chatbooks/test_local_chatbook_service.py Tests/UI/test_home_screen.py Tests/UI/test_screen_navigation.py::test_app_initializes_watchlists_and_notifications_services Tests/UI/test_product_maturity_phase1_harness.py -q
+```
+
+Result:
+
+- `65 passed, 8 warnings in 33.20s`.
+
+Review comments addressed:
+
+- Home Chatbook artifact snapshot refresh now runs off the Home compose path and uses a cached snapshot for dashboard rendering.
+- Mixed W+C plus Chatbook active work now exposes dedicated Chatbook detail and Console controls so the saved artifact remains reachable.
+- Console launch payload fields are sanitized, path-validated, and length-bounded before they are rendered by Console live-work status rows.
+
 ## Defects Fixed
 
 - `workflow-degradation`: Home had no way to surface a newly saved Console Chatbook artifact as resumable work after Phase 2.3 proved Artifacts could reopen it.
