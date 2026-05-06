@@ -31,7 +31,7 @@ Required deferred follow-up gates:
 
 - **Gate 1.5: Console internals decomposition and `ChatWindowEnhanced` replacement.** Gate 1 may frame the existing chat surface inside the Console shell for compatibility, but the legacy `ChatWindowEnhanced` implementation must be decomposed and replaced in a later required gate. That gate owns visual fit, keyboard flow, provider/model controls, transcript rendering, composer behavior, staged context, RAG controls, tool calls, approvals, artifacts/Chatbook save controls, and parity with existing chat features.
 - **Gate 1.6: Library-native Search/RAG workflow.** Gate 1 may make Library's Search/RAG mode selectable, but the full Search/RAG implementation must be delivered in a later required gate. That gate owns source selection, RAG query input, retrieval status, evidence/results list, citations/provenance, failure/setup recovery, and handoff into Console with staged evidence.
-- These gates should be planned and tracked before broad Gate 2 destination rewrites, because Console usability and Library retrieval are core-loop dependencies.
+- These gates must receive their own implementation plans and Backlog tasks before broad Gate 2 destination rewrites, because Console usability and Library retrieval are core-loop dependencies.
 
 ## File Structure
 
@@ -52,6 +52,8 @@ Required deferred follow-up gates:
   - Add Console shell regions around `ChatWindowEnhanced`.
 - `tldw_chatbook/UI/Screens/library_screen.py`
   - Convert Library mode chips into actionable mode controls and render mode-specific detail/inspector copy.
+- `tldw_chatbook/css/components/_agentic_terminal.tcss`
+  - Add or verify shared design-system layout hooks for the new Home, Console, and Library regions.
 - `tldw_chatbook/Home/dashboard_state.py`
   - Only if needed: add small pure helpers for active item selection. Do not move UI rendering here.
 - `tldw_chatbook/Chat/console_live_work.py`
@@ -75,6 +77,7 @@ Required deferred follow-up gates:
 - `Tests/UI/test_destination_shells.py`
 - `Tests/UI/test_product_maturity_phase3_library_contract_layout.py`
 - `Tests/UI/test_chat_first_handoffs.py`
+- `Tests/UI/test_master_shell_design_system_contract.py`
 
 Use the repo-level virtualenv when working in a sibling worktree:
 
@@ -99,6 +102,7 @@ Create a new test file with small helpers copied or imported from existing UI te
 ```python
 from __future__ import annotations
 
+import pytest
 from textual.app import App
 from textual.widgets import Button, Static
 
@@ -149,6 +153,7 @@ class ConsoleHarness(App):
 Add a mounted test that proves Home needs dashboard regions and selected-item inspector.
 
 ```python
+@pytest.mark.asyncio
 async def test_home_core_loop_uses_dashboard_regions_and_selected_item_inspector():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
@@ -207,6 +212,7 @@ async def test_home_core_loop_uses_dashboard_regions_and_selected_item_inspector
 Add a mounted test that proves Console needs shell regions around the existing chat surface.
 
 ```python
+@pytest.mark.asyncio
 async def test_console_core_loop_exposes_agentic_shell_regions():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -241,6 +247,7 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
 Add a mounted test that clicks Search/RAG and verifies Library detail/inspector copy updates without leaving the Library shell.
 
 ```python
+@pytest.mark.asyncio
 async def test_library_core_loop_modes_are_actionable_without_leaving_library():
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService(
@@ -286,6 +293,7 @@ git commit -m "Add Gate 1 core loop screen adaptation regressions"
 
 **Files:**
 - Modify: `tldw_chatbook/UI/Screens/home_screen.py`
+- Modify: `tldw_chatbook/css/components/_agentic_terminal.tcss`
 - Optional Modify: `tldw_chatbook/Home/dashboard_state.py`
 - Test: `Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py`
 - Test: `Tests/UI/test_home_screen.py`
@@ -315,6 +323,17 @@ dashboard_input = self._build_dashboard_input()
 dashboard = summarize_home_dashboard(dashboard_input)
 self._current_dashboard = dashboard
 self._current_dashboard_input = dashboard_input
+
+sections = {section.section_id: section for section in dashboard.sections}
+
+def section_text(section_id: str) -> str:
+    section = sections.get(section_id)
+    return "\n".join(section.lines) if section is not None else ""
+
+attention_text = section_text("attention")
+active_text = section_text("active_work")
+recent_text = section_text("recent_work")
+next_action_copy = f"{dashboard.next_action.label}\n{dashboard.next_action.reason}"
 ```
 
 Add a private helper in `HomeScreen`:
@@ -322,6 +341,20 @@ Add a private helper in `HomeScreen`:
 ```python
 def _selected_home_item(self, dashboard_input: HomeDashboardInput):
     return dashboard_input.active_work_items[0] if dashboard_input.active_work_items else None
+```
+
+Derive selected-item copy from the same dashboard input so Home does not need to infer a target from rendered text:
+
+```python
+selected_item = self._selected_home_item(dashboard_input)
+selected_item_copy = (
+    f"Selected item\n{selected_item.title}\n"
+    f"Source: {selected_item.source}\n"
+    f"Status: {selected_item.status}\n"
+    f"Target: {selected_item.detail_route}"
+    if selected_item is not None
+    else "Selected item\nNo active work selected."
+)
 ```
 
 Do not change `HomeDashboardInput` unless a pure helper is clearly useful across tests.
@@ -386,6 +419,23 @@ with Vertical(id="home-dashboard"):
 
 Use existing `dashboard.sections` values for compatibility rather than duplicating dashboard logic.
 
+Add minimal shared layout hooks to `tldw_chatbook/css/components/_agentic_terminal.tcss` so new contract classes render as intentional panes instead of inheriting arbitrary legacy widget dimensions:
+
+```css
+.home-dashboard-region,
+.console-region,
+.library-region {
+    width: 1fr;
+    min-width: 0;
+    height: auto;
+}
+
+.library-mode-chip {
+    width: auto;
+    min-width: 10;
+}
+```
+
 - [ ] **Step 4: Run Home focused tests**
 
 Run:
@@ -399,7 +449,7 @@ Expected: pass.
 - [ ] **Step 5: Commit Home adaptation**
 
 ```bash
-git add tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/Home/dashboard_state.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py
+git add tldw_chatbook/UI/Screens/home_screen.py tldw_chatbook/css/components/_agentic_terminal.tcss tldw_chatbook/Home/dashboard_state.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py
 git commit -m "Adapt Home dashboard to core loop layout"
 ```
 
@@ -804,7 +854,7 @@ git commit -m "Record Gate 1 core loop screen adaptation evidence"
 Run:
 
 ```bash
-$PY -m pytest -q Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_home_screen.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_shell_bar.py Tests/UI/test_product_maturity_phase3_library_contract_layout.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_destination_shells.py --tb=short
+$PY -m pytest -q Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_home_screen.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_shell_bar.py Tests/UI/test_product_maturity_phase3_library_contract_layout.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_destination_shells.py Tests/UI/test_master_shell_design_system_contract.py --tb=short
 ```
 
 Expected: all selected tests pass with only known dependency warnings.
