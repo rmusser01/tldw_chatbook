@@ -20,6 +20,7 @@ TEMPLATE = PHASE_1_ROOT / "walkthrough-template.md"
 SMOKE = PHASE_1_ROOT / "2026-05-05-phase-1-1-harness-smoke.md"
 PHASE_2_3_EVIDENCE = PHASE_2_ROOT / "2026-05-05-phase-2-3-saved-chatbook-artifact-reopen-contract.md"
 PHASE_2_4_EVIDENCE = PHASE_2_ROOT / "2026-05-05-phase-2-4-home-chatbook-artifact-resume-contract.md"
+PHASE_2_5_EVIDENCE = PHASE_2_ROOT / "2026-05-06-phase-2-5-core-loop-closeout-replay.md"
 PHASE_1_2_PLAN = Path("Docs/superpowers/plans/2026-05-05-product-maturity-phase-1-2-first-run-walkthrough.md")
 BACKLOG_TASKS = Path("backlog/tasks")
 
@@ -213,6 +214,43 @@ def test_product_maturity_phase_two_four_evidence_links_task_and_tracker() -> No
     assert "Home Chatbook Artifact Resume Contract" in evidence
     assert "closeout replay" in evidence
     assert "Home active-work input includes the latest Console-saved Chatbook artifact" in task
+
+
+def test_product_maturity_phase_two_closeout_evidence_links_parent_task_and_tracker() -> None:
+    tracker = _text(TRACKER)
+    readme = _text(PHASE_2_README)
+    evidence = _text(PHASE_2_5_EVIDENCE)
+    parent_task = _task_text_by_id("TASK-9")
+    closeout_task = _task_text_by_id("TASK-9.5")
+
+    phase_two_row = _phase_row(tracker, "Phase 2: Core Agentic Loop")
+
+    assert "Phase 2 verified" in tracker
+    assert "Phase 2.5" in tracker
+    assert "verified" == phase_two_row[2]
+    assert "TASK-9" in phase_two_row[3]
+    assert "TASK-9.5" in phase_two_row[3]
+    assert PHASE_2_5_EVIDENCE.name in phase_two_row[4]
+    assert "full closeout replay remains" not in phase_two_row[5].lower()
+    assert PHASE_2_5_EVIDENCE.name in readme
+
+    assert "Core Loop Closeout Replay" in evidence
+    assert "source/question -> grounded Console -> saved Chatbook -> Artifacts reopen -> Home resume" in evidence
+    assert "P0/P1" in evidence
+    assert "Exit Decision" in evidence
+    assert "Tests/UI/test_product_maturity_phase1_harness.py" in evidence
+
+    assert "Product Maturity Phase 2.5: Core Loop Closeout Replay" in closeout_task
+    assert "- [x] #1" in closeout_task
+    assert "- [x] #2" in closeout_task
+    assert "- [x] #3" in closeout_task
+    assert "- [x] #4" in closeout_task
+
+    assert "status: Done" in parent_task
+    assert "- [x] #1" in parent_task
+    assert "- [x] #2" in parent_task
+    assert "- [x] #3" in parent_task
+    assert "- [x] #4" in parent_task
 
 
 def test_phase_one_one_smoke_evidence_records_harness_only_boundary() -> None:
