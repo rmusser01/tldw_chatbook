@@ -34,6 +34,56 @@ LIBRARY_SOURCE_PAGE_SIZE = 5
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
 LIBRARY_SERVICE_UNAVAILABLE_COPY = "Library source services are unavailable in this runtime."
 LIBRARY_EMPTY_COPY = "No local Library sources are available yet."
+LIBRARY_MODES = {
+    "sources": {
+        "label": "Sources",
+        "button_id": "library-mode-sources",
+        "description": "Sources mode: browse notes, media, and conversations as reusable context.",
+        "next_action": "Use in Console stages the visible source snapshot for grounded chat.",
+    },
+    "search": {
+        "label": "Search/RAG",
+        "button_id": "library-mode-search",
+        "description": (
+            "Search/RAG mode: ask over indexed Library sources or open the existing "
+            "Search/RAG surface."
+        ),
+        "next_action": "Ask in Console by staging selected Library context with Use in Console.",
+    },
+    "import-export": {
+        "label": "Import/Export",
+        "button_id": "library-mode-import-export",
+        "description": "Import/Export mode: bring source material into Library or export it out.",
+        "next_action": "Import/Export tools stay under Library, not Artifacts.",
+    },
+    "workspaces": {
+        "label": "Workspaces",
+        "button_id": "library-mode-workspaces",
+        "description": "Workspaces mode: scope Library material to project or task contexts.",
+        "next_action": "Workspace scoping is shown here before material is staged in Console.",
+    },
+    "study": {
+        "label": "Study",
+        "button_id": "library-mode-study",
+        "description": "Study mode: turn Library material into study sessions.",
+        "next_action": "Open Study Dashboard to continue due cards, decks, and quizzes.",
+    },
+    "flashcards": {
+        "label": "Flashcards",
+        "button_id": "library-mode-flashcards",
+        "description": "Flashcards mode: generate or review cards from Library sources.",
+        "next_action": "Open Flashcards to work with the current source snapshot.",
+    },
+    "quizzes": {
+        "label": "Quizzes",
+        "button_id": "library-mode-quizzes",
+        "description": "Quizzes mode: generate or resume quizzes from Library sources.",
+        "next_action": "Open Quizzes to test recall against the current source snapshot.",
+    },
+}
+LIBRARY_MODE_BY_BUTTON_ID = {
+    mode["button_id"]: mode_id for mode_id, mode in LIBRARY_MODES.items()
+}
 
 
 class LibraryScreen(BaseAppScreen):
@@ -59,6 +109,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_lookup_error: str | None = None
         self._library_lookup_recovery_state: DestinationRecoveryState | None = None
         self._library_loaded = False
+        self._active_mode = "sources"
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -346,6 +397,9 @@ class LibraryScreen(BaseAppScreen):
             return "Unavailable"
         return "Blocked"
 
+    def _active_mode_contract(self) -> Mapping[str, str]:
+        return LIBRARY_MODES.get(self._active_mode, LIBRARY_MODES["sources"])
+
     def compose_content(self) -> ComposeResult:
         has_sources = self._has_local_sources()
         status_label = self._status_label()
@@ -364,15 +418,29 @@ class LibraryScreen(BaseAppScreen):
                 id="library-status-row",
                 classes="destination-status-row",
             )
-            with Horizontal(id="library-mode-bar", classes="ds-panel"):
-                yield Static("Modes:", id="library-mode-label", classes="destination-section")
-                yield Static("Sources", id="library-mode-sources", classes="library-mode-chip")
-                yield Static("Search/RAG", id="library-mode-search", classes="library-mode-chip")
-                yield Static("Import/Export", id="library-mode-import-export", classes="library-mode-chip")
-                yield Static("Workspaces", id="library-mode-workspaces", classes="library-mode-chip")
-                yield Static("Study", id="library-mode-study", classes="library-mode-chip")
-                yield Static("Flashcards", id="library-mode-flashcards", classes="library-mode-chip")
-                yield Static("Quizzes", id="library-mode-quizzes", classes="library-mode-chip")
+            with Horizontal(id="library-mode-bar", classes="ds-panel") as mode_bar:
+                mode_bar.styles.height = 3
+                mode_bar.styles.min_height = 3
+                mode_label = Static(
+                    "Modes:",
+                    id="library-mode-label",
+                    classes="destination-section",
+                )
+                mode_label.styles.width = 8
+                yield mode_label
+                for mode_id, mode in LIBRARY_MODES.items():
+                    classes = "library-mode-chip"
+                    if mode_id == self._active_mode:
+                        classes = f"{classes} is-active"
+                    mode_button = Button(
+                        mode["label"],
+                        id=mode["button_id"],
+                        classes=classes,
+                        tooltip=mode["description"],
+                    )
+                    mode_button.styles.height = 1
+                    mode_button.styles.min_height = 1
+                    yield mode_button
 
             with Horizontal(id="library-contract-grid", classes="ds-panel"):
                 with Vertical(id="library-source-browser", classes="library-region"):
@@ -397,6 +465,20 @@ class LibraryScreen(BaseAppScreen):
 
                 with Vertical(id="library-source-detail", classes="library-region"):
                     yield Static("Source Detail / Search Results", classes="destination-section")
+                    active_mode = self._active_mode_contract()
+                    yield Static(
+                        f"{active_mode['label']} mode",
+                        id="library-active-mode-title",
+                        classes="destination-section",
+                    )
+                    yield Static(
+                        active_mode["description"],
+                        id="library-active-mode-description",
+                    )
+                    yield Static(
+                        active_mode["next_action"],
+                        id="library-active-mode-next-action",
+                    )
                     yield Static("Local Library snapshot", classes="destination-section")
                     if not self._library_loaded:
                         yield Static(
@@ -481,6 +563,15 @@ class LibraryScreen(BaseAppScreen):
                         disabled=handoff_disabled,
                         tooltip=handoff_tooltip,
                     )
+
+    @on(Button.Pressed, ".library-mode-chip")
+    def switch_library_mode(self, event: Button.Pressed) -> None:
+        mode_id = LIBRARY_MODE_BY_BUTTON_ID.get(event.button.id or "")
+        if mode_id is None:
+            return
+        event.stop()
+        self._active_mode = mode_id
+        self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-open-notes")
     def open_notes(self) -> None:
