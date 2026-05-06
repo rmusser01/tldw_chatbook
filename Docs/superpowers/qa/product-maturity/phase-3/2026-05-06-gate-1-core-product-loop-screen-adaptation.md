@@ -46,6 +46,11 @@ Focused implementation checks:
 - `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py::test_library_core_loop_modes_are_actionable_without_leaving_library Tests/UI/test_product_maturity_phase3_library_contract_layout.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_destination_shells.py --tb=short`
 - Result: `91 passed, 1 warning`
 
+Final focused PR gate:
+
+- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_home_screen.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_shell_bar.py Tests/UI/test_product_maturity_phase3_library_contract_layout.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_destination_shells.py Tests/UI/test_master_shell_design_system_contract.py --tb=short`
+- Result: `158 passed, 1 warning`
+
 ## Defects
 
 - Initial Home adaptation rendered all Active Work controls, but later controls were outside the visible parent region in mounted tests. Fixed by giving the Home dashboard row deterministic height and compact control hit targets.
