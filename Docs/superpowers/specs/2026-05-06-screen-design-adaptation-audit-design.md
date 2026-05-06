@@ -41,6 +41,7 @@ This document should be used as the screen-design gate before deeper feature wor
 5. Most destination headers lack a compact status/authority row. This weakens visibility of system status and source/runtime authority.
 6. Several screens expose product concepts as static section labels instead of mode bars, lists, detail panes, and inspectors. This passes recognition tests but not workflow completion tests.
 7. Current QA is strongest for shell navigation and selected workflows. It needs screen-design gate tests that assert layout regions, actionable states, and first-focus behavior.
+8. The approved manual wireframe pass now defines concrete target layouts for every top-level destination. Implementation should follow those layout contracts before adding deeper feature behavior.
 
 ## Screen Maturity Matrix
 
@@ -119,6 +120,7 @@ Required adaptation:
 - Keep the current three-region shell as the template for other destinations.
 - Make mode chips actionable where feasible.
 - Add selected-source state and make the inspector reflect the selected item.
+- Keep Study as a Library-owned umbrella mode or section, with Flashcards and Quizzes visible as child modes/actions.
 - Keep outward legacy routes only as compatibility paths while the Library-native modes mature.
 
 Acceptance checks:
@@ -127,6 +129,7 @@ Acceptance checks:
 - Search/RAG is usable from Library without knowing the legacy `search` route.
 - Import/Export copy stays source-oriented and does not blur with Artifacts exports.
 - Flashcards and Quizzes remain visible as Library-owned study paths.
+- Library exports source material and retrieval evidence; generated outputs and bundles belong in Artifacts.
 
 ### Artifacts
 
@@ -142,12 +145,14 @@ Required adaptation:
 - Add artifact list, preview/detail, and provenance inspector.
 - Keep Chatbooks first-class, but avoid making Artifacts a renamed Chatbooks screen.
 - Distinguish raw Library sources from generated/reusable outputs.
+- Keep export/bundle language output-oriented so it does not blur with Library source import/export.
 
 Acceptance checks:
 
 - Empty state explains how artifacts are created or imported.
 - A Chatbook artifact can reopen in Console with source provenance.
 - Export/bundle actions show target and recovery when unavailable.
+- Artifacts export generated outputs; Library imports/exports source material.
 
 ### Personas
 
@@ -245,12 +250,14 @@ Required adaptation:
 
 - Add MCP status/authority row at the wrapper level.
 - Ensure mode labels map to `Servers`, `Tools`, `Resources`, `Permissions`, `Audit`.
+- Use a server-first collapsible tree where tools appear under each server, with `PgUp` and `PgDn` paging for long lists.
 - Treat readiness, auth, permission, and risk as inspector concepts.
 - Remove or revise copy that implies MCP lives under Tools & Settings.
 
 Acceptance checks:
 
 - `tools_settings` resolves as MCP, not Settings.
+- Servers are the primary grouping, and tools are visible under expanded servers.
 - Tool readiness and permission status are visible before use.
 - Blocked tools show owner, impact, and recovery.
 
@@ -266,7 +273,7 @@ Required adaptation:
 
 - Add modes: `Agents`, `Sessions`, `Runtimes`, `Compatibility`.
 - Add agent/session list, runtime setup/detail workspace, and compatibility inspector.
-- Show missing runtime setup steps in-screen.
+- Show missing runtime setup steps in ACP itself. Settings may hold global defaults only.
 - Launch/follow live ACP sessions through Console only.
 
 Acceptance checks:
@@ -274,6 +281,7 @@ Acceptance checks:
 - Runtime-unconfigured state is honest and recoverable.
 - ACP and MCP purposes remain visibly distinct.
 - Follow-in-Console is disabled with a target-specific reason until session payloads exist.
+- ACP owns runtime setup UI and must not push primary setup into global Settings.
 
 ### Skills
 
@@ -381,6 +389,7 @@ Done when:
 - MCP and ACP remain visibly separate.
 - Settings stays global and does not absorb destination-owned configuration.
 - Runtime/provider/tool blockers include owner, impact, and next action.
+- ACP runtime setup, MCP permissions, Skills validation, Personas behavior, Schedules timing, and Workflows procedure editing stay in their owning destinations except for global defaults.
 
 ## Cross-Screen Acceptance Checklist
 
