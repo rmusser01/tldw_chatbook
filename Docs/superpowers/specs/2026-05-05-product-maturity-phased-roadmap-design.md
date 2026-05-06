@@ -9,6 +9,7 @@ Related Specs:
 - `Docs/superpowers/specs/2026-05-02-new-user-first-run-shell-ux-design.md`
 - `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md`
 - `Docs/superpowers/specs/2026-05-03-unified-shell-maturity-tracking-design.md`
+- `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`
 - `Docs/superpowers/trackers/unified-shell-maturity-roadmap.md`
 
 ## Summary
@@ -68,6 +69,7 @@ The next roadmap must make this work trackable without turning it into one large
 - Keep Workspaces, flashcards, quizzes, sources, Artifacts/Chatbooks, Personas, Skills, W+C, Schedules, Workflows, MCP, ACP, Search/RAG, media, notes, and handoffs explicit in planning.
 - Add beginner orientation without slowing power users.
 - Require QA walkthrough evidence that proves the running app is usable, not just rendering.
+- Insert destination layout and IA contracts before deeper Phase 3+ visual work so page designs do not drift from the product model.
 - Maintain clear local parity targets with the adjacent `tldw_server2` checkout, representing the server capability model previously discussed as `tldw_server`.
 
 ## Non-Goals
@@ -205,6 +207,7 @@ Turn Library and study-adjacent surfaces into a coherent knowledge workbench.
 
 PR-sized gates:
 
+- Phase 3.0 prerequisite: destination layout and IA contracts for all top-level destinations and major subflows, including binding ASCII wireframes and non-binding image-generation briefs.
 - Library-native detail views for notes, media, conversations, and imported sources.
 - Import/Export entry points under Library with progress, validation, and recovery.
 - Search/RAG as both deliberate Library workflow and Console-integrated retrieval mode.
@@ -215,6 +218,7 @@ PR-sized gates:
 
 Done when:
 
+- Phase 3.0 contracts are approved before additional Phase 3 visual rewrites continue.
 - A user can ingest or select material, organize it in a workspace or collection, retrieve from it, generate study material, and reuse it in Console.
 - The UI distinguishes source material, generated outputs, and study derivatives.
 - Import/export failures are diagnosable and recoverable.
