@@ -150,7 +150,13 @@ def test_phase30_route_inventory_keeps_study_library_owned() -> None:
 
     library_row = _markdown_table_row(inventory, "Library")
     assert "`study`" in library_row[1]
+    assert "`conversation`" in library_row[1]
+    assert "conversation browsing" not in library_row[1]
+    for route_token in [token.strip() for token in library_row[1].split(",")]:
+        assert route_token.startswith("`")
+        assert route_token.endswith("`")
     assert "Study Dashboard" in library_row[4]
+    assert "conversation browsing" in library_row[4]
 
     study_row = _markdown_table_row(inventory, "Study route")
     assert study_row[2] == "Library"
