@@ -21,7 +21,11 @@ from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
-from .study_scope_models import StudyScopeContext
+from .study_scope_models import (
+    MATERIAL_SOURCE_LIBRARY,
+    MATERIAL_TITLE_LIBRARY_SOURCES,
+    StudyScopeContext,
+)
 
 
 logger = logger.bind(module="LibraryScreen")
@@ -294,11 +298,11 @@ class LibraryScreen(BaseAppScreen):
         for source_type in ("notes", "media", "conversations"):
             material_titles.extend(self._source_sample_titles(source_type))
         return StudyScopeContext(
-            material_source="library",
-            material_title="Local Library Sources",
+            material_source=MATERIAL_SOURCE_LIBRARY,
+            material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
             material_summary=self._source_snapshot_body(),
             material_titles=tuple(material_titles),
-            return_hint="library",
+            return_hint=MATERIAL_SOURCE_LIBRARY,
         )
 
     def compose_content(self) -> ComposeResult:

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 from inspect import isawaitable
+import re
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -13,6 +16,7 @@ from textual.reactive import reactive
 from textual.widgets import Button
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Study_Window import StudyWindow
 from ...Widgets.Study import QuizSessionWidget, StudyDashboard
@@ -27,7 +31,19 @@ from ...Widgets.Study.quiz_session_widget import (
     QUIZ_START_SELECT_TOOLTIP,
 )
 from .notes_scope_models import WorkspaceSubview
-from .study_scope_models import StudyScopeContext, StudyScopeState, StudyScopeType
+from .study_scope_models import (
+    STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
+    STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+    STUDY_MATERIAL_TITLES_LIMIT,
+    StudyScopeContext,
+    StudyScopeState,
+    StudyScopeType,
+)
+
+
+ScopeKey = tuple[str, Optional[str], str, bool, Optional[str]]
+_HTML_TAG_RE = re.compile(r"<[^>]*>")
+_DANGEROUS_TEXT_RE = re.compile(r"javascript\s*:|\bon(?:click|error)\s*=", re.IGNORECASE)
 
 
 class StudyScreen(BaseAppScreen):
@@ -68,7 +84,7 @@ class StudyScreen(BaseAppScreen):
             self.scope_state = self._derive_scope_state(pending_scope)
         else:
             self.scope_state = StudyScopeState(backend=self._runtime_backend())
-        self._effective_scope_key: tuple[str, Optional[str], str, bool] = self._scope_key(self.scope_state)
+        self._effective_scope_key: ScopeKey = self._scope_key(self.scope_state)
         self.study_dashboard: Optional[StudyDashboard] = None
         self.quiz_session_widget: Optional[QuizSessionWidget] = None
         self.study_window_widget: Optional[StudyWindow] = None
@@ -141,26 +157,64 @@ class StudyScreen(BaseAppScreen):
         return "local"
 
     @staticmethod
-    def _scope_key(scope_state: StudyScopeState) -> tuple[
-        str,
-        Optional[str],
-        str,
-        bool,
-        Optional[str],
-        Optional[str],
-        Optional[str],
-        tuple[str, ...],
-    ]:
+    def _scope_key(scope_state: StudyScopeState) -> ScopeKey:
         return (
             scope_state.scope_type.value,
             scope_state.workspace_id,
             scope_state.backend,
             scope_state.workspace_scope_available,
-            scope_state.material_source,
-            scope_state.material_title,
-            scope_state.material_summary,
-            scope_state.material_titles,
+            StudyScreen._material_context_fingerprint(scope_state),
         )
+
+    @staticmethod
+    def _material_context_fingerprint(scope_state: StudyScopeState) -> Optional[str]:
+        if not any(
+            (
+                scope_state.material_source,
+                scope_state.material_title,
+                scope_state.material_summary,
+                scope_state.material_titles,
+            )
+        ):
+            return None
+
+        digest = hashlib.sha256()
+        parts = (
+            scope_state.material_source or "",
+            scope_state.material_title or "",
+            scope_state.material_summary or "",
+            str(len(scope_state.material_titles)),
+            *scope_state.material_titles[:STUDY_MATERIAL_TITLES_LIMIT],
+        )
+        for part in parts:
+            digest.update(part.encode("utf-8", errors="ignore"))
+            digest.update(b"\0")
+        source = scope_state.material_source or "material"
+        return f"{source}:{len(scope_state.material_titles)}:{digest.hexdigest()[:12]}"
+
+    @staticmethod
+    def _clean_material_text(value: Any, *, max_length: int) -> str:
+        text = sanitize_string(str(value or ""), max_length=max_length).strip()
+        if not text:
+            return ""
+        text = _HTML_TAG_RE.sub("", text)
+        text = _DANGEROUS_TEXT_RE.sub("", text).strip()
+        if not validate_text_input(text, max_length=max_length, allow_html=False):
+            return ""
+        return text
+
+    def _clean_material_titles(self, material_titles: tuple[str, ...]) -> tuple[str, ...]:
+        cleaned: list[str] = []
+        for title in material_titles:
+            clean_title = self._clean_material_text(
+                title,
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            )
+            if clean_title:
+                cleaned.append(clean_title)
+            if len(cleaned) >= STUDY_MATERIAL_TITLES_LIMIT:
+                break
+        return tuple(cleaned)
 
     def _derive_scope_state(self, scope_context: StudyScopeContext) -> StudyScopeState:
         backend = self._runtime_backend()
@@ -181,10 +235,22 @@ class StudyScreen(BaseAppScreen):
             backend=backend,
             workspace_scope_available=workspace_scope_available,
             error_message=error_message,
-            material_source=scope_context.material_source,
-            material_title=scope_context.material_title,
-            material_summary=scope_context.material_summary,
-            material_titles=tuple(str(title) for title in (scope_context.material_titles or ()) if str(title).strip()),
+            material_source=self._clean_material_text(
+                scope_context.material_source,
+                max_length=64,
+            )
+            or None,
+            material_title=self._clean_material_text(
+                scope_context.material_title,
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            )
+            or None,
+            material_summary=self._clean_material_text(
+                scope_context.material_summary,
+                max_length=STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
+            )
+            or None,
+            material_titles=self._clean_material_titles(tuple(scope_context.material_titles or ())),
         )
 
     def _consume_pending_scope_context(self) -> Optional[StudyScopeContext]:
@@ -251,16 +317,32 @@ class StudyScreen(BaseAppScreen):
     def _material_context_summary_text(self) -> str | None:
         if not self.scope_state.material_source and not self.scope_state.material_title:
             return None
-        title = self.scope_state.material_title or "Study material"
-        sample_titles = [title for title in self.scope_state.material_titles if title]
+        title = escape_markup(
+            self._clean_material_text(
+                self.scope_state.material_title,
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            )
+            or "Study material"
+        )
+        sample_titles: list[str] = []
+        for raw_title in self.scope_state.material_titles:
+            clean_title = self._clean_material_text(
+                raw_title,
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            )
+            if clean_title:
+                sample_titles.append(escape_markup(clean_title))
         if sample_titles:
             sample_text = ", ".join(sample_titles[:3])
             if len(sample_titles) > 3:
                 sample_text = f"{sample_text}, +{len(sample_titles) - 3} more"
             return f"{title}: {sample_text}"
-        summary = str(self.scope_state.material_summary or "").strip()
+        summary = self._clean_material_text(
+            self.scope_state.material_summary,
+            max_length=STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
+        )
         if summary:
-            first_line = summary.splitlines()[0].strip()
+            first_line = escape_markup(summary.splitlines()[0].strip())
             return f"{title}: {first_line}"
         return title
 

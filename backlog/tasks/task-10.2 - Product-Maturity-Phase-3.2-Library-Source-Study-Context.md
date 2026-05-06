@@ -41,4 +41,6 @@ Carry visible Library source material into Study Flashcards and Quizzes so users
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented Phase 3.2 Library source study context. Library now passes the loaded local source snapshot into Study Dashboard Flashcards and Quizzes entry points when sources exist, while empty/unavailable Library states preserve plain section routing. Study scope context/state now carries optional material metadata, displays Library source titles in the Study scope summary, stores them as study materials, and keeps deck/quiz service queries on global or workspace scope. Added focused mounted UI and tracking regressions plus Phase 3.2 QA evidence and roadmap updates.
+
+PR review hardening sanitized and escaped restored Study material context, capped persisted material titles, replaced full material fields in the scope key with a bounded fingerprint, and extracted shared Library material constants.
 <!-- SECTION:NOTES:END -->

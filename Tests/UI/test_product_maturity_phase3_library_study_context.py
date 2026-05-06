@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from rich.text import Text
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import (
@@ -16,7 +17,14 @@ from Tests.UI.test_destination_shells import (
     _build_test_app,
 )
 from Tests.UI.test_study_dashboard import StudyDashboardTestApp, _build_app_instance
-from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeContext, StudyScopeType
+from tldw_chatbook.UI.Screens.study_screen import StudyScreen
+from tldw_chatbook.UI.Screens.study_scope_models import (
+    MATERIAL_SOURCE_LIBRARY,
+    MATERIAL_TITLE_LIBRARY_SOURCES,
+    STUDY_MATERIAL_TITLES_LIMIT,
+    StudyScopeContext,
+    StudyScopeType,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -70,8 +78,8 @@ async def test_library_flashcards_entry_passes_source_snapshot_context_to_study(
 
     assert isinstance(scope_context, StudyScopeContext)
     assert scope_context.scope_type == StudyScopeType.GLOBAL
-    assert scope_context.material_source == "library"
-    assert scope_context.material_title == "Local Library Sources"
+    assert scope_context.material_source == MATERIAL_SOURCE_LIBRARY
+    assert scope_context.material_title == MATERIAL_TITLE_LIBRARY_SOURCES
     assert scope_context.material_titles == (
         "Research Note",
         "Transcript A",
@@ -104,8 +112,8 @@ async def test_study_displays_library_material_context_without_changing_service_
     app_instance = _build_app_instance()
     app_instance.pending_study_scope_context = StudyScopeContext(
         scope_type=StudyScopeType.GLOBAL,
-        material_source="library",
-        material_title="Local Library Sources",
+        material_source=MATERIAL_SOURCE_LIBRARY,
+        material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
         material_summary="Notes: 1\n  1. Research Note\n\nMedia: 1\n  1. Transcript A",
         material_titles=("Research Note", "Transcript A"),
     )
@@ -149,3 +157,56 @@ def test_phase_3_2_library_study_context_evidence_is_tracked() -> None:
     assert "- [x] #2" in task
     assert "- [x] #3" in task
     assert "- [x] #4" in task
+
+
+def test_study_restored_material_context_is_sanitized_and_escaped_for_markup() -> None:
+    screen = StudyScreen(app_instance=_build_app_instance())
+
+    screen.restore_state(
+        {
+            "study_scope": {
+                "scope_type": "global",
+                "material_source": MATERIAL_SOURCE_LIBRARY,
+                "material_title": "[bold]Unsafe[/bold] <script>alert(1)</script>",
+                "material_summary": "javascript:alert(1)\nSecond line",
+                "material_titles": (
+                    "[red]Styled title[/red]",
+                    "Clickable <script>alert(1)</script>",
+                    "onclick=alert(1)",
+                ),
+            }
+        }
+    )
+
+    summary = screen._scope_summary_text()
+    rendered = Text.from_markup(summary)
+
+    assert rendered.spans == []
+    assert "[bold]Unsafe[/bold]" in rendered.plain
+    assert "[red]Styled title[/red]" in rendered.plain
+    assert "<script" not in rendered.plain.lower()
+    assert "javascript:" not in rendered.plain.lower()
+    assert "onclick=" not in rendered.plain.lower()
+    assert "<script" not in repr(screen.scope_state.material_titles).lower()
+    assert "javascript:" not in str(screen.scope_state.material_summary).lower()
+    assert "onclick=" not in repr(screen.scope_state.material_titles).lower()
+
+
+def test_study_material_context_key_uses_bounded_fingerprint_and_caps_titles() -> None:
+    screen = StudyScreen(app_instance=_build_app_instance())
+    long_titles = tuple(f"Sensitive material title {index} {'x' * 80}" for index in range(25))
+    long_summary = f"Sensitive summary {'y' * 4000}"
+
+    state = screen._derive_scope_state(
+        StudyScopeContext(
+            material_source=MATERIAL_SOURCE_LIBRARY,
+            material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
+            material_summary=long_summary,
+            material_titles=long_titles,
+        )
+    )
+    key = screen._scope_key(state)
+
+    assert len(state.material_titles) <= STUDY_MATERIAL_TITLES_LIMIT
+    assert long_titles[-1] not in repr(key)
+    assert long_summary not in repr(key)

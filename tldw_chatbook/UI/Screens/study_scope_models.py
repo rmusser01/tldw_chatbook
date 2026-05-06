@@ -7,6 +7,13 @@ from enum import Enum
 from typing import Optional
 
 
+MATERIAL_SOURCE_LIBRARY = "library"
+MATERIAL_TITLE_LIBRARY_SOURCES = "Local Library Sources"
+STUDY_MATERIAL_TITLES_LIMIT = 10
+STUDY_MATERIAL_TITLE_LENGTH_LIMIT = 160
+STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT = 1000
+
+
 class StudyScopeType(str, Enum):
     GLOBAL = "global"
     WORKSPACE = "workspace"
