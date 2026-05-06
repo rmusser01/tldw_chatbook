@@ -21,6 +21,11 @@ from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
+from .study_scope_models import (
+    MATERIAL_SOURCE_LIBRARY,
+    MATERIAL_TITLE_LIBRARY_SOURCES,
+    StudyScopeContext,
+)
 
 
 logger = logger.bind(module="LibraryScreen")
@@ -286,6 +291,20 @@ class LibraryScreen(BaseAppScreen):
             "conversation_titles": self._source_sample_titles("conversations"),
         }
 
+    def _source_study_context(self) -> StudyScopeContext | None:
+        if not self._has_local_sources():
+            return None
+        material_titles: list[str] = []
+        for source_type in ("notes", "media", "conversations"):
+            material_titles.extend(self._source_sample_titles(source_type))
+        return StudyScopeContext(
+            material_source=MATERIAL_SOURCE_LIBRARY,
+            material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
+            material_summary=self._source_snapshot_body(),
+            material_titles=tuple(material_titles),
+            return_hint=MATERIAL_SOURCE_LIBRARY,
+        )
+
     def compose_content(self) -> ComposeResult:
         has_sources = self._has_local_sources()
         with Vertical(id="library-shell"):
@@ -409,7 +428,11 @@ class LibraryScreen(BaseAppScreen):
     def _open_study_section(self, initial_section: str = "dashboard") -> None:
         open_study_screen = getattr(self.app_instance, "open_study_screen", None)
         if callable(open_study_screen):
-            open_study_screen(initial_section=initial_section)
+            scope_context = self._source_study_context()
+            if scope_context is None:
+                open_study_screen(initial_section=initial_section)
+            else:
+                open_study_screen(scope_context, initial_section=initial_section)
             return
         self.post_message(NavigateToScreen("study"))
 

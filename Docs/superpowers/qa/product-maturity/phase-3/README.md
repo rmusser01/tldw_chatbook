@@ -9,3 +9,4 @@ Each child gate should record whether the tested slice completes a full workflow
 ## Evidence
 
 - `2026-05-06-phase-3-1-library-study-entry.md`
+- `2026-05-06-phase-3-2-library-source-study-context.md`
