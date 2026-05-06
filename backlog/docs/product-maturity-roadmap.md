@@ -8,6 +8,12 @@ The canonical product-maturity tracker lives at:
 
 `Docs/superpowers/trackers/product-maturity-roadmap.md`
 
+The post-UX roadmap design lives at:
+
+`Docs/superpowers/specs/2026-05-06-post-ux-product-roadmap-design.md`
+
+The canonical product-maturity tracker remains the execution source of truth. Do not create a parallel phase tree from the post-UX roadmap; map new child tasks to the existing product-maturity parent tasks unless the tracker explicitly supersedes them.
+
 Durable QA evidence lives at:
 
 `Docs/superpowers/qa/product-maturity/`

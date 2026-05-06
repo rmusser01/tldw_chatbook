@@ -31,6 +31,24 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 - Phase 3.2 verifies Library-originated Study entry preserves visible source context in Study without changing deck or quiz service scope away from global or workspace.
 - Phase 3.3 verifies the Library destination layout shell against the approved contract: mode bar, source browser, detail, inspector, authority, and existing Library actions remain visible across compact, default, and large terminal sizes.
 
+## Post-UX Roadmap Handoff
+
+Source Spec: `Docs/superpowers/specs/2026-05-06-post-ux-product-roadmap-design.md`
+Status: pending UX/UI completion and tracker activation
+
+This post-UX roadmap is a planning overlay for work that starts after the current UX/UI and destination layout-contract work is complete. It does not create a parallel task tree.
+
+Product Maturity Phase 1 and Phase 2 are not reopened by default. Their existing QA evidence is the pre-UX baseline. New post-UX evidence should record only changed screens, changed workflows, changed layout contracts, or discovered regressions.
+
+| Post-UX Roadmap Stage | Existing Backlog Owner | Execution Rule |
+| --- | --- | --- |
+| Post-UX Reliability Rebaseline | `TASK-10` only if Phase 3 UX/UI deltas require a distinct gate | Revalidate deltas against verified Phase 1/2 evidence; do not recreate Phase 1/2 child tasks. |
+| Source, Knowledge, And Artifact Loops | `TASK-10` | Continue Phase 3 under existing Knowledge/Study ownership. |
+| Controlled Agent Configuration And Run Loops | `TASK-11` | Create PR-sized child tasks under Phase 4 when ready. |
+| Monitoring And Cross-Loop Recovery | `TASK-10` or `TASK-11` based on the concrete workflow owner | Do not create standalone recovery rewrites without a workflow gate. |
+| Server Parity And Live Integrations | `TASK-12` | Prioritize parity by workflow value, not endpoint count. |
+| Release Hardening And Distribution | `TASK-13` | Use only after earlier workflow gates have QA evidence. |
+
 ## Severity Policy
 
 | Priority | Taxonomy | Exit Rule |
@@ -86,10 +104,10 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 | --- | --- | --- | --- | --- | --- |
 | Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | verified | `TASK-8`, Phase 1.1 (`TASK-8.1`), Phase 1.2 (`TASK-8.2`), Phase 1.3 (`TASK-8.3`), Phase 1.4 (`TASK-8.4`), Phase 1.5 (`TASK-8.5`), Phase 1.6 (`TASK-8.6`), Phase 1.7 (`TASK-8.7`) | `phase-1/` | Closed; full grounded generation and Artifact/Chatbook persistence move to Phase 2. |
 | Phase 2: Core Agentic Loop | Complete source/question to grounded Console to Artifact/Chatbook loop. | verified | `TASK-9`, Phase 2.1 (`TASK-9.1`), Phase 2.2 (`TASK-9.2`), Phase 2.3 (`TASK-9.3`), Phase 2.4 (`TASK-9.4`), Phase 2.5 (`TASK-9.5`) | `phase-2/2026-05-05-phase-2-1-grounded-console-response-contract.md`, `phase-2/2026-05-05-phase-2-2-console-chatbook-artifact-save-contract.md`, `phase-2/2026-05-05-phase-2-3-saved-chatbook-artifact-reopen-contract.md`, `phase-2/2026-05-05-phase-2-4-home-chatbook-artifact-resume-contract.md`, `phase-2/2026-05-06-phase-2-5-core-loop-closeout-replay.md` | Closed for the local core loop; live provider generation, full `.chatbook` export packaging, and full artifact history picking remain later-phase risks. |
-| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified; Phase 3.3 verified | `TASK-10`, Phase 3.0 (`TASK-10.0`), Phase 3.1 (`TASK-10.1`), Phase 3.2 (`TASK-10.2`), Phase 3.3 (`TASK-10.3`) | `phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md`, `phase-3/2026-05-06-phase-3-1-library-study-entry.md`, `phase-3/2026-05-06-phase-3-2-library-source-study-context.md`, `phase-3/2026-05-06-phase-3-3-library-contract-layout.md` | Layout contracts, Library Study entry, Library source context, and the Library contract layout shell are verified; actual source-selected study generation, Workspaces, Collections, and deeper Import/Export/Search/RAG study flows remain. |
-| Phase 4: Agent Configuration And Execution | Mature Personas, Skills, MCP, ACP, Schedules, and Workflows. | planned | `TASK-11` | not-started | Depends on service adapters and runtime readiness. |
-| Phase 5: Server-Parity And Live Integrations | Close high-value `tldw_server2` parity gaps. | planned | `TASK-12` | not-started | Requires parity inventory. |
-| Phase 6: Release Hardening And Documentation | Reach release-candidate usability. | planned | `TASK-13` | not-started | Depends on earlier phase evidence. |
+| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified; Phase 3.3 verified | `TASK-10`, Phase 3.0 (`TASK-10.0`), Phase 3.1 (`TASK-10.1`), Phase 3.2 (`TASK-10.2`), Phase 3.3 (`TASK-10.3`) | `phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md`, `phase-3/2026-05-06-phase-3-1-library-study-entry.md`, `phase-3/2026-05-06-phase-3-2-library-source-study-context.md`, `phase-3/2026-05-06-phase-3-3-library-contract-layout.md` | Layout contracts, Library Study entry, Library source context, and the Library contract layout shell are verified; actual source-selected study generation, Workspaces, Collections, and deeper Import/Export/Search/RAG study flows remain. Post-UX roadmap execution should continue under TASK-10 unless the tracker explicitly creates a rebaseline child task for UX/UI deltas. |
+| Phase 4: Agent Configuration And Execution | Mature Personas, Skills, MCP, ACP, Schedules, and Workflows. | planned | `TASK-11` | not-started | Depends on service adapters and runtime readiness. The post-UX roadmap maps controlled agent configuration and run loops to TASK-11. |
+| Phase 5: Server-Parity And Live Integrations | Close high-value `tldw_server2` parity gaps. | planned | `TASK-12` | not-started | Requires parity inventory. The post-UX roadmap requires parity to be prioritized by workflow value rather than endpoint count. |
+| Phase 6: Release Hardening And Documentation | Reach release-candidate usability. | planned | `TASK-13` | not-started | Depends on earlier phase evidence. The post-UX roadmap public-roadmap and release-readiness refresh belongs under TASK-13. |
 
 ## Phase 1.1 Evidence
 
