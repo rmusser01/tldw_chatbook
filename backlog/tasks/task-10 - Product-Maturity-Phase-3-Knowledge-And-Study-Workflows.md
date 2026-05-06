@@ -4,7 +4,7 @@ title: 'Product Maturity Phase 3: Knowledge And Study Workflows'
 status: In Progress
 assignee: []
 created_date: '2026-05-05 15:11'
-updated_date: '2026-05-06 01:15'
+updated_date: '2026-05-06 06:27'
 labels:
   - product-maturity
   - phase-3-knowledge-study
@@ -30,4 +30,8 @@ Mature ingest, organize, retrieve, study, and reuse workflows across Library, Wo
 
 <!-- SECTION:NOTES:BEGIN -->
 Started Phase 3 with TASK-10.1 as the first PR-sized Knowledge and Study workflow gate. Parent remains open until later Phase 3 child gates verify import/export Search/RAG Workspaces flashcards quizzes and collections workflows end to end.
+
+Continued Phase 3 with TASK-10.2. Library source context now carries into Study Dashboard Flashcards and Quizzes without changing deck/quiz service scope. Parent remains open for source-selected generation Workspaces Collections Import/Export Search/RAG and Console reuse gates.
+
+Continued Phase 3 with TASK-10.3. The Library destination now exposes the approved Phase 3.0 layout shell with mode bar source browser source detail and inspector regions across compact default and large terminal sizes. Parent remains open for source-selected study generation Workspaces Collections and deeper Import/Export Search/RAG workflows.
 <!-- SECTION:NOTES:END -->

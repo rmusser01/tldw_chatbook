@@ -109,8 +109,8 @@ Current tracker state:
 
 - Product Maturity Phase 1 is verified for QA baseline and usability guardrails.
 - Product Maturity Phase 2 is verified for the local core agentic loop.
-- Product Maturity Phase 3 is in progress.
-- `TASK-10.2` is the current Phase 3.0 destination layout and IA contract gate.
+- Product Maturity Phase 3 is in progress, with Phase 3.0 through Phase 3.3 currently verified in the tracker.
+- `TASK-10.0` is the current Phase 3.0 destination layout and IA contract gate.
 - `TASK-11`, `TASK-12`, and `TASK-13` remain planned parent tasks for agent execution, server parity/live integrations, and release hardening.
 
 Verified work reuse rule:

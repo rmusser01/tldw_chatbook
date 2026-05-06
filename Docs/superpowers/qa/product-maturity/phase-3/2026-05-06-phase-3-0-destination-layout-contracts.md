@@ -2,7 +2,7 @@
 
 Date: 2026-05-06
 Status: verified
-Task: TASK-10.2
+Task: TASK-10.0
 
 ## Scope
 
@@ -13,7 +13,7 @@ Phase 3.0 records that destination layout and IA contracts exist before addition
 - Spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`
 - Route inventory: `Docs/Design/master-shell-route-inventory.md`
 - Product tracker: `Docs/superpowers/trackers/product-maturity-roadmap.md`
-- Backlog task: `backlog/tasks/task-10.2 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
+- Backlog task: `backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
 - spec review approved after fixing Study route and Study Dashboard ownership.
 
 ## Contract Coverage
@@ -40,4 +40,4 @@ This gate verifies contracts, not runtime screen rewrites. Later implementation 
 
 ## Result
 
-Phase 3.0 contract evidence is verified for planning. TASK-10.2 is prepared, checked, and marked Done.
+Phase 3.0 contract evidence is verified for planning. TASK-10.0 is prepared, checked, and marked Done.

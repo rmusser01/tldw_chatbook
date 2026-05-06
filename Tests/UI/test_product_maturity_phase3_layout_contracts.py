@@ -14,8 +14,8 @@ PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
 PHASE_3_0_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md"
 )
-TASK_10_2 = Path(
-    "backlog/tasks/task-10.2 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md"
+TASK_10_0 = Path(
+    "backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md"
 )
 PROMPT_MANIFEST = Path("Docs/Design/destination-layout-image-reference-prompts.md")
 
@@ -167,8 +167,8 @@ def test_phase30_tracker_records_layout_contract_gate() -> None:
     tracker = _text(TRACKER)
 
     assert "Layout Contract Spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`" in tracker
-    assert "Phase 3.0: Destination Layout And IA Contracts - `TASK-10.2`" in tracker
-    assert "destination layout and IA contracts are approved" in tracker
+    assert "Phase 3.0: Destination Layout And IA Contracts - `TASK-10.0`" in tracker
+    assert "destination layout and IA contracts must be approved" in tracker
 
 
 def test_phase30_qa_evidence_is_verified() -> None:
@@ -189,7 +189,7 @@ def test_phase30_qa_evidence_is_verified() -> None:
     ):
         assert section in evidence
 
-    assert "TASK-10.2" in evidence
+    assert "TASK-10.0" in evidence
     assert "Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md" in evidence
     assert "spec review approved" in evidence
     assert "compact, default, and large terminal" in evidence
@@ -206,13 +206,15 @@ def test_phase30_tracker_has_evidence_row() -> None:
     assert row[2] == "verified"
     phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
     assert "Phase 3.0 verified" in phase_three_row[2]
+    assert "Phase 3.2 verified" in phase_three_row[2]
+    assert "phase-3/2026-05-06-phase-3-2-library-source-study-context.md" in phase_three_row[4]
     assert "Phase 3.0 evidence pending" not in phase_three_row[4]
     assert "Phase 3.0 prerequisite planned" not in tracker
-    assert "Status: Phase 1 verified; Phase 2 verified; Phase 3.0 verified; Phase 3.1 verified" in tracker
+    assert "Status: Phase 1 verified; Phase 2 verified; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified" in tracker
 
 
 def test_phase30_backlog_task_is_closed_after_verification() -> None:
-    task = _text(TASK_10_2)
+    task = _text(TASK_10_0)
 
     assert "status: Done" in task
     for ac_number in range(1, 6):

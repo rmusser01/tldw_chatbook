@@ -1,5 +1,5 @@
 ---
-id: TASK-10.2
+id: TASK-10.0
 title: 'Product Maturity Phase 3.0: Destination Layout And IA Contracts'
 status: Done
 assignee: []
@@ -37,7 +37,7 @@ Define destination-level layout and IA contracts before additional Phase 3 Knowl
 
 1. Align runtime route metadata so `study` is Library-owned.
 2. Add focused contract regressions for Phase 3.0 docs, route inventory, tracker, QA evidence, prompt manifest, and backlog task in `Tests/UI/test_product_maturity_phase3_layout_contracts.py`.
-3. Record Phase 3.0 QA evidence and tracker closeout evidence.
+3. Record Phase 3.0 QA evidence and tracker closeout / pending closeout evidence.
 4. Add a non-binding destination image prompt manifest.
 5. Run focused verification before checking ACs and closing the task against `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`.
 

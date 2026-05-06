@@ -12,9 +12,11 @@ Phase 3.0 destination layout contract status: verified
 
 - `2026-05-06-phase-3-0-destination-layout-contracts.md`
 
-Phase 3.0 records destination layout and IA contracts before additional Phase 3 Knowledge/Study visual rewrites continue. It does not rewrite runtime screens; TASK-10.2 closeout is verified.
+Phase 3.0 records destination layout and IA contracts before additional Phase 3 Knowledge/Study visual rewrites continue. It does not rewrite runtime screens; TASK-10.0 closeout is verified.
 
 ## Evidence
 
 - `2026-05-06-phase-3-0-destination-layout-contracts.md`
 - `2026-05-06-phase-3-1-library-study-entry.md`
+- `2026-05-06-phase-3-2-library-source-study-context.md`
+- `2026-05-06-phase-3-3-library-contract-layout.md`
