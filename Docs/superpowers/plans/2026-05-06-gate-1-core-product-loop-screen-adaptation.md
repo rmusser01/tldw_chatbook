@@ -2,13 +2,31 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Adapt the `Home`, `Console`, and `Library` screens into a usable core product loop that follows the approved destination layout contracts.
+**Goal:** Adapt the `Home`, `Console`, and `Library` screens into a usable core product loop that follows the approved destination layout contracts and the approved manual wireframe decisions.
 
-**Architecture:** Keep existing route IDs, service adapters, and legacy screen behavior intact while adding contract-aligned wrapper structure and mounted UI regressions. `Home` becomes a dashboard/control layout, `Console` becomes the live-work shell around existing chat functionality, and `Library` keeps its verified three-region layout while gaining actionable local modes.
+**Architecture:** Keep existing route IDs, service adapters, and legacy screen behavior intact while adding contract-aligned wrapper structure and mounted UI regressions. `Home` becomes the approved Command Center, `Console` becomes the approved Agent Workbench around existing chat functionality, and `Library` keeps its verified Source Workbench layout while gaining actionable local modes.
 
 **Tech Stack:** Python 3.12, Textual, pytest, Backlog.md, existing `tldw_chatbook` screen wrappers and service adapters.
 
 ---
+
+## Resume State
+
+This plan was updated after the manual screen-by-screen wireframe pass and must not be resumed from the older rough concepts alone.
+
+Current source-of-truth updates:
+
+- Worktree carrying this plan update: `/private/tmp/tldw-chatbook-screen-review`
+- Branch carrying this plan update: `codex/screen-design-adaptation-audit`
+- Latest relevant commit before this plan update: `689718e4 Record approved screen wireframe contracts`
+- Binding spec section: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md` -> `## Approved Manual Wireframe Decisions`
+- Audit/spec gate: `Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-design.md`
+
+Implementation precondition:
+
+- If the implementation agent is on another worktree or branch, first merge/rebase/cherry-pick the approved screen-contract docs from this branch or wait until the docs PR lands on `dev`.
+- Do not implement from stale concept pages or generated image references. Text contracts and ASCII wireframes are binding; image references are only inspiration.
+- Before editing code, re-check the current `dev` branch because Phase 3.3 already verified the Library layout shell and some planned Library work may now be assertion-only or smaller than originally written here.
 
 ## Scope
 
@@ -16,20 +34,21 @@ This plan implements Gate 1 from `Docs/superpowers/specs/2026-05-06-screen-desig
 
 Included:
 
-- `Home`: dashboard regions, selected active-work inspector, status/authority row, and compatibility with existing controls.
-- `Console`: destination header, status/mode rows, staged-context tray, transcript region, live-work inspector, and existing chat surface preservation.
-- `Library`: actionable mode selection for the already-verified Library contract shell.
+- `Home`: approved Command Center regions, selected active-work inspector, status/authority row, next-best action, recent/resumable work, and compatibility with existing controls.
+- `Console`: approved Agent Workbench shell with destination header, status/mode rows, staged-context tray, transcript/event region, live-work inspector, composer region, and existing chat surface preservation.
+- `Library`: approved Source Workbench behavior for actionable modes on top of the already-verified Library contract shell.
 - QA evidence and Backlog tracking for Gate 1.
 
 Excluded:
 
 - Full rewrite of `ChatWindowEnhanced`.
 - Full Search/RAG implementation inside Library.
+- Optional Console Zen Mode implementation. Gate 1 should not block the future Zen Mode, but the actual toggle/collapsed-pane behavior belongs with Console internals work unless it is explicitly pulled into a separate PR.
 - Rebuilding Artifacts, Personas, W+C, Schedules, Workflows, MCP, ACP, Skills, or Settings. Those belong to Gate 2 and Gate 3 follow-up plans.
 
 Required deferred follow-up gates:
 
-- **Gate 1.5: Console internals decomposition and `ChatWindowEnhanced` replacement.** Gate 1 may frame the existing chat surface inside the Console shell for compatibility, but the legacy `ChatWindowEnhanced` implementation must be decomposed and replaced in a later required gate. That gate owns visual fit, keyboard flow, provider/model controls, transcript rendering, composer behavior, staged context, RAG controls, tool calls, approvals, artifacts/Chatbook save controls, and parity with existing chat features.
+- **Gate 1.5: Console internals decomposition and `ChatWindowEnhanced` replacement.** Gate 1 may frame the existing chat surface inside the Console shell for compatibility, but the legacy `ChatWindowEnhanced` implementation must be decomposed and replaced in a later required gate. That gate owns visual fit, keyboard flow, provider/model controls, transcript rendering, composer behavior, staged context, RAG controls, tool calls, approvals, artifacts/Chatbook save controls, optional Zen Mode, and parity with existing chat features.
 - **Gate 1.6: Library-native Search/RAG workflow.** Gate 1 may make Library's Search/RAG mode selectable, but the full Search/RAG implementation must be delivered in a later required gate. That gate owns source selection, RAG query input, retrieval status, evidence/results list, citations/provenance, failure/setup recovery, and handoff into Console with staged evidence.
 - These gates must receive their own implementation plans and Backlog tasks before broad Gate 2 destination rewrites, because Console usability and Library retrieval are core-loop dependencies.
 
@@ -71,6 +90,7 @@ Required deferred follow-up gates:
 
 - `Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-design.md`
 - `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`
+- `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md` -> `## Approved Manual Wireframe Decisions`
 - `Docs/superpowers/specs/2026-05-02-new-user-first-run-shell-ux-design.md`
 - `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md`
 - `Tests/UI/test_home_screen.py`
@@ -84,6 +104,26 @@ Use the repo-level virtualenv when working in a sibling worktree:
 ```bash
 PY=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
 ```
+
+## Contract Update Summary For Resuming Agents
+
+Use these approved models when interpreting the tasks below:
+
+| Screen | Approved model | Gate 1 implication |
+| --- | --- | --- |
+| Home | Command Center | Build dashboard/control regions, not a static onboarding report. Home must remain useful for returning users as status center and lightweight control surface. |
+| Console | Agent Workbench with optional Zen Mode | Gate 1 frames live work around current chat; Gate 1.5 replaces/decomposes `ChatWindowEnhanced` and owns Zen Mode. |
+| Library | Source Workbench | Preserve the verified three-pane Library shell; make modes actionable without pretending Search/RAG is complete. |
+| Artifacts | Output Registry | Do not move source import/export into Artifacts. Artifact export/bundle is for generated outputs. |
+| MCP | Protocol Control Plane | Later MCP work must use server-first collapsible server/tool trees with `PgUp`/`PgDn`, not flat tools/settings framing. |
+| ACP | Agent Runtime Console | Later ACP work owns runtime setup in ACP; Settings may hold global defaults only. |
+
+Review guardrails:
+
+- Tests should assert durable regions, selectors, enabled/disabled state, and target payloads. Avoid brittle full ASCII-row or exact paragraph assertions.
+- When a workflow remains a shell-only affordance, label it as setup/deferred and verify recovery copy. Do not present placeholder controls as complete workflows.
+- Every affected screen must pass compact/default/large terminal checks before the gate is marked done.
+- QA evidence must explicitly state whether the walkthrough proved usable behavior or only verified visible layout regions.
 
 ---
 
