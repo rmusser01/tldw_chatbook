@@ -141,12 +141,25 @@ class StudyScreen(BaseAppScreen):
         return "local"
 
     @staticmethod
-    def _scope_key(scope_state: StudyScopeState) -> tuple[str, Optional[str], str, bool]:
+    def _scope_key(scope_state: StudyScopeState) -> tuple[
+        str,
+        Optional[str],
+        str,
+        bool,
+        Optional[str],
+        Optional[str],
+        Optional[str],
+        tuple[str, ...],
+    ]:
         return (
             scope_state.scope_type.value,
             scope_state.workspace_id,
             scope_state.backend,
             scope_state.workspace_scope_available,
+            scope_state.material_source,
+            scope_state.material_title,
+            scope_state.material_summary,
+            scope_state.material_titles,
         )
 
     def _derive_scope_state(self, scope_context: StudyScopeContext) -> StudyScopeState:
@@ -168,6 +181,10 @@ class StudyScreen(BaseAppScreen):
             backend=backend,
             workspace_scope_available=workspace_scope_available,
             error_message=error_message,
+            material_source=scope_context.material_source,
+            material_title=scope_context.material_title,
+            material_summary=scope_context.material_summary,
+            material_titles=tuple(str(title) for title in (scope_context.material_titles or ()) if str(title).strip()),
         )
 
     def _consume_pending_scope_context(self) -> Optional[StudyScopeContext]:
@@ -221,13 +238,31 @@ class StudyScreen(BaseAppScreen):
         return []
 
     def _scope_summary_text(self) -> str:
+        material_summary = self._material_context_summary_text()
         if self.scope_state.scope_type == StudyScopeType.WORKSPACE:
             workspace_name = self.scope_state.workspace_name or self.scope_state.workspace_id or "Workspace"
             backend = self.scope_state.backend
             if self.scope_state.error_message:
                 return f"Workspace: {workspace_name} | {self.scope_state.error_message}"
-            return f"Workspace: {workspace_name} | Backend: {backend}"
-        return "Global study"
+            base = f"Workspace: {workspace_name} | Backend: {backend}"
+            return f"{base} | {material_summary}" if material_summary else base
+        return f"Global study | {material_summary}" if material_summary else "Global study"
+
+    def _material_context_summary_text(self) -> str | None:
+        if not self.scope_state.material_source and not self.scope_state.material_title:
+            return None
+        title = self.scope_state.material_title or "Study material"
+        sample_titles = [title for title in self.scope_state.material_titles if title]
+        if sample_titles:
+            sample_text = ", ".join(sample_titles[:3])
+            if len(sample_titles) > 3:
+                sample_text = f"{sample_text}, +{len(sample_titles) - 3} more"
+            return f"{title}: {sample_text}"
+        summary = str(self.scope_state.material_summary or "").strip()
+        if summary:
+            first_line = summary.splitlines()[0].strip()
+            return f"{title}: {first_line}"
+        return title
 
     def _apply_section_layout(self) -> None:
         dashboard = self.study_dashboard
@@ -564,6 +599,7 @@ class StudyScreen(BaseAppScreen):
 
         self.scope_state = next_state
         self._effective_scope_key = next_key
+        self.study_materials = list(next_state.material_titles)
 
         if previous_key == next_key and not force_controller_notify:
             return
@@ -664,6 +700,10 @@ class StudyScreen(BaseAppScreen):
                     "workspace_id": self.scope_state.workspace_id,
                     "workspace_name": self.scope_state.workspace_name,
                     "return_hint": self.scope_state.return_hint,
+                    "material_source": self.scope_state.material_source,
+                    "material_title": self.scope_state.material_title,
+                    "material_summary": self.scope_state.material_summary,
+                    "material_titles": list(self.scope_state.material_titles),
                 },
                 "study_section": self.current_section,
                 "current_study_session": self.current_study_session,
@@ -681,6 +721,10 @@ class StudyScreen(BaseAppScreen):
                     workspace_id=saved_scope.get("workspace_id"),
                     workspace_name=saved_scope.get("workspace_name"),
                     return_hint=saved_scope.get("return_hint"),
+                    material_source=saved_scope.get("material_source"),
+                    material_title=saved_scope.get("material_title"),
+                    material_summary=saved_scope.get("material_summary"),
+                    material_titles=tuple(saved_scope.get("material_titles") or ()),
                 )
             )
             self._effective_scope_key = self._scope_key(self.scope_state)
