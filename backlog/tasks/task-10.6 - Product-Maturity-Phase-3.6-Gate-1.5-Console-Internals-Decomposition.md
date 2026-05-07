@@ -26,8 +26,8 @@ Plan and execute the required Gate 1.5 Console internals decomposition so Consol
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Console-native components replace or isolate legacy ChatWindowEnhanced internals for provider/model controls staged context transcript composer run inspector approvals tools RAG controls and artifact actions.
-- [ ] #2 Existing chat behavior remains compatible or has documented replacement coverage for basic chat tabs/session state provider/model selection streaming fallback handoffs RAG-related controls tool-call visibility and persona/character attachment paths.
+- [ ] #1 Console-native components replace or isolate legacy ChatWindowEnhanced internals for provider/model controls, staged context, transcript, composer, run inspector, approvals, tools, RAG controls, and artifact actions.
+- [ ] #2 Existing chat behavior remains compatible or has documented replacement coverage for basic chat, tabs/session state, provider/model selection, streaming fallback, handoffs, RAG-related controls, tool-call visibility, and persona/character attachment paths.
 - [ ] #3 Mounted UI regressions verify Console internals fit the approved agentic terminal design system without presenting an out-of-place embedded legacy chat screen.
 - [ ] #4 QA walkthrough verifies the Console is usable for repeated core-loop work not merely renderable or clickable.
 <!-- AC:END -->

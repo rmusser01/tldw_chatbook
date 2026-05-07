@@ -108,10 +108,10 @@ Excluded:
 - `Tests/UI/test_chat_window_enhanced.py`
 - `Tests/UI/test_console_live_work_handoffs.py`
 
-Use the repo virtualenv from sibling worktrees:
+Use the repo virtualenv from the repository root, or activate the virtualenv and use `PY=python`:
 
 ```bash
-PY=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
+PY=.venv/bin/python
 ```
 
 ## Risk Controls
