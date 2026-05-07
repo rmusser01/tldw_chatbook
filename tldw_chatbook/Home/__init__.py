@@ -5,6 +5,7 @@ from .dashboard_state import (
     HomeDashboardInput,
     HomeSection,
     build_home_controls,
+    choose_home_selected_item,
     choose_next_best_action,
     summarize_home_dashboard,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "LocalNotificationHomeActiveWorkAdapter",
     "UnavailableHomeActiveWorkAdapter",
     "build_home_controls",
+    "choose_home_selected_item",
     "choose_next_best_action",
     "summarize_home_dashboard",
 ]

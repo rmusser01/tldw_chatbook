@@ -150,6 +150,15 @@ class ChatScreen(BaseAppScreen):
         self.ui_state = UIState()
         self._load_sidebar_state()
 
+    def _ensure_chat_window(self) -> ChatWindowEnhanced:
+        if self.chat_window is None:
+            self.chat_window = ChatWindowEnhanced(
+                self.app_instance,
+                id="chat-window",
+                classes="window",
+            )
+        return self.chat_window
+
     def _consume_pending_console_launch(self) -> Optional[ConsoleLiveWorkLaunch]:
         """Accept one-shot live-work launch context from another destination."""
         if self._pending_console_launch_context is not None:
@@ -227,14 +236,12 @@ class ChatScreen(BaseAppScreen):
                 id="console-mode-bar",
                 classes="ds-panel",
             )
-            with Vertical(id="console-workspace-grid", classes="ds-panel") as workspace_grid:
-                workspace_grid.styles.height = "1fr"
+            with Vertical(id="console-workspace-grid", classes="ds-panel"):
                 with Horizontal(id="console-context-row"):
                     with Vertical(
                         id="console-staged-context-tray",
                         classes="console-region",
-                    ) as staged_context:
-                        staged_context.styles.width = "1fr"
+                    ):
                         yield Static(
                             "Staged Context",
                             id="console-staged-context-title",
@@ -261,8 +268,7 @@ class ChatScreen(BaseAppScreen):
                     with Vertical(
                         id="console-run-inspector",
                         classes="console-region",
-                    ) as run_inspector:
-                        run_inspector.styles.width = "1fr"
+                    ):
                         yield Static(
                             "Run Inspector",
                             id="console-run-inspector-title",
@@ -278,12 +284,7 @@ class ChatScreen(BaseAppScreen):
                         id="console-transcript-title",
                         classes="destination-section",
                     )
-                    self.chat_window = ChatWindowEnhanced(
-                        self.app_instance,
-                        id="chat-window",
-                        classes="window",
-                    )
-                    yield self.chat_window
+                    yield self._ensure_chat_window()
                 with Vertical(id="console-composer-region", classes="console-region"):
                     yield Static(
                         "Composer",

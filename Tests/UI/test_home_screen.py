@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -16,6 +17,10 @@ from Tests.UI.test_screen_navigation import _build_test_app
 
 
 class HomeHarness(App):
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+    )
+
     def __init__(self, app_instance, seen_routes=None):
         super().__init__()
         self.app_instance = app_instance

@@ -132,6 +132,17 @@ def choose_next_best_action(state: HomeDashboardInput) -> HomeAction:
     return HomeAction("start_console", "Start in Console", "chat", "Console is ready for a task.")
 
 
+def choose_home_selected_item(state: HomeDashboardInput) -> HomeActiveWorkItem | None:
+    """Choose the Home inspector/default details target using control priority."""
+    return (
+        _first_item_for_status(state, _APPROVAL_STATUSES)
+        or _first_item_for_status(state, _FAILED_STATUSES)
+        or _first_item_for_status(state, _RUNNING_STATUSES)
+        or _first_item_for_status(state, _PAUSED_STATUSES)
+        or (state.active_work_items[0] if state.active_work_items else None)
+    )
+
+
 def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
     controls: list[HomeControl] = []
     approval_item = _first_item_for_status(state, _APPROVAL_STATUSES)
@@ -139,13 +150,7 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
     paused_item = _first_item_for_status(state, _PAUSED_STATUSES)
     failed_item = _first_item_for_status(state, _FAILED_STATUSES)
     chatbook_item = _first_chatbook_artifact_item(state)
-    detail_item = (
-        approval_item
-        or failed_item
-        or running_item
-        or paused_item
-        or (state.active_work_items[0] if state.active_work_items else None)
-    )
+    detail_item = choose_home_selected_item(state)
 
     if _pending_approval_count(state):
         controls.extend(
@@ -215,7 +220,11 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
             )
         )
         if not state.active_work_items or any(item.console_available for item in state.active_work_items):
-            console_item = next((item for item in state.active_work_items if item.console_available), detail_item)
+            console_item = (
+                detail_item
+                if detail_item is not None and detail_item.console_available
+                else next((item for item in state.active_work_items if item.console_available), detail_item)
+            )
             controls.append(
                 HomeControl(
                     "home-open-in-console",

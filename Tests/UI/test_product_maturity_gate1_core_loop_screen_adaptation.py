@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _build_test_app,
     _wait_for_library_snapshot,
+    _wait_for_selector,
 )
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
@@ -59,6 +61,16 @@ def _visible_text(screen) -> str:
     return " ".join([*static_text, *button_text])
 
 
+async def _wait_for_visible_text(screen, pilot, expected: str, *, timeout: float = 1.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if expected in _visible_text(screen):
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for {expected!r}. Visible text: {_visible_text(screen)}")
+
+
 class ConsoleHarness(App[None]):
     def __init__(self, app_instance):
         super().__init__()
@@ -99,8 +111,8 @@ async def test_home_core_loop_uses_dashboard_regions_and_selected_item_inspector
     host = HomeHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
-        await pilot.pause(0.1)
         home = _active_home_screen(host)
+        await _wait_for_selector(home, pilot, "#home-dashboard-grid")
 
         for selector in (
             "#home-status-row",
@@ -123,13 +135,58 @@ async def test_home_core_loop_uses_dashboard_regions_and_selected_item_inspector
 
 
 @pytest.mark.asyncio
+async def test_home_selected_item_matches_prioritized_details_control():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:chatbook:summary",
+                title="RAG Summary Chatbook",
+                source="artifacts",
+                status="ready",
+                detail_route="artifacts",
+                console_available=True,
+            ),
+            HomeActiveWorkItem(
+                item_id="local:watchlist-run:daily",
+                title="Daily papers",
+                source="watchlists",
+                status="failed",
+                detail_route="subscriptions",
+                console_available=True,
+            ),
+        ),
+    )
+    app.open_active_home_item_details = lambda **kwargs: setattr(app, "last_home_details_kwargs", kwargs)
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        home = _active_home_screen(host)
+        await _wait_for_selector(home, pilot, "#home-dashboard-grid")
+
+        selected_body = str(home.query_one("#home-selected-item-body", Static).renderable)
+        assert "Daily papers" in selected_body
+        assert "RAG Summary Chatbook" not in selected_body
+
+        await pilot.click("#home-open-details")
+        await _wait_for_selector(home, pilot, "#home-open-details")
+
+    assert app.last_home_details_kwargs == {
+        "target_id": "local:watchlist-run:daily",
+        "target_route": "subscriptions",
+    }
+
+
+@pytest.mark.asyncio
 async def test_console_core_loop_exposes_agentic_shell_regions():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
-        await pilot.pause(0.45)
         console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#chat-window")
 
         for selector in (
             "#console-shell",
@@ -153,6 +210,22 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
 
 
 @pytest.mark.asyncio
+async def test_console_chat_window_instance_survives_screen_recompose():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#chat-window")
+        chat_window = console.query_one("#chat-window")
+
+        console.refresh(recompose=True)
+        await _wait_for_selector(console, pilot, "#chat-window")
+
+        assert console.query_one("#chat-window") is chat_window
+
+
+@pytest.mark.asyncio
 async def test_library_core_loop_modes_are_actionable_without_leaving_library():
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService(
@@ -165,19 +238,28 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await pilot.click("#library-mode-search")
-        await pilot.pause(0.1)
+        source_browser = screen.query_one("#library-source-browser")
+        source_detail = screen.query_one("#library-source-detail")
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_visible_text(screen, pilot, "Search/RAG mode")
 
         assert screen.query_one("#library-source-detail")
         assert screen.query_one("#library-source-inspector")
+        assert screen.query_one("#library-source-browser") is source_browser
+        assert screen.query_one("#library-source-detail") is source_detail
+        assert screen.query_one("#library-mode-search").has_class("is-active")
         text = _visible_text(screen)
         assert "Search/RAG mode" in text
         assert "Ask in Console" in text or "Use in Console" in text
 
-        await pilot.click("#library-mode-collections")
-        await pilot.pause(0.1)
+        screen.query_one("#library-mode-collections", Button).press()
+        await _wait_for_visible_text(screen, pilot, "Collections mode")
 
         text = _visible_text(screen)
+        assert screen.query_one("#library-source-browser") is source_browser
+        assert screen.query_one("#library-source-detail") is source_detail
+        assert screen.query_one("#library-mode-collections").has_class("is-active")
         assert "Collections mode" in text
         assert "Library-owned" in text
         assert "citations/snippets" in text

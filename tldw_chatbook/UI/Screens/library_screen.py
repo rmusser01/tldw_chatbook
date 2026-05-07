@@ -424,29 +424,23 @@ class LibraryScreen(BaseAppScreen):
                 id="library-status-row",
                 classes="destination-status-row",
             )
-            with Horizontal(id="library-mode-bar", classes="ds-panel") as mode_bar:
-                mode_bar.styles.height = 3
-                mode_bar.styles.min_height = 3
+            with Horizontal(id="library-mode-bar", classes="ds-panel"):
                 mode_label = Static(
                     "Modes:",
                     id="library-mode-label",
                     classes="destination-section",
                 )
-                mode_label.styles.width = 8
                 yield mode_label
                 for mode_id, mode in LIBRARY_MODES.items():
                     classes = "library-mode-chip"
                     if mode_id == self._active_mode:
                         classes = f"{classes} is-active"
-                    mode_button = Button(
+                    yield Button(
                         mode["label"],
                         id=mode["button_id"],
                         classes=classes,
                         tooltip=mode["description"],
                     )
-                    mode_button.styles.height = 1
-                    mode_button.styles.min_height = 1
-                    yield mode_button
 
             with Horizontal(id="library-contract-grid", classes="ds-panel"):
                 with Vertical(id="library-source-browser", classes="library-region"):
@@ -576,8 +570,21 @@ class LibraryScreen(BaseAppScreen):
         if mode_id is None:
             return
         event.stop()
+        if mode_id == self._active_mode:
+            return
         self._active_mode = mode_id
-        self.refresh(recompose=True)
+        self._refresh_active_mode_widgets()
+
+    def _refresh_active_mode_widgets(self) -> None:
+        active_mode = self._active_mode_contract()
+        self.query_one("#library-active-mode-title", Static).update(f"{active_mode['label']} mode")
+        self.query_one("#library-active-mode-description", Static).update(active_mode["description"])
+        self.query_one("#library-active-mode-next-action", Static).update(active_mode["next_action"])
+        for mode_id, mode in LIBRARY_MODES.items():
+            self.query_one(f"#{mode['button_id']}", Button).set_class(
+                mode_id == self._active_mode,
+                "is-active",
+            )
 
     @on(Button.Pressed, "#library-open-notes")
     def open_notes(self) -> None:

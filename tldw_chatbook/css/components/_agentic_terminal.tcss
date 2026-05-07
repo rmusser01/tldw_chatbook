@@ -112,8 +112,18 @@
 }
 
 #home-dashboard-grid {
-    height: 18;
-    min-height: 18;
+    height: $ds-home-dashboard-grid-height;
+    min-height: $ds-home-dashboard-grid-height;
+}
+
+#home-status-row,
+#home-status,
+#home-status-body,
+#home-scope-filter-row {
+    height: $ds-home-compact-row-height;
+    min-height: $ds-home-compact-row-height;
+    padding: 0 1;
+    margin: 0;
 }
 
 .home-dashboard-region {
@@ -121,16 +131,31 @@
 }
 
 #home-active-work-region .ds-toolbar {
-    height: 1;
-    min-height: 1;
+    height: $ds-home-control-button-height;
+    min-height: $ds-home-control-button-height;
     padding: 0 1;
     margin: 0;
     border: none;
 }
 
+#console-workspace-grid {
+    height: $ds-console-workspace-grid-height;
+}
+
+#library-mode-bar {
+    height: $ds-library-mode-bar-height;
+    min-height: $ds-library-mode-bar-height;
+}
+
+#library-mode-label {
+    width: $ds-library-mode-label-width;
+}
+
 .library-mode-chip {
     width: auto;
-    min-width: 10;
+    min-width: $ds-library-mode-chip-min-width;
+    height: $ds-library-mode-chip-height;
+    min-height: $ds-library-mode-chip-height;
 }
 
 .ds-shortcut-bar {

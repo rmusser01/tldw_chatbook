@@ -8,6 +8,7 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Home.dashboard_state import (
     HomeDashboard,
     HomeDashboardInput,
+    choose_home_selected_item,
     summarize_home_dashboard,
 )
 
@@ -118,24 +119,24 @@ class HomeScreen(BaseAppScreen):
                 id="home-scope-filter-row",
                 classes="ds-panel",
             )
-            with Horizontal(id="home-dashboard-grid", classes="ds-panel") as dashboard_grid:
-                dashboard_grid.styles.height = 18
-                dashboard_grid.styles.min_height = 18
+            with Horizontal(id="home-dashboard-grid", classes="ds-panel"):
                 with Vertical(id="home-attention-queue", classes="home-dashboard-region"):
                     yield Static("Attention Queue", id="home-attention", classes="ds-panel")
+                    yield Button(
+                        dashboard.next_action.label,
+                        id="home-primary-action",
+                        classes="ds-toolbar",
+                    )
                     yield Static(section_text("attention"), id="home-attention-body")
                 with Vertical(id="home-active-work-region", classes="home-dashboard-region"):
                     yield Static("Active Work", id="home-active-work", classes="ds-panel")
-                    yield Static(section_text("active_work"), id="home-active-work-body")
                     for control in dashboard.controls:
-                        control_button = Button(
+                        yield Button(
                             control.label,
                             id=control.control_id,
                             classes="ds-toolbar",
                         )
-                        control_button.styles.height = 1
-                        control_button.styles.min_height = 1
-                        yield control_button
+                    yield Static(section_text("active_work"), id="home-active-work-body")
                 with Vertical(id="home-inspector", classes="home-dashboard-region"):
                     yield Static(
                         "Selected item",
@@ -146,13 +147,12 @@ class HomeScreen(BaseAppScreen):
             with Vertical(id="home-next-actions-region", classes="ds-panel"):
                 yield Static("Next Best Action", id="home-next-best-action", classes="ds-panel")
                 yield Static(next_action_copy, id="home-next-best-action-body")
-                yield Button(dashboard.next_action.label, id="home-primary-action")
             with Vertical(id="home-recent-work-region", classes="ds-panel"):
                 yield Static("Recent Work", id="home-recent-work", classes="ds-panel")
                 yield Static(section_text("recent_work"), id="home-recent-work-body")
 
     def _selected_home_item(self, dashboard_input: HomeDashboardInput):
-        return dashboard_input.active_work_items[0] if dashboard_input.active_work_items else None
+        return choose_home_selected_item(dashboard_input)
 
     @on(Button.Pressed)
     def handle_home_button(self, event: Button.Pressed) -> None:
