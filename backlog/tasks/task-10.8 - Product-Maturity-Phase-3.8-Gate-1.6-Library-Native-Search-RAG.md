@@ -1,9 +1,10 @@
 ---
 id: TASK-10.8
 title: 'Product Maturity Phase 3.8: Gate 1.6 Library Native Search/RAG'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-05-07 12:00'
+updated_date: '2026-05-07 19:53'
 labels:
   - product-maturity
   - phase-3-knowledge-study
@@ -42,3 +43,9 @@ Gate 1.6 is split into child tasks so retrieval state, Library UI, adapter behav
 
 Primary implementation plan: `Docs/superpowers/plans/2026-05-07-gate-1-6-library-native-search-rag.md`.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Started Gate 1.6 execution with TASK-10.8.1. The first slice adds pure Library Search/RAG display-state contracts for source scope query blockers evidence rows citations/snippets and panel action readiness; remaining child tasks cover the mounted Library panel retrieval adapter Console handoff/invocation and QA closeout.
+<!-- SECTION:NOTES:END -->

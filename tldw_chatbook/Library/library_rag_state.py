@@ -1,0 +1,513 @@
+"""Pure display-state contracts for Library-native Search/RAG."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Mapping, Sequence
+
+
+LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
+    ("notes", "Notes"),
+    ("media", "Media"),
+    ("conversations", "Conversations"),
+    ("workspaces", "Workspaces"),
+    ("collections", "Collections"),
+)
+LIBRARY_RAG_DEFAULT_TOP_K = 5
+LIBRARY_RAG_RUN_ACTION_ID = "library-rag-run-query"
+LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID = "library-rag-use-in-console"
+LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON = (
+    "Run a query and select usable evidence before sending to Console."
+)
+
+
+def _clean_text(value: Any, fallback: str = "") -> str:
+    text = " ".join(str(value or "").strip().split())
+    return text or fallback
+
+
+def _sentence(value: str) -> str:
+    text = value.strip()
+    if not text or text.endswith((".", "!", "?")):
+        return text
+    return f"{text}."
+
+
+def _coerce_non_negative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _coerce_positive_int(value: Any, fallback: int) -> int:
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return coerced if coerced > 0 else fallback
+
+
+def _coerce_score(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_mode(value: Any) -> str:
+    mode = _clean_text(value, "rag").lower()
+    return mode if mode in {"rag", "search"} else "rag"
+
+
+def _recovery_copy(
+    *,
+    status_label: str,
+    unavailable_what: str,
+    why: str,
+    next_action: str,
+    recovery_action: str,
+    owner: str,
+) -> str:
+    return "\n".join(
+        (
+            _sentence(status_label),
+            f"Unavailable: {_sentence(unavailable_what)}",
+            f"Why: {_sentence(why)}",
+            f"Next: {_sentence(next_action)}",
+            f"Recovery: {_sentence(recovery_action)}",
+            f"Owner: {_sentence(owner)}",
+        )
+    )
+
+
+@dataclass(frozen=True)
+class LibraryRagActionState:
+    """Display state for one Library Search/RAG action."""
+
+    label: str
+    enabled: bool
+    widget_id: str
+    disabled_reason: str = ""
+
+    @property
+    def tooltip(self) -> str:
+        return "" if self.enabled else self.disabled_reason
+
+
+@dataclass(frozen=True)
+class LibraryRagSourceOption:
+    """One source-scope option in Library Search/RAG."""
+
+    source_type: str
+    label: str
+    count: int
+    selected: bool
+    status: str
+    recovery: str = ""
+
+    @property
+    def available(self) -> bool:
+        return self.count > 0
+
+    @property
+    def count_label(self) -> str:
+        suffix = "source" if self.count == 1 else "sources"
+        return f"{self.count} {suffix}"
+
+
+@dataclass(frozen=True)
+class LibraryRagScopeState:
+    """Display state for Library Search/RAG source scope."""
+
+    heading: str
+    options: tuple[LibraryRagSourceOption, ...]
+    selected_source_types: tuple[str, ...]
+    total_count: int
+    status: str = "ready"
+    recovery_copy: str = ""
+
+    @classmethod
+    def from_source_counts(
+        cls,
+        *,
+        notes: Any = 0,
+        media: Any = 0,
+        conversations: Any = 0,
+        workspaces: Any = 0,
+        collections: Any = 0,
+        selected: Sequence[str] | None = None,
+        heading: str = "Source Scope: All local sources",
+    ) -> "LibraryRagScopeState":
+        counts = {
+            "notes": _coerce_non_negative_int(notes),
+            "media": _coerce_non_negative_int(media),
+            "conversations": _coerce_non_negative_int(conversations),
+            "workspaces": _coerce_non_negative_int(workspaces),
+            "collections": _coerce_non_negative_int(collections),
+        }
+        available_source_types = {
+            source_type for source_type, count in counts.items() if count > 0
+        }
+        selected_values = {
+            _clean_text(source_type).lower()
+            for source_type in selected or available_source_types
+        }
+        options = tuple(
+            LibraryRagSourceOption(
+                source_type=source_type,
+                label=label,
+                count=counts[source_type],
+                selected=source_type in selected_values and counts[source_type] > 0,
+                status="ready" if counts[source_type] > 0 else "empty",
+                recovery=(
+                    ""
+                    if counts[source_type] > 0
+                    else f"No {source_type} available. Add or import {source_type} before querying."
+                ),
+            )
+            for source_type, label in LIBRARY_RAG_SOURCE_TYPES
+        )
+        total_count = sum(counts.values())
+        recovery_copy = ""
+        status = "ready"
+        if total_count == 0:
+            status = "blocked"
+            recovery_copy = _recovery_copy(
+                status_label="No sources",
+                unavailable_what="Library Search/RAG",
+                why="No Library sources are available for retrieval",
+                next_action="Add or import Library sources before querying",
+                recovery_action="Library Import/Export",
+                owner="Library source index",
+            )
+        return cls(
+            heading=heading,
+            options=options,
+            selected_source_types=tuple(
+                option.source_type for option in options if option.selected
+            ),
+            total_count=total_count,
+            status=status,
+            recovery_copy=recovery_copy,
+        )
+
+    @property
+    def has_available_sources(self) -> bool:
+        return self.total_count > 0
+
+    def option_by_type(self, source_type: str) -> LibraryRagSourceOption:
+        normalized_source_type = _clean_text(source_type).lower()
+        for option in self.options:
+            if option.source_type == normalized_source_type:
+                return option
+        raise KeyError(source_type)
+
+
+@dataclass(frozen=True)
+class LibraryRagQueryState:
+    """Display state for Library Search/RAG query controls."""
+
+    query: str
+    mode: str
+    mode_label: str
+    top_k: int
+    include_citations: bool
+    status: str
+    run_action: LibraryRagActionState
+    recovery_copy: str = ""
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        query: Any = "",
+        mode: Any = "rag",
+        top_k: Any = LIBRARY_RAG_DEFAULT_TOP_K,
+        include_citations: bool = True,
+        has_source_scope: bool = True,
+        dependencies_ready: bool = True,
+        index_ready: bool = True,
+        provider_ready: bool = True,
+    ) -> "LibraryRagQueryState":
+        normalized_query = _clean_text(query)
+        normalized_mode = _normalize_mode(mode)
+        mode_label = "Search" if normalized_mode == "search" else "RAG Answer"
+        normalized_top_k = _coerce_positive_int(top_k, LIBRARY_RAG_DEFAULT_TOP_K)
+        disabled_reason = ""
+        owner = ""
+        next_action = ""
+        recovery_action = ""
+        if not normalized_query:
+            disabled_reason = "Enter a question or search query."
+            owner = "user"
+            next_action = "Type a query before running Search/RAG"
+            recovery_action = "Query input"
+        elif not has_source_scope:
+            disabled_reason = "Select at least one Library source."
+            owner = "Library source scope"
+            next_action = "Select or import a source before querying"
+            recovery_action = "Library source scope"
+        elif not dependencies_ready:
+            disabled_reason = "Install or enable Search/RAG dependencies."
+            owner = "optional dependency"
+            next_action = "Install Search/RAG dependencies and restart"
+            recovery_action = "Settings or package extras"
+        elif not index_ready:
+            disabled_reason = "Index selected Library sources before querying."
+            owner = "Library source index"
+            next_action = "Build or refresh the Library index"
+            recovery_action = "Library indexing"
+        elif normalized_mode == "rag" and not provider_ready:
+            disabled_reason = "Select a provider/model before asking for a RAG answer."
+            owner = "LLM provider"
+            next_action = "Select a provider and model before running a RAG answer"
+            recovery_action = "Console controls"
+
+        enabled = not disabled_reason
+        recovery_copy = ""
+        if disabled_reason:
+            recovery_copy = _recovery_copy(
+                status_label="Blocked",
+                unavailable_what="Run Library Search/RAG",
+                why=disabled_reason,
+                next_action=next_action,
+                recovery_action=recovery_action,
+                owner=owner,
+            )
+        return cls(
+            query=normalized_query,
+            mode=normalized_mode,
+            mode_label=mode_label,
+            top_k=normalized_top_k,
+            include_citations=include_citations,
+            status="ready" if enabled else "blocked",
+            run_action=LibraryRagActionState(
+                label="Run Search/RAG",
+                enabled=enabled,
+                widget_id=LIBRARY_RAG_RUN_ACTION_ID,
+                disabled_reason=disabled_reason,
+            ),
+            recovery_copy=recovery_copy,
+        )
+
+
+@dataclass(frozen=True)
+class LibraryRagCitation:
+    """Normalized citation metadata for a Library Search/RAG result."""
+
+    label: str
+    url: str = ""
+    source_id: str = ""
+    chunk_id: str = ""
+
+
+@dataclass(frozen=True)
+class LibraryRagResultRow:
+    """Normalized evidence row for Library Search/RAG results."""
+
+    result_id: str
+    title: str
+    snippet: str
+    score: float | None
+    source_id: str
+    chunk_id: str
+    citations: tuple[LibraryRagCitation, ...]
+    provenance: Mapping[str, Any]
+    runtime_backend: str = ""
+
+    @classmethod
+    def from_result(cls, result: Mapping[str, Any] | Any) -> "LibraryRagResultRow":
+        values = result if isinstance(result, Mapping) else {}
+        source_id = _clean_text(values.get("source_id"))
+        chunk_id = _clean_text(values.get("chunk_id"))
+        title = _clean_text(
+            values.get("document_title")
+            or values.get("title")
+            or values.get("source_title"),
+            "Untitled source",
+        )
+        snippet = _clean_text(
+            values.get("snippet") or values.get("text") or values.get("content"),
+            "No snippet available.",
+        )
+        citations = tuple(
+            _normalize_citation(citation)
+            for citation in _as_sequence(values.get("citations"))
+        )
+        provenance_value = values.get("provenance")
+        provenance = (
+            dict(provenance_value) if isinstance(provenance_value, Mapping) else {}
+        )
+        result_id = _result_id(source_id, chunk_id, title)
+        return cls(
+            result_id=result_id,
+            title=title,
+            snippet=snippet,
+            score=_coerce_score(values.get("score")),
+            source_id=source_id,
+            chunk_id=chunk_id,
+            citations=citations,
+            provenance=provenance,
+            runtime_backend=_clean_text(values.get("runtime_backend")),
+        )
+
+    @property
+    def citation_labels(self) -> tuple[str, ...]:
+        return tuple(citation.label for citation in self.citations)
+
+
+@dataclass(frozen=True)
+class LibraryRagPanelState:
+    """Display state for the destination-native Library Search/RAG panel."""
+
+    scope: LibraryRagScopeState
+    query_state: LibraryRagQueryState
+    results: tuple[LibraryRagResultRow, ...]
+    retrieval_status: str
+    next_action: str
+    use_in_console_action: LibraryRagActionState
+    selected_result_id: str = ""
+    selected_result: LibraryRagResultRow | None = None
+    recovery_copy: str = ""
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        source_counts: Mapping[str, Any] | None = None,
+        query: Any = "",
+        mode: Any = "rag",
+        results: Sequence[LibraryRagResultRow | Mapping[str, Any]] = (),
+        selected_result_id: Any = "",
+        retrieval_status: Any = "",
+        dependencies_ready: bool = True,
+        index_ready: bool = True,
+        provider_ready: bool = True,
+    ) -> "LibraryRagPanelState":
+        counts = dict(source_counts or {})
+        scope = LibraryRagScopeState.from_source_counts(
+            notes=counts.get("notes", 0),
+            media=counts.get("media", 0),
+            conversations=counts.get("conversations", 0),
+            workspaces=counts.get("workspaces", 0),
+            collections=counts.get("collections", 0),
+        )
+        query_state = LibraryRagQueryState.from_values(
+            query=query,
+            mode=mode,
+            has_source_scope=scope.has_available_sources,
+            dependencies_ready=dependencies_ready,
+            index_ready=index_ready,
+            provider_ready=provider_ready,
+        )
+        result_rows = tuple(
+            result
+            if isinstance(result, LibraryRagResultRow)
+            else LibraryRagResultRow.from_result(result)
+            for result in results
+        )
+        normalized_selected_result_id = _clean_text(selected_result_id)
+        selected_result = next(
+            (
+                result
+                for result in result_rows
+                if result.result_id == normalized_selected_result_id
+            ),
+            None,
+        )
+        explicit_status = _clean_text(retrieval_status).lower()
+        if query_state.status == "blocked":
+            normalized_status = "blocked"
+            recovery_copy = scope.recovery_copy or query_state.recovery_copy
+            next_action = _blocked_next_action(recovery_copy)
+        elif explicit_status == "searching":
+            normalized_status = "searching"
+            recovery_copy = ""
+            next_action = "Wait for retrieval results."
+        elif explicit_status == "empty" or (
+            explicit_status == "ready" and not result_rows
+        ):
+            normalized_status = "empty"
+            recovery_copy = _recovery_copy(
+                status_label="No results",
+                unavailable_what="Library Search/RAG evidence",
+                why="No evidence matched the current query",
+                next_action="Revise the query or broaden the source scope",
+                recovery_action="Query input or source scope",
+                owner="Library retrieval",
+            )
+            next_action = "Revise the query or broaden the source scope."
+        elif result_rows:
+            normalized_status = "ready"
+            recovery_copy = ""
+            next_action = "Review cited evidence or send the selected result to Console."
+        else:
+            normalized_status = "ready"
+            recovery_copy = ""
+            next_action = "Run Search/RAG over the selected Library sources."
+
+        can_use_console = normalized_status == "ready" and selected_result is not None
+        return cls(
+            scope=scope,
+            query_state=query_state,
+            results=result_rows,
+            retrieval_status=normalized_status,
+            next_action=next_action,
+            use_in_console_action=LibraryRagActionState(
+                label="Use in Console",
+                enabled=can_use_console,
+                widget_id=LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID,
+                disabled_reason=(
+                    "" if can_use_console else LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON
+                ),
+            ),
+            selected_result_id=normalized_selected_result_id,
+            selected_result=selected_result,
+            recovery_copy=recovery_copy,
+        )
+
+
+def _as_sequence(value: Any) -> tuple[Any, ...]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(value)
+    if value:
+        return (value,)
+    return ()
+
+
+def _normalize_citation(value: Any) -> LibraryRagCitation:
+    if isinstance(value, Mapping):
+        label = _clean_text(
+            value.get("label")
+            or value.get("title")
+            or value.get("url")
+            or value.get("source_id"),
+            "Citation",
+        )
+        return LibraryRagCitation(
+            label=label,
+            url=_clean_text(value.get("url")),
+            source_id=_clean_text(value.get("source_id")),
+            chunk_id=_clean_text(value.get("chunk_id")),
+        )
+    return LibraryRagCitation(label=_clean_text(value, "Citation"))
+
+
+def _result_id(source_id: str, chunk_id: str, title: str) -> str:
+    if source_id and chunk_id:
+        return f"{source_id}:{chunk_id}"
+    if source_id:
+        return source_id
+    if chunk_id:
+        return chunk_id
+    return f"result:{title.lower().replace(' ', '-')}"
+
+
+def _blocked_next_action(recovery_copy: str) -> str:
+    for line in recovery_copy.splitlines():
+        if line.startswith("Next: "):
+            return line.removeprefix("Next: ")
+    return "Resolve the blocker before running Search/RAG."

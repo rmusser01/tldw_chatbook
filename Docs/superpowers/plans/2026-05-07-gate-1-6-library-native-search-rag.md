@@ -119,7 +119,7 @@ Backlog: `TASK-10.8.1`
 - Create: `Tests/Library/test_library_rag_state.py`
 - Test: `Tests/UI/test_product_maturity_phase3_library_contract_layout.py`
 
-- [ ] **Step 1: Run current Library baseline**
+- [x] **Step 1: Run current Library baseline**
 
 ```bash
 $PY -m pytest -q Tests/UI/test_product_maturity_phase3_library_contract_layout.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py::test_library_core_loop_modes_are_actionable_without_leaving_library --tb=short
@@ -127,7 +127,7 @@ $PY -m pytest -q Tests/UI/test_product_maturity_phase3_library_contract_layout.p
 
 Expected: pass with existing warnings only.
 
-- [ ] **Step 2: Add pure state red tests**
+- [x] **Step 2: Add pure state red tests**
 
 Create tests for:
 
@@ -138,7 +138,7 @@ Create tests for:
 
 Expected before implementation: import failure for `tldw_chatbook.Library.library_rag_state`.
 
-- [ ] **Step 3: Implement minimal dataclasses**
+- [x] **Step 3: Implement minimal dataclasses**
 
 Implement frozen dataclasses:
 
@@ -150,7 +150,7 @@ Implement frozen dataclasses:
 
 Keep these pure, non-Textual, and tolerant of loose app/test seam values.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 $PY -m pytest -q Tests/Library/test_library_rag_state.py Tests/UI/test_product_maturity_phase3_library_contract_layout.py --tb=short
