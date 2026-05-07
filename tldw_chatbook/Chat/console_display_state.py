@@ -15,6 +15,13 @@ def _clean(value: Any, fallback: str) -> str:
     return text or fallback
 
 
+def _non_negative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 @dataclass(frozen=True)
 class ConsoleDisplayRow:
     """One user-visible Console display row."""
@@ -28,6 +35,21 @@ class ConsoleDisplayRow:
     def text(self) -> str:
         suffix = f" - {self.recovery}" if self.recovery else ""
         return f"{self.label}: {self.value}{suffix}"
+
+
+@dataclass(frozen=True)
+class ConsoleInspectorAction:
+    """One action exposed by the Console run inspector."""
+
+    widget_id: str
+    label: str
+    enabled: bool
+    disabled_reason: str = ""
+    classes: str = "destination-action-button console-inspector-action"
+
+    @property
+    def tooltip(self) -> str:
+        return "" if self.enabled else self.disabled_reason
 
 
 @dataclass(frozen=True)
@@ -108,6 +130,7 @@ class ConsoleInspectorState:
     """Display state for Console run/readiness inspection."""
 
     rows: tuple[ConsoleDisplayRow, ...]
+    actions: tuple[ConsoleInspectorAction, ...] = ()
     has_pending_approval: bool = False
     can_save_chatbook: bool = False
 
@@ -120,10 +143,13 @@ class ConsoleInspectorState:
         provider_recovery: Any = None,
         rag_status: Any = None,
         artifact_status: Any = None,
+        tool_count: int = 0,
         approval_count: int = 0,
         can_save_chatbook: bool = False,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
+        normalized_tool_count = _non_negative_int(tool_count)
+        normalized_approval_count = _non_negative_int(approval_count)
         rows = [
             ConsoleDisplayRow("Live work", _clean(live_work_title, "No active work")),
             ConsoleDisplayRow(
@@ -132,13 +158,35 @@ class ConsoleInspectorState:
                 status=provider_status,
                 recovery=_clean(provider_recovery, "") if not provider_ready else "",
             ),
-            ConsoleDisplayRow("RAG", _clean(rag_status, "not staged")),
+            ConsoleDisplayRow("Tools", f"{normalized_tool_count} ready"),
+            ConsoleDisplayRow("RAG/source", _clean(rag_status, "not staged")),
             ConsoleDisplayRow("Artifacts", _clean(artifact_status, "unavailable")),
-            ConsoleDisplayRow("Approvals", f"{approval_count} pending"),
+            ConsoleDisplayRow("Approvals", f"{normalized_approval_count} pending"),
+        ]
+        actions = [
+            ConsoleInspectorAction(
+                widget_id="console-inspector-review-approval",
+                label="Review approval",
+                enabled=normalized_approval_count > 0,
+                disabled_reason="No approval is pending.",
+            ),
+            ConsoleInspectorAction(
+                widget_id="console-inspector-review-tool-call",
+                label="Review tool call",
+                enabled=normalized_tool_count > 0,
+                disabled_reason="No tool calls are ready for review.",
+            ),
+            ConsoleInspectorAction(
+                widget_id="console-inspector-save-chatbook",
+                label="Save Chatbook",
+                enabled=can_save_chatbook,
+                disabled_reason="No Chatbook artifact is available.",
+            ),
         ]
         return cls(
             rows=tuple(rows),
-            has_pending_approval=approval_count > 0,
+            actions=tuple(actions),
+            has_pending_approval=normalized_approval_count > 0,
             can_save_chatbook=can_save_chatbook,
         )
 

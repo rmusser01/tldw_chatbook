@@ -20,7 +20,11 @@ from textual.css.query import NoMatches, QueryError
 from ..Navigation.base_app_screen import BaseAppScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
 from ...Chat.chat_conversation_service import derive_conversation_title
-from ...Chat.console_display_state import ConsoleControlState, ConsoleStagedContextState
+from ...Chat.console_display_state import (
+    ConsoleControlState,
+    ConsoleInspectorState,
+    ConsoleStagedContextState,
+)
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
 from ...Chat.console_live_work import (
@@ -35,6 +39,7 @@ from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
     ConsoleComposerBar,
     ConsoleControlBar,
+    ConsoleRunInspector,
     ConsoleSessionSurface,
     ConsoleStagedContextTray,
 )
@@ -74,6 +79,19 @@ def _source_mentions_rag(source: Any) -> bool:
     """Return True when a source label explicitly includes a RAG token."""
     tokens = re.split(r"[^a-z0-9]+", str(source or "").lower())
     return "rag" in tokens
+
+
+def _coerce_non_negative_int(value: Any) -> int:
+    """Return a non-negative int for loose app/test seam values."""
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _has_selected_text(value: Any) -> bool:
+    """Return True when a provider/model value is meaningfully selected."""
+    return not _is_empty_select_value(value) and bool(str(value).strip())
 
 
 class ChatScreen(BaseAppScreen):
@@ -236,8 +254,8 @@ class ChatScreen(BaseAppScreen):
             persona=None,
             rag_enabled=_source_mentions_rag(source),
             staged_source_count=1 if pending_launch else 0,
-            tool_count=0,
-            approval_count=0,
+            tool_count=self._console_tool_count(),
+            approval_count=self._console_pending_approval_count(),
         )
 
     def _build_console_staged_context_state(
@@ -247,6 +265,99 @@ class ChatScreen(BaseAppScreen):
         if pending_launch is None:
             return ConsoleStagedContextState.empty()
         return ConsoleStagedContextState.from_live_work(pending_launch)
+
+    @staticmethod
+    def _launch_targets_chatbook_artifact(
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> bool:
+        if pending_launch is None:
+            return False
+        source = str(pending_launch.source or "").strip().lower()
+        target_id = str(pending_launch.payload.get("target_id") or "").strip()
+        return source in {"artifacts", "chatbooks"} and ":chatbook:" in target_id
+
+    @staticmethod
+    def _launch_has_rag_source_payload(pending_launch: ConsoleLiveWorkLaunch) -> bool:
+        source_keys = (
+            "source_id",
+            "source_count",
+            "citation_count",
+            "chunk_id",
+            "query",
+            "result_id",
+        )
+        return any(str(pending_launch.payload.get(key) or "").strip() for key in source_keys)
+
+    def _console_pending_approval_count(self) -> int:
+        explicit_count = getattr(self.app_instance, "console_pending_approval_count", None)
+        if explicit_count is not None:
+            return _coerce_non_negative_int(explicit_count)
+
+        pending_approval = getattr(self.app_instance, "pending_console_approval", None)
+        if pending_approval:
+            return 1
+
+        task_state = self.chat_state.task_resume_state
+        return 1 if task_state.has_pending_approval() else 0
+
+    def _console_tool_count(self) -> int:
+        return _coerce_non_negative_int(getattr(self.app_instance, "console_tool_count", 0))
+
+    def _console_rag_source_status(
+        self,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> str:
+        if pending_launch is None:
+            return "not staged"
+        if _source_mentions_rag(pending_launch.source):
+            if self._launch_has_rag_source_payload(pending_launch):
+                return "staged from Library Search/RAG"
+            return "missing source"
+        return "not requested"
+
+    def _console_artifact_status(
+        self,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+        *,
+        can_save_chatbook: bool,
+    ) -> str:
+        if can_save_chatbook:
+            return "Chatbook artifact available"
+        if pending_launch is not None:
+            return "not available for this item"
+        return "unavailable"
+
+    def _build_console_inspector_state(
+        self,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> ConsoleInspectorState:
+        provider = self._console_control_provider or self._chat_default_value("provider")
+        model = self._console_control_model or self._chat_default_value("model")
+        explicit_provider_ready = getattr(self.app_instance, "console_provider_ready", None)
+        provider_ready = (
+            bool(explicit_provider_ready)
+            if explicit_provider_ready is not None
+            else _has_selected_text(provider) and _has_selected_text(model)
+        )
+        can_save_chatbook = bool(
+            getattr(self.app_instance, "console_chatbook_artifact_available", False)
+            or self._launch_targets_chatbook_artifact(pending_launch)
+        )
+        return ConsoleInspectorState.from_values(
+            live_work_title=pending_launch.title if pending_launch else None,
+            provider_ready=provider_ready,
+            provider_recovery=(
+                "" if provider_ready else "Select a provider and model before sending."
+            ),
+            rag_status=self._console_rag_source_status(pending_launch),
+            artifact_status=self._console_artifact_status(
+                pending_launch,
+                can_save_chatbook=can_save_chatbook,
+            ),
+            tool_count=self._console_tool_count(),
+            approval_count=self._console_pending_approval_count(),
+            can_save_chatbook=can_save_chatbook,
+        )
 
     def _toggle_console_chat_sidebar(self) -> None:
         """Route Console-level compact control toggles to the embedded chat sidebar."""
@@ -267,8 +378,6 @@ class ChatScreen(BaseAppScreen):
                 id=card_state.badge_id,
                 classes=card_state.badge_classes,
             )
-            for row in card_state.rows:
-                yield Static(row.text, id=row.widget_id, classes=row.classes)
             if card_state.primary_action is not None:
                 yield Button(
                     card_state.primary_action.label,
@@ -276,6 +385,8 @@ class ChatScreen(BaseAppScreen):
                     classes=card_state.primary_action.classes,
                     variant="primary",
                 )
+            for row in card_state.rows:
+                yield Static(row.text, id=row.widget_id, classes=row.classes)
 
     def _render_console_live_work_source_readiness(self) -> ComposeResult:
         """Render Console source readiness when no live-work item is staged."""
@@ -309,6 +420,7 @@ class ChatScreen(BaseAppScreen):
         pending_launch = self._consume_pending_console_launch()
         control_state = self._build_console_control_state(pending_launch)
         staged_context_state = self._build_console_staged_context_state(pending_launch)
+        inspector_state = self._build_console_inspector_state(pending_launch)
         with Vertical(id="console-shell"):
             yield Static("Console", id="console-title", classes="ds-destination-header")
             yield Static(
@@ -333,8 +445,8 @@ class ChatScreen(BaseAppScreen):
                 id="console-control-bar",
                 classes="ds-panel",
             )
-            with Vertical(id="console-workspace-grid", classes="ds-panel"):
-                with Horizontal(id="console-context-row"):
+            with Horizontal(id="console-workspace-grid", classes="ds-panel"):
+                with Vertical(id="console-context-row"):
                     yield ConsoleStagedContextTray(
                         staged_context_state,
                         id="console-staged-context-tray",
@@ -344,18 +456,18 @@ class ChatScreen(BaseAppScreen):
                         id="console-run-inspector",
                         classes="console-region",
                     ):
-                        yield Static(
-                            "Run Inspector",
-                            id="console-run-inspector-title",
-                            classes="destination-section",
+                        yield ConsoleRunInspector(
+                            inspector_state,
+                            id="console-run-inspector-state",
                         )
                         if pending_launch:
                             yield from self._render_console_live_work_status_card(pending_launch)
                         else:
                             yield from self._render_console_live_work_source_readiness()
-                with Vertical(id="console-transcript-region", classes="console-region"):
-                    yield self._ensure_console_session_surface()
-                yield ConsoleComposerBar(id="console-native-composer", classes="console-region ds-panel")
+                with Vertical(id="console-main-column"):
+                    with Vertical(id="console-transcript-region", classes="console-region"):
+                        yield self._ensure_console_session_surface()
+                    yield ConsoleComposerBar(id="console-native-composer", classes="console-region ds-panel")
     
     def on_mount(self) -> None:
         """Run diagnostics when first mounted (only once)."""
@@ -758,6 +870,35 @@ class ChatScreen(BaseAppScreen):
             severity="information",
         )
 
+    @on(Button.Pressed, "#console-inspector-review-approval")
+    def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
+        """Keep approval review reachable from the Console inspector seam."""
+        event.stop()
+        if self._console_pending_approval_count() <= 0:
+            self.app_instance.notify("No approval is pending.", severity="warning")
+            return
+        self.app_instance.notify(
+            "Approval review is available from the active Console task context.",
+            severity="information",
+        )
+
+    @on(Button.Pressed, "#console-inspector-review-tool-call")
+    def handle_console_inspector_review_tool_call(self, event: Button.Pressed) -> None:
+        """Keep tool-call review reachable from the Console inspector seam."""
+        event.stop()
+        if self._console_tool_count() <= 0:
+            self.app_instance.notify("No tool calls are ready for review.", severity="warning")
+            return
+        self.app_instance.notify(
+            "Tool-call review is available from the active Console task context.",
+            severity="information",
+        )
+
+    @on(Button.Pressed, "#console-inspector-save-chatbook")
+    def handle_console_inspector_save_chatbook(self, event: Button.Pressed) -> None:
+        """Route inspector Chatbook action through the existing Console save seam."""
+        self.handle_console_save_chatbook(event)
+
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar."""
         if not self.chat_window:
@@ -798,9 +939,17 @@ class ChatScreen(BaseAppScreen):
         try:
             control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
         except QueryError:
+            control_bar = None
+        if control_bar is not None:
+            control_bar.sync_state(
+                self._build_console_control_state(self._pending_console_launch_context)
+            )
+        try:
+            inspector = self.query_one("#console-run-inspector-state", ConsoleRunInspector)
+        except QueryError:
             return
-        control_bar.sync_state(
-            self._build_console_control_state(self._pending_console_launch_context)
+        inspector.sync_state(
+            self._build_console_inspector_state(self._pending_console_launch_context)
         )
 
     def _sync_compact_shell_controls(

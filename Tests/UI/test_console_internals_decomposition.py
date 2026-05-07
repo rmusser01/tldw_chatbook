@@ -207,3 +207,67 @@ def test_console_control_state_tolerates_missing_launch_source():
     )
 
     assert state.rag_label == "RAG: off"
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_source():
+    app = _build_test_app()
+    app.app_config = {"chat_defaults": {}}
+    app.console_provider_ready = False
+    app.pending_console_launch = {
+        "source": "Library Search/RAG",
+        "title": "Grounded answer",
+        "status": "ready",
+        "recovery": "Attach a source before asking the model.",
+        "payload": {},
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-provider")
+
+        assert "Provider: blocked" in str(
+            console.query_one("#console-inspector-provider", Static).renderable
+        )
+        assert "Select a provider and model before sending." in str(
+            console.query_one("#console-inspector-provider", Static).renderable
+        )
+        assert "RAG/source: missing source" in str(
+            console.query_one("#console-inspector-rag-source", Static).renderable
+        )
+        assert console.query_one("#console-inspector-review-tool-call", Button).disabled is True
+        assert "No tool calls are ready for review." in str(
+            console.query_one("#console-inspector-review-tool-call-reason", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artifact_actions():
+    app = _build_test_app()
+    app.console_pending_approval_count = 1
+    app.console_tool_count = 1
+    app.pending_console_launch = {
+        "source": "artifacts",
+        "title": "Grounded Answer Chatbook",
+        "status": "ready",
+        "recovery": "Review this Chatbook artifact in Console or return to Artifacts.",
+        "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
+        "action_label": "Open Chatbook artifact",
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-review-approval")
+
+        assert "Approvals: 1 pending" in str(
+            console.query_one("#console-inspector-approvals", Static).renderable
+        )
+        assert "Artifacts: Chatbook artifact available" in str(
+            console.query_one("#console-inspector-artifacts", Static).renderable
+        )
+        assert console.query_one("#console-inspector-review-approval", Button).disabled is False
+        assert console.query_one("#console-inspector-review-tool-call", Button).disabled is False
+        assert console.query_one("#console-inspector-save-chatbook", Button).disabled is False
+        assert console.query_one("#console-live-work-primary-action", Button).disabled is False

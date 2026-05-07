@@ -69,7 +69,7 @@ def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows()
     assert "Daily papers" in text
     assert "Provider: blocked" in text
     assert "Configure a provider before sending." in text
-    assert "RAG: missing index" in text
+    assert "RAG/source: missing index" in text
     assert "Artifacts: save available after response" in text
 
 
@@ -85,3 +85,56 @@ def test_console_inspector_state_uses_explicit_chatbook_save_capability():
 
     assert state.can_save_chatbook is True
     assert label_only_state.can_save_chatbook is False
+
+
+def test_console_inspector_state_exposes_action_disabled_reasons():
+    state = ConsoleInspectorState.from_values(
+        provider_ready=False,
+        provider_recovery="Select a provider and model before sending.",
+        rag_status="missing source",
+        artifact_status="No Chatbook artifact available",
+        tool_count=0,
+        approval_count=0,
+        can_save_chatbook=False,
+    )
+
+    text = state.to_plain_text()
+    actions_by_id = {action.widget_id: action for action in state.actions}
+
+    assert "Tools: 0 ready" in text
+    assert "RAG/source: missing source" in text
+    assert actions_by_id["console-inspector-review-approval"].enabled is False
+    assert (
+        actions_by_id["console-inspector-review-approval"].disabled_reason
+        == "No approval is pending."
+    )
+    assert actions_by_id["console-inspector-review-tool-call"].enabled is False
+    assert (
+        actions_by_id["console-inspector-review-tool-call"].disabled_reason
+        == "No tool calls are ready for review."
+    )
+    assert actions_by_id["console-inspector-save-chatbook"].enabled is False
+    assert (
+        actions_by_id["console-inspector-save-chatbook"].disabled_reason
+        == "No Chatbook artifact is available."
+    )
+
+
+def test_console_inspector_state_enables_pending_approval_tools_and_chatbook_actions():
+    state = ConsoleInspectorState.from_values(
+        live_work_title="Grounded answer",
+        provider_ready=True,
+        rag_status="staged from Library Search/RAG",
+        artifact_status="Chatbook artifact available",
+        tool_count=2,
+        approval_count=1,
+        can_save_chatbook=True,
+    )
+
+    actions_by_id = {action.widget_id: action for action in state.actions}
+
+    assert state.has_pending_approval is True
+    assert state.can_save_chatbook is True
+    assert actions_by_id["console-inspector-review-approval"].enabled is True
+    assert actions_by_id["console-inspector-review-tool-call"].enabled is True
+    assert actions_by_id["console-inspector-save-chatbook"].enabled is True

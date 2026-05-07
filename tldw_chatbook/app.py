@@ -1711,6 +1711,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.post_message(NavigateToScreen(TAB_SUBSCRIPTIONS))
             return True
 
+        if action.target_route == TAB_ARTIFACTS:
+            self.pending_artifacts_chatbook_target_id = action.target_id
+            self.post_message(NavigateToScreen(TAB_ARTIFACTS))
+            return True
+
         self.notify("Console action route is not available yet.", severity="warning")
         return False
 
