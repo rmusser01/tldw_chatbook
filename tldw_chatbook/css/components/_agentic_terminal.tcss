@@ -142,6 +142,25 @@
     height: $ds-console-workspace-grid-height;
 }
 
+#console-control-bar {
+    height: auto;
+    min-height: 3;
+}
+
+.console-control-label,
+.console-staged-context-row,
+.console-staged-context-summary,
+.console-staged-context-recovery {
+    width: auto;
+    min-width: 0;
+    height: auto;
+}
+
+.console-compact-model-bar {
+    width: auto;
+    min-width: 0;
+}
+
 #library-mode-bar {
     height: $ds-library-mode-bar-height;
     min-height: $ds-library-mode-bar-height;

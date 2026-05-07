@@ -19,6 +19,7 @@ from textual.css.query import QueryError
 from ..Navigation.base_app_screen import BaseAppScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
 from ...Chat.chat_conversation_service import derive_conversation_title
+from ...Chat.console_display_state import ConsoleControlState, ConsoleStagedContextState
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
 from ...Chat.console_live_work import (
@@ -29,6 +30,7 @@ from ...Chat.console_live_work import (
 from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
+from ...Widgets.Console import ConsoleControlBar, ConsoleStagedContextTray
 from ...Widgets.compact_model_bar import CompactModelBar
 
 # Import the existing chat window to reuse its functionality
@@ -170,6 +172,49 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.pending_console_launch = None
         return self._pending_console_launch_context
 
+    def _chat_default_value(self, key: str) -> Any:
+        defaults = getattr(self.app_instance, "app_config", {}).get("chat_defaults", {})
+        if isinstance(defaults, dict):
+            return defaults.get(key)
+        return None
+
+    def _build_console_control_state(
+        self,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> ConsoleControlState:
+        """Build Console-owned control/readiness labels without querying Textual widgets."""
+        provider = getattr(self.app_instance, "chat_api_provider_value", None)
+        provider = provider or self._chat_default_value("provider")
+        model = self._chat_default_value("model")
+        source = pending_launch.source.lower() if pending_launch else ""
+        return ConsoleControlState.from_values(
+            provider=provider,
+            model=model,
+            persona=None,
+            rag_enabled="rag" in source,
+            staged_source_count=1 if pending_launch else 0,
+            tool_count=0,
+            approval_count=0,
+        )
+
+    def _build_console_staged_context_state(
+        self,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> ConsoleStagedContextState:
+        if pending_launch is None:
+            return ConsoleStagedContextState.empty()
+        return ConsoleStagedContextState.from_live_work(pending_launch)
+
+    def _toggle_console_chat_sidebar(self) -> None:
+        """Route Console-level compact control toggles to the embedded chat sidebar."""
+        if self.chat_window and hasattr(self.chat_window, "handle_shell_sidebar_toggle_requested"):
+            self.chat_window.handle_shell_sidebar_toggle_requested()
+            return
+        self.app_instance.notify(
+            "Chat settings are still loading.",
+            severity="warning",
+        )
+
     def _render_console_live_work_status_card(self, launch: ConsoleLiveWorkLaunch) -> ComposeResult:
         """Render a reusable live-work status card for Console launch context."""
         card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
@@ -219,6 +264,8 @@ class ChatScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
         pending_launch = self._consume_pending_console_launch()
+        control_state = self._build_console_control_state(pending_launch)
+        staged_context_state = self._build_console_staged_context_state(pending_launch)
         with Vertical(id="console-shell"):
             yield Static("Console", id="console-title", classes="ds-destination-header")
             yield Static(
@@ -236,35 +283,20 @@ class ChatScreen(BaseAppScreen):
                 id="console-mode-bar",
                 classes="ds-panel",
             )
+            yield ConsoleControlBar(
+                control_state,
+                self.app_instance,
+                on_sidebar_toggle_requested=self._toggle_console_chat_sidebar,
+                id="console-control-bar",
+                classes="ds-panel",
+            )
             with Vertical(id="console-workspace-grid", classes="ds-panel"):
                 with Horizontal(id="console-context-row"):
-                    with Vertical(
+                    yield ConsoleStagedContextTray(
+                        staged_context_state,
                         id="console-staged-context-tray",
                         classes="console-region",
-                    ):
-                        yield Static(
-                            "Staged Context",
-                            id="console-staged-context-title",
-                            classes="destination-section",
-                        )
-                        if pending_launch is not None:
-                            yield Static(
-                                (
-                                    f"Staged: {pending_launch.title}\n"
-                                    f"Source: {pending_launch.source}\n"
-                                    f"Status: {pending_launch.status}"
-                                ),
-                                id="console-staged-context-summary",
-                            )
-                        else:
-                            yield Static(
-                                (
-                                    "No live work item is staged.\n"
-                                    "Attach sources from Library, W+C, Schedules, "
-                                    "Artifacts, or RAG."
-                                ),
-                                id="console-staged-context-summary",
-                            )
+                    )
                     with Vertical(
                         id="console-run-inspector",
                         classes="console-region",
@@ -561,6 +593,13 @@ class ChatScreen(BaseAppScreen):
 
     def _get_compact_model_bar(self) -> Optional[CompactModelBar]:
         """Get the embedded compact control bar from the mounted shell bar."""
+        try:
+            return self.query_one("#console-compact-model-bar", CompactModelBar)
+        except QueryError:
+            pass
+        except Exception:
+            pass
+
         shell_bar = self._get_shell_bar()
         if not shell_bar:
             return None

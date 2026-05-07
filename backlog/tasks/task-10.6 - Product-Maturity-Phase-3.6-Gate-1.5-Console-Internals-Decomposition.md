@@ -51,4 +51,6 @@ Detailed step-by-step implementation instructions live in `Docs/superpowers/plan
 
 <!-- SECTION:NOTES:BEGIN -->
 Completed TASK-10.6.1. Console display-state contracts now exist as pure non-Textual dataclasses with focused tests, and strict xfailed mounted guardrails document the remaining embedded legacy ChatWindowEnhanced chrome for later Gate 1.5 slices.
+
+Completed TASK-10.6.2. Console now owns visible provider/model/persona/RAG/source controls and staged-context rendering outside the transcript region while preserving the legacy chat surface for compatibility until the transcript/composer replacement slices.
 <!-- SECTION:NOTES:END -->

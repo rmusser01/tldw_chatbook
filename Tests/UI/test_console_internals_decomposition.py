@@ -1,5 +1,5 @@
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Input, Select
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -52,3 +52,52 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
             or button.has_class("console-send-button")
         ]
         assert send_controls
+
+
+@pytest.mark.asyncio
+async def test_console_native_control_bar_and_staged_context_reflect_pending_handoff():
+    app = _build_test_app()
+    app.pending_console_launch = {
+        "source": "Library Search/RAG",
+        "title": "Transformer notes",
+        "status": "ready",
+        "recovery": "Review citations before sending.",
+        "payload": {"source_id": "note-1", "citation_count": 2},
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        text = _visible_text(console)
+        assert "Provider:" in text
+        assert "Model:" in text
+        assert "Assistant: General" in text
+        assert "RAG:" in text
+        assert "Sources: 1 staged" in text
+        assert "Transformer notes" in text
+        assert "citation_count: 2" in text
+        assert "Review citations before sending." in text
+
+
+@pytest.mark.asyncio
+async def test_console_native_control_bar_uses_existing_compact_model_sync_seam():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-compact-model-bar")
+
+        compact_bar = console.query_one("#console-compact-model-bar")
+        console._sync_compact_shell_controls(
+            model="console-test-model",
+            temperature="0.2",
+        )
+
+        assert (
+            compact_bar.query_one("#compact-api-model", Select).value
+            == "console-test-model"
+        )
+        assert compact_bar.query_one("#compact-temperature", Input).value == "0.2"
