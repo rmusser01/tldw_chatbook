@@ -64,8 +64,14 @@ class RecordingSourceStudyService(DashboardStudyScopeService):
         )
         return {"job": {"id": 42, "status": "queued"}}
 
-    async def get_study_pack_job_status(self, job_id: int) -> dict[str, object]:
-        self.calls.append(("get_study_pack_job_status", job_id))
+    async def get_study_pack_job_status(
+        self,
+        *,
+        mode: str | None = None,
+        job_id: int,
+    ) -> dict[str, object]:
+        assert isinstance(job_id, int)
+        self.calls.append(("get_study_pack_job_status", mode, job_id))
         statuses = getattr(self, "study_pack_job_statuses", [])
         if statuses:
             return statuses.pop(0)
@@ -242,6 +248,7 @@ async def test_server_study_dashboard_observes_completed_source_pack_for_reuse()
 
         assert app.screen.current_section == "flashcards"
 
+    assert ("get_study_pack_job_status", "server", 42) in service.calls
     app_instance.notify.assert_any_call("Study pack ready.", severity="information")
 
 
@@ -251,7 +258,7 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
     service.study_pack_job_statuses = [
         {
             "job": {"id": 42, "status": "failed"},
-            "error": "Embedding service unavailable",
+            "error": "<b>Embedding service unavailable</b> javascript: onerror=retry",
         }
     ]
     app_instance = _build_app_instance()
@@ -277,13 +284,21 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
 
         assert "failed" in _static_text(status).lower()
         assert "Embedding service unavailable" in _static_text(status)
+        assert "<b>" not in _static_text(status)
+        assert "javascript:" not in _static_text(status)
+        assert "onerror=" not in _static_text(status)
         assert generate_button.disabled is False
         assert "Retry source study-pack generation" in str(generate_button.tooltip)
 
-    app_instance.notify.assert_any_call(
-        "Study pack generation failed. Embedding service unavailable",
-        severity="error",
-    )
+    error_notifications = [
+        call.args[0]
+        for call in app_instance.notify.call_args_list
+        if call.kwargs.get("severity") == "error"
+    ]
+    assert any("Embedding service unavailable" in message for message in error_notifications)
+    assert all("<b>" not in message for message in error_notifications)
+    assert all("javascript:" not in message for message in error_notifications)
+    assert all("onerror=" not in message for message in error_notifications)
 
 
 @pytest.mark.asyncio
