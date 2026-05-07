@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
@@ -34,7 +35,7 @@ class ConsoleComposerBar(Horizontal):
             )
 
         try:
-            self.query_one("#console-composer-status", Static).update(status)
+            self.query_one("#console-composer-status", Static).update(escape(status))
         except NoMatches:
             return
 
@@ -44,7 +45,6 @@ class ConsoleComposerBar(Horizontal):
             self.DEFAULT_STATUS,
             id="console-composer-status",
             classes="console-composer-status",
-            markup=False,
         )
         yield Button(
             "Send",
