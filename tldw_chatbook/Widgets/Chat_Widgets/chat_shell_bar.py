@@ -118,6 +118,7 @@ class ChatShellBar(Container):
         resolver: Optional[ChatShellLabelResolver] = None,
         app_instance: Any = None,
         on_sidebar_toggle_requested: Callable[[], Any] | None = None,
+        show_compact_controls: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -125,6 +126,7 @@ class ChatShellBar(Container):
         self.resolver = resolver
         self.app_instance = app_instance
         self.on_sidebar_toggle_requested = on_sidebar_toggle_requested
+        self.show_compact_controls = show_compact_controls
         self.context = ChatShellContext.from_session_data(self.session_data, resolver=resolver)
 
     def compose(self) -> ComposeResult:
@@ -138,6 +140,8 @@ class ChatShellBar(Container):
             expand=True,
             shrink=True,
         )
+        if not self.show_compact_controls:
+            return
         yield CompactModelBar(
             app_instance,
             on_sidebar_toggle_requested=self.on_sidebar_toggle_requested,
