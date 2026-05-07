@@ -1,7 +1,7 @@
 # Product Maturity Roadmap
 
 Date: 2026-05-07
-Status: Phase 1 verified; Phase 2 verified; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified; Phase 3.3 verified; Phase 3.4 verified; Gate 1 / Phase 3.5 verified; Gate 1.5 / Phase 3.6 planned; Phase 3.7 verified
+Status: Phase 1 verified; Phase 2 verified; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified; Phase 3.3 verified; Phase 3.4 verified; Gate 1 / Phase 3.5 verified; Gate 1.5 / Phase 3.6 verified; Phase 3.7 verified
 Source Branch: `dev`
 Source Spec: `Docs/superpowers/specs/2026-05-05-product-maturity-phased-roadmap-design.md`
 Layout Contract Spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`
@@ -32,7 +32,7 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 - Phase 3.3 verifies the Library destination layout shell against the approved contract: mode bar, source browser, detail, inspector, authority, and existing Library actions remain visible across compact, default, and large terminal sizes.
 - Phase 3.4 verifies the first source-selected Study generation contract: Library-selected note and media source items carry into Study Dashboard and can queue a server study-pack generation job with local-mode recovery.
 - Gate 1 / Phase 3.5 verifies the core product-loop screen adaptation: Home dashboard regions, Console agentic shell regions, and actionable Library modes are mounted and usable enough to continue into required Gate 1.5 and Gate 1.6 follow-ups.
-- Gate 1.5 / Phase 3.6 is now planned as a tracked Console internals decomposition gate before broad Gate 2 work. It is split into PR-sized child tasks so the Console can become a native agentic workbench without a risky all-at-once rewrite.
+- Gate 1.5 / Phase 3.6 verifies the Console internals decomposition gate: Console now mounts native workbench components for controls, staged context, transcript/session, composer, run inspector, approvals, RAG/source state, and Chatbook artifact actions while retaining focused compatibility coverage for existing chat behavior.
 - Phase 3.7 verifies the next source-selected Study generation contract: queued server study-pack jobs can be observed into completed pack metadata and visible reusable Study dashboard state.
 
 ## Post-UX Roadmap Handoff
@@ -112,7 +112,7 @@ Product Maturity Phase 1 and Phase 2 are not reopened by default. Their existing
 | Phase 3.3 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-3-library-contract-layout.md` | verified |
 | Phase 3.4 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-07-phase-3-4-source-study-generation.md` | verified |
 | Gate 1 / Phase 3.5 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-gate-1-core-product-loop-screen-adaptation.md` | verified |
-| Gate 1.5 / Phase 3.6 | `Docs/superpowers/plans/2026-05-07-gate-1-5-console-internals-decomposition.md` | planned |
+| Gate 1.5 / Phase 3.6 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-07-gate-1-5-console-internals-decomposition.md` | verified |
 | Phase 3.7 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-07-phase-3-7-source-study-pack-completion-reuse.md` | verified |
 
 ## Phase Overview
@@ -121,7 +121,7 @@ Product Maturity Phase 1 and Phase 2 are not reopened by default. Their existing
 | --- | --- | --- | --- | --- | --- |
 | Phase 1: QA Baseline And Usability Guardrails | Establish clean-run usability guardrails before feature depth. | verified | `TASK-8`, Phase 1.1 (`TASK-8.1`), Phase 1.2 (`TASK-8.2`), Phase 1.3 (`TASK-8.3`), Phase 1.4 (`TASK-8.4`), Phase 1.5 (`TASK-8.5`), Phase 1.6 (`TASK-8.6`), Phase 1.7 (`TASK-8.7`) | `phase-1/` | Closed; full grounded generation and Artifact/Chatbook persistence move to Phase 2. |
 | Phase 2: Core Agentic Loop | Complete source/question to grounded Console to Artifact/Chatbook loop. | verified | `TASK-9`, Phase 2.1 (`TASK-9.1`), Phase 2.2 (`TASK-9.2`), Phase 2.3 (`TASK-9.3`), Phase 2.4 (`TASK-9.4`), Phase 2.5 (`TASK-9.5`) | `phase-2/2026-05-05-phase-2-1-grounded-console-response-contract.md`, `phase-2/2026-05-05-phase-2-2-console-chatbook-artifact-save-contract.md`, `phase-2/2026-05-05-phase-2-3-saved-chatbook-artifact-reopen-contract.md`, `phase-2/2026-05-05-phase-2-4-home-chatbook-artifact-resume-contract.md`, `phase-2/2026-05-06-phase-2-5-core-loop-closeout-replay.md` | Closed for the local core loop; live provider generation, full `.chatbook` export packaging, and full artifact history picking remain later-phase risks. |
-| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified; Phase 3.3 verified; Phase 3.4 verified; Gate 1 / Phase 3.5 verified; Gate 1.5 / Phase 3.6 planned; Phase 3.7 verified | `TASK-10`, Phase 3.0 (`TASK-10.0`), Phase 3.1 (`TASK-10.1`), Phase 3.2 (`TASK-10.2`), Phase 3.3 (`TASK-10.3`), Phase 3.4 (`TASK-10.4`), Gate 1 / Phase 3.5 (`TASK-10.5`), Gate 1.5 / Phase 3.6 (`TASK-10.6`), Phase 3.7 (`TASK-10.7`) | `phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md`, `phase-3/2026-05-06-phase-3-1-library-study-entry.md`, `phase-3/2026-05-06-phase-3-2-library-source-study-context.md`, `phase-3/2026-05-06-phase-3-3-library-contract-layout.md`, `phase-3/2026-05-07-phase-3-4-source-study-generation.md`, `phase-3/2026-05-06-gate-1-core-product-loop-screen-adaptation.md`, `Docs/superpowers/plans/2026-05-07-gate-1-5-console-internals-decomposition.md`, `phase-3/2026-05-07-phase-3-7-source-study-pack-completion-reuse.md` | Layout contracts, Library Study entry, Library source context, Library contract layout shell, source-selected server study-pack job launch, core Home/Console/Library screen adaptation, and completed study-pack reuse state are verified; Gate 1.5 Console internals are now split into tracked child tasks; full server job history, direct generated deck selection, Gate 1.6 Library-native Search/RAG with citations/snippets, Workspaces, Collections-in-Library, and deeper Import/Export/Search/RAG study flows remain. Post-UX roadmap execution should continue under TASK-10 unless the tracker explicitly creates a rebaseline child task for UX/UI deltas. |
+| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified; Phase 3.3 verified; Phase 3.4 verified; Gate 1 / Phase 3.5 verified; Gate 1.5 / Phase 3.6 verified; Phase 3.7 verified | `TASK-10`, Phase 3.0 (`TASK-10.0`), Phase 3.1 (`TASK-10.1`), Phase 3.2 (`TASK-10.2`), Phase 3.3 (`TASK-10.3`), Phase 3.4 (`TASK-10.4`), Gate 1 / Phase 3.5 (`TASK-10.5`), Gate 1.5 / Phase 3.6 (`TASK-10.6`), Phase 3.7 (`TASK-10.7`) | `phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md`, `phase-3/2026-05-06-phase-3-1-library-study-entry.md`, `phase-3/2026-05-06-phase-3-2-library-source-study-context.md`, `phase-3/2026-05-06-phase-3-3-library-contract-layout.md`, `phase-3/2026-05-07-phase-3-4-source-study-generation.md`, `phase-3/2026-05-06-gate-1-core-product-loop-screen-adaptation.md`, `phase-3/2026-05-07-gate-1-5-console-internals-decomposition.md`, `phase-3/2026-05-07-phase-3-7-source-study-pack-completion-reuse.md` | Layout contracts, Library Study entry, Library source context, Library contract layout shell, source-selected server study-pack job launch, core Home/Console/Library screen adaptation, Console-native internals, and completed study-pack reuse state are verified; full server job history, direct generated deck selection, Gate 1.6 Library-native Search/RAG with citations/snippets, Workspaces, Collections-in-Library, and deeper Import/Export/Search/RAG study flows remain. Post-UX roadmap execution should continue under TASK-10 unless the tracker explicitly creates a rebaseline child task for UX/UI deltas. |
 | Phase 4: Agent Configuration And Execution | Mature Personas, Skills, MCP, ACP, Schedules, and Workflows. | planned | `TASK-11` | not-started | Depends on service adapters and runtime readiness. The post-UX roadmap maps controlled agent configuration and run loops to TASK-11. |
 | Phase 5: Server-Parity And Live Integrations | Close high-value `tldw_server2` parity gaps. | planned | `TASK-12` | not-started | Requires parity inventory. The post-UX roadmap requires parity to be prioritized by workflow value rather than endpoint count. |
 | Phase 6: Release Hardening And Documentation | Reach release-candidate usability. | planned | `TASK-13` | not-started | Depends on earlier phase evidence. The post-UX roadmap public-roadmap and release-readiness refresh belongs under TASK-13. |
@@ -237,10 +237,11 @@ Status: verified
 
 - `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-gate-1-core-product-loop-screen-adaptation.md`
 
-## Gate 1.5 / Phase 3.6 Plan
+## Gate 1.5 / Phase 3.6 Evidence
 
-Status: planned
+Status: verified
 
+- `Docs/superpowers/qa/product-maturity/phase-3/2026-05-07-gate-1-5-console-internals-decomposition.md`
 - `Docs/superpowers/plans/2026-05-07-gate-1-5-console-internals-decomposition.md`
 
 ## Phase 3.7 Evidence

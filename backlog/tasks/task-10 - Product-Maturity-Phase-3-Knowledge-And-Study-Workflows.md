@@ -4,7 +4,7 @@ title: 'Product Maturity Phase 3: Knowledge And Study Workflows'
 status: In Progress
 assignee: []
 created_date: '2026-05-05 15:11'
-updated_date: '2026-05-06 06:27'
+updated_date: '2026-05-07 07:05'
 labels:
   - product-maturity
   - phase-3-knowledge-study
@@ -40,4 +40,6 @@ Continued Phase 3 with TASK-10.4. Library-selected note and media source items n
 Continued Phase 3 with TASK-10.5. Gate 1 now adapts Home Console and Library into the core product-loop screen model: Home Command Center regions, Console Agent Workbench regions around the existing chat surface, and actionable Library modes. Parent remains open for required Gate 1.5 Console internals decomposition, Gate 1.6 Library-native Search/RAG with citations/snippets, Library-owned Collections, and later Knowledge/Study workflow depth.
 
 Continued Phase 3 with TASK-10.7. Queued server source study-pack jobs now observe bounded completion status and surface ready pack metadata as reusable Study dashboard state. Parent remains open for full server job history direct generated deck selection conversation message-level selection Workspaces Library Collections citations/snippets and deeper Import/Export Search/RAG workflows.
+
+Closed Gate 1.5 with TASK-10.6. Console now uses native workbench internals for provider/model controls staged context transcript/session composer run inspector approvals RAG/source state and Chatbook artifact actions instead of presenting a full embedded legacy Chat screen. Parent remains open for Gate 1.6 Library-native Search/RAG with citations/snippets Workspaces Library Collections and deeper Import/Export/Search/RAG study workflows.
 <!-- SECTION:NOTES:END -->

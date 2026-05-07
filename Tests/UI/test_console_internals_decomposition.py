@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from textual.widgets import Button, Input, Select, Static
 
@@ -11,6 +13,54 @@ from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+GATE15_EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-3/"
+    "2026-05-07-gate-1-5-console-internals-decomposition.md"
+)
+ROADMAP = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
+PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
+TASK_10_6 = Path(
+    "backlog/tasks/task-10.6 - "
+    "Product-Maturity-Phase-3.6-Gate-1.5-Console-Internals-Decomposition.md"
+)
+
+
+def _repo_text(path: Path) -> str:
+    return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def test_gate15_console_internals_evidence_is_tracked():
+    evidence = _repo_text(GATE15_EVIDENCE)
+    roadmap = _repo_text(ROADMAP)
+    readme = _repo_text(PHASE_3_README)
+    task = _repo_text(TASK_10_6)
+
+    for heading in (
+        "## Scope",
+        "## Walkthrough",
+        "## Functional Result",
+        "## Verification",
+        "## Defects",
+        "## Residual Risk",
+        "## Exit Decision",
+    ):
+        assert heading in evidence
+    for selector in (
+        "#console-control-bar",
+        "#console-session-surface",
+        "#console-native-composer",
+        "#console-run-inspector",
+    ):
+        assert selector in evidence
+    assert GATE15_EVIDENCE.name in readme
+    assert GATE15_EVIDENCE.name in roadmap
+    assert "Gate 1.5" in roadmap
+    assert "TASK-10.6" in roadmap
+    assert "status: Done" in task
+    assert "## Implementation Notes" in task
 
 
 @pytest.mark.asyncio
