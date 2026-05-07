@@ -56,7 +56,7 @@ Completed TASK-10.6.2. Console now owns visible provider/model/persona/RAG/sourc
 
 Completed TASK-10.6.3. Console now mounts a native transcript/session surface and native composer action row instead of embedding the full `ChatWindowEnhanced` chrome; chat tabs, handoff draft text, state restoration seams, and direct `ChatWindowEnhanced` compatibility tests remain covered by focused regressions.
 
-Completed TASK-10.6.4. Console now owns a native run inspector for live-work provenance provider readiness tool readiness RAG/source state Chatbook artifact availability approvals and target-specific disabled action reasons while preserving existing Console transcript/composer compatibility seams.
+Completed TASK-10.6.4. Console now owns a native run inspector for live-work provenance, provider readiness, tool readiness, RAG/source state, Chatbook artifact availability, approvals, and target-specific disabled action reasons while preserving existing Console transcript/composer compatibility seams.
 
 Completed TASK-10.6.5. Gate 1.5 QA evidence now verifies the Console-native workbench closeout and the roadmap/screen-design audit/Phase 3 evidence index track Gate 1.5 as verified. Residual risks remain explicitly scoped to Gate 1.6 Library-native Search/RAG, remaining Phase 3 Knowledge/Study depth, and later agent/runtime phases.
 <!-- SECTION:NOTES:END -->

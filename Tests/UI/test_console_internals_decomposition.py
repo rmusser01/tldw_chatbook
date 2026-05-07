@@ -55,6 +55,7 @@ def test_gate15_console_internals_evidence_is_tracked():
         "#console-run-inspector",
     ):
         assert selector in evidence
+    assert "/Users/macbook-dev/" not in evidence
     assert GATE15_EVIDENCE.name in readme
     assert GATE15_EVIDENCE.name in roadmap
     assert "Gate 1.5" in roadmap

@@ -32,7 +32,7 @@ Existing chat behavior remains covered through compatibility tests instead of re
 
 Red evidence-tracking regression:
 
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_console_internals_decomposition.py::test_gate15_console_internals_evidence_is_tracked --tb=short`
+- `python -m pytest -q Tests/UI/test_console_internals_decomposition.py::test_gate15_console_internals_evidence_is_tracked --tb=short`
 - Result before closeout docs/task updates: failed with `FileNotFoundError` for `2026-05-07-gate-1-5-console-internals-decomposition.md`, proving the tracking test guarded the missing evidence.
 
 Gate 1.5 focused implementation evidence from completed child tasks:
@@ -44,7 +44,7 @@ Gate 1.5 focused implementation evidence from completed child tasks:
 
 Final closeout verification:
 
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Chat/test_console_display_state.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_shell_bar.py Tests/UI/test_chat_tab_container.py Tests/UI/test_chat_window_enhanced.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_chat_approvals_and_resume.py Tests/UI/test_chat_screen_state.py --tb=short`
+- `python -m pytest -q Tests/Chat/test_console_display_state.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_shell_bar.py Tests/UI/test_chat_tab_container.py Tests/UI/test_chat_window_enhanced.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_chat_approvals_and_resume.py Tests/UI/test_chat_screen_state.py --tb=short`
 - Result: `170 passed, 8 warnings in 70.64s`.
 - `git diff --check`
 - Result: passed with no output.
