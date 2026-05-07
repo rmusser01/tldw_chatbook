@@ -21,3 +21,4 @@ Phase 3.0 records destination layout and IA contracts before additional Phase 3 
 - `2026-05-06-phase-3-2-library-source-study-context.md`
 - `2026-05-06-phase-3-3-library-contract-layout.md`
 - `2026-05-07-phase-3-4-source-study-generation.md`
+- `2026-05-06-gate-1-core-product-loop-screen-adaptation.md`

@@ -1,7 +1,7 @@
 # Master Shell UX Design
 
 Date: 2026-05-02
-Last Updated: 2026-05-02
+Last Updated: 2026-05-06
 Status: User-approved design, pending spec review and implementation planning
 Primary Repo: `tldw_chatbook`
 Scope: Master shell UX, first-run dashboard, top-level information architecture, Console-centered live work, local parity destinations, and migration constraints
@@ -36,7 +36,7 @@ Current user-facing risks:
 - Home/onboarding work is useful but too narrow if treated as only a first-run feature.
 - RAG/search, imports, notes, media, conversations, and artifacts need clearer boundaries.
 - MCP, ACP, and Skills are distinct concepts but can easily blur without explicit ownership rules.
-- Watchlists and Collections should mirror server-side local parity domains rather than become a generic bucket.
+- Watchlists should mirror server-side local parity domains while Collections move under Library as reusable source sets.
 - Schedules and Workflows can blur unless the app clearly separates "when it runs" from "what procedure runs."
 - Live agent work can fragment unless every launch/follow path converges on Console.
 
@@ -52,7 +52,7 @@ For a new user, this creates uncertainty about where to start. For a power user,
 - Keep local/server/workspace source authority visible.
 - Preserve power-user speed, keyboard shortcuts, command palette access, and dense TUI workflows.
 - Keep every destination's role clear enough to guide implementation and test coverage.
-- Align Watchlists and Collections with the local versions of their `tldw_server2` functionality.
+- Align Watchlists with local `tldw_server2` monitoring functionality and align Collections with Library source organization.
 - Treat Skills as Agent Skills spec-compatible capability packs with discovery/import and attachment points.
 
 ## Non-Goals
@@ -88,7 +88,7 @@ The top-level shell should expose these destinations:
 - `Library`
 - `Artifacts`
 - `Personas`
-- `Watchlists+Collections`
+- `W+C` / Watchlists compatibility surface
 - `Schedules`
 - `Workflows`
 - `MCP`
@@ -194,9 +194,9 @@ Personas includes:
 
 Personas can be attached to Console sessions, Workflows, ACP agents, and Skills.
 
-### Watchlists+Collections
+### Watchlists
 
-Watchlists+Collections is one top-level destination with two primary internal tabs: `Watchlists` and `Collections`.
+`W+C` remains a legacy compact route label during migration, but the destination's future ownership is Watchlists.
 
 This destination represents local versions of the corresponding `tldw_server2` functionality.
 
@@ -215,7 +215,7 @@ Watchlists owns monitored-source workflows:
 - telemetry/status
 - retry and backoff state
 
-Collections owns curated reading/content workflows:
+Library Collections owns curated reading/content workflows:
 
 - reading/content items
 - highlights
@@ -227,7 +227,7 @@ Collections owns curated reading/content workflows:
 - feeds/subscriptions where available
 - import/export
 
-Watchlists+Collections can feed Library, Schedules, Workflows, Artifacts, and Console, but it should not be reduced to any one of them.
+Watchlists can feed Library, Schedules, Workflows, Artifacts, and Console. Collection create/edit/review belongs in Library.
 
 ### Schedules
 
@@ -358,7 +358,7 @@ The user-facing IA may change before internal route IDs do.
 | `Library` | wraps or groups `notes`, `media`, `search`, `ingest`, conversation browsing |
 | `Artifacts` | wraps Chatbooks and output/bundle surfaces |
 | `Personas` | character/persona/prompt/dictionary/lore portions of current `ccp` |
-| `Watchlists+Collections` | local watchlists and collections parity surfaces |
+| `W+C` / Watchlists | local watchlists, monitored sources, alerts, and run history; Library owns Collections |
 | `Schedules` | schedule and trigger surfaces |
 | `Workflows` | workflow definitions, builders, templates, dry-runs |
 | `MCP` | MCP/tool configuration and audit surfaces |
@@ -435,7 +435,7 @@ Priority order:
 4. Set up required model, agent, or tools.
 5. Import or search Library content.
 6. Start a Console task.
-7. Explore Personas, Workflows, Skills, or Watchlists+Collections.
+7. Explore Personas, Workflows, Skills, Watchlists, or Library Collections.
 
 The recommendation must be derived from deterministic state, not ad hoc UI checks.
 
@@ -461,7 +461,8 @@ Show compact re-entry:
 - recent Library items
 - recent Artifacts
 - recent Workflows
-- recent Watchlists/Collections activity
+- recent Watchlist activity
+- recent Library Collections activity
 - recently used Personas
 - recently used Skills
 
@@ -512,7 +513,7 @@ Console must support:
 
 ### Handoff Rules
 
-- Handoffs from Library, Artifacts, Personas, Watchlists+Collections, Schedules, Workflows, MCP, ACP, and Skills should open or follow in Console when live work begins.
+- Handoffs from Library, Artifacts, Personas, Watchlists, Schedules, Workflows, MCP, ACP, and Skills should open or follow in Console when live work begins.
 - Staged source/context must be visible before send/run.
 - Nothing should auto-send without explicit user action.
 - The user must be able to edit, remove, or change role before sending.
@@ -591,12 +592,9 @@ Required capabilities:
 - attach persona to ACP agent
 - recommend compatible Skills
 
-### Watchlists+Collections Contract
+### Watchlists Contract
 
-Watchlists+Collections must expose two internal tabs:
-
-- `Watchlists`
-- `Collections`
+The current `W+C` route must preserve compatibility while making Watchlists the operational surface and pointing collection workflows to Library.
 
 Watchlists sections:
 
@@ -610,18 +608,7 @@ Watchlists sections:
 - Templates
 - Settings/Status
 
-Collections sections:
-
-- Reading/content items
-- Highlights
-- Saved searches
-- Feeds/subscriptions
-- Archive state
-- Note links
-- Templates
-- Import/Export
-
-The screen must preserve the distinction between monitored streams and curated content.
+Library owns Collections sections such as reading/content items, highlights, saved searches, archive state, note links, templates, and import/export. The watchlists screen must preserve the distinction by sending collection workflows to Library instead of duplicating them.
 
 ### Schedules Contract
 
@@ -853,7 +840,7 @@ Home and destination empty states should teach enough to complete the next actio
 
 ### Phase 5: Destination Containers
 
-- Create or refactor top-level shells for Library, Artifacts, Personas, Watchlists+Collections, Schedules, Workflows, MCP, ACP, Skills, and Settings.
+- Create or refactor top-level shells for Library, Artifacts, Personas, Watchlists, Schedules, Workflows, MCP, ACP, Skills, and Settings.
 - Wrapping existing screens is acceptable if the new destination contract is visible.
 
 ### Phase 6: Cross-Surface Flows
@@ -928,7 +915,7 @@ Mitigation:
 
 Mitigation:
 
-- Watchlists+Collections spec references server domain concepts
+- Watchlists and Library Collections specs reference the relevant server domain concepts
 - implementation should inspect `tldw_server2` schemas before building local parity
 
 ### Risk: Existing users lose muscle memory
@@ -984,10 +971,10 @@ Measurement must not block the shell migration unless no other verification is p
 - Home shows global status, notifications, active work, and lightweight controls.
 - A returning user with prior work can resume from last active screen or Home without forced onboarding.
 - User-facing `Chat` is reframed as `Console` while preserving internal route compatibility.
-- Live agent work from Workflows, Schedules, ACP, Personas, Library, Skills, and Watchlists+Collections opens or follows in Console.
+- Live agent work from Workflows, Schedules, ACP, Personas, Library, Skills, and Watchlists opens or follows in Console.
 - Library includes Search/RAG and Import/Export, while Console can also answer using RAG.
 - Artifacts is separate from Library and contains Chatbooks plus generated/portable outputs.
-- Watchlists+Collections is one destination with `Watchlists` and `Collections` internal tabs.
+- `W+C` remains a compatibility route for Watchlists; Collections are Library-owned reusable source sets.
 - Schedules and Workflows remain separate top-level destinations with clear ownership.
 - MCP, ACP, and Skills have distinct, testable boundaries.
 - Source authority and runtime capability states remain visible.
@@ -1002,7 +989,7 @@ Proceed with the master shell redesign using this IA:
 - `Library`
 - `Artifacts`
 - `Personas`
-- `Watchlists+Collections`
+- `W+C` / Watchlists compatibility surface
 - `Schedules`
 - `Workflows`
 - `MCP`

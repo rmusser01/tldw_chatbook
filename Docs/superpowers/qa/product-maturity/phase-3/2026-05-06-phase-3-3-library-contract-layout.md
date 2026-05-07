@@ -6,7 +6,7 @@ Status: verified
 
 Phase 3.3 verifies that the running Library destination exposes the approved Phase 3.0 Library layout contract enough for users to orient and act without knowing legacy route names.
 
-This is a shell layout gate only. It does not implement deeper source-selected generation, full Workspaces management, Collections flows, or new Search/RAG/Import/Export internals.
+This is a shell layout gate only. It does not implement deeper source-selected generation, full Workspaces management, full Library Collections flows, or new Search/RAG/Import/Export internals.
 
 ## Evidence
 
@@ -41,6 +41,7 @@ Observed visible contract labels:
 - Search/RAG
 - Import/Export
 - Workspaces
+- Collections
 - Study
 - Flashcards
 - Quizzes
@@ -95,10 +96,10 @@ No P0/P1 defects found after the final layout change.
 
 ## Residual Risk
 
-- Search/RAG, Import/Export, Workspaces, Flashcards, and Quizzes still route into existing surfaces; their deeper contract implementations remain later Phase 3 child gates.
+- Search/RAG, Import/Export, Workspaces, Collections, Flashcards, and Quizzes still route into existing or shallow surfaces; their deeper contract implementations remain later Phase 3 child gates.
 - Workspaces are visible as scope language but not yet a full Library-native workspace manager in this slice.
-- Collections remain owned by W+C; Library only exposes Workspaces scope and source material actions.
+- Collections are now Library-owned, but this slice only verifies their visible mode placement. Full collection create/edit/review behavior remains later Phase 3 work.
 
 ## Exit Decision
 
-Phase 3.3 Library contract layout shell is verified. Continue Phase 3 with deeper source-selected generation, Search/RAG, Import/Export, Workspaces, and Collections-adjacent workflow gates.
+Phase 3.3 Library contract layout shell is verified. Continue Phase 3 with deeper source-selected generation, Search/RAG, Import/Export, Workspaces, Library Collections, and citation/snippet workflow gates.

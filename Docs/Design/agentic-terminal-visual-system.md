@@ -22,7 +22,7 @@ Runtime shell implementation must not introduce new visual patterns, token names
 ## Verified Runtime Notes
 
 - The visible top navigation may use compact labels, but runtime metadata must expose full labels through `ShellDestination.full_label`/`accessible_label`, tooltips, and command-palette help/search.
-- `W+C` is the verified compact-label case; `Watchlists+Collections` remains searchable and visible in help text.
+- `W+C` is the verified compact-label compatibility case; watchlists remain searchable in help text, and Collections are discoverable through Library.
 - The footer shortcut display is backed by `ShortcutContext` and `ShortcutAction`; changing context replaces stale shortcuts instead of appending to them.
 - `BaseAppScreen` is still the current screen wrapper seam. Tests verify it mounts one `MainNavigationBar`; a full app-owned chrome migration is deferred.
 - Runtime TCSS uses hyphenated `$ds-*` variables only. Dotted concept names are allowed in design discussion, not TCSS variable references.

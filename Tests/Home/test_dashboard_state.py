@@ -1,6 +1,7 @@
 from tldw_chatbook.Home.dashboard_state import (
     HomeActiveWorkItem,
     HomeDashboardInput,
+    choose_home_selected_item,
     choose_next_best_action,
     summarize_home_dashboard,
 )
@@ -115,6 +116,41 @@ def test_failed_work_details_follow_failed_item_when_mixed_with_running_work():
     assert dashboard.next_action.action_id == "review_failed_work"
     assert controls_by_id["home-open-details"].target_id == "local:watchlist_run:5"
     assert controls_by_id["home-retry"].target_id == "local:watchlist_run:5"
+
+
+def test_home_selected_item_uses_same_priority_as_default_details_control():
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:chatbook:77",
+                title="Grounded Answer",
+                source="Artifacts",
+                status="ready",
+                detail_route="artifacts",
+                console_available=True,
+            ),
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:5",
+                title="Daily security feed",
+                source="W+C",
+                status="failed",
+                detail_route="subscriptions",
+                console_available=True,
+            ),
+        ),
+    )
+
+    dashboard = summarize_home_dashboard(state)
+    selected_item = choose_home_selected_item(state)
+
+    assert selected_item is not None
+    assert selected_item.item_id == "local:watchlist_run:5"
+    controls_by_id = {control.control_id: control for control in dashboard.controls}
+    assert controls_by_id["home-open-details"].target_id == selected_item.item_id
+    assert controls_by_id["home-open-details"].target_route == selected_item.detail_route
+    assert controls_by_id["home-open-in-console"].target_id == selected_item.item_id
 
 
 def test_dashboard_summary_exposes_required_sections():
