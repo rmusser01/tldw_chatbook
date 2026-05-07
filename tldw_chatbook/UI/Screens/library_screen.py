@@ -25,6 +25,7 @@ from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
     MATERIAL_TITLE_LIBRARY_SOURCES,
     StudyScopeContext,
+    StudySourceItem,
 )
 
 
@@ -271,6 +272,34 @@ class LibraryScreen(BaseAppScreen):
             for record in self._local_source_records[source_type]
         ]
 
+    @classmethod
+    def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
+        for key in ("id", "uuid", "record_id", "backing_id", "source_id"):
+            value = cls._safe_text(record.get(key), max_length=128)
+            if value:
+                return value
+        return None
+
+    def _study_source_items(self) -> tuple[StudySourceItem, ...]:
+        source_items: list[StudySourceItem] = []
+        source_type_map = {
+            "notes": "note",
+            "media": "media",
+        }
+        for source_type, study_source_type in source_type_map.items():
+            for record in self._local_source_records[source_type]:
+                source_id = self._source_record_id(record)
+                if not source_id:
+                    continue
+                source_items.append(
+                    StudySourceItem(
+                        source_type=study_source_type,
+                        source_id=source_id,
+                        label=self._source_title(source_type, record),
+                    )
+                )
+        return tuple(source_items)
+
     def _source_count_metadata(self) -> dict[str, int | None]:
         metadata: dict[str, int | None] = {}
         for source_type in ("notes", "media", "conversations"):
@@ -302,6 +331,7 @@ class LibraryScreen(BaseAppScreen):
             material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
             material_summary=self._source_snapshot_body(),
             material_titles=tuple(material_titles),
+            source_items=self._study_source_items(),
             return_hint=MATERIAL_SOURCE_LIBRARY,
         )
 

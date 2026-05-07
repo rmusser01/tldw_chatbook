@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import hashlib
 from inspect import isawaitable
 import re
@@ -35,9 +36,12 @@ from .study_scope_models import (
     STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLES_LIMIT,
+    STUDY_SOURCE_ID_LENGTH_LIMIT,
+    STUDY_SOURCE_ITEMS_LIMIT,
     StudyScopeContext,
     StudyScopeState,
     StudyScopeType,
+    StudySourceItem,
 )
 
 
@@ -174,6 +178,7 @@ class StudyScreen(BaseAppScreen):
                 scope_state.material_title,
                 scope_state.material_summary,
                 scope_state.material_titles,
+                scope_state.source_items,
             )
         ):
             return None
@@ -185,6 +190,11 @@ class StudyScreen(BaseAppScreen):
             scope_state.material_summary or "",
             str(len(scope_state.material_titles)),
             *scope_state.material_titles[:STUDY_MATERIAL_TITLES_LIMIT],
+            str(len(scope_state.source_items)),
+            *(
+                f"{item.source_type}:{item.source_id}:{item.label or ''}"
+                for item in scope_state.source_items[:STUDY_SOURCE_ITEMS_LIMIT]
+            ),
         )
         for part in parts:
             digest.update(part.encode("utf-8", errors="ignore"))
@@ -213,6 +223,48 @@ class StudyScreen(BaseAppScreen):
             if clean_title:
                 cleaned.append(clean_title)
             if len(cleaned) >= STUDY_MATERIAL_TITLES_LIMIT:
+                break
+        return tuple(cleaned)
+
+    def _clean_source_items(self, source_items: tuple[StudySourceItem, ...]) -> tuple[StudySourceItem, ...]:
+        cleaned: list[StudySourceItem] = []
+        for item in source_items:
+            if not isinstance(item, StudySourceItem):
+                continue
+            source_type = self._clean_material_text(item.source_type, max_length=32)
+            if source_type not in {"note", "media", "message"}:
+                continue
+            source_id = self._clean_material_text(
+                item.source_id,
+                max_length=STUDY_SOURCE_ID_LENGTH_LIMIT,
+            )
+            if not source_id:
+                continue
+            label = self._clean_material_text(
+                item.label,
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            ) or None
+            excerpt_text = self._clean_material_text(
+                item.excerpt_text,
+                max_length=STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
+            ) or None
+            locator: dict[str, Any] = {}
+            if isinstance(item.locator, Mapping):
+                for key, value in item.locator.items():
+                    clean_key = self._clean_material_text(key, max_length=64)
+                    clean_value = self._clean_material_text(value, max_length=160)
+                    if clean_key and clean_value:
+                        locator[clean_key] = clean_value
+            cleaned.append(
+                StudySourceItem(
+                    source_type=source_type,
+                    source_id=source_id,
+                    label=label,
+                    excerpt_text=excerpt_text,
+                    locator=locator,
+                )
+            )
+            if len(cleaned) >= STUDY_SOURCE_ITEMS_LIMIT:
                 break
         return tuple(cleaned)
 
@@ -251,6 +303,7 @@ class StudyScreen(BaseAppScreen):
             )
             or None,
             material_titles=self._clean_material_titles(tuple(scope_context.material_titles or ())),
+            source_items=self._clean_source_items(tuple(scope_context.source_items or ())),
         )
 
     def _consume_pending_scope_context(self) -> Optional[StudyScopeContext]:
@@ -422,6 +475,114 @@ class StudyScreen(BaseAppScreen):
             topic = str(self.current_study_session.get("topic") or "session").strip()
             summary = f"{section}: {topic}"
         self.study_dashboard.update_resume_action(summary)
+        self.study_dashboard.update_source_generation_action(**self._source_generation_dashboard_state())
+
+    def _source_generation_dashboard_state(self) -> dict[str, Any]:
+        if not self.scope_state.source_items:
+            return {
+                "enabled": False,
+                "status": "Source generation is unavailable until Study has selected source items.",
+                "tooltip": "Open Study from selected Library sources in server mode to generate a study pack.",
+            }
+        if self.scope_state.error_message:
+            return {
+                "enabled": False,
+                "status": self.scope_state.error_message,
+                "tooltip": self.scope_state.error_message,
+            }
+        if self._runtime_backend() != "server":
+            return {
+                "enabled": False,
+                "status": "Source generation requires server mode.",
+                "tooltip": "Switch to server mode to generate a study pack from selected Library sources.",
+            }
+        return {
+            "enabled": True,
+            "status": f"{len(self.scope_state.source_items)} selected source items ready for study-pack generation.",
+            "tooltip": "Generate a server study pack from the selected Library sources.",
+        }
+
+    def _source_study_pack_title(self) -> str:
+        return self.scope_state.material_title or "Selected Source Study Pack"
+
+    def _source_items_payload(self) -> list[dict[str, Any]]:
+        return [item.as_payload() for item in self.scope_state.source_items]
+
+    async def _generate_source_study_pack(self) -> None:
+        if self.study_dashboard is not None and self.study_dashboard.is_mounted:
+            self.study_dashboard.update_source_generation_action(
+                enabled=False,
+                status="Queuing source study-pack generation...",
+                tooltip="Source study-pack generation is already queued.",
+            )
+
+        state = self._source_generation_dashboard_state()
+        if not state["enabled"]:
+            if self.study_dashboard is not None and self.study_dashboard.is_mounted:
+                self.study_dashboard.update_source_generation_action(**state)
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(state["status"], severity="warning")
+            return
+
+        study_service = getattr(self.app_instance, "study_scope_service", None)
+        create_job = getattr(study_service, "create_study_pack_job", None)
+        if not callable(create_job):
+            status = "Study pack generation is unavailable in this runtime."
+            if self.study_dashboard is not None and self.study_dashboard.is_mounted:
+                self.study_dashboard.update_source_generation_action(
+                    enabled=False,
+                    status=status,
+                    tooltip=status,
+                )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(status, severity="warning")
+            return
+
+        try:
+            result = await self._maybe_await(
+                create_job(
+                    mode=self._runtime_backend(),
+                    title=self._source_study_pack_title(),
+                    workspace_id=(
+                        self.scope_state.workspace_id
+                        if self.scope_state.scope_type == StudyScopeType.WORKSPACE
+                        else None
+                    ),
+                    source_items=self._source_items_payload(),
+                )
+            )
+        except Exception:
+            logger.error("Failed to queue source study-pack generation", exc_info=True)
+            status = "Failed to queue source study-pack generation."
+            if self.study_dashboard is not None and self.study_dashboard.is_mounted:
+                self.study_dashboard.update_source_generation_action(
+                    enabled=True,
+                    status=status,
+                    tooltip="Retry source study-pack generation.",
+                )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(status, severity="error")
+            return
+
+        job = result.get("job") if isinstance(result, dict) else None
+        job_id = job.get("id") if isinstance(job, dict) else None
+        job_status = str(job.get("status") or "queued") if isinstance(job, dict) else "queued"
+        if job_id is not None:
+            status = f"Study pack generation {job_status}: job {job_id}."
+        else:
+            status = f"Study pack generation {job_status}."
+        if self.study_dashboard is not None and self.study_dashboard.is_mounted:
+            self.study_dashboard.update_source_generation_action(
+                enabled=True,
+                status=status,
+                tooltip="Generate another server study pack from the selected Library sources.",
+            )
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify("Study pack generation queued.", severity="information")
 
     def _status_text_from_window(self, widget_id: str) -> str:
         study_window = self.study_window_widget
@@ -786,12 +947,20 @@ class StudyScreen(BaseAppScreen):
                     "material_title": self.scope_state.material_title,
                     "material_summary": self.scope_state.material_summary,
                     "material_titles": list(self.scope_state.material_titles),
+                    "source_items": [item.as_payload() for item in self.scope_state.source_items],
                 },
                 "study_section": self.current_section,
                 "current_study_session": self.current_study_session,
             }
         )
         return state
+
+    @staticmethod
+    def _restored_source_item_locator(item: dict[str, Any]) -> dict[str, Any]:
+        locator = item.get("locator")
+        if isinstance(locator, Mapping):
+            return dict(locator)
+        return {}
 
     def restore_state(self, state: dict[str, Any]) -> None:
         super().restore_state(state)
@@ -807,6 +976,17 @@ class StudyScreen(BaseAppScreen):
                     material_title=saved_scope.get("material_title"),
                     material_summary=saved_scope.get("material_summary"),
                     material_titles=tuple(saved_scope.get("material_titles") or ()),
+                    source_items=tuple(
+                        StudySourceItem(
+                            source_type=str(item.get("source_type") or ""),
+                            source_id=str(item.get("source_id") or ""),
+                            label=item.get("label"),
+                            excerpt_text=item.get("excerpt_text"),
+                            locator=self._restored_source_item_locator(item),
+                        )
+                        for item in list(saved_scope.get("source_items") or [])
+                        if isinstance(item, dict)
+                    ),
                 )
             )
             self._effective_scope_key = self._scope_key(self.scope_state)
@@ -904,6 +1084,10 @@ class StudyScreen(BaseAppScreen):
     @on(Button.Pressed, "#study-open-quizzes")
     def handle_dashboard_open_quizzes(self) -> None:
         self.activate_section("quizzes")
+
+    @on(Button.Pressed, "#study-generate-source-pack")
+    def handle_generate_source_pack(self) -> None:
+        self.run_worker(self._generate_source_study_pack(), exclusive=True)
 
     @on(Button.Pressed, "#study-resume-last")
     def handle_resume_last_session(self) -> None:

@@ -34,4 +34,6 @@ Started Phase 3 with TASK-10.1 as the first PR-sized Knowledge and Study workflo
 Continued Phase 3 with TASK-10.2. Library source context now carries into Study Dashboard Flashcards and Quizzes without changing deck/quiz service scope. Parent remains open for source-selected generation Workspaces Collections Import/Export Search/RAG and Console reuse gates.
 
 Continued Phase 3 with TASK-10.3. The Library destination now exposes the approved Phase 3.0 layout shell with mode bar source browser source detail and inspector regions across compact default and large terminal sizes. Parent remains open for source-selected study generation Workspaces Collections and deeper Import/Export Search/RAG workflows.
+
+Continued Phase 3 with TASK-10.4. Library-selected note and media source items now carry into Study Dashboard and can queue a server study-pack generation job with local-mode recovery. Parent remains open for completed study-pack polling/reuse conversation message-level selection Workspaces Collections and deeper Import/Export Search/RAG workflows.
 <!-- SECTION:NOTES:END -->
