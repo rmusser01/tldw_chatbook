@@ -44,6 +44,7 @@ class ConsoleComposerBar(Horizontal):
             self.DEFAULT_STATUS,
             id="console-composer-status",
             classes="console-composer-status",
+            markup=False,
         )
         yield Button(
             "Send",

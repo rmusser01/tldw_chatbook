@@ -10,12 +10,12 @@ import toml
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 from textual.events import Key
 from textual import on
 from textual.reactive import reactive
-from textual.css.query import QueryError
+from textual.css.query import NoMatches, QueryError
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
@@ -532,15 +532,15 @@ class ChatScreen(BaseAppScreen):
         """Get the ChatTabContainer widget."""
         try:
             return self.query_one("#console-chat-tabs", ChatTabContainer)
-        except Exception:
+        except NoMatches:
             pass
 
         try:
-            if self.chat_window and hasattr(self.chat_window, '_tab_container'):
-                return self.chat_window._tab_container
-            if self.chat_window:
+            if isinstance(self.chat_window, ChatWindowEnhanced):
+                if self.chat_window._tab_container is not None:
+                    return self.chat_window._tab_container
                 return self.chat_window.query_one("ChatTabContainer")
-        except Exception:
+        except NoMatches:
             return None
         return None
 
@@ -561,6 +561,76 @@ class ChatScreen(BaseAppScreen):
     def _chat_query_scope(self):
         """Prefer the legacy chat window when present, else the native Console tree."""
         return self.chat_window or self
+
+    def _get_active_chat_input(self) -> Optional[TextArea]:
+        """Return the active session input before falling back to legacy single-chat input."""
+        session = self._get_active_chat_session()
+        if session is not None:
+            get_chat_input = getattr(session, "get_chat_input", None)
+            if callable(get_chat_input):
+                try:
+                    chat_input = get_chat_input()
+                    if chat_input is not None:
+                        return chat_input
+                except QueryError:
+                    logger.debug("Active session chat input was not mounted")
+
+        try:
+            return self._chat_query_scope().query_one("#chat-input", TextArea)
+        except QueryError:
+            return None
+
+    def _get_active_chat_log(self):
+        """Return the active session chat log before falling back to legacy chat logs."""
+        session = self._get_active_chat_session()
+        if session is not None:
+            get_chat_log = getattr(session, "get_chat_log", None)
+            if callable(get_chat_log):
+                try:
+                    chat_log = get_chat_log()
+                    if chat_log is not None:
+                        return chat_log
+                except QueryError:
+                    logger.debug("Active session chat log was not mounted")
+
+            session_data = getattr(session, "session_data", None)
+            tab_id = getattr(session_data, "tab_id", None)
+            if tab_id:
+                try:
+                    return session.query_one(f"#chat-log-{tab_id}", VerticalScroll)
+                except QueryError:
+                    logger.debug(f"Active session chat log for tab {tab_id} was not mounted")
+
+        return None
+
+    @staticmethod
+    def _first_query_result(containers: Any) -> Any:
+        if hasattr(containers, "first"):
+            return containers.first()
+        return containers[0]
+
+    def _find_chat_log_container(self, selectors: list[str]):
+        """Find the correct chat log, preferring the active tab over DOM order."""
+        active_log = self._get_active_chat_log()
+        if active_log is not None:
+            return active_log
+
+        try:
+            return self.app_instance.query_one("#chat-log", VerticalScroll)
+        except (LookupError, QueryError):
+            pass
+
+        for selector in selectors:
+            try:
+                containers = self._chat_query_scope().query(selector)
+            except QueryError as e:
+                logger.debug(f"Could not find chat log with {selector}: {e}")
+                continue
+            if containers:
+                logger.debug(f"Found chat log container with selector: {selector}")
+                return self._first_query_result(containers)
+
+        return None
 
     def _session_data_for_handoff(self, payload: ChatHandoffPayload) -> ChatSessionData:
         title_item_type = payload.item_type.replace("-", " ").title()
@@ -995,11 +1065,7 @@ class ChatScreen(BaseAppScreen):
             if tab_container and tab_container.active_session_id:
                 active_tab = self.chat_state.get_tab_by_id(tab_container.active_session_id)
                 if active_tab:
-                    session = self._get_active_chat_session()
-                    if session is not None and hasattr(session, "get_chat_input"):
-                        input_widget = session.get_chat_input()
-                    else:
-                        input_widget = self._chat_query_scope().query_one("#chat-input", TextArea)
+                    input_widget = self._get_active_chat_input()
                     if input_widget:
                         active_tab.input_text = input_widget.text
                         logger.debug(f"Saved input text for tab {tab_container.active_session_id}: '{input_widget.text[:50]}...'")
@@ -1019,18 +1085,8 @@ class ChatScreen(BaseAppScreen):
             active_tab = self.chat_state.get_active_tab()
             if active_tab and active_tab.input_text:
                 logger.info(f"Restoring input text: '{active_tab.input_text[:50]}...'")
-                
-                # Try to find the input widget
-                try:
-                    session = self._get_active_chat_session()
-                    if session is not None and hasattr(session, "get_chat_input"):
-                        input_widget = session.get_chat_input()
-                    else:
-                        input_widget = self._chat_query_scope().query_one("#chat-input", TextArea)
-                except Exception:
-                    # Try alternate query
-                    input_widget = self._chat_query_scope().query_one("#chat-input")
-                
+                input_widget = self._get_active_chat_input()
+
                 if input_widget and hasattr(input_widget, 'load_text'):
                     input_widget.load_text(active_tab.input_text)
                     logger.info(f"Successfully restored input text to widget")
@@ -1278,35 +1334,12 @@ class ChatScreen(BaseAppScreen):
                 return
                 
             logger.info(f"Restoring {len(active_tab.messages)} messages to chat log")
-            
-            # Import required classes
-            from textual.containers import VerticalScroll
-            
-            # Find the chat log container (it's a VerticalScroll)
-            chat_log = None
+
             log_selectors = [
                 "#chat-log",
                 ".chat-log",
             ]
-            
-            # Try the direct approach first
-            try:
-                chat_log = self.app_instance.query_one("#chat-log", VerticalScroll)
-                logger.debug("Found chat log for restoration via app_instance")
-            except Exception:
-                pass
-            
-            # If not found, try other approaches
-            if not chat_log:
-                for selector in log_selectors:
-                    try:
-                        containers = self._chat_query_scope().query(selector)
-                        if containers:
-                            chat_log = containers.first()
-                            logger.debug(f"Found chat log container for restoration: {selector}")
-                            break
-                    except Exception as e:
-                        logger.debug(f"Could not find chat log with {selector}: {e}")
+            chat_log = self._find_chat_log_container(log_selectors)
             
             if not chat_log:
                 logger.warning("Could not find chat log container to restore messages")
@@ -1414,19 +1447,9 @@ class ChatScreen(BaseAppScreen):
         """Try to save input text directly from the chat input TextArea only."""
         try:
             # Be specific - only look for the chat input TextArea, not system prompt or other TextAreas
-            chat_input = None
-            
-            # Try to find the specific chat input by ID first
-            try:
-                session = self._get_active_chat_session()
-                if session is not None and hasattr(session, "get_chat_input"):
-                    chat_input = session.get_chat_input()
-                else:
-                    chat_input = self._chat_query_scope().query_one("#chat-input", TextArea)
+            chat_input = self._get_active_chat_input()
+            if chat_input:
                 logger.debug("Found chat input by #chat-input ID")
-            except Exception:
-                # If not found by ID, try other selectors but be careful
-                pass
             
             if not chat_input:
                 # Look for TextAreas but filter out system prompt and other non-chat inputs
@@ -1482,35 +1505,14 @@ class ChatScreen(BaseAppScreen):
         try:
             # Import message widget classes
             from ...Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
-            from textual.containers import VerticalScroll
-            
-            # Try to find the chat log container (it's a VerticalScroll)
-            chat_log = None
+
             log_selectors = [
                 "#chat-log",
                 ".chat-log",
                 "#chat-messages-container",
                 ".chat-messages"
             ]
-            
-            # First try the direct approach used in Chat_Window_Enhanced
-            try:
-                chat_log = self.app_instance.query_one("#chat-log", VerticalScroll)
-                logger.debug("Found chat log via app_instance.query_one")
-            except Exception:
-                pass
-            
-            # If not found, try other selectors
-            if not chat_log:
-                for selector in log_selectors:
-                    try:
-                        containers = self._chat_query_scope().query(selector)
-                        if containers:
-                            chat_log = containers.first()
-                            logger.debug(f"Found chat log container with selector: {selector}")
-                            break
-                    except Exception as e:
-                        logger.debug(f"Could not find chat log with {selector}: {e}")
+            chat_log = self._find_chat_log_container(log_selectors)
             
             if not chat_log:
                 logger.warning("Could not find chat log container to save messages")

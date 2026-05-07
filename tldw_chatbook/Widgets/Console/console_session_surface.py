@@ -6,6 +6,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
@@ -37,6 +38,6 @@ class ConsoleSessionSurface(Vertical):
             return self.tab_container
         try:
             self.tab_container = self.query_one("#console-chat-tabs", ChatTabContainer)
-        except Exception:
+        except NoMatches:
             return None
         return self.tab_container
