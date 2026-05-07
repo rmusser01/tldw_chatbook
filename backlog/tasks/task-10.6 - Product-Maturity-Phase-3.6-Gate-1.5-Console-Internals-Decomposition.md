@@ -1,9 +1,10 @@
 ---
 id: TASK-10.6
 title: 'Product Maturity Phase 3.6: Gate 1.5 Console Internals Decomposition'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-05-07 03:36'
+updated_date: '2026-05-07 04:25'
 labels:
   - product-maturity
   - phase-3-knowledge-study
@@ -45,3 +46,9 @@ Gate 1.5 is intentionally split into child tasks so the Console rewrite can proc
 
 Detailed step-by-step implementation instructions live in `Docs/superpowers/plans/2026-05-07-gate-1-5-console-internals-decomposition.md`.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Completed TASK-10.6.1. Console display-state contracts now exist as pure non-Textual dataclasses with focused tests, and strict xfailed mounted guardrails document the remaining embedded legacy ChatWindowEnhanced chrome for later Gate 1.5 slices.
+<!-- SECTION:NOTES:END -->
