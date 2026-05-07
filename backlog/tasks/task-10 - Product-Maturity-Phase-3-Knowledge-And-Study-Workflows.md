@@ -42,4 +42,6 @@ Continued Phase 3 with TASK-10.5. Gate 1 now adapts Home Console and Library int
 Continued Phase 3 with TASK-10.7. Queued server source study-pack jobs now observe bounded completion status and surface ready pack metadata as reusable Study dashboard state. Parent remains open for full server job history direct generated deck selection conversation message-level selection Workspaces Library Collections citations/snippets and deeper Import/Export Search/RAG workflows.
 
 Closed Gate 1.5 with TASK-10.6. Console now uses native workbench internals for provider/model controls, staged context, transcript/session, composer, run inspector, approvals, RAG/source state, and Chatbook artifact actions instead of presenting a full embedded legacy Chat screen. Parent remains open for Gate 1.6 Library-native Search/RAG with citations/snippets, Workspaces, Library Collections, and deeper Import/Export/Search/RAG study workflows.
+
+Planned Gate 1.6 with TASK-10.8. The Library-native Search/RAG gate is split into display-state contracts, a Library-owned Search/RAG panel, retrieval adapter and evidence normalization, Console handoff/Console-invoked RAG seams, and QA closeout. Parent remains open for execution of TASK-10.8 and later Workspaces, Library Collections, and deeper Import/Export/Search/RAG study workflows.
 <!-- SECTION:NOTES:END -->

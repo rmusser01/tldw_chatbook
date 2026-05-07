@@ -14,8 +14,17 @@ PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
 PHASE_3_0_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md"
 )
+GATE16_PLAN = Path(
+    "Docs/superpowers/plans/2026-05-07-gate-1-6-library-native-search-rag.md"
+)
+TASK_10 = Path(
+    "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md"
+)
 TASK_10_0 = Path(
     "backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md"
+)
+TASK_10_8 = Path(
+    "backlog/tasks/task-10.8 - Product-Maturity-Phase-3.8-Gate-1.6-Library-Native-Search-RAG.md"
 )
 PROMPT_MANIFEST = Path("Docs/Design/destination-layout-image-reference-prompts.md")
 
@@ -189,6 +198,35 @@ def test_phase30_tracker_records_layout_contract_gate() -> None:
     assert "Layout Contract Spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`" in tracker
     assert "Phase 3.0: Destination Layout And IA Contracts - `TASK-10.0`" in tracker
     assert "destination layout and IA contracts must be approved" in tracker
+
+
+def test_phase3_gate16_library_rag_plan_and_tasks_are_tracked() -> None:
+    tracker = _text(TRACKER)
+    parent_task = _text(TASK_10)
+    plan = _text(GATE16_PLAN)
+    task = _text(TASK_10_8)
+
+    assert "Gate 1.6 / Phase 3.8" in tracker
+    assert "TASK-10.8" in tracker
+    assert GATE16_PLAN.as_posix() in tracker
+    assert "TASK-10.8" in parent_task
+    assert "Gate 1.6" in parent_task
+    assert "Library-native Search/RAG" in plan
+    for required_section in (
+        "## Source Of Truth",
+        "## Scope",
+        "## File Structure",
+        "## Risk Controls",
+        "### Task 1: Gate 1.6.1 Library Search/RAG Display-State Contracts",
+        "### Task 5: Gate 1.6.5 QA Closeout And Tracking",
+    ):
+        assert required_section in plan
+    for child_task in ("TASK-10.8.1", "TASK-10.8.2", "TASK-10.8.3", "TASK-10.8.4", "TASK-10.8.5"):
+        assert child_task in plan
+        assert child_task in tracker
+    assert "status: To Do" in task
+    for ac_number in range(1, 5):
+        assert f"- [ ] #{ac_number}" in task
 
 
 def test_phase30_qa_evidence_is_verified() -> None:
