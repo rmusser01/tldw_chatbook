@@ -3,7 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import html
+import re
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
+
+from rich.markup import escape as escape_markup
+
+from tldw_chatbook.Utils.input_validation import (
+    sanitize_string,
+    validate_number_range,
+    validate_text_input,
+    validate_url,
+)
 
 
 LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
@@ -19,11 +31,82 @@ LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID = "library-rag-use-in-console"
 LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON = (
     "Run a query and select usable evidence before sending to Console."
 )
+LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
+LIBRARY_RAG_DISPLAY_MAX_LENGTH = 1_000
+LIBRARY_RAG_SNIPPET_MAX_LENGTH = 4_000
+LIBRARY_RAG_TOP_K_MAX = 50
+_SCRIPT_BLOCK_PATTERN = re.compile(
+    r"<script\b[^>]*>.*?</script\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _clean_text(value: Any, fallback: str = "") -> str:
-    text = " ".join(str(value or "").strip().split())
+    if value is None:
+        return fallback
+    text = " ".join(str(value).strip().split())
     return text or fallback
+
+
+def _remove_dangerous_display_patterns(value: str) -> tuple[str, bool]:
+    scrubbed = _SCRIPT_BLOCK_PATTERN.sub("", value)
+    changed = scrubbed != value
+    for pattern in ("javascript:", "onclick=", "onerror="):
+        if pattern in scrubbed.lower():
+            scrubbed = re.sub(re.escape(pattern), "", scrubbed, flags=re.IGNORECASE)
+            changed = True
+    return scrubbed, changed
+
+
+def _collapse_text(value: str, *, preserve_newlines: bool) -> str:
+    if not preserve_newlines:
+        return " ".join(value.strip().split())
+    lines = (" ".join(line.strip().split()) for line in value.strip().splitlines())
+    return "\n".join(line for line in lines if line)
+
+
+def _sanitize_display_text(
+    value: Any,
+    fallback: str,
+    *,
+    max_length: int = LIBRARY_RAG_DISPLAY_MAX_LENGTH,
+    preserve_newlines: bool = False,
+    escape: bool = True,
+) -> str:
+    if value is None:
+        return fallback
+    sanitized = sanitize_string(str(value), max_length=max_length)
+    scrubbed, _ = _remove_dangerous_display_patterns(sanitized)
+    if not validate_text_input(scrubbed, max_length=max_length, allow_html=False):
+        return fallback
+    text = _collapse_text(scrubbed, preserve_newlines=preserve_newlines)
+    if not text:
+        return fallback
+    return escape_markup(html.escape(text, quote=False)) if escape else text
+
+
+def _sanitize_query(value: Any) -> tuple[str, bool]:
+    if value is None:
+        return "", False
+    sanitized = sanitize_string(str(value), max_length=LIBRARY_RAG_QUERY_MAX_LENGTH)
+    scrubbed, changed = _remove_dangerous_display_patterns(sanitized)
+    valid = validate_text_input(
+        scrubbed,
+        max_length=LIBRARY_RAG_QUERY_MAX_LENGTH,
+        allow_html=False,
+    )
+    if changed or not valid:
+        return "", True
+    return _collapse_text(scrubbed, preserve_newlines=False), False
+
+
+def _sanitize_url(value: Any) -> str:
+    text = _sanitize_display_text(value, "", max_length=2_000, escape=False)
+    if not text:
+        return ""
+    if text.startswith("file://"):
+        return text
+    return text if validate_url(text) else ""
 
 
 def _sentence(value: str) -> str:
@@ -41,10 +124,9 @@ def _coerce_non_negative_int(value: Any) -> int:
 
 
 def _coerce_positive_int(value: Any, fallback: int) -> int:
-    try:
-        coerced = int(value)
-    except (TypeError, ValueError):
+    if not validate_number_range(value, min_val=1, max_val=LIBRARY_RAG_TOP_K_MAX):
         return fallback
+    coerced = int(value)
     return coerced if coerced > 0 else fallback
 
 
@@ -58,7 +140,7 @@ def _coerce_score(value: Any) -> float | None:
 
 
 def _normalize_mode(value: Any) -> str:
-    mode = _clean_text(value, "rag").lower()
+    mode = _sanitize_display_text(value, "rag", max_length=32, escape=False).lower()
     return mode if mode in {"rag", "search"} else "rag"
 
 
@@ -141,6 +223,22 @@ class LibraryRagScopeState:
         selected: Sequence[str] | None = None,
         heading: str = "Source Scope: All local sources",
     ) -> "LibraryRagScopeState":
+        """Build source-scope display state from loose source counts.
+
+        Args:
+            notes: Available note source count.
+            media: Available media source count.
+            conversations: Available conversation source count.
+            workspaces: Available workspace source count.
+            collections: Available collection source count.
+            selected: Selected source type IDs. `None` selects all available sources;
+                an empty sequence represents an explicit empty selection.
+            heading: User-facing source-scope heading.
+
+        Returns:
+            Display state for the Library Search/RAG source scope.
+        """
+
         counts = {
             "notes": _coerce_non_negative_int(notes),
             "media": _coerce_non_negative_int(media),
@@ -151,9 +249,9 @@ class LibraryRagScopeState:
         available_source_types = {
             source_type for source_type, count in counts.items() if count > 0
         }
+        selected_source_types = available_source_types if selected is None else selected
         selected_values = {
-            _clean_text(source_type).lower()
-            for source_type in selected or available_source_types
+            _clean_text(source_type).lower() for source_type in selected_source_types
         }
         options = tuple(
             LibraryRagSourceOption(
@@ -183,6 +281,16 @@ class LibraryRagScopeState:
                 recovery_action="Library Import/Export",
                 owner="Library source index",
             )
+        elif not any(option.selected for option in options):
+            status = "blocked"
+            recovery_copy = _recovery_copy(
+                status_label="No source selected",
+                unavailable_what="Library Search/RAG",
+                why="No Library source scope is selected",
+                next_action="Select at least one Library source before querying",
+                recovery_action="Library source scope",
+                owner="Library source scope",
+            )
         return cls(
             heading=heading,
             options=options,
@@ -197,6 +305,10 @@ class LibraryRagScopeState:
     @property
     def has_available_sources(self) -> bool:
         return self.total_count > 0
+
+    @property
+    def has_selected_sources(self) -> bool:
+        return bool(self.selected_source_types)
 
     def option_by_type(self, source_type: str) -> LibraryRagSourceOption:
         normalized_source_type = _clean_text(source_type).lower()
@@ -232,7 +344,23 @@ class LibraryRagQueryState:
         index_ready: bool = True,
         provider_ready: bool = True,
     ) -> "LibraryRagQueryState":
-        normalized_query = _clean_text(query)
+        """Build query-control display state from UI or service values.
+
+        Args:
+            query: User query text.
+            mode: Search mode, either `rag` or `search`; invalid values default to `rag`.
+            top_k: Requested result count. Values outside the allowed range use the default.
+            include_citations: Whether citation metadata should be requested/displayed.
+            has_source_scope: Whether at least one source is selected.
+            dependencies_ready: Whether Search/RAG optional dependencies are available.
+            index_ready: Whether the selected source scope has an index.
+            provider_ready: Whether a provider/model is ready for RAG-answer mode.
+
+        Returns:
+            Display state for query controls and the run action.
+        """
+
+        normalized_query, unsafe_query = _sanitize_query(query)
         normalized_mode = _normalize_mode(mode)
         mode_label = "Search" if normalized_mode == "search" else "RAG Answer"
         normalized_top_k = _coerce_positive_int(top_k, LIBRARY_RAG_DEFAULT_TOP_K)
@@ -240,7 +368,12 @@ class LibraryRagQueryState:
         owner = ""
         next_action = ""
         recovery_action = ""
-        if not normalized_query:
+        if unsafe_query:
+            disabled_reason = "Enter a safe question or search query."
+            owner = "user"
+            next_action = "Remove markup or script content before running Search/RAG"
+            recovery_action = "Query input"
+        elif not normalized_query:
             disabled_reason = "Enter a question or search query."
             owner = "user"
             next_action = "Type a query before running Search/RAG"
@@ -320,18 +453,30 @@ class LibraryRagResultRow:
 
     @classmethod
     def from_result(cls, result: Mapping[str, Any] | Any) -> "LibraryRagResultRow":
+        """Normalize a retrieval result into immutable evidence display state.
+
+        Args:
+            result: Retrieval result mapping from a local or remote Search/RAG adapter.
+
+        Returns:
+            Normalized evidence row with sanitized display text, citations, score, IDs,
+            backend metadata, and immutable provenance.
+        """
+
         values = result if isinstance(result, Mapping) else {}
-        source_id = _clean_text(values.get("source_id"))
-        chunk_id = _clean_text(values.get("chunk_id"))
-        title = _clean_text(
+        source_id = _sanitize_display_text(values.get("source_id"), "", escape=False)
+        chunk_id = _sanitize_display_text(values.get("chunk_id"), "", escape=False)
+        title = _sanitize_display_text(
             values.get("document_title")
             or values.get("title")
             or values.get("source_title"),
             "Untitled source",
         )
-        snippet = _clean_text(
+        snippet = _sanitize_display_text(
             values.get("snippet") or values.get("text") or values.get("content"),
             "No snippet available.",
+            max_length=LIBRARY_RAG_SNIPPET_MAX_LENGTH,
+            preserve_newlines=True,
         )
         citations = tuple(
             _normalize_citation(citation)
@@ -350,8 +495,12 @@ class LibraryRagResultRow:
             source_id=source_id,
             chunk_id=chunk_id,
             citations=citations,
-            provenance=provenance,
-            runtime_backend=_clean_text(values.get("runtime_backend")),
+            provenance=MappingProxyType(provenance),
+            runtime_backend=_sanitize_display_text(
+                values.get("runtime_backend"),
+                "",
+                escape=False,
+            ),
         )
 
     @property
@@ -386,7 +535,27 @@ class LibraryRagPanelState:
         dependencies_ready: bool = True,
         index_ready: bool = True,
         provider_ready: bool = True,
+        selected_source_types: Sequence[str] | None = None,
     ) -> "LibraryRagPanelState":
+        """Build full Library Search/RAG panel display state.
+
+        Args:
+            source_counts: Available source counts keyed by source type.
+            query: User query text.
+            mode: Search mode, either `rag` or `search`.
+            results: Retrieval result rows or mappings.
+            selected_result_id: Result ID selected for inspector/Console handoff.
+            retrieval_status: Explicit retrieval status override.
+            dependencies_ready: Whether Search/RAG optional dependencies are available.
+            index_ready: Whether the selected source scope has an index.
+            provider_ready: Whether a provider/model is ready for RAG-answer mode.
+            selected_source_types: Selected source type IDs. `None` selects all available
+                source types; an empty sequence represents no selected sources.
+
+        Returns:
+            Display state for the destination-native Library Search/RAG panel.
+        """
+
         counts = dict(source_counts or {})
         scope = LibraryRagScopeState.from_source_counts(
             notes=counts.get("notes", 0),
@@ -394,11 +563,12 @@ class LibraryRagPanelState:
             conversations=counts.get("conversations", 0),
             workspaces=counts.get("workspaces", 0),
             collections=counts.get("collections", 0),
+            selected=selected_source_types,
         )
         query_state = LibraryRagQueryState.from_values(
             query=query,
             mode=mode,
-            has_source_scope=scope.has_available_sources,
+            has_source_scope=scope.has_selected_sources,
             dependencies_ready=dependencies_ready,
             index_ready=index_ready,
             provider_ready=provider_ready,
@@ -480,7 +650,7 @@ def _as_sequence(value: Any) -> tuple[Any, ...]:
 
 def _normalize_citation(value: Any) -> LibraryRagCitation:
     if isinstance(value, Mapping):
-        label = _clean_text(
+        label = _sanitize_display_text(
             value.get("label")
             or value.get("title")
             or value.get("url")
@@ -489,11 +659,11 @@ def _normalize_citation(value: Any) -> LibraryRagCitation:
         )
         return LibraryRagCitation(
             label=label,
-            url=_clean_text(value.get("url")),
-            source_id=_clean_text(value.get("source_id")),
-            chunk_id=_clean_text(value.get("chunk_id")),
+            url=_sanitize_url(value.get("url")),
+            source_id=_sanitize_display_text(value.get("source_id"), "", escape=False),
+            chunk_id=_sanitize_display_text(value.get("chunk_id"), "", escape=False),
         )
-    return LibraryRagCitation(label=_clean_text(value, "Citation"))
+    return LibraryRagCitation(label=_sanitize_display_text(value, "Citation"))
 
 
 def _result_id(source_id: str, chunk_id: str, title: str) -> str:

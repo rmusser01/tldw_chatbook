@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tldw_chatbook.Library.library_rag_state import (
     LibraryRagPanelState,
     LibraryRagQueryState,
@@ -86,6 +88,31 @@ def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
     assert ready_query.run_action.enabled is True
 
 
+def test_query_state_validates_and_sanitizes_external_values() -> None:
+    unsafe_query = LibraryRagQueryState.from_values(
+        query="<script>alert('x')</script>",
+        mode="<b>rag</b>",
+        top_k=500,
+    )
+
+    assert unsafe_query.query == ""
+    assert unsafe_query.status == "blocked"
+    assert unsafe_query.run_action.disabled_reason == (
+        "Enter a safe question or search query."
+    )
+    assert unsafe_query.mode == "rag"
+    assert unsafe_query.top_k == 5
+
+    bounded_query = LibraryRagQueryState.from_values(
+        query="Find policy evidence",
+        mode="search",
+        top_k=50,
+    )
+
+    assert bounded_query.status == "ready"
+    assert bounded_query.top_k == 50
+
+
 def test_result_row_preserves_snippet_score_citations_and_provenance() -> None:
     row = LibraryRagResultRow.from_result(
         {
@@ -125,6 +152,42 @@ def test_result_row_preserves_snippet_score_citations_and_provenance() -> None:
     assert malformed.title == "Untitled source"
     assert malformed.score is None
     assert malformed.citation_labels == ("https://example.test",)
+
+
+def test_result_row_sanitizes_display_text_and_preserves_numeric_ids() -> None:
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "<b>Release</b>",
+            "snippet": "Line one\nLine two <script>alert(1)</script>",
+            "source_id": 0,
+            "chunk_id": 0,
+            "citations": [
+                {"label": "<i>Citation</i>", "url": "javascript:alert(1)"},
+            ],
+        }
+    )
+
+    assert row.result_id == "0:0"
+    assert row.source_id == "0"
+    assert row.chunk_id == "0"
+    assert row.title == "&lt;b&gt;Release&lt;/b&gt;"
+    assert "Line one\nLine two" in row.snippet
+    assert "<script" not in row.snippet
+    assert row.citation_labels == ("&lt;i&gt;Citation&lt;/i&gt;",)
+    assert row.citations[0].url == ""
+
+
+def test_result_row_provenance_is_immutable_snapshot() -> None:
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Release Notes",
+            "provenance": {"index": "library", "rank": 1},
+        }
+    )
+
+    assert row.provenance["rank"] == 1
+    with pytest.raises(TypeError):
+        row.provenance["rank"] = 2
 
 
 def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> None:
@@ -176,3 +239,22 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
 
     assert searching.retrieval_status == "searching"
     assert searching.next_action == "Wait for retrieval results."
+
+
+def test_explicit_empty_scope_selection_is_not_defaulted_to_all_sources() -> None:
+    scope = LibraryRagScopeState.from_source_counts(notes=2, media=1, selected=())
+
+    assert scope.has_available_sources is True
+    assert scope.has_selected_sources is False
+    assert scope.selected_source_types == ()
+    assert all(not option.selected for option in scope.options)
+
+    panel = LibraryRagPanelState.from_values(
+        source_counts={"notes": 2, "media": 1},
+        selected_source_types=(),
+        query="Find policy evidence",
+    )
+
+    assert panel.scope.has_selected_sources is False
+    assert panel.retrieval_status == "blocked"
+    assert panel.query_state.run_action.disabled_reason == "Select at least one Library source."
