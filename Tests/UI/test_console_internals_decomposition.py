@@ -209,6 +209,21 @@ def test_console_control_state_tolerates_missing_launch_source():
     assert state.rag_label == "RAG: off"
 
 
+def test_console_control_and_inspector_share_effective_provider_model_sources():
+    app = _build_test_app()
+    app.app_config = {"chat_defaults": {"model": "reactive-model"}}
+    app.chat_api_provider_value = "ReactiveOpenAI"
+    screen = ChatScreen(app)
+
+    control_state = screen._build_console_control_state(None)
+    inspector_state = screen._build_console_inspector_state(None)
+    rows_by_label = {row.label: row for row in inspector_state.rows}
+
+    assert control_state.provider_label == "Provider: ReactiveOpenAI"
+    assert control_state.model_label == "Model: reactive-model"
+    assert rows_by_label["Provider"].text == "Provider: ready"
+
+
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_source():
     app = _build_test_app()

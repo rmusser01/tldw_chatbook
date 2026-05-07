@@ -1,4 +1,10 @@
 from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
+    CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON,
+    CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
+    CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+    CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
+    CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleControlState,
     ConsoleInspectorState,
     ConsoleStagedContextState,
@@ -71,6 +77,10 @@ def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows()
     assert "Configure a provider before sending." in text
     assert "RAG/source: missing index" in text
     assert "Artifacts: save available after response" in text
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["Provider"].status == "blocked"
+    assert rows_by_label["RAG/source"].status == "blocked"
+    assert rows_by_label["Approvals"].status == "ready"
 
 
 def test_console_inspector_state_uses_explicit_chatbook_save_capability():
@@ -103,20 +113,20 @@ def test_console_inspector_state_exposes_action_disabled_reasons():
 
     assert "Tools: 0 ready" in text
     assert "RAG/source: missing source" in text
-    assert actions_by_id["console-inspector-review-approval"].enabled is False
+    assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].enabled is False
     assert (
-        actions_by_id["console-inspector-review-approval"].disabled_reason
-        == "No approval is pending."
+        actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].disabled_reason
+        == CONSOLE_INSPECTOR_NO_APPROVAL_REASON
     )
-    assert actions_by_id["console-inspector-review-tool-call"].enabled is False
+    assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID].enabled is False
     assert (
-        actions_by_id["console-inspector-review-tool-call"].disabled_reason
-        == "No tool calls are ready for review."
+        actions_by_id[CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID].disabled_reason
+        == CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON
     )
-    assert actions_by_id["console-inspector-save-chatbook"].enabled is False
+    assert actions_by_id[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].enabled is False
     assert (
-        actions_by_id["console-inspector-save-chatbook"].disabled_reason
-        == "No Chatbook artifact is available."
+        actions_by_id[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].disabled_reason
+        == CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON
     )
 
 
@@ -135,6 +145,8 @@ def test_console_inspector_state_enables_pending_approval_tools_and_chatbook_act
 
     assert state.has_pending_approval is True
     assert state.can_save_chatbook is True
-    assert actions_by_id["console-inspector-review-approval"].enabled is True
-    assert actions_by_id["console-inspector-review-tool-call"].enabled is True
-    assert actions_by_id["console-inspector-save-chatbook"].enabled is True
+    assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].enabled is True
+    assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID].enabled is True
+    assert actions_by_id[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].enabled is True
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["Approvals"].status == "blocked"

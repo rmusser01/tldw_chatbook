@@ -56,10 +56,30 @@ class ArtifactsScreen(BaseAppScreen):
         super().__init__(app_instance, "artifacts", **kwargs)
         self._latest_chatbook_console_launch: dict[str, Any] | None = None
         self._chatbook_lookup_error: str | None = None
+        self._requested_chatbook_target_id: str | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
+        self._consume_pending_chatbook_target_id()
         self._refresh_latest_chatbook_context()
+
+    def on_screen_resume(self) -> None:
+        """Refresh one-shot Chatbook handoffs when returning to Artifacts."""
+        if not str(
+            getattr(self.app_instance, "pending_artifacts_chatbook_target_id", "") or ""
+        ).strip():
+            return
+        self._consume_pending_chatbook_target_id()
+        self._refresh_latest_chatbook_context()
+
+    def _consume_pending_chatbook_target_id(self) -> None:
+        target_id = str(
+            getattr(self.app_instance, "pending_artifacts_chatbook_target_id", "") or ""
+        ).strip()
+        if not target_id:
+            return
+        self._requested_chatbook_target_id = target_id
+        self.app_instance.pending_artifacts_chatbook_target_id = None
 
     @work(exclusive=True, thread=True)
     def _refresh_latest_chatbook_context(self) -> None:
@@ -202,14 +222,28 @@ class ArtifactsScreen(BaseAppScreen):
         return (updated_at, id_kind, id_number, id_text)
 
     @classmethod
-    def _build_chatbook_console_launch(cls, record: Mapping[str, Any]) -> dict[str, Any] | None:
-        chatbook_id = cls._safe_identifier(record.get("chatbook_id") or record.get("id"))
+    def _chatbook_identifier(cls, record: Mapping[str, Any]) -> int | str | None:
+        return cls._safe_identifier(record.get("chatbook_id") or record.get("id"))
+
+    @classmethod
+    def _chatbook_target_id(cls, record: Mapping[str, Any]) -> str:
+        chatbook_id = cls._chatbook_identifier(record)
         if chatbook_id in (None, ""):
+            return ""
+        return f"local:chatbook:{chatbook_id}"
+
+    @classmethod
+    def _build_chatbook_console_launch(cls, record: Mapping[str, Any]) -> dict[str, Any] | None:
+        chatbook_id = cls._chatbook_identifier(record)
+        if chatbook_id in (None, ""):
+            return None
+        target_id = cls._chatbook_target_id(record)
+        if not target_id:
             return None
         title = cls._safe_text(record.get("name") or record.get("title"), "Untitled Chatbook")
         description = cls._safe_text(record.get("description"))
         payload = {
-            "target_id": f"local:chatbook:{chatbook_id}",
+            "target_id": target_id,
             "chatbook_id": chatbook_id,
             "record_id": cls._safe_text(record.get("id")),
             "file_path": cls._safe_text(record.get("file_path"), max_length=2000),
@@ -246,6 +280,17 @@ class ArtifactsScreen(BaseAppScreen):
         records = [record for record in tuple(result or ()) if isinstance(record, Mapping)]
         if not records:
             return None, None
+        if self._requested_chatbook_target_id:
+            requested_record = next(
+                (
+                    record
+                    for record in records
+                    if self._chatbook_target_id(record) == self._requested_chatbook_target_id
+                ),
+                None,
+            )
+            if requested_record is not None:
+                return self._build_chatbook_console_launch(requested_record), None
         latest_record = max(records, key=self._chatbook_sort_key)
         return self._build_chatbook_console_launch(latest_record), None
 
@@ -272,13 +317,19 @@ class ArtifactsScreen(BaseAppScreen):
                 if launch_kwargs is not None:
                     title = str(launch_kwargs["title"])
                     payload = launch_kwargs.get("payload") or {}
+                    target_id = str(payload.get("target_id") or "").strip()
+                    is_requested = bool(
+                        self._requested_chatbook_target_id
+                        and target_id == self._requested_chatbook_target_id
+                    )
+                    launch_scope = "requested" if is_requested else "latest"
                     description = str(payload.get("description") or "").strip()
                     provenance = self._console_saved_artifact_provenance(payload)
                     content_preview = str(payload.get("content_preview") or "").strip()
                     yield Static("Console launch available", classes="destination-section")
                     yield Static(
                         Text.from_markup(
-                            "Console can launch latest Chatbook artifact: "
+                            f"Console can launch {launch_scope} Chatbook artifact: "
                             f"{escape_markup(title)}."
                         ),
                         id="artifacts-console-available",
@@ -301,7 +352,7 @@ class ArtifactsScreen(BaseAppScreen):
                     yield Button(
                         Text.from_markup(f"Launch {escape_markup(title)} in Console"),
                         id="artifacts-use-in-console",
-                        tooltip="Open the latest local Chatbook artifact in Console.",
+                        tooltip=f"Open the {launch_scope} local Chatbook artifact in Console.",
                     )
                 else:
                     yield Static("Console launch unavailable", classes="destination-section")

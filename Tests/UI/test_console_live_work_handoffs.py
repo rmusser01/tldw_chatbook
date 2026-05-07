@@ -1614,6 +1614,44 @@ async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbo
 
 
 @pytest.mark.asyncio
+async def test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback():
+    app = _build_test_app()
+    app.pending_artifacts_chatbook_target_id = "local:chatbook:77"
+    app.local_chatbook_service = StaticLocalChatbookService(
+        (
+            {
+                "chatbook_id": 77,
+                "id": "77",
+                "name": "Requested Pack",
+                "updated_at": "2026-05-01T20:00:00Z",
+            },
+            {
+                "chatbook_id": 99,
+                "id": "99",
+                "name": "Latest Pack",
+                "updated_at": "2026-05-05T20:00:00Z",
+            },
+        )
+    )
+    app.open_console_for_live_work = Mock()
+    host = DestinationHarness(app, "artifacts")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-console-available")
+
+        text = _screen_static_text(screen)
+        assert "Console can launch requested Chatbook artifact: Requested Pack." in text
+        assert "Latest Pack" not in text
+        assert getattr(app, "pending_artifacts_chatbook_target_id", None) is None
+
+        await pilot.click("#artifacts-use-in-console")
+
+    app.open_console_for_live_work.assert_called_once()
+    assert app.open_console_for_live_work.call_args.kwargs["payload"]["target_id"] == "local:chatbook:77"
+
+
+@pytest.mark.asyncio
 async def test_artifacts_destination_distinguishes_chatbook_service_failure_from_empty_state():
     app = _build_test_app()
     app.local_chatbook_service = RaisingLocalChatbookService()
