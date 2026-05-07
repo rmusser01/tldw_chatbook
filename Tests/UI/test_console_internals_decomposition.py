@@ -1,21 +1,19 @@
 import pytest
-from textual.widgets import Button, Input, Select
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
+from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason="Gate 1.5 Task 2/3 will replace the full legacy ChatWindowEnhanced chrome.",
-    strict=True,
-)
 async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -34,10 +32,6 @@ async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason="Gate 1.5 Task 3 will expose a native Console composer.",
-    strict=True,
-)
 async def test_console_gate15_keeps_existing_chat_send_control_reachable():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -48,6 +42,9 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
 
         text = _visible_text(console)
         assert "Send" in text
+        assert "Stop" in text
+        assert "Attach" in text
+        assert "Save Chatbook" in text
         send_controls = [
             button
             for button in console.query(Button)
@@ -55,6 +52,41 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
             or button.has_class("console-send-button")
         ]
         assert send_controls
+        assert console.query_one("#console-stop-generation", Button)
+        assert console.query_one("#console-attach-context", Button)
+        assert console.query_one("#console-save-chatbook", Button)
+
+
+@pytest.mark.asyncio
+async def test_console_composer_status_renders_session_metadata_as_plain_text():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.sync_session_data(
+            ChatSessionData(
+                tab_id="metadata",
+                title="[red]Injected[/red]",
+                runtime_backend="[blue]server[/blue]",
+                assistant_id="[green]persona[/green]",
+                scope_type="workspace",
+                workspace_id="[yellow]workspace[/yellow]",
+            )
+        )
+        await pilot.pause()
+
+        status = console.query_one("#console-composer-status", Static)
+        rendered = status.render()
+        plain = getattr(rendered, "plain", str(rendered))
+
+        assert "[red]Injected[/red]" in plain
+        assert "[blue]server[/blue]" in plain
+        assert "[green]persona[/green]" in plain
+        assert "[yellow]workspace[/yellow]" in plain
 
 
 @pytest.mark.asyncio

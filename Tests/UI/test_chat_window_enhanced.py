@@ -460,7 +460,7 @@ class TestChatWindowShellBarMounting:
                 assert children.index(task_surface) < children.index(tab_container)
 
     @pytest.mark.asyncio
-    async def test_chat_screen_receives_live_active_session_message_in_mounted_tree(self):
+    async def test_chat_screen_receives_live_active_session_message_from_native_console_tabs(self):
         app = _ChatScreenShellSyncTestApp()
 
         with patch.object(ChatScreen, "_load_sidebar_state", lambda self: None), patch.object(
@@ -484,10 +484,8 @@ class TestChatWindowShellBarMounting:
                 await pilot.pause()
 
                 screen = pilot.app.screen
-                chat_window = screen.query_one(ChatWindowEnhanced)
-                tab_container = chat_window.query_one(ChatTabContainer)
-                shell_bar = chat_window.get_shell_bar()
-                shell_label = chat_window.query_one("#chat-shell-context", Static)
+                tab_container = screen.query_one("#console-chat-tabs", ChatTabContainer)
+                composer_status = screen.query_one("#console-composer-status", Static)
 
                 tab_container._publish_active_session_changed(
                     ChatSessionData(
@@ -502,17 +500,13 @@ class TestChatWindowShellBarMounting:
                 )
                 await pilot.pause()
 
-                rendered_label = str(shell_label.render())
+                rendered_label = str(composer_status.render())
 
-                assert shell_bar is not None
-                assert shell_bar.context.backend_label == "Server"
-                assert shell_bar.context.scope_label == "Workspace: workspace-42"
-                assert shell_bar.context.assistant_label == "Persona: study.coach"
-                assert shell_bar.context.session_label == "Session: Live Persona Session"
-                assert "Server" in rendered_label
-                assert "Workspace: workspace-42" in rendered_label
-                assert "Persona: study.coach" in rendered_label
-                assert "Session: Live Persona Session" in rendered_label
+                assert len(screen.query(ChatWindowEnhanced)) == 0
+                assert "Live Persona Session" in rendered_label
+                assert "server" in rendered_label
+                assert "workspace-42" in rendered_label
+                assert "study.coach" in rendered_label
 
 
 class TestChatScreenConversationParity:
