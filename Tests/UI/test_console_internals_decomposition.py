@@ -6,6 +6,8 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
 @pytest.mark.asyncio
@@ -101,3 +103,32 @@ async def test_console_native_control_bar_uses_existing_compact_model_sync_seam(
             == "console-test-model"
         )
         assert compact_bar.query_one("#compact-temperature", Input).value == "0.2"
+
+
+def test_console_control_state_tolerates_missing_config_and_precise_rag_source():
+    app = _build_test_app()
+    app.app_config = None
+    screen = ChatScreen(app)
+
+    assert screen._chat_default_value("provider") is None
+
+    non_rag_state = screen._build_console_control_state(
+        ConsoleLiveWorkLaunch(source="storage", title="Storage queue"),
+    )
+    rag_state = screen._build_console_control_state(
+        ConsoleLiveWorkLaunch(source="Library Search/RAG", title="RAG result"),
+    )
+
+    assert non_rag_state.rag_label == "RAG: off"
+    assert rag_state.rag_label == "RAG: on"
+
+
+def test_console_control_state_tolerates_missing_launch_source():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+
+    state = screen._build_console_control_state(
+        ConsoleLiveWorkLaunch(source=None, title="Unknown source"),
+    )
+
+    assert state.rag_label == "RAG: off"

@@ -1,6 +1,7 @@
 """Chat screen implementation with comprehensive state management."""
 
 import inspect
+import re
 from typing import TYPE_CHECKING, Dict, Any, Optional
 from datetime import datetime
 import uuid
@@ -61,6 +62,12 @@ def _derive_tab_title(tab_state: TabState) -> str:
         fallback_title=tab_state.title,
         character_id=tab_state.character_id,
     )
+
+
+def _source_mentions_rag(source: Any) -> bool:
+    """Return True when a source label explicitly includes a RAG token."""
+    tokens = re.split(r"[^a-z0-9]+", str(source or "").lower())
+    return "rag" in tokens
 
 
 class ChatScreen(BaseAppScreen):
@@ -173,7 +180,8 @@ class ChatScreen(BaseAppScreen):
         return self._pending_console_launch_context
 
     def _chat_default_value(self, key: str) -> Any:
-        defaults = getattr(self.app_instance, "app_config", {}).get("chat_defaults", {})
+        config = getattr(self.app_instance, "app_config", {}) or {}
+        defaults = config.get("chat_defaults", {})
         if isinstance(defaults, dict):
             return defaults.get(key)
         return None
@@ -182,16 +190,16 @@ class ChatScreen(BaseAppScreen):
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleControlState:
-        """Build Console-owned control/readiness labels without querying Textual widgets."""
+        """Build Console-owned control/readiness labels."""
         provider = getattr(self.app_instance, "chat_api_provider_value", None)
         provider = provider or self._chat_default_value("provider")
         model = self._chat_default_value("model")
-        source = pending_launch.source.lower() if pending_launch else ""
+        source = pending_launch.source if pending_launch else None
         return ConsoleControlState.from_values(
             provider=provider,
             model=model,
             persona=None,
-            rag_enabled="rag" in source,
+            rag_enabled=_source_mentions_rag(source),
             staged_source_count=1 if pending_launch else 0,
             tool_count=0,
             approval_count=0,
@@ -596,8 +604,6 @@ class ChatScreen(BaseAppScreen):
         try:
             return self.query_one("#console-compact-model-bar", CompactModelBar)
         except QueryError:
-            pass
-        except Exception:
             pass
 
         shell_bar = self._get_shell_bar()
