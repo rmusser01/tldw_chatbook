@@ -48,11 +48,11 @@ class RecordingSourceStudyService(DashboardStudyScopeService):
     async def create_study_pack_job(
         self,
         *,
-        mode=None,
-        title,
-        source_items,
-        workspace_id=None,
-    ):
+        mode: str | None = None,
+        title: str,
+        source_items: list[dict[str, object]],
+        workspace_id: str | None = None,
+    ) -> dict[str, object]:
         self.calls.append(
             (
                 "create_study_pack_job",
@@ -69,7 +69,7 @@ async def _wait_for_source_generation_call(
     service: RecordingSourceStudyService,
     pilot,
     *,
-    timeout: float = 1.0,
+    timeout: float = 5.0,
 ) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

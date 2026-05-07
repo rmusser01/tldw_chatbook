@@ -138,6 +138,13 @@ class StudyDashboard(Widget):
         status: str,
         tooltip: str,
     ) -> None:
+        """Update the source-pack generation action state.
+
+        Args:
+            enabled: Whether the generation button should be interactive.
+            status: Status text shown beside the generation action.
+            tooltip: Tooltip explaining the current action state.
+        """
         if not self.is_mounted:
             return
         button = self.query_one("#study-generate-source-pack", Button)

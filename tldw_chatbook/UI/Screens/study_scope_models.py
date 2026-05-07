@@ -23,7 +23,15 @@ class StudyScopeType(str, Enum):
 
 @dataclass(frozen=True)
 class StudySourceItem:
-    """Concrete source item that can back server-side study generation."""
+    """Concrete source item that can back server-side study generation.
+
+    Attributes:
+        source_type: Stable source category, such as ``note`` or ``media``.
+        source_id: Stable identifier for the selected source record.
+        label: Optional user-facing source label.
+        excerpt_text: Optional source excerpt for generation context.
+        locator: Optional structured locator metadata for the source.
+    """
 
     source_type: str
     source_id: str
@@ -32,6 +40,12 @@ class StudySourceItem:
     locator: dict[str, Any] = field(default_factory=dict)
 
     def as_payload(self) -> dict[str, Any]:
+        """Return the server study-pack generation payload.
+
+        Returns:
+            Dictionary containing the source identity plus optional label,
+            excerpt, and locator metadata.
+        """
         payload: dict[str, Any] = {
             "source_type": self.source_type,
             "source_id": self.source_id,

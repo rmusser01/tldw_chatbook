@@ -554,7 +554,7 @@ class StudyScreen(BaseAppScreen):
                 )
             )
         except Exception:
-            logger.error("Failed to queue source study-pack generation", exc_info=True)
+            logger.exception("Failed to queue source study-pack generation")
             status = "Failed to queue source study-pack generation."
             if self.study_dashboard is not None and self.study_dashboard.is_mounted:
                 self.study_dashboard.update_source_generation_action(
