@@ -418,7 +418,8 @@ Next focus:
 
 - ask grounded questions over selected sources.
 - turn answers into reusable Chatbooks and artifacts.
-- organize knowledge with Workspaces and Collections.
+- organize knowledge with Workspaces and Library Collections.
+- preserve retrieved citations and snippets for reuse in Console and artifacts.
 - generate and reuse flashcards, quizzes, reports, and study outputs.
 - configure personas, skills, tools, schedules, and workflows.
 - launch and monitor controlled agent work through Console.
@@ -428,8 +429,8 @@ Next focus:
 
 Longer-term focus:
 
-- richer source and RAG integration.
-- server-assisted watchlists and collections.
+- richer source and RAG integration with citations/snippets.
+- server-assisted watchlists and Library collection sync.
 - live status updates for running work.
 - import and sync paths for sources, personas, skills, and artifacts.
 - clearer collaboration between local and remote runtimes.

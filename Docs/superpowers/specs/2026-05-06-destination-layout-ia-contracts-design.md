@@ -230,10 +230,10 @@ Destinations should not become alternate live-run consoles. When live work start
 | --- | --- |
 | Home | `home`, notifications, active work, next-best actions, lightweight run controls |
 | Console | `chat`, live agent/chat/RAG/tool/approval/run surface |
-| Library | `notes`, `media`, `ingest`, `search`, `conversation`, `study`, Search/RAG, Import/Export, Workspaces, Study Dashboard, Flashcards, Quizzes, source detail |
+| Library | `notes`, `media`, `ingest`, `search`, `conversation`, `study`, Search/RAG, Import/Export, Workspaces, Collections, Study Dashboard, Flashcards, Quizzes, source detail |
 | Artifacts | `artifacts`, `chatbooks`, generated outputs, exports, bundles, reports, datasets |
 | Personas | `personas`, `ccp`, characters, prompts, dictionaries, lore/world books, behavior profiles |
-| W+C | `watchlists_collections`, `subscription`, `subscriptions`, watchlists, collections, feeds, alerts, run history |
+| W+C | `watchlists_collections`, `subscription`, `subscriptions`, watchlists, monitored sources, feeds, alerts, run history |
 | Schedules | `schedules`, schedule detail, run history, pause/resume/retry |
 | Workflows | `workflows`, workflow builder, workflow run detail, approvals |
 | MCP | `mcp`, `tools_settings`, MCP tools/resources/servers/permissions/audit |
@@ -254,7 +254,7 @@ The following screen-level layout choices were approved in the manual wireframe 
 | Library | Source Workbench |
 | Artifacts | Output Registry |
 | Personas | Behavior Profile Workbench |
-| W+C | Dual-Tab Operations Workbench |
+| W+C | Watchlist Operations Workbench |
 | Schedules | Timing Control Board |
 | Workflows | Procedure Builder Workbench |
 | MCP | Protocol Control Plane with collapsible server/tool tree |
@@ -434,9 +434,9 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 | Home Console Library Artifacts Personas W+C Schedules Workflows MCP ACP Skills |
 +--------------------------------------------------------------------------------+
-| Library | Sources, imports, Search/RAG, Workspaces, Study | Ready | Local      |
+| Library | Sources/Search/RAG/Workspaces/Collections/Study | Ready | Local |
 +--------------------------------------------------------------------------------+
-| Modes: Sources Search/RAG Import/Export Workspaces Study Flashcards Quizzes    |
+| Modes: Sources Search/RAG Import/Export Workspaces Collections Study Cards Quiz |
 +----------------------+--------------------------------------+------------------+
 | Source Browser       | Source Detail / Mode Workspace        | Source Inspector |
 | Scope: Workspace All | Title: Research Note                  | Authority: local |
@@ -461,7 +461,7 @@ Search/RAG mode uses the same three-pane shell:
 | [x] Research Note    | Ask: "What changed since last week?"  | Index: ready     |
 | [x] Papers folder    | [Run Search] [Ask with RAG]           | Top K: 8         |
 | [ ] Conversations    | Results: chunks, scores, citations    | Citations: on    |
-| Saved Searches       | Answer draft / evidence preview       | Open in Console  |
+| Collections          | Answer draft / evidence preview       | Open in Console  |
 +--------------------------------------------------------------------------------+
 ```
 
@@ -471,6 +471,7 @@ Primary actions:
 
 - search/query selected sources.
 - import/export sources.
+- create, review, or apply collection source sets.
 - stage source/evidence into Console.
 - generate flashcards or quizzes from selected material.
 - open workspace or source detail.
@@ -482,12 +483,13 @@ Console handoff: selected sources, RAG results, notes, media, conversations, and
 Image reference brief:
 
 ```text
-Create a Textual-native terminal UI concept for the Library destination in a local-first agentic knowledge console. Show global nav with Home, Console, Library, Artifacts, Personas, W+C, Schedules, Workflows, MCP, ACP, Skills, Settings. The Library screen should include local modes for Sources, Search/RAG, Import/Export, Workspaces, Flashcards, Quizzes, Notes, and Media. Use dense bordered panes, visible local/server/workspace authority badges, a selected source detail inspector, and a primary action to ask in Console. Avoid web cards, browser chrome, floating modals, or glossy SaaS dashboard styling.
+Create a Textual-native terminal UI concept for the Library destination in a local-first agentic knowledge console. Show global nav with Home, Console, Library, Artifacts, Personas, W+C, Schedules, Workflows, MCP, ACP, Skills, Settings. The Library screen should include local modes for Sources, Search/RAG, Import/Export, Workspaces, Collections, Flashcards, Quizzes, Notes, and Media. Use dense bordered panes, visible local/server/workspace authority badges, a selected source detail inspector, citation/snippet evidence preview in retrieval mode, and a primary action to ask in Console. Avoid web cards, browser chrome, floating modals, or glossy SaaS dashboard styling.
 ```
 
 QA checks:
 
 - Search/RAG is reachable from Library without knowing legacy routes.
+- Collections are Library-owned reusable source sets, not a W+C subflow.
 - Import/Export appears under Library and does not blur with Artifact export.
 - Study entry points make Flashcards and Quizzes visible without creating a top-level Study destination.
 - The existing `study` route and Study Dashboard remain Library-owned and preserve section routing from Library.
@@ -617,14 +619,14 @@ QA checks:
 
 ### W+C
 
-User goal: monitor sources and manage curated collections.
+User goal: monitor sources, feeds, alerts, and watchlist runs.
 
-Screen role: Watchlists and Collections as local/server parity destination.
+Screen role: watchlists as local/server parity destination. The current `W+C` label remains a route-compatibility alias until navigation labels are migrated; new Collections workflows are Library-owned.
 
 Binding regions:
 
-- top-level internal tabs: Watchlists and Collections.
-- list of watchlists/collections.
+- watchlist/run filters.
+- list of watchlists, monitored sources, feeds, and alerts.
 - run/feed/item detail.
 - status/history/retry inspector.
 
@@ -632,9 +634,9 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 | Home Console Library Artifacts Personas W+C Schedules Workflows MCP ACP Skills |
 +--------------------------------------------------------------------------------+
-| W+C | Watchlists and Collections | Mixed readiness | Local/Server              |
+| W+C | Watchlists | Mixed readiness | Local/Server                              |
 +--------------------------------------------------------------------------------+
-| Tabs: Watchlists Collections | Filter: Running Failed Recent Alerts            |
+| Filters: Running Failed Recent Alerts Sources Feeds                            |
 +----------------------+--------------------------------------+------------------+
 | Watchlist List       | Detail / Items / Runs                 | Status Inspector |
 | > Daily papers       | Source: arxiv query                   | State: running   |
@@ -647,44 +649,29 @@ Binding regions:
 +--------------------------------------------------------------------------------+
 ```
 
-Collections tab uses the same layout with collection-focused labels:
-
-```text
-+--------------------------------------------------------------------------------+
-| W+C | Collections | Ready | Local                                               |
-+--------------------------------------------------------------------------------+
-| Collection List      | Items / Highlights / Saved Searches   | Collection Info  |
-| > Reading Queue      | > paper.pdf                           | Items: 42        |
-|   AI papers          |   transcript.md                       | Highlights: 8    |
-|   Project Sources    |   blog article                        | Saved searches: 3|
-| Saved Searches       | Highlights and note links             | Use in Library   |
-| Archive              |                                      | Ask in Console   |
-+--------------------------------------------------------------------------------+
-```
-
 Primary actions:
 
-- create/edit watchlist or collection.
+- create/edit watchlist.
 - run/retry watchlist.
 - inspect items/outputs.
 - follow live work in Console.
-- import/export.
+- send fetched items to Library collections or source sets.
 
-Focus path: tabs -> list -> detail -> status/history inspector.
+Focus path: filters -> list -> detail -> status/history inspector.
 
 Console handoff: active runs, outputs, and selected items can follow or stage into Console.
 
 Image reference brief:
 
 ```text
-Create a Textual-native terminal UI concept for the W+C destination, short for Watchlists+Collections. Show two internal tabs: Watchlists for monitored sources, jobs, runs, alerts, retry/backoff, scraped items, and outputs; Collections for curated reading/content items, highlights, saved searches, feeds, archives, and templates. Include local/server authority badges, run status, alert state, and follow-in-Console action. Avoid generic bookmark manager visuals or web dashboard cards.
+Create a Textual-native terminal UI concept for the W+C destination as a compatibility-labeled Watchlists control plane. Show monitored sources, jobs, runs, alerts, retry/backoff, scraped items, and outputs. Include local/server authority badges, run status, alert state, send-to-Library action, and follow-in-Console action. Avoid generic bookmark manager visuals, collection manager visuals, or web dashboard cards.
 ```
 
 QA checks:
 
-- Watchlists and Collections are visibly distinct.
+- Users can tell W+C is currently the watchlist/run control surface and that Collections live in Library.
 - Run history and retry/backoff are visible for watchlists.
-- Collection items can feed Library/RAG or Console without becoming Artifacts by default.
+- Fetched watchlist items can feed Library/RAG or Console without becoming Artifacts by default.
 - Watchlist outputs become Artifacts only when explicitly saved or exported.
 
 ### Schedules
@@ -1159,7 +1146,24 @@ Required behavior: Library import/export is for source material. Artifact export
 +----------------------+--------------------------------------+------------------+
 ```
 
-Required behavior: Workspaces define broad user context and scope. They do not replace Collections.
+Required behavior: Workspaces define broad user context and scope. They do not replace Library-owned Collections.
+
+### Library: Collections
+
+```text
++--------------------------------------------------------------------------------+
+| Library > Collections | Reusable source sets | Ready | Local/Server            |
++--------------------------------------------------------------------------------+
+| Collection List      | Items / Highlights / Saved Searches   | Collection Info  |
+| > Reading Queue      | > paper.pdf                           | Items: 42        |
+|   AI papers          |   transcript.md                       | Highlights: 8    |
+|   Project Sources    |   blog article                        | Saved searches: 3|
+| Saved Searches       | Highlights and note links             | Use in Search/RAG|
+| Archive              |                                      | Ask in Console   |
++--------------------------------------------------------------------------------+
+```
+
+Required behavior: Collections are Library-owned reusable source sets. They can feed Search/RAG, citations/snippets, study generation, schedules, workflows, and monitoring without duplicating Workspaces or becoming Artifacts.
 
 ### Library: Study Dashboard
 
@@ -1212,7 +1216,7 @@ Required behavior: quizzes are reachable from Library and can be generated from 
 +----------------------+--------------------------------------+------------------+
 ```
 
-Required behavior: source detail exposes use-in-Console, Search/RAG, metadata, and import/export recovery where relevant.
+Required behavior: source detail exposes use-in-Console, Search/RAG, citation/snippet provenance, metadata, and import/export recovery where relevant.
 
 ### Artifacts: Chatbooks
 
@@ -1262,18 +1266,6 @@ Required behavior: edits expose behavior impact and attachment compatibility.
 ```
 
 Required behavior: run status, retry/backoff, alerts, and follow-in-Console are visible.
-
-### W+C: Collections
-
-```text
-+--------------------------------------------------------------------------------+
-| W+C > Collections | Curated content sets | Ready | Local/Server             |
-+--------------------------------------------------------------------------------+
-| Collection List   | Items Highlights Saved Searches Feeds    | RAG/Export       |
-+----------------------+--------------------------------------+------------------+
-```
-
-Required behavior: Collections feed RAG, Library, schedules, workflows, and monitoring without duplicating Workspaces.
 
 ### Schedules: Detail And History
 
@@ -1386,7 +1378,7 @@ Later implementation gates are done only when:
 | Layout work becomes visual-only polish. | Every appendix includes user goal, states, focus path, and QA checks. |
 | Legacy routes duplicate destination layouts. | Route-owner map assigns each legacy route/subflow to one owner destination. |
 | Study placement stays confusing. | Study remains Library-owned; Flashcards and Quizzes are visible Library subflows. |
-| Workspaces and Collections blur. | Workspaces are global context; Collections are reusable source/content sets. |
+| Workspaces and Collections blur. | Workspaces are global context; Collections are Library-owned reusable source/content sets. |
 | Phase 6 discovers structural problems too late. | Phase 3.0 becomes the prerequisite before deeper Phase 3+ visual work. |
 
 ## Open Implementation Questions

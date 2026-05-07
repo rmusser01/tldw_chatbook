@@ -60,7 +60,7 @@ Required deferred follow-up gates:
   - Mounted UI regressions for Home, Console, and Library Gate 1 contract behavior.
 - `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-gate-1-core-product-loop-screen-adaptation.md`
   - QA walkthrough evidence for the adapted core loop.
-- `backlog/tasks/task-10.4 - Product-Maturity-Phase-3.4-Core-Product-Loop-Screen-Adaptation.md`
+- `backlog/tasks/task-10.5 - Product-Maturity-Phase-3.5-Core-Product-Loop-Screen-Adaptation.md`
   - Backlog task for this implementation slice, if Backlog.md does not assign a different child id.
 
 ### Modify
@@ -755,7 +755,7 @@ git commit -m "Make Library contract modes actionable"
 - Modify: `Docs/superpowers/qa/product-maturity/phase-3/README.md`
 - Modify: `Docs/superpowers/trackers/product-maturity-roadmap.md`
 - Modify: `Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-design.md`
-- Create: `backlog/tasks/task-10.4 - Product-Maturity-Phase-3.4-Core-Product-Loop-Screen-Adaptation.md`
+- Create: `backlog/tasks/task-10.5 - Product-Maturity-Phase-3.5-Core-Product-Loop-Screen-Adaptation.md`
 - Modify: `backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md`
 - Test: `Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py`
 
@@ -774,8 +774,8 @@ AUDIT = Path("Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-d
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
 TASK_10 = Path("backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md")
-TASK_10_4 = Path(
-    "backlog/tasks/task-10.4 - Product-Maturity-Phase-3.4-Core-Product-Loop-Screen-Adaptation.md"
+TASK_10_5 = Path(
+    "backlog/tasks/task-10.5 - Product-Maturity-Phase-3.5-Core-Product-Loop-Screen-Adaptation.md"
 )
 
 
@@ -788,7 +788,7 @@ def test_gate1_core_loop_screen_adaptation_evidence_is_tracked() -> None:
     audit = _text(AUDIT)
     tracker = _text(TRACKER)
     readme = _text(PHASE_3_README)
-    task = _text(TASK_10_4)
+    task = _text(TASK_10_5)
     parent = _text(TASK_10)
 
     for heading in ("## Scope", "## Walkthrough", "## Verification", "## Defects", "## Exit Decision"):
@@ -798,8 +798,8 @@ def test_gate1_core_loop_screen_adaptation_evidence_is_tracked() -> None:
     assert EVIDENCE.name in readme
     assert EVIDENCE.name in tracker
     assert "Gate 1" in audit
-    assert "TASK-10.4" in tracker
-    assert "TASK-10.4" in parent
+    assert "TASK-10.5" in tracker
+    assert "TASK-10.5" in parent
     assert "status: Done" in task
     for ac_number in range(1, 6):
         assert f"- [x] #{ac_number}" in task
@@ -846,13 +846,13 @@ Update:
 
 Use stable references:
 
-- `TASK-10.4`
+- `TASK-10.5`
 - evidence filename
 - selectors `#home-dashboard-grid`, `#console-workspace-grid`, `#library-mode-bar`
 
 - [ ] **Step 5: Add Backlog task hygiene**
 
-Create `backlog/tasks/task-10.4 - Product-Maturity-Phase-3.4-Core-Product-Loop-Screen-Adaptation.md`.
+Create `backlog/tasks/task-10.5 - Product-Maturity-Phase-3.5-Core-Product-Loop-Screen-Adaptation.md`.
 
 Minimum acceptance criteria:
 
@@ -877,7 +877,7 @@ Expected: pass.
 - [ ] **Step 7: Commit docs and tracking**
 
 ```bash
-git add Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-gate-1-core-product-loop-screen-adaptation.md Docs/superpowers/qa/product-maturity/phase-3/README.md Docs/superpowers/trackers/product-maturity-roadmap.md Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-design.md "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md" "backlog/tasks/task-10.4 - Product-Maturity-Phase-3.4-Core-Product-Loop-Screen-Adaptation.md" Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py
+git add Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-gate-1-core-product-loop-screen-adaptation.md Docs/superpowers/qa/product-maturity/phase-3/README.md Docs/superpowers/trackers/product-maturity-roadmap.md Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-design.md "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md" "backlog/tasks/task-10.5 - Product-Maturity-Phase-3.5-Core-Product-Loop-Screen-Adaptation.md" Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py
 git commit -m "Record Gate 1 core loop screen adaptation evidence"
 ```
 

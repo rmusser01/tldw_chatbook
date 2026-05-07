@@ -21,7 +21,7 @@ This is not a theme-only refresh. It is the visual and interaction grammar for t
 ### 2026-05-03 Verified Foundation Notes
 
 - Runtime destination metadata now supports compact visible labels plus full accessible/help labels through `ShellDestination.full_label` and `accessible_label`.
-- The command palette searches destination help text, so product terms such as Workspaces, Flashcards, Quizzes, and Watchlists+Collections remain discoverable even when the top bar is compact.
+- The command palette searches destination help text, so product terms such as Workspaces, Library Collections, Flashcards, Quizzes, and watchlists remain discoverable even when the top bar is compact.
 - The footer shortcut display has a typed `ShortcutContext`/`ShortcutAction` source of truth and regression coverage for stale shortcut replacement.
 - TCSS contract tests reject dotted `$ds.*` variable references and verify required `$ds-*` semantic tokens in source TCSS, `agentic_terminal` theme variables, and generated modular CSS.
 - `BaseAppScreen` remains the current wrapper seam; guardrail tests verify exactly one primary navigation bar per screen while full app-owned shell chrome remains deferred.

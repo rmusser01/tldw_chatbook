@@ -95,6 +95,7 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
             "Search/RAG",
             "Import/Export",
             "Workspaces",
+            "Collections",
             "Study",
             "Flashcards",
             "Quizzes",

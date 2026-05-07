@@ -1,7 +1,7 @@
-# Product Maturity Phase 3.5: Source Study-Pack Completion Reuse
+# Product Maturity Phase 3.7: Source Study-Pack Completion Reuse
 
 Date: 2026-05-07
-Task: `TASK-10.5`
+Task: `TASK-10.7`
 Status: verified
 
 ## Scope

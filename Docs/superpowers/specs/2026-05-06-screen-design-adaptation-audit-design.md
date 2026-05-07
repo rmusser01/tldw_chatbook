@@ -1,16 +1,16 @@
 # Screen Design Adaptation Audit
 
 Date: 2026-05-06
-Status: Design audit and implementation gate
+Status: Design audit and implementation gate; Gate 1 implementation verified
 Primary Repo: `tldw_chatbook`
-Current Base: `origin/dev` at `6d4389fa` (`Verify Phase 3.3 Library contract layout (#263)`)
+Current Base: `origin/dev` at `75879521` (`Add post-UX product roadmap handoff (#264)`)
 Scope: Current top-level destination screens after the Phase 3.3 Library contract merge
 
 ## Summary
 
 The current shell has the approved top-level information architecture and a verified global navigation model. It does not yet have fully adapted screen designs for every destination.
 
-`Library` is the only destination that substantially follows the approved destination layout grammar today. `Home` and `Console` have meaningful foundations but still need structural adaptation. Most other destinations are honest wrapper or skeleton screens: they explain ownership, expose some recovery states, and preserve route compatibility, but they are not yet designed as complete usable destination screens.
+Gate 1 now verifies the core product-loop adaptation for `Home`, `Console`, and `Library`: Home has dashboard regions and selected-item inspector, Console has agentic shell contract regions around the existing chat surface, and Library modes are actionable. Most other destinations are honest wrapper or skeleton screens: they explain ownership, expose some recovery states, and preserve route compatibility, but they are not yet designed as complete usable destination screens.
 
 This document should be used as the screen-design gate before deeper feature work continues. A screen should not be considered product-mature just because it renders, has clickable buttons, or passes shallow navigation tests. It must expose a usable layout, clear state, recoverable failure modes, and correct Console handoff behavior.
 
@@ -52,7 +52,7 @@ This document should be used as the screen-design gate before deeper feature wor
 | Library | Adapted with workflow gaps | High | Keep the three-region shell; make modes actionable and progressively replace outward legacy routing with Library-native source/search/study flows. |
 | Artifacts | Skeleton/Partial | High | Add artifact filters, artifact list, preview/detail, provenance inspector, Chatbook reopen/export/bundle actions. |
 | Personas | Partial | Medium | Add Personas/Characters/Prompts/Dictionaries/Lore modes, profile/detail editor, import/export, and attachment readiness inspector. |
-| W+C | Partial | Medium | Add Watchlists and Collections tabs, object list, item/run detail, status/history/retry inspector, and Console follow/stage actions. |
+| W+C | Partial | Medium | Add Watchlists filters, object list, item/run detail, status/history/retry inspector, and Console follow/stage actions; Collections are Library-owned. |
 | Schedules | Skeleton | Medium | Add schedule list, upcoming/detail/history workspace, pause/resume/retry controls, and selected-run Console handoff. |
 | Workflows | Skeleton | Medium | Add workflow list, builder/run detail workspace, dry-run/readiness inspector, approvals, and launch/follow in Console. |
 | MCP | Partial | Medium | Wrap `UnifiedMCPPanel` in destination contract framing: status/authority row, mode clarity, and readiness/permission/audit hierarchy. |
@@ -113,13 +113,14 @@ Current evidence: `LibraryScreen.compose_content()` now renders `#library-status
 
 Assessment: Adapted, with workflow gaps.
 
-Design issue: The structural shell is correct, but the modes are not yet fully interactive destination-native flows. Several actions still route to legacy screens rather than presenting source selection, Search/RAG, Import/Export, Workspaces, Study, Flashcards, and Quizzes as Library-owned modes.
+Design issue: The structural shell is correct, but the modes are not yet fully interactive destination-native flows. Several actions still route to legacy screens rather than presenting source selection, Search/RAG, Import/Export, Workspaces, Collections, Study, Flashcards, and Quizzes as Library-owned modes.
 
 Required adaptation:
 
 - Keep the current three-region shell as the template for other destinations.
 - Make mode chips actionable where feasible.
 - Add selected-source state and make the inspector reflect the selected item.
+- Move Collections into Library as reusable source sets that can feed Search/RAG, study, schedules, workflows, and Console.
 - Keep Study as a Library-owned umbrella mode or section, with Flashcards and Quizzes visible as child modes/actions.
 - Keep outward legacy routes only as compatibility paths while the Library-native modes mature.
 
@@ -127,6 +128,7 @@ Acceptance checks:
 
 - Source selection changes detail and inspector content.
 - Search/RAG is usable from Library without knowing the legacy `search` route.
+- Collections are visible as Library-owned source sets rather than a W+C subflow.
 - Import/Export copy stays source-oriented and does not blur with Artifacts exports.
 - Flashcards and Quizzes remain visible as Library-owned study paths.
 - Library exports source material and retrieval evidence; generated outputs and bundles belong in Artifacts.
@@ -177,24 +179,24 @@ Acceptance checks:
 
 ### W+C
 
-Current evidence: W+C shows Watchlists and Collections explanatory sections, local snapshot/recovery states, staging to Console, `Open current Watchlists`, and follow-in-Console controls.
+Current evidence: W+C still shows legacy Watchlists and Collections explanatory copy, local snapshot/recovery states, staging to Console, `Open current Watchlists`, and follow-in-Console controls.
 
 Assessment: Partial.
 
-Design issue: The destination explains the two domains but does not yet make them operationally distinct as tabs with lists, details, run history, and status/retry controls.
+Design issue: Collections now belong under Library, so W+C should not mature into a second collection-management surface. It should focus on watchlists, monitored sources, runs, alerts, retry/backoff, and Console follow/stage actions while preserving route compatibility.
 
 Required adaptation:
 
-- Add true internal tabs for `Watchlists` and `Collections`.
+- Replace legacy dual-domain copy with watchlist/run filters.
 - Add object list, detail/items/runs workspace, and status/history inspector.
 - For Watchlists, expose run state, retry/backoff, alert state, latest output, and Console follow.
-- For Collections, expose item state, highlights, saved searches, archive state, note links, and Library/RAG/Console handoff.
+- Route collection creation, review, saved searches, highlights, and Library/RAG/Console collection handoff to Library.
 
 Acceptance checks:
 
-- Watchlists and Collections are visibly distinct.
+- Users can tell W+C is the watchlist/run control surface and Collections are managed in Library.
 - Watchlist run failure shows cause, retry/backoff, and follow/retry target.
-- Collection items can feed Library/RAG or Console without becoming Artifacts by default.
+- Fetched watchlist items can feed Library/RAG or Console without becoming Artifacts by default.
 
 ### Schedules
 
@@ -360,7 +362,7 @@ Why: Gate 1 is allowed to make `Search/RAG` mode selectable inside Library. That
 
 Done when:
 
-- Library Search/RAG mode includes source selection, query input, retrieval status, evidence/results list, citations/provenance where available, and clear empty/error/setup recovery states.
+- Library Search/RAG mode includes source selection, query input, retrieval status, evidence/results list, citations/provenance, source snippets where available, and clear empty/error/setup recovery states.
 - Users can start from Library Search/RAG and continue into Console with staged evidence and source authority preserved.
 - Users can start from Console and invoke RAG against Library sources with visible retrieval state and cited evidence.
 - QA verifies retrieval usability rather than only selector presence or route navigation.
