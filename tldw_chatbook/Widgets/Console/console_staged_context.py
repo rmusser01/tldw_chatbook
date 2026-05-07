@@ -12,9 +12,20 @@ from tldw_chatbook.Chat.console_display_state import ConsoleStagedContextState
 
 
 class ConsoleStagedContextTray(Vertical):
-    """Render staged handoff/live-work provenance in the Console shell."""
+    """Render staged handoff/live-work provenance in the Console shell.
+
+    The tray shows the current staged-context heading, summary, structured
+    provenance rows, and recovery guidance supplied by the pure Console
+    display-state contract.
+    """
 
     def __init__(self, state: ConsoleStagedContextState, **kwargs: Any) -> None:
+        """Initialize the staged-context tray.
+
+        Args:
+            state: Staged-context display-state snapshot to render.
+            **kwargs: Additional Textual widget arguments.
+        """
         super().__init__(**kwargs)
         self.state = state
 

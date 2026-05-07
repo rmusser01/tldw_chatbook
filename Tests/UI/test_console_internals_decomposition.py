@@ -8,6 +8,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
 @pytest.mark.asyncio
@@ -103,6 +104,48 @@ async def test_console_native_control_bar_uses_existing_compact_model_sync_seam(
             == "console-test-model"
         )
         assert compact_bar.query_one("#compact-temperature", Input).value == "0.2"
+
+
+@pytest.mark.asyncio
+async def test_console_mounts_only_one_compact_model_bar():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-compact-model-bar")
+
+        assert len(console.query(CompactModelBar)) == 1
+        assert len(console.query("#compact-model-bar")) == 0
+
+
+@pytest.mark.asyncio
+async def test_console_control_labels_refresh_after_compact_control_sync():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-compact-model-bar")
+
+        compact_bar = console.query_one("#console-compact-model-bar")
+        provider_select = compact_bar.query_one("#compact-api-provider", Select)
+        provider = next(
+            value
+            for _, value in provider_select._options
+            if isinstance(value, str)
+        )
+
+        console._sync_compact_shell_controls(
+            provider=provider,
+            model="console-test-model",
+        )
+        await pilot.pause()
+
+        assert provider in str(console.query_one("#console-provider-label").renderable)
+        assert "console-test-model" in str(
+            console.query_one("#console-model-label").renderable
+        )
 
 
 def test_console_control_state_tolerates_missing_config_and_precise_rag_source():

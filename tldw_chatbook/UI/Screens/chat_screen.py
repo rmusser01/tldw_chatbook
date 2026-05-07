@@ -156,6 +156,8 @@ class ChatScreen(BaseAppScreen):
         self._diagnostics_run = False
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
+        self._console_control_provider: Optional[Any] = None
+        self._console_control_model: Optional[Any] = None
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -163,6 +165,7 @@ class ChatScreen(BaseAppScreen):
         if self.chat_window is None:
             self.chat_window = ChatWindowEnhanced(
                 self.app_instance,
+                show_shell_compact_controls=False,
                 id="chat-window",
                 classes="window",
             )
@@ -193,7 +196,9 @@ class ChatScreen(BaseAppScreen):
         """Build Console-owned control/readiness labels."""
         provider = getattr(self.app_instance, "chat_api_provider_value", None)
         provider = provider or self._chat_default_value("provider")
+        provider = self._console_control_provider or provider
         model = self._chat_default_value("model")
+        model = self._console_control_model or model
         source = pending_launch.source if pending_launch else None
         return ConsoleControlState.from_values(
             provider=provider,
@@ -614,8 +619,19 @@ class ChatScreen(BaseAppScreen):
             return shell_bar.query_one(CompactModelBar)
         except QueryError:
             return None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Legacy compact model bar unavailable: {e}")
             return None
+
+    def _sync_console_control_bar(self) -> None:
+        """Refresh Console-owned control labels from current selection state."""
+        try:
+            control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
+        except QueryError:
+            return
+        control_bar.sync_state(
+            self._build_console_control_state(self._pending_console_launch_context)
+        )
 
     def _sync_compact_shell_controls(
         self,
@@ -625,23 +641,25 @@ class ChatScreen(BaseAppScreen):
         temperature: Optional[str] = None,
     ) -> None:
         """Push sidebar control values back into the compact shell bar."""
-        compact_bar = self._get_compact_model_bar()
-        if not compact_bar:
-            logger.debug("No compact model bar available for reverse sync")
-            return
-
         updates: Dict[str, str] = {}
         if provider is not None:
             updates["provider"] = provider
+            self._console_control_provider = provider
         if model is not None:
             updates["model"] = model
+            self._console_control_model = model
         if temperature is not None:
             updates["temperature"] = temperature
 
         if not updates:
             return
 
-        compact_bar.sync_from_sidebar(**updates)
+        compact_bar = self._get_compact_model_bar()
+        if compact_bar:
+            compact_bar.sync_from_sidebar(**updates)
+        else:
+            logger.debug("No compact model bar available for reverse sync")
+        self._sync_console_control_bar()
 
     def _sync_compact_shell_controls_from_sidebar(self) -> None:
         """Mirror the current sidebar widget values into the compact shell controls."""

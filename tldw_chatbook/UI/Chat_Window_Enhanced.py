@@ -90,15 +90,24 @@ class ChatWindowEnhanced(Container):
     _tab_container: Optional['ChatTabContainer'] = None
     _task_cards: Optional[ChatTaskCards] = None
     
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+    def __init__(
+        self,
+        app_instance: 'TldwCli',
+        *,
+        show_shell_compact_controls: bool = True,
+        **kwargs: Any,
+    ):
         """Initialize the chat window with modular handlers.
         
         Args:
             app_instance: Reference to the main application instance
+            show_shell_compact_controls: Whether the embedded shell bar should
+                render its compact provider/model controls.
             **kwargs: Additional keyword arguments for Container
         """
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.show_shell_compact_controls = show_shell_compact_controls
         # Track the sidebar state locally as well
         self._sidebar_collapsed = False
         self._suppress_attachment_watch = False
@@ -821,6 +830,7 @@ class ChatWindowEnhanced(Container):
             yield ChatShellBar(
                 app_instance=self.app_instance,
                 on_sidebar_toggle_requested=self.handle_shell_sidebar_toggle_requested,
+                show_compact_controls=self.show_shell_compact_controls,
                 id="chat-shell-bar",
             )
             yield ChatTaskCards(id="chat-task-surface")
