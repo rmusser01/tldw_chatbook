@@ -1,16 +1,16 @@
 # Screen Design Adaptation Audit
 
 Date: 2026-05-06
-Status: Design audit and implementation gate; Gate 1 implementation verified
+Status: Design audit and implementation gate; Gate 1 and Gate 1.5 implementation verified
 Primary Repo: `tldw_chatbook`
-Current Base: `origin/dev` at `75879521` (`Add post-UX product roadmap handoff (#264)`)
-Scope: Current top-level destination screens after the Phase 3.3 Library contract merge
+Current Base: `origin/dev` at `16652ed2` (`Add Console native run inspector (#274)`)
+Scope: Current top-level destination screens after the Gate 1.5 Console internals closeout
 
 ## Summary
 
 The current shell has the approved top-level information architecture and a verified global navigation model. It does not yet have fully adapted screen designs for every destination.
 
-Gate 1 now verifies the core product-loop adaptation for `Home`, `Console`, and `Library`: Home has dashboard regions and selected-item inspector, Console has agentic shell contract regions around the existing chat surface, and Library modes are actionable. Most other destinations are honest wrapper or skeleton screens: they explain ownership, expose some recovery states, and preserve route compatibility, but they are not yet designed as complete usable destination screens.
+Gate 1 now verifies the core product-loop adaptation for `Home`, `Console`, and `Library`: Home has dashboard regions and selected-item inspector, Console has agentic shell contract regions, and Library modes are actionable. Gate 1.5 verifies that Console no longer presents the full embedded legacy Chat screen as its product-center surface; native Console controls, staged context, transcript/session, composer, run inspector, approvals, RAG/source state, and Chatbook artifact actions are now tracked by focused QA. Most other destinations are honest wrapper or skeleton screens: they explain ownership, expose some recovery states, and preserve route compatibility, but they are not yet designed as complete usable destination screens.
 
 This document should be used as the screen-design gate before deeper feature work continues. A screen should not be considered product-mature just because it renders, has clickable buttons, or passes shallow navigation tests. It must expose a usable layout, clear state, recoverable failure modes, and correct Console handoff behavior.
 
@@ -23,6 +23,7 @@ This document should be used as the screen-design gate before deeper feature wor
 - Current destination metadata: `tldw_chatbook/UI/Navigation/shell_destinations.py`
 - Current screen implementations under `tldw_chatbook/UI/Screens/`
 - Mounted Textual harness review at `140x42` for `Home`, `Console`, `Library`, `Artifacts`, `Personas`, `W+C`, `Schedules`, `Workflows`, `MCP`, `ACP`, `Skills`, and `Settings`
+- Gate 1.5 Console internals evidence: `Docs/superpowers/qa/product-maturity/phase-3/2026-05-07-gate-1-5-console-internals-decomposition.md`
 
 ## Maturity Labels
 
@@ -35,7 +36,7 @@ This document should be used as the screen-design gate before deeper feature wor
 ## Global Findings
 
 1. The shell IA is now coherent, but screen-level IA is uneven. Users can reach the right destination but may not know what to do after arriving.
-2. `Console` still behaves visually like legacy Chat plus readiness cards, not yet like the primary agentic control surface.
+2. `Console` now has native product-center internals for controls, staged context, transcript/session, composer, run inspector, approvals, RAG/source state, and Chatbook artifact actions; broader live-runtime depth remains later-phase work.
 3. `Library` proves the destination contract can work in Textual, but the same grammar has not been applied across the rest of the product.
 4. Recovery copy has improved, but many screens stop at "unavailable" without offering an in-screen setup path, object selection path, or concrete next action.
 5. Most destination headers lack a compact status/authority row. This weakens visibility of system status and source/runtime authority.
@@ -48,7 +49,7 @@ This document should be used as the screen-design gate before deeper feature wor
 | Destination | Current State | User Impact | Required Design Adaptation |
 | --- | --- | --- | --- |
 | Home | Partial | High | Convert from vertical summary sections into dashboard regions: attention queue, active work, selected-item inspector, next-best actions, recent/resume. |
-| Console | Partial | Critical | Reframe from legacy Chat wrapper into agentic live-work surface with staged context tray, transcript/event stream, composer, run/tool/approval inspector, and artifact controls. |
+| Console | Adapted for Gate 1.5 | Critical | Continue runtime depth from the native agentic workbench rather than reintroducing legacy embedded Chat chrome. |
 | Library | Adapted with workflow gaps | High | Keep the three-region shell; make modes actionable and progressively replace outward legacy routing with Library-native source/search/study flows. |
 | Artifacts | Skeleton/Partial | High | Add artifact filters, artifact list, preview/detail, provenance inspector, Chatbook reopen/export/bundle actions. |
 | Personas | Partial | Medium | Add Personas/Characters/Prompts/Dictionaries/Lore modes, profile/detail editor, import/export, and attachment readiness inspector. |
@@ -86,19 +87,19 @@ Acceptance checks:
 
 ### Console
 
-Current evidence: `ChatScreen.compose_content()` renders a live-work launch/status card or source-readiness card before mounting `ChatWindowEnhanced`. The mounted default state shows live-work source readiness plus many legacy Chat settings controls.
+Current evidence: `ChatScreen.compose_content()` mounts Console-native control, staged-context, transcript/session, composer, and run-inspector regions. Focused mounted regressions verify `#console-control-bar`, `#console-session-surface`, `#console-native-composer`, and `#console-run-inspector` while rejecting the full legacy `ChatWindowEnhanced` chrome inside the Console route.
 
-Assessment: Partial, with critical product risk.
+Assessment: Adapted for Gate 1.5, with later runtime-depth risks.
 
-Design issue: Console is the product center, but the current composition still visually prioritizes Chat settings/sidebar complexity. It does not yet clearly separate staged context, transcript/event stream, composer, run inspector, approvals, and artifacts.
+Design issue: The prior embedded-legacy-screen risk is closed for the Console route. Remaining Console maturity risk is deeper runtime behavior: live provider generation, richer tool/MCP/ACP execution, server-backed run history, and broader cross-destination recovery should build on the native workbench instead of reintroducing legacy chrome.
 
 Required adaptation:
 
-- Add a Console destination header with readiness, workspace/source authority, and primary action.
-- Introduce a stable Console shell grid: staged context tray, transcript/event stream, run inspector, composer/action row.
-- Promote live-work source readiness into the inspector or a readiness lane rather than making it compete with the conversation surface.
-- Make RAG/source usage visible in Console before send.
-- Keep legacy `ChatWindowEnhanced` behavior behind the new shell until it can be incrementally decomposed.
+- Preserve the Console destination header with readiness, workspace/source authority, and primary action.
+- Preserve the stable Console shell grid: staged context tray, transcript/event stream, run inspector, composer/action row.
+- Keep RAG/source usage visible in Console before send.
+- Keep existing chat behavior covered through compatibility seams and direct legacy-widget tests.
+- Continue live runtime, tool/MCP/ACP, and artifact-history depth in later phases without restoring the full embedded legacy screen.
 
 Acceptance checks:
 
@@ -345,8 +346,9 @@ Done when:
 ### Gate 1.5: Console Internals Decomposition
 
 Screen: `Console`.
+Status: verified by `Docs/superpowers/qa/product-maturity/phase-3/2026-05-07-gate-1-5-console-internals-decomposition.md`.
 
-Why: Gate 1 is allowed to wrap the existing `ChatWindowEnhanced` surface for compatibility. That cannot be the end state. The product center must look and behave like one coherent agentic Console, not a new shell wrapped around an out-of-place legacy Chat implementation.
+Why: Gate 1 allowed wrapping the existing `ChatWindowEnhanced` surface for compatibility. Gate 1.5 closes that interim risk so the product center looks and behaves like one coherent agentic Console, not a new shell wrapped around an out-of-place legacy Chat implementation.
 
 Done when:
 
