@@ -38,6 +38,7 @@ SUBFLOWS = (
     "Library: Search/RAG",
     "Library: Import/Export",
     "Library: Workspaces",
+    "Library: Collections",
     "Library: Study Dashboard",
     "Library: Flashcards",
     "Library: Quizzes",
@@ -46,7 +47,6 @@ SUBFLOWS = (
     "Artifacts: Exports And Reuse",
     "Personas: Detail/Edit/Import/Export",
     "W+C: Watchlists",
-    "W+C: Collections",
     "Schedules: Detail And History",
     "Workflows: Builder And Run Detail",
     "MCP: Tools/Resources/Readiness",
@@ -161,6 +161,26 @@ def test_phase30_route_inventory_keeps_study_library_owned() -> None:
     study_row = _markdown_table_row(inventory, "Study route")
     assert study_row[2] == "Library"
     assert "do not create a separate top-level Study destination" in study_row[3]
+
+
+def test_phase30_collections_are_library_owned_with_later_citation_snippet_scope() -> None:
+    spec = _text(SPEC)
+    tracker = _text(TRACKER)
+
+    library_row = _markdown_table_row(spec, "Library")
+    wc_row = _markdown_table_row(spec, "W+C")
+    assert "Collections" in library_row[1]
+    wc_owned_terms = wc_row[1].replace("`watchlists_collections`", "")
+    assert "collections" not in wc_owned_terms.lower()
+
+    assert "### Library: Collections" in spec
+    assert "### W+C: Collections" not in spec
+    assert "citation" in spec.lower()
+    assert "snippet" in spec.lower()
+
+    phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
+    assert "Collections-in-Library" in phase_three_row[5]
+    assert "citations/snippets" in phase_three_row[5]
 
 
 def test_phase30_tracker_records_layout_contract_gate() -> None:

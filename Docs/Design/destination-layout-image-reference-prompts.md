@@ -29,7 +29,7 @@ Create a Textual-native terminal UI concept for the Console destination in a loc
 Caption: Non-binding inspiration; text and ASCII contract are authoritative.
 
 ```text
-Create a Textual-native terminal UI concept for the Library destination in a local-first agentic knowledge console. Show global nav with Home, Console, Library, Artifacts, Personas, W+C, Schedules, Workflows, MCP, ACP, Skills, Settings. The Library screen should include local modes for Sources, Search/RAG, Import/Export, Workspaces, Flashcards, Quizzes, Notes, and Media. Use dense bordered panes, visible local/server/workspace authority badges, a selected source detail inspector, and a primary action to ask in Console. Avoid web cards, browser chrome, floating modals, or glossy SaaS dashboard styling.
+Create a Textual-native terminal UI concept for the Library destination in a local-first agentic knowledge console. Show global nav with Home, Console, Library, Artifacts, Personas, W+C, Schedules, Workflows, MCP, ACP, Skills, Settings. The Library screen should include local modes for Sources, Search/RAG, Import/Export, Workspaces, Collections, Flashcards, Quizzes, Notes, and Media. Use dense bordered panes, visible local/server/workspace authority badges, a selected source detail inspector, citation/snippet evidence preview in retrieval mode, and a primary action to ask in Console. Avoid web cards, browser chrome, floating modals, or glossy SaaS dashboard styling.
 ```
 
 ## Artifacts
@@ -53,7 +53,7 @@ Create a Textual-native terminal UI concept for the Personas destination in a lo
 Caption: Non-binding inspiration; text and ASCII contract are authoritative.
 
 ```text
-Create a Textual-native terminal UI concept for the W+C destination, short for Watchlists+Collections. Show two internal tabs: Watchlists for monitored sources, jobs, runs, alerts, retry/backoff, scraped items, and outputs; Collections for curated reading/content items, highlights, saved searches, feeds, archives, and templates. Include local/server authority badges, run status, alert state, and follow-in-Console action. Avoid generic bookmark manager visuals or web dashboard cards.
+Create a Textual-native terminal UI concept for the W+C destination as a compatibility-labeled Watchlists control plane. Show monitored sources, jobs, runs, alerts, retry/backoff, scraped items, and outputs. Include local/server authority badges, run status, alert state, send-to-Library action, and follow-in-Console action. Avoid generic bookmark manager visuals, collection manager visuals, or web dashboard cards.
 ```
 
 ## Schedules

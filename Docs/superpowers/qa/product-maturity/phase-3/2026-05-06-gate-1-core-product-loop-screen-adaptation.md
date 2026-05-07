@@ -20,7 +20,7 @@ Home mounted with mixed active work and exposed `#home-dashboard-grid`, `#home-a
 
 Console mounted as an agentic shell and exposed `#console-workspace-grid`, `#console-staged-context-tray`, `#console-transcript-region`, `#console-run-inspector`, and `#console-composer-region`. Existing live-work source readiness and pending launch cards still render inside the new shell, and key live-work button routing remains covered.
 
-Library mounted with `#library-mode-bar`, `#library-source-browser`, `#library-source-detail`, and `#library-source-inspector`. Clicking `#library-mode-search` stayed on Library and changed the detail copy to `Search/RAG mode`, with Console handoff still available through the existing `Use in Console` action when sources exist.
+Library mounted with `#library-mode-bar`, `#library-source-browser`, `#library-source-detail`, and `#library-source-inspector`. Clicking `#library-mode-search` stayed on Library and changed the detail copy to `Search/RAG mode`, with Console handoff still available through the existing `Use in Console` action when sources exist. Clicking `#library-mode-collections` stays on Library and exposes `Collections mode` copy that identifies Collections as Library-owned reusable source sets for citations/snippets, study, and Console.
 
 ## Functional Result
 
@@ -29,6 +29,7 @@ The QA pass verified usable mounted behavior rather than selector presence only:
 - Home control clicks still call the app runtime hooks for approve, reject, pause, resume, retry, details, and Console handoff.
 - Console preserves existing chat handoff, shell-bar, live-work readiness, pending launch rendering, and W+C live-work primary action routing.
 - Library mode selection is clickable in the mounted app and does not leave the Library route or break source snapshot, study, or destination-shell behavior.
+- Collections are now represented as a Library mode. Full collection create/edit/review behavior remains later Phase 3 scope.
 
 ## Verification
 
@@ -48,20 +49,21 @@ Focused implementation checks:
 
 Final focused PR gate:
 
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_home_screen.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_shell_bar.py Tests/UI/test_product_maturity_phase3_library_contract_layout.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_destination_shells.py Tests/UI/test_master_shell_design_system_contract.py --tb=short`
-- Result: `158 passed, 1 warning`
+- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_home_screen.py Tests/UI/test_chat_first_handoffs.py Tests/UI/test_chat_shell_bar.py Tests/UI/test_product_maturity_phase3_layout_contracts.py Tests/UI/test_product_maturity_phase3_library_contract_layout.py Tests/UI/test_product_maturity_phase3_knowledge_entry.py Tests/UI/test_product_maturity_phase3_library_study_context.py Tests/UI/test_destination_shells.py Tests/UI/test_master_shell_design_system_contract.py --tb=short`
+- Result: `168 passed, 1 warning`
 
 ## Defects
 
 - Initial Home adaptation rendered all Active Work controls, but later controls were outside the visible parent region in mounted tests. Fixed by giving the Home dashboard row deterministic height and compact control hit targets.
 - Initial Library mode buttons existed but were out of bounds because the test harness did not load app TCSS and the mode label consumed the full row width. Fixed with inline mode-bar sizing so mode controls stay reachable in mounted tests.
+- The follow-up Collections-in-Library regression initially failed because `#library-mode-collections` did not exist. Fixed by adding a Library-owned Collections mode chip and explicit citation/snippet follow-up copy.
 
 No P0 or P1 defect remains in the verified Gate 1 scope.
 
 ## Residual Risk
 
 - `ChatWindowEnhanced` remains the legacy Console internals inside the new Console shell. Gate 1.5 must decompose or replace it with Console-native components.
-- Library `Search/RAG` mode is selectable and honest, but full Library-native retrieval, evidence, citation, and handoff workflow remains Gate 1.6.
+- Library `Search/RAG` mode is selectable and honest, but full Library-native retrieval, evidence, citation/snippet, and handoff workflow remains Gate 1.6.
 - Other destinations are not adapted by this gate and remain owned by later Gate 2 and Gate 3 plans.
 
 ## Exit Decision

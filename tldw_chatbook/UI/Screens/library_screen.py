@@ -62,6 +62,12 @@ LIBRARY_MODES = {
         "description": "Workspaces mode: scope Library material to project or task contexts.",
         "next_action": "Workspace scoping is shown here before material is staged in Console.",
     },
+    "collections": {
+        "label": "Collections",
+        "button_id": "library-mode-collections",
+        "description": "Collections mode: manage Library-owned reusable source sets.",
+        "next_action": "Collections can feed Search/RAG citations/snippets, study generation, and Console.",
+    },
     "study": {
         "label": "Study",
         "button_id": "library-mode-study",
@@ -409,12 +415,12 @@ class LibraryScreen(BaseAppScreen):
         with Vertical(id="library-shell"):
             yield Static("Library", id="library-title", classes="ds-destination-header")
             yield Static(
-                "Source material, notes, media, conversations, imports/exports, and Search/RAG.",
+                "Source material, notes, media, conversations, collections, imports/exports, and Search/RAG.",
                 id="library-purpose",
                 classes="destination-purpose",
             )
             yield Static(
-                f"Library | Sources, imports, Search/RAG, Workspaces, Study | {status_label} | Local",
+                f"Library | Sources, imports, Search/RAG, Workspaces, Collections, Study | {status_label} | Local",
                 id="library-status-row",
                 classes="destination-status-row",
             )

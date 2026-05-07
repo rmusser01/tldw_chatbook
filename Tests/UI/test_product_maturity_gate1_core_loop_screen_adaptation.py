@@ -174,6 +174,14 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         assert "Search/RAG mode" in text
         assert "Ask in Console" in text or "Use in Console" in text
 
+        await pilot.click("#library-mode-collections")
+        await pilot.pause(0.1)
+
+        text = _visible_text(screen)
+        assert "Collections mode" in text
+        assert "Library-owned" in text
+        assert "citations/snippets" in text
+
 
 def test_gate1_core_loop_screen_adaptation_evidence_is_tracked() -> None:
     evidence = _text(EVIDENCE)

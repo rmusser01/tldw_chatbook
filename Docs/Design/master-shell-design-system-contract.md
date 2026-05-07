@@ -49,9 +49,9 @@ All new shell surfaces must support `.density-compact` and `.density-comfortable
 
 - Top navigation is global primary destination navigation only.
 - `Home` and `Console` remain visible at all supported widths.
-- Compact labels such as `W+C` are allowed in the top bar only when tooltip, command palette, and destination header expose the full label.
+- Compact legacy labels such as `W+C` are allowed in the top bar only when tooltip, command palette, and destination header expose the full label and current ownership. New Collections workflows are Library-owned.
 - Runtime destination metadata uses `ShellDestination.label` for the visible top-nav label and `ShellDestination.full_label`/`accessible_label` for full names exposed through help, tooltips, and command-palette search.
-- `Home` and `Console` are the first priority destinations; `Library` and `W+C` follow as primary product-model destinations rather than local page tabs.
+- `Home` and `Console` are the first priority destinations; `Library` and the watchlist control surface follow as primary product-model destinations rather than local page tabs.
 - Overflow must be discoverable and keyboard-reachable; destinations must not disappear silently at narrow widths.
 - Destination context, workspace, backend, readiness, and recovery state stay inside destination headers or local panels.
 
@@ -93,7 +93,7 @@ All new shell surfaces must support `.density-compact` and `.density-comfortable
 - Home and all primary destination wrappers use `.ds-destination-header` and `.ds-panel`.
 - Console renders pending live-work launch context with `.ds-panel` and a readable source/title label.
 - Top navigation metadata now separates compact visible labels from full accessible/help labels.
-- Command-palette tab navigation searches destination help text so hidden product-model terms such as Workspaces, flashcards, quizzes, and Watchlists+Collections remain discoverable.
+- Command-palette tab navigation searches destination help text so hidden product-model terms such as Workspaces, Library Collections, flashcards, quizzes, and watchlists remain discoverable.
 - Footer shortcut context has a typed source-of-truth API and stale-context regression coverage.
 - Semantic token contracts verify hyphenated TCSS names, theme-variable parity, and generated stylesheet coverage.
 - Shell chrome ownership is guarded by tests, but full app-owned chrome migration is deferred; `BaseAppScreen` remains the current wrapper seam.
