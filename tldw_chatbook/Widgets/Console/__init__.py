@@ -2,12 +2,14 @@
 
 from .console_control_bar import ConsoleControlBar
 from .console_composer_bar import ConsoleComposerBar
+from .console_run_inspector import ConsoleRunInspector
 from .console_session_surface import ConsoleSessionSurface
 from .console_staged_context import ConsoleStagedContextTray
 
 __all__ = [
     "ConsoleComposerBar",
     "ConsoleControlBar",
+    "ConsoleRunInspector",
     "ConsoleSessionSurface",
     "ConsoleStagedContextTray",
 ]
