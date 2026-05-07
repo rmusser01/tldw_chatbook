@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 import hashlib
 from inspect import isawaitable
@@ -48,6 +49,8 @@ from .study_scope_models import (
 ScopeKey = tuple[str, Optional[str], str, bool, Optional[str]]
 _HTML_TAG_RE = re.compile(r"<[^>]*>")
 _DANGEROUS_TEXT_RE = re.compile(r"javascript\s*:|\bon(?:click|error)\s*=", re.IGNORECASE)
+SOURCE_STUDY_PACK_STATUS_CHECKS = 3
+SOURCE_STUDY_PACK_STATUS_DELAY_SECONDS = 0.05
 
 
 class StudyScreen(BaseAppScreen):
@@ -95,6 +98,7 @@ class StudyScreen(BaseAppScreen):
         self._dashboard_due_count: int = 0
         self._recent_deck_titles: list[str] = []
         self._recent_quiz_titles: list[str] = []
+        self._latest_source_study_pack: dict[str, Any] | None = None
         self._pending_initial_section = self._consume_pending_initial_section()
 
     @property
@@ -496,6 +500,12 @@ class StudyScreen(BaseAppScreen):
                 "status": "Source generation requires server mode.",
                 "tooltip": "Switch to server mode to generate a study pack from selected Library sources.",
             }
+        if self._latest_source_study_pack:
+            return {
+                "enabled": True,
+                "status": self._source_study_pack_ready_status(self._latest_source_study_pack),
+                "tooltip": "Generate another server study pack from the selected Library sources.",
+            }
         return {
             "enabled": True,
             "status": f"{len(self.scope_state.source_items)} selected source items ready for study-pack generation.",
@@ -508,18 +518,126 @@ class StudyScreen(BaseAppScreen):
     def _source_items_payload(self) -> list[dict[str, Any]]:
         return [item.as_payload() for item in self.scope_state.source_items]
 
-    async def _generate_source_study_pack(self) -> None:
+    def _source_study_pack_title_from_payload(self, study_pack: Mapping[str, Any]) -> str:
+        return (
+            self._clean_material_text(
+                study_pack.get("title"),
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            )
+            or "Generated study pack"
+        )
+
+    @staticmethod
+    def _has_source_pack_value(value: Any) -> bool:
+        return value is not None and str(value).strip() != ""
+
+    def _source_study_pack_ready_status(self, study_pack: Mapping[str, Any]) -> str:
+        title = self._source_study_pack_title_from_payload(study_pack)
+        details: list[str] = []
+        pack_id = study_pack.get("id")
+        deck_id = study_pack.get("deck_id")
+        if self._has_source_pack_value(pack_id):
+            details.append(f"pack {pack_id}")
+        if self._has_source_pack_value(deck_id):
+            details.append(f"deck {deck_id}")
+        detail_text = f" ({', '.join(details)})" if details else ""
+        return f"Study pack ready: {title}{detail_text}. Open flashcards or resume it from the dashboard."
+
+    def _record_source_study_pack_ready(self, study_pack: Mapping[str, Any]) -> None:
+        self._latest_source_study_pack = dict(study_pack)
+        title = self._source_study_pack_title_from_payload(study_pack)
+        if title:
+            self._recent_deck_titles = [
+                title,
+                *[deck_title for deck_title in self._recent_deck_titles if deck_title != title],
+            ][:3]
+        section = "flashcards" if self._has_source_pack_value(study_pack.get("deck_id")) else "dashboard"
+        self._record_study_session(section=section, topic=title)
+
+    def _source_pack_job_status_text(self, status: str, job_id: Any) -> str:
+        if self._has_source_pack_value(job_id):
+            return f"Study pack generation {status}: job {job_id}."
+        return f"Study pack generation {status}."
+
+    def _update_source_generation_dashboard(self, *, enabled: bool, status: str, tooltip: str) -> None:
         if self.study_dashboard is not None and self.study_dashboard.is_mounted:
             self.study_dashboard.update_source_generation_action(
-                enabled=False,
-                status="Queuing source study-pack generation...",
-                tooltip="Source study-pack generation is already queued.",
+                enabled=enabled,
+                status=status,
+                tooltip=tooltip,
             )
+
+    async def _observe_source_study_pack_job(self, study_service: Any, job_id: Any) -> bool:
+        status_loader = getattr(study_service, "get_study_pack_job_status", None)
+        if not callable(status_loader):
+            return False
+
+        last_status = "queued"
+        for attempt in range(SOURCE_STUDY_PACK_STATUS_CHECKS):
+            try:
+                result = await self._maybe_await(status_loader(job_id))
+            except Exception:
+                logger.exception("Failed to observe source study-pack generation")
+                status = "Study pack generation was queued, but status refresh failed."
+                self._update_source_generation_dashboard(
+                    enabled=True,
+                    status=status,
+                    tooltip="Retry source study-pack generation or check server jobs.",
+                )
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(status, severity="warning")
+                return True
+
+            payload = result if isinstance(result, Mapping) else {}
+            job = payload.get("job") if isinstance(payload.get("job"), Mapping) else {}
+            last_status = str(job.get("status") or last_status).strip().lower() or last_status
+            study_pack = payload.get("study_pack")
+            if last_status == "completed" and isinstance(study_pack, Mapping):
+                self._record_source_study_pack_ready(study_pack)
+                self._update_source_generation_dashboard(
+                    enabled=True,
+                    status=self._source_study_pack_ready_status(study_pack),
+                    tooltip="Generate another server study pack from the selected Library sources.",
+                )
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify("Study pack ready.", severity="information")
+                return True
+            if last_status in {"failed", "cancelled"}:
+                error = str(payload.get("error") or "").strip()
+                status = f"Study pack generation {last_status}."
+                if error:
+                    status = f"{status} {error}"
+                self._update_source_generation_dashboard(
+                    enabled=True,
+                    status=status,
+                    tooltip="Retry source study-pack generation.",
+                )
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(status, severity="error" if last_status == "failed" else "warning")
+                return True
+            if attempt + 1 < SOURCE_STUDY_PACK_STATUS_CHECKS:
+                await asyncio.sleep(SOURCE_STUDY_PACK_STATUS_DELAY_SECONDS)
+
+        self._update_source_generation_dashboard(
+            enabled=True,
+            status=self._source_pack_job_status_text(last_status, job_id),
+            tooltip="Generate another server study pack from the selected Library sources.",
+        )
+        return True
+
+    async def _generate_source_study_pack(self) -> None:
+        self._update_source_generation_dashboard(
+            enabled=False,
+            status="Queuing source study-pack generation...",
+            tooltip="Source study-pack generation is already queued.",
+        )
 
         state = self._source_generation_dashboard_state()
         if not state["enabled"]:
-            if self.study_dashboard is not None and self.study_dashboard.is_mounted:
-                self.study_dashboard.update_source_generation_action(**state)
+            self._update_source_generation_dashboard(**state)
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(state["status"], severity="warning")
@@ -529,12 +647,11 @@ class StudyScreen(BaseAppScreen):
         create_job = getattr(study_service, "create_study_pack_job", None)
         if not callable(create_job):
             status = "Study pack generation is unavailable in this runtime."
-            if self.study_dashboard is not None and self.study_dashboard.is_mounted:
-                self.study_dashboard.update_source_generation_action(
-                    enabled=False,
-                    status=status,
-                    tooltip=status,
-                )
+            self._update_source_generation_dashboard(
+                enabled=False,
+                status=status,
+                tooltip=status,
+            )
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(status, severity="warning")
@@ -556,12 +673,11 @@ class StudyScreen(BaseAppScreen):
         except Exception:
             logger.exception("Failed to queue source study-pack generation")
             status = "Failed to queue source study-pack generation."
-            if self.study_dashboard is not None and self.study_dashboard.is_mounted:
-                self.study_dashboard.update_source_generation_action(
-                    enabled=True,
-                    status=status,
-                    tooltip="Retry source study-pack generation.",
-                )
+            self._update_source_generation_dashboard(
+                enabled=True,
+                status=status,
+                tooltip="Retry source study-pack generation.",
+            )
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(status, severity="error")
@@ -570,19 +686,16 @@ class StudyScreen(BaseAppScreen):
         job = result.get("job") if isinstance(result, dict) else None
         job_id = job.get("id") if isinstance(job, dict) else None
         job_status = str(job.get("status") or "queued") if isinstance(job, dict) else "queued"
-        if job_id is not None:
-            status = f"Study pack generation {job_status}: job {job_id}."
-        else:
-            status = f"Study pack generation {job_status}."
-        if self.study_dashboard is not None and self.study_dashboard.is_mounted:
-            self.study_dashboard.update_source_generation_action(
-                enabled=True,
-                status=status,
-                tooltip="Generate another server study pack from the selected Library sources.",
-            )
+        self._update_source_generation_dashboard(
+            enabled=True,
+            status=self._source_pack_job_status_text(job_status, job_id),
+            tooltip="Generate another server study pack from the selected Library sources.",
+        )
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify("Study pack generation queued.", severity="information")
+        if job_id is not None and await self._observe_source_study_pack_job(study_service, job_id):
+            return
 
     def _status_text_from_window(self, widget_id: str) -> str:
         study_window = self.study_window_widget
@@ -846,6 +959,8 @@ class StudyScreen(BaseAppScreen):
 
         if previous_key == next_key and not force_controller_notify:
             return
+
+        self._latest_source_study_pack = None
 
         for controller_name in ("flashcards_controller", "quizzes_controller"):
             controller = getattr(study_window, controller_name, None)

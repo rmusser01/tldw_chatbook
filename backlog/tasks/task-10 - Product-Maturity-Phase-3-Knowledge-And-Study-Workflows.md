@@ -36,4 +36,6 @@ Continued Phase 3 with TASK-10.2. Library source context now carries into Study 
 Continued Phase 3 with TASK-10.3. The Library destination now exposes the approved Phase 3.0 layout shell with mode bar source browser source detail and inspector regions across compact default and large terminal sizes. Parent remains open for source-selected study generation Workspaces Collections and deeper Import/Export Search/RAG workflows.
 
 Continued Phase 3 with TASK-10.4. Library-selected note and media source items now carry into Study Dashboard and can queue a server study-pack generation job with local-mode recovery. Parent remains open for completed study-pack polling/reuse conversation message-level selection Workspaces Collections and deeper Import/Export Search/RAG workflows.
+
+Continued Phase 3 with TASK-10.5. Queued server source study-pack jobs now observe bounded completion status and surface ready pack metadata as reusable Study dashboard state. Parent remains open for full server job history direct generated deck selection conversation message-level selection Workspaces Collections and deeper Import/Export Search/RAG workflows.
 <!-- SECTION:NOTES:END -->
