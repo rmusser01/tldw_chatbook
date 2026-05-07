@@ -186,7 +186,7 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#chat-window")
+        await _wait_for_selector(console, pilot, "#console-session-surface")
 
         for selector in (
             "#console-shell",
@@ -197,11 +197,13 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
             "#console-staged-context-tray",
             "#console-transcript-region",
             "#console-run-inspector",
-            "#console-composer-region",
-            "#chat-window",
+            "#console-session-surface",
+            "#console-chat-tabs",
+            "#console-native-composer",
         ):
             assert console.query_one(selector)
 
+        assert len(console.query("#chat-window")) == 0
         text = _visible_text(console)
         assert "Console" in text
         assert "Live work" in text
@@ -210,19 +212,20 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
 
 
 @pytest.mark.asyncio
-async def test_console_chat_window_instance_survives_screen_recompose():
+async def test_console_native_session_surface_survives_screen_recompose():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#chat-window")
-        chat_window = console.query_one("#chat-window")
+        await _wait_for_selector(console, pilot, "#console-session-surface")
+        session_surface = console.query_one("#console-session-surface")
 
         console.refresh(recompose=True)
-        await _wait_for_selector(console, pilot, "#chat-window")
+        await _wait_for_selector(console, pilot, "#console-session-surface")
 
-        assert console.query_one("#chat-window") is chat_window
+        assert console.query_one("#console-session-surface") is session_surface
+        assert len(console.query("#chat-window")) == 0
 
 
 @pytest.mark.asyncio

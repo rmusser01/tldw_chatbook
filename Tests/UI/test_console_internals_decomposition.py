@@ -12,10 +12,6 @@ from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason="Gate 1.5 Task 2/3 will replace the full legacy ChatWindowEnhanced chrome.",
-    strict=True,
-)
 async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -34,10 +30,6 @@ async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason="Gate 1.5 Task 3 will expose a native Console composer.",
-    strict=True,
-)
 async def test_console_gate15_keeps_existing_chat_send_control_reachable():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -48,6 +40,9 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
 
         text = _visible_text(console)
         assert "Send" in text
+        assert "Stop" in text
+        assert "Attach" in text
+        assert "Save Chatbook" in text
         send_controls = [
             button
             for button in console.query(Button)
@@ -55,6 +50,9 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
             or button.has_class("console-send-button")
         ]
         assert send_controls
+        assert console.query_one("#console-stop-generation", Button)
+        assert console.query_one("#console-attach-context", Button)
+        assert console.query_one("#console-save-chatbook", Button)
 
 
 @pytest.mark.asyncio
