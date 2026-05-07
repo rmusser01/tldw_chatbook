@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -24,7 +25,8 @@ def test_post_ux_spec_preserves_tracker_handoff_rules():
     assert "Relationship To Existing Roadmaps" in text
     assert "Verified work reuse rule" in text
     assert "Operational handoff rule" in text
-    assert "`TASK-10` through `TASK-13`" in text
+    for task_id in ("TASK-10", "TASK-11", "TASK-12", "TASK-13"):
+        assert task_id in text
     assert "Post-UX Reliability Rebaseline" in text
     assert "not reimplemented" in text
 
@@ -41,6 +43,7 @@ def test_product_tracker_maps_post_ux_roadmap_to_existing_tasks():
         "Post-UX Reliability Rebaseline",
         "Source, Knowledge, And Artifact Loops",
         "Controlled Agent Configuration And Run Loops",
+        "Monitoring And Cross-Loop Recovery",
         "Server Parity And Live Integrations",
         "Release Hardening And Distribution",
     ):
@@ -76,5 +79,12 @@ def test_public_roadmap_is_directional_and_commitment_free():
     assert "Next: Complete Workflow Loops" in text
     assert "Later: Server-Backed And Live Capabilities" in text
     assert "Always: Local-First Control" in text
-    forbidden = ("ETA", "deadline", "will ship on", "TASK-", "Phase 1.1", "Phase 2.5")
-    assert not any(term in text for term in forbidden)
+    forbidden_patterns = (
+        r"\bETA\b",
+        r"\bdeadline\b",
+        r"\bwill\s+ship\s+on\b",
+        r"\bTASK-",
+        r"\bPhase\s+1\.1\b",
+        r"\bPhase\s+2\.5\b",
+    )
+    assert not any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in forbidden_patterns)
