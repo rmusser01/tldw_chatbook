@@ -64,6 +64,19 @@ class RecordingSourceStudyService(DashboardStudyScopeService):
         )
         return {"job": {"id": 42, "status": "queued"}}
 
+    async def get_study_pack_job_status(
+        self,
+        *,
+        mode: str | None = None,
+        job_id: int,
+    ) -> dict[str, object]:
+        assert isinstance(job_id, int)
+        self.calls.append(("get_study_pack_job_status", mode, job_id))
+        statuses = getattr(self, "study_pack_job_statuses", [])
+        if statuses:
+            return statuses.pop(0)
+        return {"job": {"id": job_id, "status": "queued"}}
+
 
 async def _wait_for_source_generation_call(
     service: RecordingSourceStudyService,
@@ -77,6 +90,21 @@ async def _wait_for_source_generation_call(
             return
         await pilot.pause(0.01)
     raise AssertionError(f"Timed out waiting for study pack generation call: {service.calls}")
+
+
+async def _wait_for_service_call(
+    service: RecordingSourceStudyService,
+    pilot,
+    call_name: str,
+    *,
+    timeout: float = 5.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any(call[0] == call_name for call in service.calls):
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for {call_name}: {service.calls}")
 
 
 def _text(path: Path) -> str:
@@ -167,6 +195,110 @@ async def test_server_study_dashboard_launches_source_selected_study_pack_job() 
         ],
     ) in service.calls
     app_instance.notify.assert_called_with("Study pack generation queued.", severity="information")
+
+
+@pytest.mark.asyncio
+async def test_server_study_dashboard_observes_completed_source_pack_for_reuse() -> None:
+    service = RecordingSourceStudyService()
+    service.study_pack_job_statuses = [
+        {
+            "job": {"id": 42, "status": "completed"},
+            "study_pack": {
+                "id": 9,
+                "title": "Research Note Study Pack",
+                "deck_id": 7,
+                "status": "active",
+                "deleted": False,
+                "client_id": "server-client",
+                "version": 1,
+            },
+        }
+    ]
+    app_instance = _build_app_instance()
+    app_instance.study_scope_service = service
+    app_instance.current_runtime_backend = "server"
+    app_instance.runtime_backend = "server"
+    app_instance.notify = Mock()
+    app_instance.pending_study_scope_context = StudyScopeContext(
+        material_source=MATERIAL_SOURCE_LIBRARY,
+        material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
+        material_titles=("Research Note",),
+        source_items=(StudySourceItem(source_type="note", source_id="note-1", label="Research Note"),),
+    )
+    app = StudyDashboardTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        await pilot.click("#study-generate-source-pack")
+        await _wait_for_service_call(service, pilot, "get_study_pack_job_status")
+
+        status = app.screen.query_one("#study-source-generation-status", Static)
+        recent_decks = app.screen.query_one("#study-recent-decks", Static)
+        resume_button = app.screen.query_one("#study-resume-last", Button)
+
+        assert "ready" in _static_text(status).lower()
+        assert "Research Note Study Pack" in _static_text(status)
+        assert "deck 7" in _static_text(status)
+        assert "Research Note Study Pack" in _static_text(recent_decks)
+        assert resume_button.disabled is False
+        assert "flashcards" in str(resume_button.label).lower()
+
+        await pilot.click("#study-resume-last")
+        await pilot.pause(0.2)
+
+        assert app.screen.current_section == "flashcards"
+
+    assert ("get_study_pack_job_status", "server", 42) in service.calls
+    app_instance.notify.assert_any_call("Study pack ready.", severity="information")
+
+
+@pytest.mark.asyncio
+async def test_server_study_dashboard_keeps_failed_source_pack_generation_recoverable() -> None:
+    service = RecordingSourceStudyService()
+    service.study_pack_job_statuses = [
+        {
+            "job": {"id": 42, "status": "failed"},
+            "error": "<b>Embedding service unavailable</b> javascript: onerror=retry",
+        }
+    ]
+    app_instance = _build_app_instance()
+    app_instance.study_scope_service = service
+    app_instance.current_runtime_backend = "server"
+    app_instance.runtime_backend = "server"
+    app_instance.notify = Mock()
+    app_instance.pending_study_scope_context = StudyScopeContext(
+        material_source=MATERIAL_SOURCE_LIBRARY,
+        material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
+        material_titles=("Research Note",),
+        source_items=(StudySourceItem(source_type="note", source_id="note-1", label="Research Note"),),
+    )
+    app = StudyDashboardTestApp(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        await pilot.click("#study-generate-source-pack")
+        await _wait_for_service_call(service, pilot, "get_study_pack_job_status")
+
+        status = app.screen.query_one("#study-source-generation-status", Static)
+        generate_button = app.screen.query_one("#study-generate-source-pack", Button)
+
+        assert "failed" in _static_text(status).lower()
+        assert "Embedding service unavailable" in _static_text(status)
+        assert "<b>" not in _static_text(status)
+        assert "javascript:" not in _static_text(status)
+        assert "onerror=" not in _static_text(status)
+        assert generate_button.disabled is False
+        assert "Retry source study-pack generation" in str(generate_button.tooltip)
+
+    error_notifications = [
+        call.args[0]
+        for call in app_instance.notify.call_args_list
+        if call.kwargs.get("severity") == "error"
+    ]
+    assert any("Embedding service unavailable" in message for message in error_notifications)
+    assert all("<b>" not in message for message in error_notifications)
+    assert all("javascript:" not in message for message in error_notifications)
+    assert all("onerror=" not in message for message in error_notifications)
 
 
 @pytest.mark.asyncio

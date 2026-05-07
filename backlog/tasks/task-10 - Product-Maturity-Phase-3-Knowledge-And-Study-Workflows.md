@@ -38,4 +38,6 @@ Continued Phase 3 with TASK-10.3. The Library destination now exposes the approv
 Continued Phase 3 with TASK-10.4. Library-selected note and media source items now carry into Study Dashboard and can queue a server study-pack generation job with local-mode recovery. Parent remains open for completed study-pack polling/reuse conversation message-level selection Workspaces Library Collections citations/snippets and deeper Import/Export Search/RAG workflows.
 
 Continued Phase 3 with TASK-10.5. Gate 1 now adapts Home Console and Library into the core product-loop screen model: Home Command Center regions, Console Agent Workbench regions around the existing chat surface, and actionable Library modes. Parent remains open for required Gate 1.5 Console internals decomposition, Gate 1.6 Library-native Search/RAG with citations/snippets, Library-owned Collections, and later Knowledge/Study workflow depth.
+
+Continued Phase 3 with TASK-10.7. Queued server source study-pack jobs now observe bounded completion status and surface ready pack metadata as reusable Study dashboard state. Parent remains open for full server job history direct generated deck selection conversation message-level selection Workspaces Library Collections citations/snippets and deeper Import/Export Search/RAG workflows.
 <!-- SECTION:NOTES:END -->
