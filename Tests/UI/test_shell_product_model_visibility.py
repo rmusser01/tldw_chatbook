@@ -16,7 +16,7 @@ def test_library_destination_keeps_workspaces_visible():
 
 
 def test_study_modules_remain_discoverable_as_legacy_direct_route():
-    help_text = TabNavigationProvider.TAB_HELP_TEXT[TAB_STUDY].lower()
+    help_text = TabNavigationProvider._shell_help_text(TAB_STUDY).lower()
 
     assert "flashcards" in help_text
     assert "quizzes" in help_text

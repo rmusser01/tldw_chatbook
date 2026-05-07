@@ -12,6 +12,9 @@ RESUME_DISABLED_TOOLTIP = (
     "No study session to resume. Open flashcards or quizzes to start a session."
 )
 RESUME_ENABLED_TOOLTIP = "Resume the most recent study session."
+SOURCE_GENERATION_DISABLED_TOOLTIP = (
+    "Open Study from selected Library sources in server mode to generate a study pack."
+)
 
 
 class StudyDashboard(Widget):
@@ -85,6 +88,17 @@ class StudyDashboard(Widget):
                 )
                 yield Button("Open flashcards", id="study-open-flashcards")
                 yield Button("Open quizzes", id="study-open-quizzes")
+                yield Button(
+                    "Generate source pack",
+                    id="study-generate-source-pack",
+                    disabled=True,
+                    tooltip=SOURCE_GENERATION_DISABLED_TOOLTIP,
+                )
+            yield Static(
+                "Source generation is unavailable until Study has selected source items.",
+                id="study-source-generation-status",
+                classes="study-dashboard-meta",
+            )
 
     def update_scope_summary(self, summary: str) -> None:
         if self.is_mounted:
@@ -116,3 +130,24 @@ class StudyDashboard(Widget):
             button.label = "Resume last session"
             button.disabled = True
             button.tooltip = RESUME_DISABLED_TOOLTIP
+
+    def update_source_generation_action(
+        self,
+        *,
+        enabled: bool,
+        status: str,
+        tooltip: str,
+    ) -> None:
+        """Update the source-pack generation action state.
+
+        Args:
+            enabled: Whether the generation button should be interactive.
+            status: Status text shown beside the generation action.
+            tooltip: Tooltip explaining the current action state.
+        """
+        if not self.is_mounted:
+            return
+        button = self.query_one("#study-generate-source-pack", Button)
+        button.disabled = not enabled
+        button.tooltip = tooltip
+        self.query_one("#study-source-generation-status", Static).update(status)

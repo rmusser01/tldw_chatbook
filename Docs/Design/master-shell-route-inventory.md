@@ -12,10 +12,10 @@ This inventory maps current routes and UI surfaces onto the approved master shel
 | --- | --- | --- | --- | --- |
 | Home | `home` | new | Home | New default for first-run users |
 | Console | `chat` | `ChatScreen` | Console | Route remains `chat`; live work stores `pending_console_launch` and opens Console |
-| Library | `notes`, `media`, `ingest`, `search`, `conversation`, conversation browsing, `study` | `LibraryScreen` plus legacy screens | Library | Wrapper exposes Workspaces, Study Dashboard, Flashcards, Quizzes, and source routes; staged source context uses Chat handoff payloads |
+| Library | `notes`, `media`, `ingest`, `search`, `conversation`, `study` | `LibraryScreen` plus legacy screens | Library | Wrapper exposes Workspaces, Collections, Study Dashboard, Flashcards, Quizzes, conversation browsing, and source routes; staged source context uses Chat handoff payloads |
 | Artifacts | `chatbooks` | `ArtifactsScreen` plus `ChatbooksScreen` | Artifacts | Wrapper owns Chatbooks and generated/portable outputs; staged artifacts use Chat handoff payloads |
 | Personas | `ccp`, character/persona/prompt/lore subviews | `PersonasScreen` plus `ConversationScreen` | Personas | Personas owns behavior and identity management; staged persona context uses Chat handoff payloads |
-| W+C | `subscriptions` plus collections services | `WatchlistsCollectionsScreen` plus `SubscriptionScreen` | W+C | Wrapper separates Watchlists from Collections and can follow live work in Console |
+| W+C | `subscriptions` plus legacy collections services | `WatchlistsCollectionsScreen` plus `SubscriptionScreen` | W+C | Compatibility wrapper focuses future work on watchlists and can follow live work in Console; new Collections UX belongs in Library |
 | Schedules | schedule surfaces | `SchedulesScreen` | Schedules | Wrapper owns when-runs and can follow timing/recovery work in Console |
 | Workflows | workflow surfaces | `WorkflowsScreen` | Workflows | Wrapper owns what-runs and can launch live work in Console |
 | MCP | `tools_settings`, tools/MCP settings | `MCPScreen` | MCP | Wrapper owns MCP tool/server capability control; `tools_settings` is an MCP alias, not global Settings |
@@ -50,7 +50,7 @@ Status labels, source authority, approvals, staged source roles, recovery callou
 
 Top navigation may use compact labels where terminal width requires it, but `Home` and `Console` must remain visible, full destination names must remain available through tooltips and command palette, and overflow must be explicit rather than silently hiding destinations.
 
-Runtime label metadata separates compact visible labels from full accessible/help labels. `W+C` is the current compact top-nav label; `Watchlists+Collections` remains the full label for tooltips, command-palette text, and search. Direct legacy routes such as Study remain searchable by product terms, including Flashcards and Quizzes.
+Runtime label metadata separates compact visible labels from full accessible/help labels. `W+C` is the current compact top-nav compatibility label while navigation migration is deferred; help text should make current watchlist ownership clear, and Collections remain discoverable through Library. Direct legacy routes such as Study remain searchable by product terms, including Flashcards and Quizzes.
 
 Current runtime chrome ownership is still screen-wrapper based through `BaseAppScreen`. Guardrail tests verify that wrapper mounts one primary `MainNavigationBar` and that transient context terms do not leak into top navigation; full app-owned shell chrome remains a later migration.
 

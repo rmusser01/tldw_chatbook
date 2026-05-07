@@ -17,7 +17,7 @@
 - Product tracker pointer: `backlog/docs/product-maturity-roadmap.md`
 - Current layout contract spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`
 - Current Phase 3 task: `backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md`
-- Current Phase 3.0 task: `backlog/tasks/task-10.2 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
+- Current Phase 3.0 task: `backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
 - Future parent tasks: `backlog/tasks/task-11 - Product-Maturity-Phase-4-Agent-Configuration-And-Execution.md`, `backlog/tasks/task-12 - Product-Maturity-Phase-5-Server-Parity-And-Live-Integrations.md`, `backlog/tasks/task-13 - Product-Maturity-Phase-6-Release-Hardening-And-Documentation.md`
 
 ## Scope Check
@@ -43,7 +43,7 @@ This plan does not:
 Do not execute Task 1 until these are true:
 
 - The current in-progress UX/UI work has been merged or explicitly closed.
-- `TASK-10.2` is Done or the tracker explicitly records why the layout-contract gate is being deferred.
+- `TASK-10.0` is Done or the tracker explicitly records why the layout-contract gate is being deferred.
 - `git status --short` is reviewed and unrelated untracked UX/UI files are left untouched unless they are part of the completed handoff.
 
 If these are not true, stop after this plan and continue the active UX/UI workstream first.
@@ -418,7 +418,8 @@ Next focus:
 
 - ask grounded questions over selected sources.
 - turn answers into reusable Chatbooks and artifacts.
-- organize knowledge with Workspaces and Collections.
+- organize knowledge with Workspaces and Library Collections.
+- preserve retrieved citations and snippets for reuse in Console and artifacts.
 - generate and reuse flashcards, quizzes, reports, and study outputs.
 - configure personas, skills, tools, schedules, and workflows.
 - launch and monitor controlled agent work through Console.
@@ -428,8 +429,8 @@ Next focus:
 
 Longer-term focus:
 
-- richer source and RAG integration.
-- server-assisted watchlists and collections.
+- richer source and RAG integration with citations/snippets.
+- server-assisted watchlists and Library collection sync.
 - live status updates for running work.
 - import and sync paths for sources, personas, skills, and artifacts.
 - clearer collaboration between local and remote runtimes.

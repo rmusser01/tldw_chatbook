@@ -81,7 +81,7 @@ The roadmap should preserve six core value loops.
 | Grounded Answer Loop | Select or retrieve sources, stage evidence in Console, ask or command, inspect authority, and save output. | Library, Search/RAG, Console, Artifacts |
 | Source-to-Artifact Loop | Ingest material, reason over it, produce a durable output, and reopen or export it later. | Library, Console, Artifacts, Home |
 | Agent Run Loop | Configure behavior/tools/runtime, launch controlled work, approve risky actions, monitor, recover, and save results. | Personas, Skills, MCP, ACP, Schedules, Workflows, Console, Home |
-| Monitoring Loop | Watch sources or collections, surface changes, follow work, and convert findings into outputs or next actions. | W+C, Schedules, Home, Console, Artifacts |
+| Monitoring Loop | Watch sources, surface changes, follow work, and convert findings into Library source sets, outputs, or next actions. | W+C, Library, Schedules, Home, Console, Artifacts |
 | Study Loop | Turn source sets or Console outputs into flashcards, quizzes, and other study artifacts that remain reusable. | Library, Workspaces, Flashcards, Quizzes, Console, Artifacts |
 | Recovery Loop | Understand missing provider/runtime/server/dependency states and take a clear configure, retry, pause, or local-mode action. | Home, Console, Settings, affected destination |
 
@@ -109,8 +109,8 @@ Current tracker state:
 
 - Product Maturity Phase 1 is verified for QA baseline and usability guardrails.
 - Product Maturity Phase 2 is verified for the local core agentic loop.
-- Product Maturity Phase 3 is in progress.
-- `TASK-10.2` is the current Phase 3.0 destination layout and IA contract gate.
+- Product Maturity Phase 3 is in progress, with Phase 3.0 through Phase 3.3 currently verified in the tracker.
+- `TASK-10.0` is the current Phase 3.0 destination layout and IA contract gate.
 - `TASK-11`, `TASK-12`, and `TASK-13` remain planned parent tasks for agent execution, server parity/live integrations, and release hardening.
 
 Verified work reuse rule:
@@ -158,7 +158,7 @@ Stage 2A: Source, Knowledge, And Artifact Loops
 
 - Grounded Answer Loop: Library/Search/RAG source selection stages evidence into Console and preserves authority through answer/save.
 - Source-to-Artifact Loop: Console output saves as a Chatbook or artifact, reopens from Artifacts, and resumes from Home.
-- Knowledge Organization Loop: Workspaces and Collections clearly separate broad user context from reusable source sets.
+- Knowledge Organization Loop: Workspaces and Library Collections clearly separate broad user context from reusable source sets.
 - Study Loop: flashcards and quizzes can be generated from selected sources or Console outputs and reused later.
 
 Stage 2A maps primarily to Product Maturity Phase 3 (`TASK-10`). Existing Phase 2 core-loop contracts should be revalidated after UX/UI changes, not reimplemented, unless the rebaseline finds regressions.
@@ -191,9 +191,9 @@ Primary gates:
 
 - `tldw_server2` parity inventory by workflow family.
 - Server-backed Library/Search/RAG where it improves source coverage, scale, or reuse.
-- Import/sync paths for sources, personas, skills, artifacts, and collections where feasible.
+- Import/sync paths for sources, personas, skills, artifacts, and Library collections where feasible.
 - Live event producers for Home and Console where services support real running work.
-- W+C parity for watchlists, collection feeds, alert rules, retries, run history, and WebSub-style monitoring.
+- W+C parity for watchlists, alert rules, retries, run history, and WebSub-style monitoring, with fetched items flowing into Library collections when users choose to preserve them.
 - Explicit local/server/workspace/remote-only/dry-run authority labels.
 
 Exit criteria:
@@ -247,7 +247,8 @@ Next focus:
 
 - ask grounded questions over selected sources.
 - turn answers into reusable Chatbooks and artifacts.
-- organize knowledge with Workspaces and Collections.
+- organize knowledge with Workspaces and Library Collections.
+- preserve retrieved citations and snippets for reuse in Console and artifacts.
 - generate and reuse flashcards, quizzes, reports, and study outputs.
 - configure personas, skills, tools, schedules, and workflows.
 - launch and monitor controlled agent work through Console.
@@ -257,8 +258,8 @@ Next focus:
 
 Longer-term focus:
 
-- richer source and RAG integration.
-- server-assisted watchlists and collections.
+- richer source and RAG integration with citations/snippets.
+- server-assisted watchlists and Library collection sync.
 - live status updates for running work.
 - import/sync paths for sources, personas, skills, and artifacts.
 - clearer collaboration between local and remote runtimes.
@@ -279,7 +280,7 @@ The three roadmap views must stay aligned through these rules:
 - Every execution gate must identify which user loop it improves.
 - Server parity work must be justified by user workflow value.
 - Study features remain explicit but do not become the product center.
-- Workspaces and Collections remain distinct: Workspaces are broad user scope; Collections are reusable source sets.
+- Workspaces and Collections remain distinct: Workspaces are broad user scope; Collections are Library-owned reusable source sets.
 - Console remains the live agentic work surface.
 
 ## Immediate Next Artifacts

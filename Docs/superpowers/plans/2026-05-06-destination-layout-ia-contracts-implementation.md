@@ -17,7 +17,7 @@
 - Product tracker: `Docs/superpowers/trackers/product-maturity-roadmap.md`
 - Route inventory: `Docs/Design/master-shell-route-inventory.md`
 - Design system contract: `Docs/Design/master-shell-design-system-contract.md`
-- Backlog task: `backlog/tasks/task-10.2 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
+- Backlog task: `backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
 
 ## File Structure
 
@@ -38,7 +38,8 @@
   - Keep Study route and Study Dashboard Library-owned.
 
 - Modify: `Docs/superpowers/trackers/product-maturity-roadmap.md`
-  - Add Phase 3.0 QA evidence row and status once the QA artifact exists.
+  - Add Phase 3.0 QA evidence row with `recorded; pending final closeout` status once the QA artifact exists.
+  - Defer Phase 3.0 verified status until final TASK-10.0 closeout.
 
 - Modify: `Docs/superpowers/qa/product-maturity/phase-3/README.md`
   - Add Phase 3.0 evidence entry.
@@ -50,7 +51,7 @@
   - Consolidated prompt manifest for one non-binding image-reference per top-level destination.
   - Do not commit generated images in this plan unless the user explicitly asks during execution.
 
-- Modify: `backlog/tasks/task-10.2 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
+- Modify: `backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
   - Add implementation plan/notes.
   - Check ACs only after verification passes.
   - Mark Done only after all DoD evidence is present.
@@ -174,8 +175,8 @@ PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
 PHASE_3_0_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md"
 )
-TASK_10_2 = Path(
-    "backlog/tasks/task-10.2 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md"
+TASK_10_0 = Path(
+    "backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md"
 )
 PROMPT_MANIFEST = Path("Docs/Design/destination-layout-image-reference-prompts.md")
 
@@ -316,7 +317,7 @@ def test_phase30_tracker_records_layout_contract_gate() -> None:
     tracker = _text(TRACKER)
 
     assert "Layout Contract Spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`" in tracker
-    assert "Phase 3.0: Destination Layout And IA Contracts - `TASK-10.2`" in tracker
+    assert "Phase 3.0: Destination Layout And IA Contracts - `TASK-10.0`" in tracker
     assert "destination layout and IA contracts must be approved" in tracker
 ```
 
@@ -337,7 +338,7 @@ git add Tests/UI/test_product_maturity_phase3_layout_contracts.py Docs/superpowe
 git commit -m "Add Phase 3.0 layout contract regressions"
 ```
 
-## Task 3: Record Phase 3.0 QA Evidence And Tracker Closeout
+## Task 3: Record Phase 3.0 QA Evidence And Tracker Pending-Closeout State
 
 **Files:**
 - Modify: `Tests/UI/test_product_maturity_phase3_layout_contracts.py`
@@ -354,6 +355,8 @@ def test_phase30_qa_evidence_is_recorded() -> None:
     evidence = _text(PHASE_3_0_EVIDENCE)
     readme = _text(PHASE_3_README)
 
+    assert _status_line(evidence) == "recorded; pending final closeout"
+
     for section in (
         "## Scope",
         "## Evidence",
@@ -366,13 +369,16 @@ def test_phase30_qa_evidence_is_recorded() -> None:
     ):
         assert section in evidence
 
-    assert "TASK-10.2" in evidence
+    assert "TASK-10.0" in evidence
     assert "Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md" in evidence
     assert "spec review approved" in evidence
     assert "compact, default, and large terminal" in evidence
     assert "usable, not merely rendered" in evidence
+    assert "pending final closeout" in evidence
+    assert "Status: verified" not in evidence
     assert PHASE_3_0_EVIDENCE.name in readme
-    assert "Phase 3.0 destination layout contract status: verified" in readme
+    assert "Phase 3.0 destination layout contract status: recorded; pending final closeout" in readme
+    assert "Phase 3.0 destination layout contract status: verified" not in readme
 
 
 def test_phase30_tracker_has_evidence_row() -> None:
@@ -380,11 +386,13 @@ def test_phase30_tracker_has_evidence_row() -> None:
 
     row = _markdown_table_row(tracker, "Phase 3.0")
     assert "Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md" in row[1]
-    assert row[2] == "verified"
+    assert row[2] == "recorded; pending final closeout"
     phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
-    assert "Phase 3.0 verified" in phase_three_row[2]
+    assert "Phase 3.0 evidence recorded; pending final closeout" in phase_three_row[2]
+    assert "Phase 3.0 verified" not in phase_three_row[2]
     assert "Phase 3.0 evidence pending" not in phase_three_row[4]
     assert "Phase 3.0 prerequisite planned" not in tracker
+    assert "Status: Phase 1 verified; Phase 2 verified; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified" not in tracker
 ```
 
 - [ ] **Step 2: Run tests to verify failure**
@@ -405,19 +413,19 @@ Create `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destin
 # Product Maturity Phase 3.0 Destination Layout Contracts
 
 Date: 2026-05-06
-Status: verified
-Task: TASK-10.2
+Status: recorded; pending final closeout
+Task: TASK-10.0
 
 ## Scope
 
-Phase 3.0 verifies that destination layout and IA contracts exist before additional Phase 3 Knowledge/Study visual rewrites continue.
+Phase 3.0 records that destination layout and IA contracts exist before additional Phase 3 Knowledge/Study visual rewrites continue.
 
 ## Evidence
 
 - Spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`
 - Route inventory: `Docs/Design/master-shell-route-inventory.md`
 - Product tracker: `Docs/superpowers/trackers/product-maturity-roadmap.md`
-- Backlog task: `backlog/tasks/task-10.2 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
+- Backlog task: `backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
 - spec review approved after fixing Study route and Study Dashboard ownership.
 
 ## Contract Coverage
@@ -444,7 +452,7 @@ This gate verifies contracts, not runtime screen rewrites. Later implementation 
 
 ## Result
 
-Phase 3.0 contract gate is verified for planning.
+Phase 3.0 contract evidence is recorded for planning and remains pending final closeout until TASK-10.0 is prepared, checked, and marked Done.
 ```
 
 - [ ] **Step 4: Update Phase 3 README**
@@ -454,11 +462,11 @@ Add a Phase 3.0 section to `Docs/superpowers/qa/product-maturity/phase-3/README.
 ```markdown
 Phase 3.0 evidence:
 
-Phase 3.0 destination layout contract status: verified
+Phase 3.0 destination layout contract status: recorded; pending final closeout
 
 - `2026-05-06-phase-3-0-destination-layout-contracts.md`
 
-Phase 3.0 verifies destination layout and IA contracts before additional Phase 3 Knowledge/Study visual rewrites continue. It does not rewrite runtime screens.
+Phase 3.0 records destination layout and IA contracts before additional Phase 3 Knowledge/Study visual rewrites continue. It does not rewrite runtime screens or mark TASK-10.0 done.
 ```
 
 - [ ] **Step 5: Update tracker evidence index**
@@ -466,31 +474,27 @@ Phase 3.0 verifies destination layout and IA contracts before additional Phase 3
 In `Docs/superpowers/trackers/product-maturity-roadmap.md`, add:
 
 ```markdown
-| Phase 3.0 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md` | verified |
+| Phase 3.0 | `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md` | recorded; pending final closeout |
 ```
 
-Update status from:
+Keep status as:
 
 ```markdown
-Status: Phase 1 verified; Phase 2 verified; Phase 3.1 verified
+Status: Phase 1 verified; Phase 2 verified; Phase 3.1 verified; Phase 3.2 verified
 ```
 
-to:
-
-```markdown
-Status: Phase 1 verified; Phase 2 verified; Phase 3.0 verified; Phase 3.1 verified
-```
+Do not add `Phase 3.0 verified` until final TASK-10.0 closeout.
 
 Update the Phase Overview row from:
 
 ```markdown
-| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 prerequisite planned | `TASK-10`, Phase 3.0 (`TASK-10.2`), Phase 3.1 (`TASK-10.1`) | `phase-3/2026-05-06-phase-3-1-library-study-entry.md`; Phase 3.0 evidence pending | Library Study entry is verified; before additional Phase 3 visual rewrites, destination layout and IA contracts must be approved. Source-selected study generation, Workspaces, Collections, and deeper Import/Export/Search/RAG study flows remain. |
+| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 prerequisite planned; Phase 3.1 verified; Phase 3.2 verified | `TASK-10`, Phase 3.0 (`TASK-10.0`), Phase 3.1 (`TASK-10.1`), Phase 3.2 (`TASK-10.2`) | `phase-3/2026-05-06-phase-3-1-library-study-entry.md`; `phase-3/2026-05-06-phase-3-2-library-source-study-context.md`; Phase 3.0 evidence pending | Library Study entry and Library source context are verified; before additional Phase 3 visual rewrites, destination layout and IA contracts must be approved. Source-selected study generation, Workspaces, Collections, and deeper Import/Export/Search/RAG study flows remain. |
 ```
 
 to:
 
 ```markdown
-| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 verified; Phase 3.1 verified | `TASK-10`, Phase 3.0 (`TASK-10.2`), Phase 3.1 (`TASK-10.1`) | `phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md`; `phase-3/2026-05-06-phase-3-1-library-study-entry.md` | Layout contracts and Library Study entry are verified; source-selected study generation, Workspaces runtime behavior, Collections, and deeper Import/Export/Search/RAG study flows remain. |
+| Phase 3: Knowledge And Study Workflows | Mature ingest, organize, retrieve, study, and reuse workflows. | in-progress; Phase 3.0 evidence recorded; pending final closeout; Phase 3.1 verified; Phase 3.2 verified | `TASK-10`, Phase 3.0 (`TASK-10.0`), Phase 3.1 (`TASK-10.1`), Phase 3.2 (`TASK-10.2`) | `phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md`; `phase-3/2026-05-06-phase-3-1-library-study-entry.md`; `phase-3/2026-05-06-phase-3-2-library-source-study-context.md` | Layout contracts are recorded, and Library Study entry and source context are verified; source-selected study generation, Workspaces runtime behavior, Collections, and deeper Import/Export/Search/RAG study flows remain. |
 ```
 
 - [ ] **Step 6: Run QA evidence tests**
@@ -600,10 +604,10 @@ git add Tests/UI/test_product_maturity_phase3_layout_contracts.py Docs/Design/de
 git commit -m "Add destination image reference prompt manifest"
 ```
 
-## Task 5: Prepare TASK-10.2 For Verified Closeout
+## Task 5: Prepare TASK-10.0 For Verified Closeout
 
 **Files:**
-- Modify: `backlog/tasks/task-10.2 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
+- Modify: `backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
 - Modify: `Tests/UI/test_product_maturity_phase3_layout_contracts.py`
 
 - [ ] **Step 1: Add failing backlog preparation test**
@@ -612,7 +616,7 @@ Append:
 
 ```python
 def test_phase30_backlog_task_has_plan_before_closeout() -> None:
-    task = _text(TASK_10_2)
+    task = _text(TASK_10_0)
 
     assert "status: In Progress" in task
     assert "## Implementation Plan" in task
@@ -628,16 +632,16 @@ Run:
 .venv/bin/python -m pytest -q Tests/UI/test_product_maturity_phase3_layout_contracts.py::test_phase30_backlog_task_has_plan_before_closeout --tb=short
 ```
 
-Expected before implementation: FAIL because TASK-10.2 is still `To Do` and does not have an implementation plan.
+Expected before implementation: FAIL because TASK-10.0 is still `To Do` and does not have an implementation plan.
 
-- [ ] **Step 3: Add implementation plan to TASK-10.2**
+- [ ] **Step 3: Add implementation plan to TASK-10.0**
 
 Use Backlog.md MCP or CLI equivalent to set status In Progress and add plan:
 
 ```markdown
 1. Align runtime route metadata so `study` is Library-owned.
 2. Add focused contract regressions for Phase 3.0 docs, route inventory, tracker, QA evidence, prompt manifest, and backlog task.
-3. Record Phase 3.0 QA evidence and tracker closeout.
+3. Record Phase 3.0 QA evidence and tracker pending-closeout state.
 4. Add a non-binding destination image prompt manifest.
 5. Run focused verification before checking ACs and closing the task.
 ```
@@ -655,15 +659,18 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Tests/UI/test_product_maturity_phase3_layout_contracts.py "backlog/tasks/task-10.2 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md"
+git add Tests/UI/test_product_maturity_phase3_layout_contracts.py "backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md"
 git commit -m "Prepare Phase 3.0 layout contract task"
 ```
 
-## Task 6: Final Focused Verification And TASK-10.2 Closeout
+## Task 6: Final Focused Verification And TASK-10.0 Closeout
 
 **Files:**
-- Modify: `backlog/tasks/task-10.2 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
+- Modify: `backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md`
 - Modify: `Tests/UI/test_product_maturity_phase3_layout_contracts.py`
+- Modify: `Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md`
+- Modify: `Docs/superpowers/qa/product-maturity/phase-3/README.md`
+- Modify: `Docs/superpowers/trackers/product-maturity-roadmap.md`
 
 - [ ] **Step 1: Add final backlog completion test**
 
@@ -671,7 +678,10 @@ Append:
 
 ```python
 def test_phase30_backlog_task_is_closed_after_verification() -> None:
-    task = _text(TASK_10_2)
+    task = _text(TASK_10_0)
+    evidence = _text(PHASE_3_0_EVIDENCE)
+    readme = _text(PHASE_3_README)
+    tracker = _text(TRACKER)
 
     assert "status: Done" in task
     assert "- [x] #1" in task
@@ -683,6 +693,14 @@ def test_phase30_backlog_task_is_closed_after_verification() -> None:
     assert "## Implementation Notes" in task
     assert "Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md" in task
     assert "Tests/UI/test_product_maturity_phase3_layout_contracts.py" in task
+    assert _status_line(evidence) == "verified"
+    assert "Phase 3.0 destination layout contract status: verified" in readme
+    assert "Status: Phase 1 verified; Phase 2 verified; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified" in tracker
+
+    row = _markdown_table_row(tracker, "Phase 3.0")
+    assert row[2] == "verified"
+    phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
+    assert "Phase 3.0 verified" in phase_three_row[2]
 ```
 
 - [ ] **Step 2: Run final backlog completion test to verify failure**
@@ -691,7 +709,7 @@ def test_phase30_backlog_task_is_closed_after_verification() -> None:
 .venv/bin/python -m pytest -q Tests/UI/test_product_maturity_phase3_layout_contracts.py::test_phase30_backlog_task_is_closed_after_verification --tb=short
 ```
 
-Expected before closeout: FAIL because TASK-10.2 is still In Progress and ACs are unchecked.
+Expected before closeout: FAIL because TASK-10.0 is still In Progress and ACs are unchecked.
 
 - [ ] **Step 3: Run focused Phase 3.0 test set before closing task**
 
@@ -701,7 +719,7 @@ Run:
 .venv/bin/python -m pytest -q Tests/UI/test_shell_destinations.py Tests/UI/test_product_maturity_phase3_layout_contracts.py --tb=short -k "not test_phase30_backlog_task_is_closed_after_verification"
 ```
 
-Expected: PASS. The final backlog closeout test is intentionally excluded until TASK-10.2 is marked Done.
+Expected: PASS. The final backlog closeout test is intentionally excluded until TASK-10.0 is marked Done.
 
 - [ ] **Step 4: Run related product maturity tests before closing task**
 
@@ -723,7 +741,7 @@ git diff --check
 
 Expected: no output.
 
-- [ ] **Step 6: Check ACs and add implementation notes**
+- [ ] **Step 6: Check ACs, add implementation notes, and promote docs to verified**
 
 Use Backlog.md MCP or CLI equivalent to check all ACs and add implementation notes:
 
@@ -731,12 +749,14 @@ Use Backlog.md MCP or CLI equivalent to check all ACs and add implementation not
 Implemented Phase 3.0 as an enforceable layout contract gate. Runtime route metadata now treats `study` as Library-owned, matching the approved IA. Added doc-focused regressions for destination contracts, major subflows, Study ownership, QA evidence, route inventory, prompt governance, and backlog closure. Recorded Phase 3.0 QA evidence and created the non-binding image prompt manifest for later reference generation.
 ```
 
-- [ ] **Step 7: Mark TASK-10.2 done**
+In this closeout step, promote Phase 3.0 QA evidence, README, and tracker status from `recorded; pending final closeout` to `verified`. This transition belongs here because TASK-10.0 is being checked and marked Done.
+
+- [ ] **Step 7: Mark TASK-10.0 done**
 
 Use Backlog.md MCP or CLI equivalent:
 
 ```bash
-backlog task edit TASK-10.2 -s Done
+backlog task edit TASK-10.0 -s Done
 ```
 
 - [ ] **Step 8: Run final backlog completion test**
@@ -752,7 +772,7 @@ Expected: PASS.
 - [ ] **Step 9: Commit closeout**
 
 ```bash
-git add Tests/UI/test_product_maturity_phase3_layout_contracts.py "backlog/tasks/task-10.2 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md"
+git add Tests/UI/test_product_maturity_phase3_layout_contracts.py "backlog/tasks/task-10.0 - Product-Maturity-Phase-3.0-Destination-Layout-And-IA-Contracts.md" Docs/superpowers/qa/product-maturity/phase-3/README.md Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md Docs/superpowers/trackers/product-maturity-roadmap.md
 git commit -m "Close Phase 3.0 layout contract gate"
 ```
 

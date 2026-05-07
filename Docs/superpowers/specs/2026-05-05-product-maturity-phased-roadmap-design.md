@@ -50,7 +50,7 @@ The app now has a coherent shell, but the remaining work is fragmented across pr
 - Artifacts and Chatbooks need stronger persistence, reopen, export, and reuse paths.
 - Personas need detail, edit, import/export, archetypes, exemplars, dictionaries, and lore workflows.
 - Skills need Agent Skills discovery, import, detail, validation, edit, and execution workflows.
-- W+C needs detail, edit, import/export, feed/WebSub, alert rules, retry/backoff, and server collection-feed UX.
+- W+C needs watchlist detail, edit, feed/WebSub, alert rules, retry/backoff, and server watchlist UX, while collection create/edit/review belongs under Library.
 - Schedules and Workflows need service adapters and usable execution/recovery controls.
 - MCP needs deeper live-work integration with Console.
 - ACP needs its own runtime/session model, separate from MCP.
@@ -121,10 +121,10 @@ The roadmap should preserve this product model:
 
 - **Home**: cross-module status, notifications, active work, next-best actions, and lightweight approve/pause/retry/open controls.
 - **Console**: live chat, agentic programming/control, RAG answers, staged context, tool calls, approvals, MCP tool use, ACP sessions, run logs, recovery, and artifact creation.
-- **Library**: notes, media, conversations, imports/exports, Search/RAG, source browsing, metadata, and evidence.
+- **Library**: notes, media, conversations, collections, imports/exports, Search/RAG, source browsing, metadata, and evidence.
 - **Artifacts**: generated outputs, reusable deliverables, Chatbooks, reports, datasets, drafts, and exports.
 - **Personas**: behavior configuration, characters, profiles, archetypes, exemplars, dictionaries, and lore.
-- **W+C**: Watchlists and Collections, with local parity to server watch/collection concepts.
+- **W+C**: Watchlists, monitored sources, feeds, alerts, and run history, with local parity to server watch concepts. The legacy compact label can remain during route migration, but new Collections workflows belong under Library.
 - **Schedules**: when work runs, health, retries, pause/resume, and execution history.
 - **Workflows**: what procedure runs, steps, inputs, outputs, approvals, and recovery.
 - **MCP**: external tool/resource protocol management and readiness.
@@ -135,7 +135,7 @@ The roadmap should preserve this product model:
 Workspaces and Collections must not become duplicate grouping concepts:
 
 - **Workspaces** define broad user context and scope across sources, chats, notes, artifacts, study outputs, settings, and long-running work.
-- **Collections** define reusable source sets inside W+C/Library that can feed RAG, study generation, schedules, workflows, and monitoring.
+- **Collections** define reusable Library-owned source sets that can feed RAG, citations/snippets, study generation, schedules, workflows, and monitoring.
 - A source can belong to a workspace and one or more collections, but implementation plans must identify which surface owns create, edit, and review actions for each grouping type.
 
 ## Phase Roadmap
@@ -214,12 +214,12 @@ PR-sized gates:
 - Workspaces as scope containers for sources, chats, notes, artifacts, and study outputs.
 - Flashcards from selected sources or Console outputs.
 - Quizzes from selected sources or Console outputs.
-- Collections as reusable source sets for RAG, study, schedules, and workflows.
+- Collections as Library-owned reusable source sets for RAG, citations/snippets, study, schedules, and workflows.
 
 Done when:
 
 - Phase 3.0 contracts are approved before additional Phase 3 visual rewrites continue.
-- A user can ingest or select material, organize it in a workspace or collection, retrieve from it, generate study material, and reuse it in Console.
+- A user can ingest or select material, organize it in a workspace or Library collection, retrieve cited snippets from it, generate study material, and reuse it in Console.
 - The UI distinguishes source material, generated outputs, and study derivatives.
 - Import/export failures are diagnosable and recoverable.
 
@@ -258,7 +258,7 @@ PR-sized gates:
 - Compare Chatbook modules against adjacent `tldw_server2` capabilities.
 - Prioritize parity gaps by user value and local feasibility.
 - Wire server-backed Library/Search/RAG capabilities where useful.
-- Expand W+C watchlist, collection-feed, alert-rule, feed/WebSub, retry/backoff, and history behavior.
+- Expand W+C watchlist, alert-rule, feed/WebSub, retry/backoff, and history behavior, with preserved fetched items flowing into Library collections.
 - Add server/local sync or import paths for Personas, Skills, sources, and artifacts where appropriate.
 - Add live event producers for Console and Home where services support them.
 - Record explicit parity coverage and residual gaps.

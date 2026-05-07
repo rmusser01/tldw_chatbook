@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Mapping
+import hashlib
 from inspect import isawaitable
+import re
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -13,6 +18,7 @@ from textual.reactive import reactive
 from textual.widgets import Button
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Study_Window import StudyWindow
 from ...Widgets.Study import QuizSessionWidget, StudyDashboard
@@ -27,7 +33,27 @@ from ...Widgets.Study.quiz_session_widget import (
     QUIZ_START_SELECT_TOOLTIP,
 )
 from .notes_scope_models import WorkspaceSubview
-from .study_scope_models import StudyScopeContext, StudyScopeState, StudyScopeType
+from .study_scope_models import (
+    STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
+    STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+    STUDY_MATERIAL_TITLES_LIMIT,
+    STUDY_SOURCE_ID_LENGTH_LIMIT,
+    STUDY_SOURCE_ITEMS_LIMIT,
+    StudyScopeContext,
+    StudyScopeState,
+    StudyScopeType,
+    StudySourceItem,
+)
+
+
+ScopeKey = tuple[str, Optional[str], str, bool, Optional[str]]
+_HTML_TAG_RE = re.compile(r"<[^>]*>")
+_DANGEROUS_TEXT_RE = re.compile(r"javascript\s*:|\bon(?:click|error)\s*=", re.IGNORECASE)
+SOURCE_STUDY_PACK_STATUS_CHECKS = 8
+SOURCE_STUDY_PACK_STATUS_DELAY_SECONDS = 0.25
+SOURCE_STUDY_PACK_ERROR_LENGTH_LIMIT = 240
+SOURCE_STUDY_PACK_ID_LENGTH_LIMIT = 64
+SOURCE_STUDY_PACK_JOB_STATUSES = frozenset({"queued", "running", "completed", "failed", "cancelled"})
 
 
 class StudyScreen(BaseAppScreen):
@@ -68,13 +94,14 @@ class StudyScreen(BaseAppScreen):
             self.scope_state = self._derive_scope_state(pending_scope)
         else:
             self.scope_state = StudyScopeState(backend=self._runtime_backend())
-        self._effective_scope_key: tuple[str, Optional[str], str, bool] = self._scope_key(self.scope_state)
+        self._effective_scope_key: ScopeKey = self._scope_key(self.scope_state)
         self.study_dashboard: Optional[StudyDashboard] = None
         self.quiz_session_widget: Optional[QuizSessionWidget] = None
         self.study_window_widget: Optional[StudyWindow] = None
         self._dashboard_due_count: int = 0
         self._recent_deck_titles: list[str] = []
         self._recent_quiz_titles: list[str] = []
+        self._latest_source_study_pack: dict[str, Any] | None = None
         self._pending_initial_section = self._consume_pending_initial_section()
 
     @property
@@ -141,13 +168,112 @@ class StudyScreen(BaseAppScreen):
         return "local"
 
     @staticmethod
-    def _scope_key(scope_state: StudyScopeState) -> tuple[str, Optional[str], str, bool]:
+    def _scope_key(scope_state: StudyScopeState) -> ScopeKey:
         return (
             scope_state.scope_type.value,
             scope_state.workspace_id,
             scope_state.backend,
             scope_state.workspace_scope_available,
+            StudyScreen._material_context_fingerprint(scope_state),
         )
+
+    @staticmethod
+    def _material_context_fingerprint(scope_state: StudyScopeState) -> Optional[str]:
+        if not any(
+            (
+                scope_state.material_source,
+                scope_state.material_title,
+                scope_state.material_summary,
+                scope_state.material_titles,
+                scope_state.source_items,
+            )
+        ):
+            return None
+
+        digest = hashlib.sha256()
+        parts = (
+            scope_state.material_source or "",
+            scope_state.material_title or "",
+            scope_state.material_summary or "",
+            str(len(scope_state.material_titles)),
+            *scope_state.material_titles[:STUDY_MATERIAL_TITLES_LIMIT],
+            str(len(scope_state.source_items)),
+            *(
+                f"{item.source_type}:{item.source_id}:{item.label or ''}"
+                for item in scope_state.source_items[:STUDY_SOURCE_ITEMS_LIMIT]
+            ),
+        )
+        for part in parts:
+            digest.update(part.encode("utf-8", errors="ignore"))
+            digest.update(b"\0")
+        source = scope_state.material_source or "material"
+        return f"{source}:{len(scope_state.material_titles)}:{digest.hexdigest()[:12]}"
+
+    @staticmethod
+    def _clean_material_text(value: Any, *, max_length: int) -> str:
+        text = sanitize_string(str(value or ""), max_length=max_length).strip()
+        if not text:
+            return ""
+        text = _HTML_TAG_RE.sub("", text)
+        text = _DANGEROUS_TEXT_RE.sub("", text).strip()
+        if not validate_text_input(text, max_length=max_length, allow_html=False):
+            return ""
+        return text
+
+    def _clean_material_titles(self, material_titles: tuple[str, ...]) -> tuple[str, ...]:
+        cleaned: list[str] = []
+        for title in material_titles:
+            clean_title = self._clean_material_text(
+                title,
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            )
+            if clean_title:
+                cleaned.append(clean_title)
+            if len(cleaned) >= STUDY_MATERIAL_TITLES_LIMIT:
+                break
+        return tuple(cleaned)
+
+    def _clean_source_items(self, source_items: tuple[StudySourceItem, ...]) -> tuple[StudySourceItem, ...]:
+        cleaned: list[StudySourceItem] = []
+        for item in source_items:
+            if not isinstance(item, StudySourceItem):
+                continue
+            source_type = self._clean_material_text(item.source_type, max_length=32)
+            if source_type not in {"note", "media", "message"}:
+                continue
+            source_id = self._clean_material_text(
+                item.source_id,
+                max_length=STUDY_SOURCE_ID_LENGTH_LIMIT,
+            )
+            if not source_id:
+                continue
+            label = self._clean_material_text(
+                item.label,
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            ) or None
+            excerpt_text = self._clean_material_text(
+                item.excerpt_text,
+                max_length=STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
+            ) or None
+            locator: dict[str, Any] = {}
+            if isinstance(item.locator, Mapping):
+                for key, value in item.locator.items():
+                    clean_key = self._clean_material_text(key, max_length=64)
+                    clean_value = self._clean_material_text(value, max_length=160)
+                    if clean_key and clean_value:
+                        locator[clean_key] = clean_value
+            cleaned.append(
+                StudySourceItem(
+                    source_type=source_type,
+                    source_id=source_id,
+                    label=label,
+                    excerpt_text=excerpt_text,
+                    locator=locator,
+                )
+            )
+            if len(cleaned) >= STUDY_SOURCE_ITEMS_LIMIT:
+                break
+        return tuple(cleaned)
 
     def _derive_scope_state(self, scope_context: StudyScopeContext) -> StudyScopeState:
         backend = self._runtime_backend()
@@ -168,6 +294,23 @@ class StudyScreen(BaseAppScreen):
             backend=backend,
             workspace_scope_available=workspace_scope_available,
             error_message=error_message,
+            material_source=self._clean_material_text(
+                scope_context.material_source,
+                max_length=64,
+            )
+            or None,
+            material_title=self._clean_material_text(
+                scope_context.material_title,
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            )
+            or None,
+            material_summary=self._clean_material_text(
+                scope_context.material_summary,
+                max_length=STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
+            )
+            or None,
+            material_titles=self._clean_material_titles(tuple(scope_context.material_titles or ())),
+            source_items=self._clean_source_items(tuple(scope_context.source_items or ())),
         )
 
     def _consume_pending_scope_context(self) -> Optional[StudyScopeContext]:
@@ -221,13 +364,47 @@ class StudyScreen(BaseAppScreen):
         return []
 
     def _scope_summary_text(self) -> str:
+        material_summary = self._material_context_summary_text()
         if self.scope_state.scope_type == StudyScopeType.WORKSPACE:
             workspace_name = self.scope_state.workspace_name or self.scope_state.workspace_id or "Workspace"
             backend = self.scope_state.backend
             if self.scope_state.error_message:
                 return f"Workspace: {workspace_name} | {self.scope_state.error_message}"
-            return f"Workspace: {workspace_name} | Backend: {backend}"
-        return "Global study"
+            base = f"Workspace: {workspace_name} | Backend: {backend}"
+            return f"{base} | {material_summary}" if material_summary else base
+        return f"Global study | {material_summary}" if material_summary else "Global study"
+
+    def _material_context_summary_text(self) -> str | None:
+        if not self.scope_state.material_source and not self.scope_state.material_title:
+            return None
+        title = escape_markup(
+            self._clean_material_text(
+                self.scope_state.material_title,
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            )
+            or "Study material"
+        )
+        sample_titles: list[str] = []
+        for raw_title in self.scope_state.material_titles:
+            clean_title = self._clean_material_text(
+                raw_title,
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            )
+            if clean_title:
+                sample_titles.append(escape_markup(clean_title))
+        if sample_titles:
+            sample_text = ", ".join(sample_titles[:3])
+            if len(sample_titles) > 3:
+                sample_text = f"{sample_text}, +{len(sample_titles) - 3} more"
+            return f"{title}: {sample_text}"
+        summary = self._clean_material_text(
+            self.scope_state.material_summary,
+            max_length=STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
+        )
+        if summary:
+            first_line = escape_markup(summary.splitlines()[0].strip())
+            return f"{title}: {first_line}"
+        return title
 
     def _apply_section_layout(self) -> None:
         dashboard = self.study_dashboard
@@ -305,6 +482,282 @@ class StudyScreen(BaseAppScreen):
             topic = str(self.current_study_session.get("topic") or "session").strip()
             summary = f"{section}: {topic}"
         self.study_dashboard.update_resume_action(summary)
+        self.study_dashboard.update_source_generation_action(**self._source_generation_dashboard_state())
+
+    def _source_generation_dashboard_state(self) -> dict[str, Any]:
+        if not self.scope_state.source_items:
+            return {
+                "enabled": False,
+                "status": "Source generation is unavailable until Study has selected source items.",
+                "tooltip": "Open Study from selected Library sources in server mode to generate a study pack.",
+            }
+        if self.scope_state.error_message:
+            return {
+                "enabled": False,
+                "status": self.scope_state.error_message,
+                "tooltip": self.scope_state.error_message,
+            }
+        if self._runtime_backend() != "server":
+            return {
+                "enabled": False,
+                "status": "Source generation requires server mode.",
+                "tooltip": "Switch to server mode to generate a study pack from selected Library sources.",
+            }
+        if self._latest_source_study_pack:
+            return {
+                "enabled": True,
+                "status": self._source_study_pack_ready_status(self._latest_source_study_pack),
+                "tooltip": "Generate another server study pack from the selected Library sources.",
+            }
+        return {
+            "enabled": True,
+            "status": f"{len(self.scope_state.source_items)} selected source items ready for study-pack generation.",
+            "tooltip": "Generate a server study pack from the selected Library sources.",
+        }
+
+    def _source_study_pack_title(self) -> str:
+        return self.scope_state.material_title or "Selected Source Study Pack"
+
+    def _source_items_payload(self) -> list[dict[str, Any]]:
+        return [item.as_payload() for item in self.scope_state.source_items]
+
+    def _source_study_pack_title_from_payload(self, study_pack: Mapping[str, Any]) -> str:
+        return (
+            self._clean_material_text(
+                study_pack.get("title"),
+                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+            )
+            or "Generated study pack"
+        )
+
+    @staticmethod
+    def _has_source_pack_value(value: Any) -> bool:
+        return value is not None and str(value).strip() != ""
+
+    def _source_study_pack_ready_status(self, study_pack: Mapping[str, Any]) -> str:
+        title = self._source_study_pack_title_from_payload(study_pack)
+        details: list[str] = []
+        pack_id = self._source_pack_value_text(study_pack.get("id"))
+        deck_id = self._source_pack_value_text(study_pack.get("deck_id"))
+        if pack_id:
+            details.append(f"pack {pack_id}")
+        if deck_id:
+            details.append(f"deck {deck_id}")
+        detail_text = f" ({', '.join(details)})" if details else ""
+        return f"Study pack ready: {title}{detail_text}. Open flashcards or resume it from the dashboard."
+
+    def _record_source_study_pack_ready(self, study_pack: Mapping[str, Any]) -> None:
+        self._latest_source_study_pack = dict(study_pack)
+        title = self._source_study_pack_title_from_payload(study_pack)
+        if title:
+            self._recent_deck_titles = [
+                title,
+                *[deck_title for deck_title in self._recent_deck_titles if deck_title != title],
+            ][:3]
+        section = "flashcards" if self._has_source_pack_value(study_pack.get("deck_id")) else "dashboard"
+        self._record_study_session(section=section, topic=title)
+
+    def _source_pack_job_status_text(self, status: str, job_id: Any) -> str:
+        clean_status = self._source_pack_status_name(status)
+        clean_job_id = self._source_pack_value_text(job_id)
+        if clean_job_id:
+            return f"Study pack generation {clean_status}: job {clean_job_id}."
+        return f"Study pack generation {clean_status}."
+
+    def _source_pack_value_text(
+        self,
+        value: Any,
+        *,
+        max_length: int = SOURCE_STUDY_PACK_ID_LENGTH_LIMIT,
+    ) -> str:
+        return self._clean_material_text(value, max_length=max_length)
+
+    def _source_pack_error_text(self, value: Any) -> str:
+        return self._clean_material_text(value, max_length=SOURCE_STUDY_PACK_ERROR_LENGTH_LIMIT)
+
+    def _source_pack_status_name(self, status: Any, *, fallback: str = "queued") -> str:
+        clean_status = self._clean_material_text(status, max_length=32).lower()
+        if clean_status in SOURCE_STUDY_PACK_JOB_STATUSES:
+            return clean_status
+        return fallback if fallback in SOURCE_STUDY_PACK_JOB_STATUSES else "queued"
+
+    @staticmethod
+    def _source_pack_job_id(value: Any) -> int | None:
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        text = str(value).strip()
+        if text.isdecimal():
+            return int(text)
+        return None
+
+    def _update_source_generation_dashboard(self, *, enabled: bool, status: str, tooltip: str) -> None:
+        if self.study_dashboard is not None and self.study_dashboard.is_mounted:
+            self.study_dashboard.update_source_generation_action(
+                enabled=enabled,
+                status=status,
+                tooltip=tooltip,
+            )
+
+    async def _observe_source_study_pack_job(self, study_service: Any, job_id: Any) -> bool:
+        status_loader = getattr(study_service, "get_study_pack_job_status", None)
+        if not callable(status_loader):
+            return False
+
+        normalized_job_id = self._source_pack_job_id(job_id)
+        if normalized_job_id is None:
+            status = "Study pack generation was queued, but the server returned an invalid job id."
+            self._update_source_generation_dashboard(
+                enabled=True,
+                status=status,
+                tooltip="Retry source study-pack generation or check server jobs.",
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(status, severity="warning")
+            return True
+
+        last_status = "queued"
+        mode = self._runtime_backend()
+        for attempt in range(SOURCE_STUDY_PACK_STATUS_CHECKS):
+            try:
+                result = await self._maybe_await(status_loader(mode=mode, job_id=normalized_job_id))
+            except Exception:
+                logger.exception("Failed to observe source study-pack generation")
+                status = "Study pack generation was queued, but status refresh failed."
+                self._update_source_generation_dashboard(
+                    enabled=True,
+                    status=status,
+                    tooltip="Retry source study-pack generation or check server jobs.",
+                )
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(status, severity="warning")
+                return True
+
+            payload = result if isinstance(result, Mapping) else {}
+            job = payload.get("job") if isinstance(payload.get("job"), Mapping) else {}
+            last_status = self._source_pack_status_name(job.get("status"), fallback=last_status)
+            study_pack = payload.get("study_pack")
+            if last_status == "completed" and isinstance(study_pack, Mapping):
+                self._record_source_study_pack_ready(study_pack)
+                self._update_source_generation_dashboard(
+                    enabled=True,
+                    status=self._source_study_pack_ready_status(study_pack),
+                    tooltip="Generate another server study pack from the selected Library sources.",
+                )
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify("Study pack ready.", severity="information")
+                return True
+            if last_status in {"failed", "cancelled"}:
+                error = self._source_pack_error_text(payload.get("error"))
+                status = f"Study pack generation {last_status}."
+                if error:
+                    status = f"{status} {error}"
+                self._update_source_generation_dashboard(
+                    enabled=True,
+                    status=status,
+                    tooltip="Retry source study-pack generation.",
+                )
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(status, severity="error" if last_status == "failed" else "warning")
+                return True
+            if attempt + 1 < SOURCE_STUDY_PACK_STATUS_CHECKS:
+                await asyncio.sleep(SOURCE_STUDY_PACK_STATUS_DELAY_SECONDS)
+
+        self._update_source_generation_dashboard(
+            enabled=True,
+            status=self._source_pack_job_status_text(last_status, job_id),
+            tooltip="Generate another server study pack from the selected Library sources.",
+        )
+        return True
+
+    async def _generate_source_study_pack(self) -> None:
+        self._update_source_generation_dashboard(
+            enabled=False,
+            status="Queuing source study-pack generation...",
+            tooltip="Source study-pack generation is already queued.",
+        )
+
+        state = self._source_generation_dashboard_state()
+        if not state["enabled"]:
+            self._update_source_generation_dashboard(**state)
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(state["status"], severity="warning")
+            return
+
+        study_service = getattr(self.app_instance, "study_scope_service", None)
+        create_job = getattr(study_service, "create_study_pack_job", None)
+        if not callable(create_job):
+            status = "Study pack generation is unavailable in this runtime."
+            self._update_source_generation_dashboard(
+                enabled=False,
+                status=status,
+                tooltip=status,
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(status, severity="warning")
+            return
+
+        try:
+            result = await self._maybe_await(
+                create_job(
+                    mode=self._runtime_backend(),
+                    title=self._source_study_pack_title(),
+                    workspace_id=(
+                        self.scope_state.workspace_id
+                        if self.scope_state.scope_type == StudyScopeType.WORKSPACE
+                        else None
+                    ),
+                    source_items=self._source_items_payload(),
+                )
+            )
+        except Exception:
+            logger.exception("Failed to queue source study-pack generation")
+            status = "Failed to queue source study-pack generation."
+            self._update_source_generation_dashboard(
+                enabled=True,
+                status=status,
+                tooltip="Retry source study-pack generation.",
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(status, severity="error")
+            return
+
+        job = result.get("job") if isinstance(result, Mapping) else None
+        job_id = job.get("id") if isinstance(job, Mapping) else None
+        normalized_job_id = self._source_pack_job_id(job_id)
+        job_status = self._source_pack_status_name(job.get("status") if isinstance(job, Mapping) else None)
+        observing_job = (
+            normalized_job_id is not None
+            and callable(getattr(study_service, "get_study_pack_job_status", None))
+        )
+        self._update_source_generation_dashboard(
+            enabled=not observing_job,
+            status=self._source_pack_job_status_text(
+                job_status,
+                normalized_job_id if normalized_job_id is not None else job_id,
+            ),
+            tooltip=(
+                "Source study-pack generation is queued; observing server completion."
+                if observing_job
+                else "Generate another server study pack from the selected Library sources."
+            ),
+        )
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify("Study pack generation queued.", severity="information")
+        if normalized_job_id is not None and await self._observe_source_study_pack_job(
+            study_service,
+            normalized_job_id,
+        ):
+            return
 
     def _status_text_from_window(self, widget_id: str) -> str:
         study_window = self.study_window_widget
@@ -564,9 +1017,12 @@ class StudyScreen(BaseAppScreen):
 
         self.scope_state = next_state
         self._effective_scope_key = next_key
+        self.study_materials = list(next_state.material_titles)
 
         if previous_key == next_key and not force_controller_notify:
             return
+
+        self._latest_source_study_pack = None
 
         for controller_name in ("flashcards_controller", "quizzes_controller"):
             controller = getattr(study_window, controller_name, None)
@@ -664,12 +1120,24 @@ class StudyScreen(BaseAppScreen):
                     "workspace_id": self.scope_state.workspace_id,
                     "workspace_name": self.scope_state.workspace_name,
                     "return_hint": self.scope_state.return_hint,
+                    "material_source": self.scope_state.material_source,
+                    "material_title": self.scope_state.material_title,
+                    "material_summary": self.scope_state.material_summary,
+                    "material_titles": list(self.scope_state.material_titles),
+                    "source_items": [item.as_payload() for item in self.scope_state.source_items],
                 },
                 "study_section": self.current_section,
                 "current_study_session": self.current_study_session,
             }
         )
         return state
+
+    @staticmethod
+    def _restored_source_item_locator(item: dict[str, Any]) -> dict[str, Any]:
+        locator = item.get("locator")
+        if isinstance(locator, Mapping):
+            return dict(locator)
+        return {}
 
     def restore_state(self, state: dict[str, Any]) -> None:
         super().restore_state(state)
@@ -681,6 +1149,21 @@ class StudyScreen(BaseAppScreen):
                     workspace_id=saved_scope.get("workspace_id"),
                     workspace_name=saved_scope.get("workspace_name"),
                     return_hint=saved_scope.get("return_hint"),
+                    material_source=saved_scope.get("material_source"),
+                    material_title=saved_scope.get("material_title"),
+                    material_summary=saved_scope.get("material_summary"),
+                    material_titles=tuple(saved_scope.get("material_titles") or ()),
+                    source_items=tuple(
+                        StudySourceItem(
+                            source_type=str(item.get("source_type") or ""),
+                            source_id=str(item.get("source_id") or ""),
+                            label=item.get("label"),
+                            excerpt_text=item.get("excerpt_text"),
+                            locator=self._restored_source_item_locator(item),
+                        )
+                        for item in list(saved_scope.get("source_items") or [])
+                        if isinstance(item, dict)
+                    ),
                 )
             )
             self._effective_scope_key = self._scope_key(self.scope_state)
@@ -778,6 +1261,10 @@ class StudyScreen(BaseAppScreen):
     @on(Button.Pressed, "#study-open-quizzes")
     def handle_dashboard_open_quizzes(self) -> None:
         self.activate_section("quizzes")
+
+    @on(Button.Pressed, "#study-generate-source-pack")
+    def handle_generate_source_pack(self) -> None:
+        self.run_worker(self._generate_source_study_pack(), exclusive=True)
 
     @on(Button.Pressed, "#study-resume-last")
     def handle_resume_last_session(self) -> None:
