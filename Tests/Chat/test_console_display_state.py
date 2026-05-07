@@ -26,6 +26,18 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
     assert state.approvals_label == "Approvals: 1 pending"
 
 
+def test_console_control_state_preserves_falsy_labels_and_general_assistant_fallback():
+    state = ConsoleControlState.from_values(
+        provider=0,
+        model=False,
+        persona="",
+    )
+
+    assert state.provider_label == "Provider: 0"
+    assert state.model_label == "Model: False"
+    assert state.persona_label == "Assistant: General"
+
+
 def test_console_staged_context_state_preserves_live_work_payload_provenance():
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
@@ -59,3 +71,17 @@ def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows()
     assert "Configure a provider before sending." in text
     assert "RAG: missing index" in text
     assert "Artifacts: save available after response" in text
+
+
+def test_console_inspector_state_uses_explicit_chatbook_save_capability():
+    state = ConsoleInspectorState.from_values(
+        artifact_status="Chatbook save available",
+        can_save_chatbook=True,
+    )
+
+    label_only_state = ConsoleInspectorState.from_values(
+        artifact_status="Chatbook save available",
+    )
+
+    assert state.can_save_chatbook is True
+    assert label_only_state.can_save_chatbook is False

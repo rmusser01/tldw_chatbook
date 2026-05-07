@@ -25,9 +25,9 @@ async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
         assert console.query_one("#console-session-surface")
         assert console.query_one("#console-native-composer")
 
-        assert not console.query("#chat-enhanced-sidebar")
-        assert not console.query("#toggle-chat-left-sidebar")
-        assert not console.query("#chat-main-content")
+        assert len(console.query("#chat-enhanced-sidebar")) == 0
+        assert len(console.query("#toggle-chat-left-sidebar")) == 0
+        assert len(console.query("#chat-main-content")) == 0
 
 
 @pytest.mark.asyncio

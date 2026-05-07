@@ -9,7 +9,9 @@ from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 
 
 def _clean(value: Any, fallback: str) -> str:
-    text = str(value or "").strip()
+    if value is None:
+        return fallback
+    text = str(value).strip()
     return text or fallback
 
 
@@ -52,10 +54,14 @@ class ConsoleControlState:
         tool_count: int = 0,
         approval_count: int = 0,
     ) -> "ConsoleControlState":
+        persona_text = _clean(persona, "")
+        persona_label = (
+            f"Persona: {persona_text}" if persona_text else "Assistant: General"
+        )
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
-            persona_label=f"Persona: {_clean(persona, 'Default')}",
+            persona_label=persona_label,
             rag_label=f"RAG: {'on' if rag_enabled else 'off'}",
             sources_label=f"Sources: {staged_source_count} staged",
             tools_label=f"Tools: {tool_count} ready",
@@ -115,6 +121,7 @@ class ConsoleInspectorState:
         rag_status: Any = None,
         artifact_status: Any = None,
         approval_count: int = 0,
+        can_save_chatbook: bool = False,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
         rows = [
@@ -132,7 +139,7 @@ class ConsoleInspectorState:
         return cls(
             rows=tuple(rows),
             has_pending_approval=approval_count > 0,
-            can_save_chatbook=_clean(artifact_status, "").lower().startswith("chatbook save"),
+            can_save_chatbook=can_save_chatbook,
         )
 
     def to_plain_text(self) -> str:

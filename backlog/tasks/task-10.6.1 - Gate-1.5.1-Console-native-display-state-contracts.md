@@ -44,5 +44,5 @@ Create pure Console display-state seams and mounted red regressions that define 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Added tldw_chatbook/Chat/console_display_state.py with pure ConsoleControlState ConsoleStagedContextState ConsoleInspectorState and ConsoleDisplayRow contracts. Added unit coverage for provider/model/persona/RAG/source/tool/approval/artifact/recovery labels. Added strict xfailed mounted Console internals guardrails that record the current legacy ChatWindowEnhanced chrome and missing native composer as intentional Gate 1.5 follow-up red states. Existing Gate 1 Console shell handoff and shell-bar baseline remains green.
+Added tldw_chatbook/Chat/console_display_state.py with pure ConsoleControlState ConsoleStagedContextState ConsoleInspectorState and ConsoleDisplayRow contracts. Added unit coverage for provider/model/persona/RAG/source/tool/approval/artifact/recovery labels, including falsy label preservation and explicit Chatbook-save capability state. Added strict xfailed mounted Console internals guardrails that record the current legacy ChatWindowEnhanced chrome and missing native composer as intentional Gate 1.5 follow-up red states. Existing Gate 1 Console shell handoff and shell-bar baseline remains green.
 <!-- SECTION:NOTES:END -->
