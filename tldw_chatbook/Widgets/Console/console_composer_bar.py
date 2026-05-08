@@ -229,7 +229,20 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_left(self) -> None:
         """Delete the last draft character for simple terminal-style editing."""
-        self.load_draft(self.draft_text()[:-1])
+        if not self._segments_initialized:
+            self.load_draft(self.draft_text()[:-1])
+            return
+        if not self._segments:
+            return
+
+        last_segment = self._segments[-1]
+        last_segment.text = last_segment.text[:-1]
+        if last_segment.collapse_display:
+            last_segment.collapse_display = len(last_segment.text) > self.PASTE_COLLAPSE_THRESHOLD
+        if not last_segment.text:
+            self._segments.pop()
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
 
     def sync_session_data(self, session_data: Any | None) -> None:
         """Refresh composer status copy from the active chat session contract."""

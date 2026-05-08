@@ -317,6 +317,31 @@ async def test_console_clear_draft_keeps_canonical_payload_empty():
 
 
 @pytest.mark.asyncio
+async def test_console_delete_left_after_collapsed_paste_keeps_visible_token():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "delete after paste " * 10
+        expected_payload = pasted_text[:-1]
+        expected_token = f"Pasted Text: {len(expected_payload)} Characters"
+
+        composer.insert_pasted_text(pasted_text)
+        composer.delete_left()
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
+        assert composer.draft_text() == expected_payload
+        assert expected_token in visible_plain
+        assert expected_payload not in visible_plain
+
+
+@pytest.mark.asyncio
 async def test_console_normal_insert_text_remains_literal_over_paste_threshold():
     app = _build_test_app()
     host = ConsoleHarness(app)
