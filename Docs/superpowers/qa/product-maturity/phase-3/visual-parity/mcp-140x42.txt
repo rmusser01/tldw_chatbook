@@ -1,0 +1,13 @@
+route: mcp
+terminal_size: 140x42
+global_nav: MainNavigationBar region=(x=0, y=0, w=140, h=3)
+global_nav_buttons: nav-home, nav-console, nav-library, nav-artifacts, nav-personas, nav-watchlists_collections, nav-schedules, nav-workflows, nav-mcp, nav-acp, nav-skills, nav-settings
+identity: #mcp-title region=(x=0, y=3, w=140, h=1)
+mode_or_filter_strip: #mcp-mode-strip region=(x=0, y=5, w=140, h=1)
+workbench: #mcp-workbench region=(x=0, y=6, w=140, h=36)
+list_or_object_pane: #mcp-server-tree-pane region=(x=0, y=6, w=46, h=36)
+detail_pane: #mcp-detail-pane region=(x=46, y=6, w=47, h=36)
+inspector_or_actions_pane: #mcp-readiness-pane region=(x=93, y=6, w=47, h=36)
+action: #unified-mcp-action-run region=(x=93, y=24, w=16, h=3) disabled=True
+state_marker: #unified-mcp-content region=(x=46, y=10, w=47, h=32)
+state_marker: #unified-mcp-status region=(x=46, y=7, w=47, h=2)

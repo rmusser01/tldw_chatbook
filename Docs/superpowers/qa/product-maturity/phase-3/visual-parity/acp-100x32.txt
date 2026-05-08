@@ -1,0 +1,14 @@
+route: acp
+terminal_size: 100x32
+global_nav: MainNavigationBar region=(x=0, y=0, w=100, h=3)
+global_nav_buttons: nav-home, nav-console, nav-library, nav-artifacts, nav-personas, nav-watchlists_collections, nav-schedules, nav-workflows, nav-mcp, nav-acp, nav-skills, nav-settings
+identity: #acp-title region=(x=0, y=3, w=100, h=1)
+mode_or_filter_strip: #acp-mode-strip region=(x=0, y=5, w=100, h=1)
+workbench: #acp-workbench region=(x=0, y=6, w=100, h=26)
+list_or_object_pane: #acp-list-pane region=(x=0, y=6, w=33, h=26)
+detail_pane: #acp-detail-pane region=(x=33, y=6, w=33, h=26)
+inspector_or_actions_pane: #acp-inspector-pane region=(x=66, y=6, w=34, h=26)
+action: #acp-follow-in-console region=(x=66, y=7, w=28, h=3) disabled=True
+action: #acp-launch-agent region=(x=66, y=10, w=18, h=3) disabled=True
+state_marker: #acp-empty-state region=(x=33, y=6, w=33, h=8)
+state_marker: #acp-console-unavailable region=(x=33, y=14, w=33, h=10)

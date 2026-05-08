@@ -13,6 +13,9 @@ from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
+CONSOLE_CONTROL_BAR_HEIGHT = 3
+
+
 class ConsoleControlBar(Horizontal):
     """Visible Console control strip outside the transcript region.
 
@@ -43,6 +46,8 @@ class ConsoleControlBar(Horizontal):
         self.state = state
         self.app_instance = app_instance
         self.on_sidebar_toggle_requested = on_sidebar_toggle_requested
+        self.styles.height = CONSOLE_CONTROL_BAR_HEIGHT
+        self.styles.min_height = CONSOLE_CONTROL_BAR_HEIGHT
 
     def sync_state(self, state: ConsoleControlState) -> None:
         """Refresh visible label widgets from a new display-state snapshot.

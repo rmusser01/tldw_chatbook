@@ -11,12 +11,13 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 
@@ -170,85 +171,95 @@ class SkillsScreen(BaseAppScreen):
                 id="skills-purpose",
                 classes="destination-purpose",
             )
-            with Vertical(id="skills-sections", classes="ds-panel"):
-                yield Static("Installed", classes="destination-section")
-                yield Static("Discover/Import", classes="destination-section")
-                yield Static("Validate", classes="destination-section")
-                yield Static("Scripts", classes="destination-section")
-                yield Static("References", classes="destination-section")
-                yield Static("Assets", classes="destination-section")
-                yield Static("Attachments", classes="destination-section")
-                yield Static(f"Local skills directory: {skills_dir_label}", id="skills-local-directory")
-                if not self._skills_loaded:
-                    yield Static(
-                        "Loading local Agent Skills...",
-                        id="skills-loading-state",
-                    )
-                    attach_label = "Attach local Skills to Console"
-                    attach_disabled = True
-                    attach_tooltip = "Stage local skill context after Skills finishes loading."
-                elif self._skills_lookup_error:
-                    recovery_state = self._skills_lookup_recovery_state
-                    yield Static(
-                        self._skills_lookup_error,
-                        id=(
-                            recovery_state.stable_selector
-                            if recovery_state is not None
-                            else "skills-service-error"
-                        ),
-                    )
-                    attach_label = "Attach local Skills to Console"
-                    attach_disabled = True
-                    attach_tooltip = (
-                        recovery_state.disabled_tooltip
-                        if recovery_state is not None
-                        else "Skills service is unavailable; retry Skills later."
-                    )
-                elif not self._local_skill_records:
-                    yield Static(
-                        "No local Agent Skills are installed yet.",
-                        id="skills-empty-state",
-                    )
-                    attach_label = "Attach local Skills to Console"
-                    attach_disabled = True
-                    attach_tooltip = "Stage local skill context after installing a local Agent Skill."
-                else:
-                    yield Static(
-                        f"Installed local skills: {len(self._local_skill_records)}",
-                        id="skills-local-summary",
-                    )
-                    for index, record in enumerate(self._local_skill_records):
-                        name = self._skill_field(record, "name") or self._skill_field(
-                            record,
-                            "skill_name",
-                            "Untitled skill",
-                        )
-                        description = self._skill_field(record, "description", "No description provided.")
-                        yield Static(
-                            Text.from_markup(
-                                f"{escape_markup(name)} - {escape_markup(description)}"
-                            ),
-                            id=f"skills-local-skill-{index}",
-                        )
-                    attach_label = "Attach local Skills to Console"
-                    attach_disabled = False
-                    attach_tooltip = "Stage local skill context in Console."
+            with DestinationModeStrip(id="skills-mode-strip", classes="destination-mode-strip"):
                 yield Static(
-                    "Skill import is not wired in this shell yet.",
-                    id="skills-import-unavailable",
+                    "Mode: Installed | Validate | Attach",
+                    id="skills-mode-label",
+                    classes="destination-section",
                 )
-                yield Button(
-                    "Import Skill",
-                    id="skills-import-skill",
-                    disabled=True,
-                    tooltip="Unavailable until skill import is wired in this shell.",
-                )
-                yield Button(
-                    attach_label,
-                    id="skills-attach-to-console",
-                    disabled=attach_disabled,
-                    tooltip=attach_tooltip,
-                )
+            with Horizontal(id="skills-workbench", classes="ds-panel destination-workbench"):
+                with Vertical(id="skills-list-pane", classes="destination-workbench-pane"):
+                    yield Static("Installed", classes="destination-section")
+                    yield Static("Discover/Import", classes="destination-section")
+                    yield Static("Validate", classes="destination-section")
+                    yield Static("Scripts", classes="destination-section")
+                    yield Static("References", classes="destination-section")
+                    yield Static("Assets", classes="destination-section")
+                    yield Static("Attachments", classes="destination-section")
+                    yield Static(f"Local skills directory: {skills_dir_label}", id="skills-local-directory")
+                with Vertical(id="skills-detail-pane", classes="destination-workbench-pane"):
+                    if not self._skills_loaded:
+                        yield Static(
+                            "Loading local Agent Skills...",
+                            id="skills-loading-state",
+                        )
+                        attach_label = "Attach local Skills to Console"
+                        attach_disabled = True
+                        attach_tooltip = "Stage local skill context after Skills finishes loading."
+                    elif self._skills_lookup_error:
+                        recovery_state = self._skills_lookup_recovery_state
+                        yield Static(
+                            self._skills_lookup_error,
+                            id=(
+                                recovery_state.stable_selector
+                                if recovery_state is not None
+                                else "skills-service-error"
+                            ),
+                        )
+                        attach_label = "Attach local Skills to Console"
+                        attach_disabled = True
+                        attach_tooltip = (
+                            recovery_state.disabled_tooltip
+                            if recovery_state is not None
+                            else "Skills service is unavailable; retry Skills later."
+                        )
+                    elif not self._local_skill_records:
+                        yield Static(
+                            "No local Agent Skills are installed yet.",
+                            id="skills-empty-state",
+                        )
+                        attach_label = "Attach local Skills to Console"
+                        attach_disabled = True
+                        attach_tooltip = "Stage local skill context after installing a local Agent Skill."
+                    else:
+                        yield Static(
+                            f"Installed local skills: {len(self._local_skill_records)}",
+                            id="skills-local-summary",
+                        )
+                        for index, record in enumerate(self._local_skill_records):
+                            name = self._skill_field(record, "name") or self._skill_field(
+                                record,
+                                "skill_name",
+                                "Untitled skill",
+                            )
+                            description = self._skill_field(record, "description", "No description provided.")
+                            yield Static(
+                                Text.from_markup(
+                                    f"{escape_markup(name)} - {escape_markup(description)}"
+                                ),
+                                id=f"skills-local-skill-{index}",
+                            )
+                        attach_label = "Attach local Skills to Console"
+                        attach_disabled = False
+                        attach_tooltip = "Stage local skill context in Console."
+                with Vertical(id="skills-inspector-pane", classes="destination-workbench-pane ds-inspector"):
+                    yield Static("Skill Actions", classes="destination-section")
+                    yield Static(
+                        "Skill import is not wired in this shell yet.",
+                        id="skills-import-unavailable",
+                    )
+                    yield Button(
+                        "Import Skill",
+                        id="skills-import-skill",
+                        disabled=True,
+                        tooltip="Unavailable until skill import is wired in this shell.",
+                    )
+                    yield Button(
+                        attach_label,
+                        id="skills-attach-to-console",
+                        disabled=attach_disabled,
+                        tooltip=attach_tooltip,
+                    )
 
     @on(Button.Pressed, "#skills-attach-to-console")
     def attach_to_console(self, event: Button.Pressed) -> None:
