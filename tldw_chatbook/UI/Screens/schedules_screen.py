@@ -8,9 +8,10 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
+from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from .destination_recovery import DestinationRecoveryState
 
@@ -37,6 +38,7 @@ class SchedulesScreen(BaseAppScreen):
         self._current_console_follow_item = None
         self._latest_console_follow_item_id = None
         self._latest_console_launch_kwargs: dict[str, Any] | None = None
+        self._latest_console_context_loaded = False
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -62,6 +64,7 @@ class SchedulesScreen(BaseAppScreen):
             else None
         )
         self._latest_console_launch_kwargs = latest_console_launch
+        self._latest_console_context_loaded = True
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -159,55 +162,84 @@ class SchedulesScreen(BaseAppScreen):
                 id="schedules-purpose",
                 classes="destination-purpose",
             )
-            with Vertical(id="schedules-sections", classes="ds-panel"):
-                yield Static("Next Run", classes="destination-section")
-                yield Static("No scheduler data is available yet.", id="schedules-empty-state")
-                yield Static("Paused", classes="destination-section")
-                yield Static("Failed", classes="destination-section")
-                yield Static("Retry", classes="destination-section")
-                if latest_console_item is not None:
-                    title = str(getattr(latest_console_item, "title", None) or "Untitled")
-                    status = str(getattr(latest_console_item, "status", None) or "unknown")
-                    yield Static("Console launch available", classes="destination-section")
-                    yield Static(
-                        Text.from_markup(
-                            "Console can follow active schedule run: "
-                            f"{escape_markup(title)} ({escape_markup(status)})."
-                        ),
-                        id="schedules-console-available",
-                    )
-                    yield Button(
-                        Text.from_markup(f"Follow {escape_markup(title)} in Console"),
-                        id="schedules-follow-in-console",
-                        tooltip="Open the active schedule run in Console.",
-                    )
-                elif self._latest_console_launch_kwargs is not None:
-                    title = str(self._latest_console_launch_kwargs["title"])
-                    yield Static("Console launch available", classes="destination-section")
-                    yield Static(
-                        Text.from_markup(
-                            "Console can launch latest reading digest output: "
-                            f"{escape_markup(title)}."
-                        ),
-                        id="schedules-console-available",
-                    )
-                    yield Button(
-                        Text.from_markup(f"Launch {escape_markup(title)} in Console"),
-                        id="schedules-follow-in-console",
-                        tooltip="Open the latest local reading digest output in Console.",
-                    )
-                else:
-                    yield Static("Console recovery unavailable", classes="destination-section")
-                    yield Static(
-                        SCHEDULES_EMPTY_CONSOLE_RECOVERY.visible_copy,
-                        id=SCHEDULES_EMPTY_CONSOLE_RECOVERY.stable_selector,
-                    )
-                    yield Button(
-                        "Console recovery unavailable",
-                        id="schedules-follow-in-console",
-                        disabled=True,
-                        tooltip=SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
-                    )
+            with DestinationModeStrip(id="schedules-filter-strip", classes="destination-filter-strip"):
+                yield Static(
+                    "Filter: Next run | Paused | Failed | Retry",
+                    id="schedules-filter-label",
+                    classes="destination-section",
+                )
+            with Horizontal(id="schedules-workbench", classes="ds-panel destination-workbench"):
+                with Vertical(id="schedules-list-pane", classes="destination-workbench-pane"):
+                    yield Static("Run Timing", classes="destination-section")
+                    yield Static("Next Run", classes="destination-section")
+                    yield Static("Paused", classes="destination-section")
+                    yield Static("Failed", classes="destination-section")
+                    yield Static("Retry", classes="destination-section")
+                    yield Static("History", id="schedules-history-row", classes="destination-section")
+                with Vertical(id="schedules-detail-pane", classes="destination-workbench-pane"):
+                    if not self._latest_console_context_loaded:
+                        yield Static(
+                            "Loading schedule and Console follow context...",
+                            id="schedules-loading-state",
+                        )
+                    elif latest_console_item is not None:
+                        title = str(getattr(latest_console_item, "title", None) or "Untitled")
+                        status = str(getattr(latest_console_item, "status", None) or "unknown")
+                        yield Static("Console launch available", classes="destination-section")
+                        yield Static(
+                            Text.from_markup(
+                                "Console can follow active schedule run: "
+                                f"{escape_markup(title)} ({escape_markup(status)})."
+                            ),
+                            id="schedules-console-available",
+                        )
+                    elif self._latest_console_launch_kwargs is not None:
+                        title = str(self._latest_console_launch_kwargs["title"])
+                        yield Static("Console launch available", classes="destination-section")
+                        yield Static(
+                            Text.from_markup(
+                                "Console can launch latest reading digest output: "
+                                f"{escape_markup(title)}."
+                            ),
+                            id="schedules-console-available",
+                        )
+                    else:
+                        yield Static("No scheduler data is available yet.", id="schedules-empty-state")
+                        yield Static("Console recovery unavailable", classes="destination-section")
+                        yield Static(
+                            SCHEDULES_EMPTY_CONSOLE_RECOVERY.visible_copy,
+                            id=SCHEDULES_EMPTY_CONSOLE_RECOVERY.stable_selector,
+                        )
+                with Vertical(id="schedules-inspector-pane", classes="destination-workbench-pane ds-inspector"):
+                    yield Static("Schedule Actions", classes="destination-section")
+                    if not self._latest_console_context_loaded:
+                        yield Button(
+                            "Console recovery unavailable",
+                            id="schedules-follow-in-console",
+                            disabled=True,
+                            tooltip="Stage schedule context after Schedules finishes loading.",
+                        )
+                    elif latest_console_item is not None:
+                        title = str(getattr(latest_console_item, "title", None) or "Untitled")
+                        yield Button(
+                            Text.from_markup(f"Follow {escape_markup(title)} in Console"),
+                            id="schedules-follow-in-console",
+                            tooltip="Open the active schedule run in Console.",
+                        )
+                    elif self._latest_console_launch_kwargs is not None:
+                        title = str(self._latest_console_launch_kwargs["title"])
+                        yield Button(
+                            Text.from_markup(f"Launch {escape_markup(title)} in Console"),
+                            id="schedules-follow-in-console",
+                            tooltip="Open the latest local reading digest output in Console.",
+                        )
+                    else:
+                        yield Button(
+                            "Console recovery unavailable",
+                            id="schedules-follow-in-console",
+                            disabled=True,
+                            tooltip=SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
+                        )
 
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:

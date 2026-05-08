@@ -27,7 +27,7 @@ class BaseAppScreen(Screen):
     #screen-content {
         width: 100%;
         height: 100%;
-        padding-top: 3;
+        padding-top: 0;
     }
     """
     

@@ -20,6 +20,12 @@ Phase 3.9 Library Collections IA split status: verified
 
 Phase 3.9 verifies that Watchlists is the top-level monitored-source destination while Collections is owned by Library, locally manageable, and honest about deferred sync and scoped downstream workflows.
 
+Destination visual parity correction status: verified
+
+- `2026-05-08-destination-visual-parity-correction.md`
+
+The visual parity correction verifies the approved destination shell geometry for Home, Console, Library, Artifacts, Personas, Watchlists, Schedules, Workflows, MCP, ACP, Skills, and Settings at `140x42` and `100x32`. Text geometry dumps are tracked in `visual-parity/`.
+
 ## Evidence
 
 - `2026-05-06-phase-3-0-destination-layout-contracts.md`
@@ -32,3 +38,4 @@ Phase 3.9 verifies that Watchlists is the top-level monitored-source destination
 - `2026-05-07-phase-3-7-source-study-pack-completion-reuse.md`
 - `2026-05-07-gate-1-6-library-native-search-rag.md`
 - `2026-05-08-phase-3-9-library-collections.md`
+- `2026-05-08-destination-visual-parity-correction.md`

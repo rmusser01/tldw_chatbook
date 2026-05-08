@@ -15,12 +15,13 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
@@ -273,102 +274,112 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 id="watchlists-collections-purpose",
                 classes="destination-purpose",
             )
-            with Vertical(id="watchlists-collections-sections", classes="ds-panel"):
-                yield Static("Watchlists", classes="destination-section")
+            with DestinationModeStrip(id="watchlists-filter-strip", classes="destination-filter-strip"):
                 yield Static(
-                    "Monitored sources, filters, jobs, runs, outputs, templates, alerts, telemetry, retry/backoff."
+                    "Filter: Local Watchlists | Runs: active/recent | Console follow",
+                    id="watchlists-filter-label",
+                    classes="destination-section",
                 )
-                yield Static(
-                    "Library now owns curated source groups, imports, saved searches, and reading workflows."
-                )
-                if not self._wc_loaded:
+            with Horizontal(id="watchlists-workbench", classes="ds-panel destination-workbench"):
+                with Vertical(id="watchlists-list-pane", classes="destination-workbench-pane"):
+                    yield Static("Watchlists", classes="destination-section")
                     yield Static(
-                        "Loading local Watchlists snapshot...",
-                        id="wc-loading-state",
-                    )
-                    attach_disabled = True
-                    attach_tooltip = "Stage local Watchlists context after the local snapshot loads."
-                elif self._wc_lookup_error:
-                    recovery_state = self._wc_lookup_recovery_state
-                    yield Static(
-                        self._wc_lookup_error,
-                        id=(
-                            recovery_state.stable_selector
-                            if recovery_state is not None
-                            else "wc-service-error"
-                        ),
-                    )
-                    attach_disabled = True
-                    attach_tooltip = (
-                        recovery_state.disabled_tooltip
-                        if recovery_state is not None
-                        else "Watchlists services are unavailable; retry Watchlists before staging Console context."
-                    )
-                elif not self._has_local_wc_context():
-                    yield Static(
-                        WC_EMPTY_COPY,
-                        id="wc-empty-state",
-                    )
-                    attach_disabled = True
-                    attach_tooltip = "Stage local Watchlists context once local watchlists exist."
-                else:
-                    yield Static(
-                        "Local Watchlists snapshot",
-                        id="wc-snapshot-title",
-                        classes="destination-section",
+                        "Monitored sources, filters, jobs, runs, outputs, templates, alerts, telemetry, retry/backoff."
                     )
                     yield Static(
-                        self._count_label(
-                            "Watchlists",
-                            self._local_watchlist_count,
-                            self._watchlist_total_known,
-                        ),
-                        id="wc-watchlists-summary",
+                        "Library now owns curated source groups, imports, saved searches, and reading workflows."
                     )
-                    for index, record in enumerate(self._local_watchlist_records):
+                with Vertical(id="watchlists-detail-pane", classes="destination-workbench-pane"):
+                    if not self._wc_loaded:
                         yield Static(
-                            Text.from_markup(escape_markup(self._record_title(record))),
-                            id=f"wc-watchlist-item-{index}",
+                            "Loading local Watchlists snapshot...",
+                            id="wc-loading-state",
                         )
-                    attach_disabled = False
-                    attach_tooltip = "Stage local Watchlists context in Console."
-                yield Button(
-                    "Stage Watchlists Context in Console",
-                    id="wc-attach-to-console",
-                    disabled=attach_disabled,
-                    tooltip=attach_tooltip,
-                )
-                yield Button(
-                    "Open current Watchlists",
-                    id="wc-open-watchlists",
-                    tooltip="Open the current watchlist/subscription surface.",
-                )
-                if latest_console_item is not None:
-                    title = str(getattr(latest_console_item, "title", None) or "Untitled")
-                    status = str(getattr(latest_console_item, "status", None) or "unknown")
-                    yield Static(
-                        Text.from_markup(
-                            "Console can follow latest Watchlists run: "
-                            f"{escape_markup(title)} ({escape_markup(status)})."
-                        ),
-                        id="watchlists-console-available",
+                        attach_disabled = True
+                        attach_tooltip = "Stage local Watchlists context after the local snapshot loads."
+                    elif self._wc_lookup_error:
+                        recovery_state = self._wc_lookup_recovery_state
+                        yield Static(
+                            self._wc_lookup_error,
+                            id=(
+                                recovery_state.stable_selector
+                                if recovery_state is not None
+                                else "wc-service-error"
+                            ),
+                        )
+                        attach_disabled = True
+                        attach_tooltip = (
+                            recovery_state.disabled_tooltip
+                            if recovery_state is not None
+                            else "Watchlists services are unavailable; retry Watchlists before staging Console context."
+                        )
+                    elif not self._has_local_wc_context():
+                        yield Static(
+                            WC_EMPTY_COPY,
+                            id="wc-empty-state",
+                        )
+                        attach_disabled = True
+                        attach_tooltip = "Stage local Watchlists context once local watchlists exist."
+                    else:
+                        yield Static(
+                            "Local Watchlists snapshot",
+                            id="wc-snapshot-title",
+                            classes="destination-section",
+                        )
+                        yield Static(
+                            self._count_label(
+                                "Watchlists",
+                                self._local_watchlist_count,
+                                self._watchlist_total_known,
+                            ),
+                            id="wc-watchlists-summary",
+                        )
+                        for index, record in enumerate(self._local_watchlist_records):
+                            yield Static(
+                                Text.from_markup(escape_markup(self._record_title(record))),
+                                id=f"wc-watchlist-item-{index}",
+                            )
+                        attach_disabled = False
+                        attach_tooltip = "Stage local Watchlists context in Console."
+                with Vertical(id="watchlists-inspector-pane", classes="destination-workbench-pane ds-inspector"):
+                    yield Static("Actions", classes="destination-section")
+                    yield Button(
+                        "Stage Watchlists Context in Console",
+                        id="wc-attach-to-console",
+                        disabled=attach_disabled,
+                        tooltip=attach_tooltip,
                     )
                     yield Button(
-                        Text.from_markup(f"Follow {escape_markup(title)} in Console"),
-                        id="watchlists-follow-in-console",
-                        tooltip="Open the latest active Watchlists run in Console.",
+                        "Open current Watchlists",
+                        id="wc-open-watchlists",
+                        tooltip="Open the current watchlist/subscription surface.",
                     )
-                else:
-                    yield Static(
-                        "No active Watchlists run is available for Console follow.",
-                        id="watchlists-console-unavailable",
-                    )
-                    yield Button(
-                        "Console follow unavailable",
-                        id="watchlists-follow-in-console",
-                        disabled=True,
-                        tooltip="Unavailable until Watchlists has an active run with Console context.",
-                    )
+                    if latest_console_item is not None:
+                        title = str(getattr(latest_console_item, "title", None) or "Untitled")
+                        status = str(getattr(latest_console_item, "status", None) or "unknown")
+                        yield Static(
+                            Text.from_markup(
+                                "Console can follow latest Watchlists run: "
+                                f"{escape_markup(title)} ({escape_markup(status)})."
+                            ),
+                            id="watchlists-console-available",
+                        )
+                        yield Button(
+                            Text.from_markup(f"Follow {escape_markup(title)} in Console"),
+                            id="watchlists-follow-in-console",
+                            tooltip="Open the latest active Watchlists run in Console.",
+                        )
+                    else:
+                        yield Static(
+                            "No active Watchlists run is available for Console follow.",
+                            id="watchlists-console-unavailable",
+                        )
+                        yield Button(
+                            "Console follow unavailable",
+                            id="watchlists-follow-in-console",
+                            disabled=True,
+                            tooltip="Unavailable until Watchlists has an active run with Console context.",
+                        )
 
     @on(Button.Pressed, "#wc-open-watchlists")
     def open_watchlists(self) -> None:

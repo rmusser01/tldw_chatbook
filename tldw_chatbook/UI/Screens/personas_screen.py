@@ -12,12 +12,13 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
@@ -232,72 +233,91 @@ class PersonasScreen(BaseAppScreen):
                 id="personas-purpose",
                 classes="destination-purpose",
             )
-            with Vertical(id="personas-sections", classes="ds-panel"):
-                yield Button(
-                    "Open Personas",
-                    id="personas-open-profiles",
-                    tooltip="Open character, prompt, dictionary, and lore management.",
-                )
+            with DestinationModeStrip(id="personas-mode-strip", classes="destination-mode-strip"):
                 yield Static(
-                    "Characters, prompts, dictionaries, and lore stay here; Library owns saved conversation browsing.",
-                    id="personas-boundary",
-                    classes="destination-purpose",
+                    "Scope: Local behavior profiles | Target: Console context",
+                    id="personas-mode-label",
+                    classes="destination-section",
                 )
-                yield Static("Local Personas snapshot", classes="destination-section")
-                if not self._personas_loaded:
+            with Horizontal(id="personas-workbench", classes="ds-panel destination-workbench"):
+                with Vertical(id="personas-list-pane", classes="destination-workbench-pane"):
+                    yield Static("Behavior Sources", classes="destination-section")
                     yield Static(
-                        "Loading local Personas behavior context...",
-                        id="personas-loading-state",
+                        f"Characters: {self._local_behavior_counts['characters']}",
+                        id="personas-list-characters-count",
                     )
-                    attach_disabled = True
-                    attach_tooltip = "Stage local persona context after Personas finishes loading."
-                elif self._personas_lookup_error:
-                    recovery_state = self._personas_lookup_recovery_state
                     yield Static(
-                        self._personas_lookup_error,
-                        id=(
-                            recovery_state.stable_selector
-                            if recovery_state is not None
-                            else "personas-service-error"
-                        ),
+                        f"Persona profiles: {self._local_behavior_counts['profiles']}",
+                        id="personas-list-profiles-count",
                     )
-                    attach_disabled = True
-                    attach_tooltip = (
-                        recovery_state.disabled_tooltip
-                        if recovery_state is not None
-                        else "Personas service is unavailable; retry Personas later."
-                    )
-                elif not has_context:
                     yield Static(
-                        PERSONAS_EMPTY_COPY,
-                        id="personas-empty-state",
+                        "Characters, prompts, dictionaries, and lore stay here; Library owns saved conversation browsing.",
+                        id="personas-boundary",
+                        classes="destination-purpose",
                     )
-                    attach_disabled = True
-                    attach_tooltip = "Stage local persona context after adding characters or persona profiles."
-                else:
-                    for record_type, label, widget_id in (
-                        ("characters", "Characters", "personas-characters-summary"),
-                        ("profiles", "Persona profiles", "personas-profiles-summary"),
-                    ):
+                with Vertical(id="personas-detail-pane", classes="destination-workbench-pane"):
+                    yield Static("Local Personas snapshot", classes="destination-section")
+                    if not self._personas_loaded:
                         yield Static(
-                            f"{label}: {self._local_behavior_counts[record_type]}",
-                            id=widget_id,
+                            "Loading local Personas behavior context...",
+                            id="personas-loading-state",
                         )
-                        for index, record in enumerate(self._local_behavior_records[record_type]):
+                        attach_disabled = True
+                        attach_tooltip = "Stage local persona context after Personas finishes loading."
+                    elif self._personas_lookup_error:
+                        recovery_state = self._personas_lookup_recovery_state
+                        yield Static(
+                            self._personas_lookup_error,
+                            id=(
+                                recovery_state.stable_selector
+                                if recovery_state is not None
+                                else "personas-service-error"
+                            ),
+                        )
+                        attach_disabled = True
+                        attach_tooltip = (
+                            recovery_state.disabled_tooltip
+                            if recovery_state is not None
+                            else "Personas service is unavailable; retry Personas later."
+                        )
+                    elif not has_context:
+                        yield Static(
+                            PERSONAS_EMPTY_COPY,
+                            id="personas-empty-state",
+                        )
+                        attach_disabled = True
+                        attach_tooltip = "Stage local persona context after adding characters or persona profiles."
+                    else:
+                        for record_type, label, widget_id in (
+                            ("characters", "Characters", "personas-characters-summary"),
+                            ("profiles", "Persona profiles", "personas-profiles-summary"),
+                        ):
                             yield Static(
-                                Text.from_markup(
-                                    escape_markup(self._record_name(record_type, record))
-                                ),
-                                id=f"personas-{record_type}-item-{index}",
+                                f"{label}: {self._local_behavior_counts[record_type]}",
+                                id=widget_id,
                             )
-                    attach_disabled = False
-                    attach_tooltip = "Stage local persona context in Console."
-                yield Button(
-                    "Attach to Console",
-                    id="personas-attach-to-console",
-                    disabled=attach_disabled,
-                    tooltip=attach_tooltip,
-                )
+                            for index, record in enumerate(self._local_behavior_records[record_type]):
+                                yield Static(
+                                    Text.from_markup(
+                                        escape_markup(self._record_name(record_type, record))
+                                    ),
+                                    id=f"personas-{record_type}-item-{index}",
+                                )
+                        attach_disabled = False
+                        attach_tooltip = "Stage local persona context in Console."
+                with Vertical(id="personas-inspector-pane", classes="destination-workbench-pane ds-inspector"):
+                    yield Static("Console Actions", classes="destination-section")
+                    yield Button(
+                        "Open Personas",
+                        id="personas-open-profiles",
+                        tooltip="Open character, prompt, dictionary, and lore management.",
+                    )
+                    yield Button(
+                        "Attach to Console",
+                        id="personas-attach-to-console",
+                        disabled=attach_disabled,
+                        tooltip=attach_tooltip,
+                    )
 
     @on(Button.Pressed, "#personas-open-profiles")
     def open_profiles(self) -> None:

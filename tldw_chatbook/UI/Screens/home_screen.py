@@ -164,12 +164,13 @@ class HomeScreen(BaseAppScreen):
                         classes="destination-section",
                     )
                     yield Static(selected_item_copy, id="home-selected-item-body")
-            with Vertical(id="home-next-actions-region", classes="ds-panel"):
-                yield Static("Next Best Action", id="home-next-best-action", classes="ds-panel")
-                yield Static(next_action_copy, id="home-next-best-action-body")
-            with Vertical(id="home-recent-work-region", classes="ds-panel"):
-                yield Static("Recent Work", id="home-recent-work", classes="ds-panel")
-                yield Static(section_text("recent_work"), id="home-recent-work-body")
+            with Horizontal(id="home-followup-row"):
+                with Vertical(id="home-next-actions-region", classes="ds-panel home-followup-region"):
+                    yield Static("Next Best Action", id="home-next-best-action", classes="ds-panel")
+                    yield Static(next_action_copy, id="home-next-best-action-body")
+                with Vertical(id="home-recent-work-region", classes="ds-panel home-followup-region"):
+                    yield Static("Recent Work", id="home-recent-work", classes="ds-panel")
+                    yield Static(section_text("recent_work"), id="home-recent-work-body")
 
     def _selected_home_item(self, dashboard_input: HomeDashboardInput):
         return choose_home_selected_item(dashboard_input)

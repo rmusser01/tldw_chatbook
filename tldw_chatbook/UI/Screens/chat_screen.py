@@ -641,29 +641,28 @@ class ChatScreen(BaseAppScreen):
                 id="console-control-bar",
                 classes="ds-panel",
             )
-            with Horizontal(id="console-workspace-grid", classes="ds-panel"):
-                with Vertical(id="console-context-row"):
-                    yield ConsoleStagedContextTray(
-                        staged_context_state,
-                        id="console-staged-context-tray",
-                        classes="console-region",
-                    )
-                    with Vertical(
-                        id="console-run-inspector",
-                        classes="console-region",
-                    ):
-                        yield ConsoleRunInspector(
-                            inspector_state,
-                            id="console-run-inspector-state",
-                        )
-                        if pending_launch:
-                            yield from self._render_console_live_work_status_card(pending_launch)
-                        else:
-                            yield from self._render_console_live_work_source_readiness()
+            with Horizontal(id="console-workspace-grid", classes="ds-panel destination-workbench"):
+                yield ConsoleStagedContextTray(
+                    staged_context_state,
+                    id="console-staged-context-tray",
+                    classes="console-region destination-workbench-pane",
+                )
                 with Vertical(id="console-main-column"):
                     with Vertical(id="console-transcript-region", classes="console-region"):
                         yield self._ensure_console_session_surface()
                     yield ConsoleComposerBar(id="console-native-composer", classes="console-region ds-panel")
+                with Vertical(
+                    id="console-run-inspector",
+                    classes="console-region destination-workbench-pane",
+                ):
+                    yield ConsoleRunInspector(
+                        inspector_state,
+                        id="console-run-inspector-state",
+                    )
+                    if pending_launch:
+                        yield from self._render_console_live_work_status_card(pending_launch)
+                    else:
+                        yield from self._render_console_live_work_source_readiness()
     
     def on_mount(self) -> None:
         """Run diagnostics when first mounted (only once)."""

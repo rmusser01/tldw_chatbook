@@ -1,0 +1,14 @@
+route: library
+terminal_size: 100x32
+global_nav: MainNavigationBar region=(x=0, y=0, w=100, h=3)
+global_nav_buttons: nav-home, nav-console, nav-library, nav-artifacts, nav-personas, nav-watchlists_collections, nav-schedules, nav-workflows, nav-mcp, nav-acp, nav-skills, nav-settings
+identity: #library-title region=(x=0, y=3, w=100, h=1)
+mode_or_filter_strip: #library-mode-bar region=(x=0, y=6, w=100, h=1)
+workbench: #library-contract-grid region=(x=0, y=7, w=100, h=25)
+list_or_object_pane: #library-source-browser region=(x=0, y=7, w=33, h=25)
+detail_pane: #library-source-detail region=(x=33, y=7, w=33, h=25)
+inspector_or_actions_pane: #library-source-inspector region=(x=66, y=7, w=34, h=25)
+action: #library-open-search region=(x=0, y=20, w=16, h=3) disabled=False
+action: #library-use-in-console region=(x=66, y=26, w=16, h=3) disabled=True
+action: #library-open-notes region=(x=0, y=8, w=16, h=3) disabled=False
+state_marker: #library-source-error region=(x=33, y=16, w=33, h=2)

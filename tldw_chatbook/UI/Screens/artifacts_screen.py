@@ -15,10 +15,11 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from .destination_recovery import DestinationRecoveryState
@@ -57,6 +58,7 @@ class ArtifactsScreen(BaseAppScreen):
         self._latest_chatbook_console_launch: dict[str, Any] | None = None
         self._chatbook_lookup_error: str | None = None
         self._requested_chatbook_target_id: str | None = None
+        self._chatbook_context_loaded = False
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -93,6 +95,7 @@ class ArtifactsScreen(BaseAppScreen):
     ) -> None:
         self._latest_chatbook_console_launch = launch_kwargs
         self._chatbook_lookup_error = lookup_error
+        self._chatbook_context_loaded = True
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -303,74 +306,110 @@ class ArtifactsScreen(BaseAppScreen):
                 id="artifacts-purpose",
                 classes="destination-purpose",
             )
-            with Vertical(id="artifacts-sections", classes="ds-panel"):
-                yield Button(
-                    "Open Chatbooks",
-                    id="artifacts-open-chatbooks",
-                    tooltip="Open portable Chatbook bundles.",
-                )
+            with DestinationModeStrip(id="artifacts-mode-strip", classes="destination-mode-strip"):
                 yield Static(
-                    "Generated outputs from local and server output services will appear here.",
-                    id="artifacts-output-status",
-                    classes="destination-purpose",
+                    "Mode: Chatbooks | Outputs | Reports | Imports",
+                    id="artifacts-mode-label",
+                    classes="destination-section",
                 )
-                if launch_kwargs is not None:
-                    title = str(launch_kwargs["title"])
-                    payload = launch_kwargs.get("payload") or {}
-                    target_id = str(payload.get("target_id") or "").strip()
-                    is_requested = bool(
-                        self._requested_chatbook_target_id
-                        and target_id == self._requested_chatbook_target_id
-                    )
-                    launch_scope = "requested" if is_requested else "latest"
-                    description = str(payload.get("description") or "").strip()
-                    provenance = self._console_saved_artifact_provenance(payload)
-                    content_preview = str(payload.get("content_preview") or "").strip()
-                    yield Static("Console launch available", classes="destination-section")
-                    yield Static(
-                        Text.from_markup(
-                            f"Console can launch {launch_scope} Chatbook artifact: "
-                            f"{escape_markup(title)}."
-                        ),
-                        id="artifacts-console-available",
-                    )
-                    if description:
-                        yield Static(
-                            Text.from_markup(escape_markup(description)),
-                            id="artifacts-chatbook-description",
-                        )
-                    if provenance:
-                        yield Static(
-                            Text.from_markup(escape_markup(provenance)),
-                            id="artifacts-chatbook-provenance",
-                        )
-                    if content_preview:
-                        yield Static(
-                            Text.from_markup(f"Preview: {escape_markup(content_preview)}"),
-                            id="artifacts-chatbook-content-preview",
-                        )
+            with Horizontal(id="artifacts-workbench", classes="ds-panel destination-workbench"):
+                with Vertical(id="artifacts-list-pane", classes="destination-workbench-pane"):
+                    yield Static("Artifact Sources", classes="destination-section")
                     yield Button(
-                        Text.from_markup(f"Launch {escape_markup(title)} in Console"),
-                        id="artifacts-use-in-console",
-                        tooltip=f"Open the {launch_scope} local Chatbook artifact in Console.",
-                    )
-                else:
-                    yield Static("Console launch unavailable", classes="destination-section")
-                    recovery_state = self._blocked_chatbook_recovery_state
-                    yield Static(
-                        recovery_state.visible_copy,
-                        id=recovery_state.stable_selector,
+                        "Open Chatbooks",
+                        id="artifacts-open-chatbooks",
+                        tooltip="Open portable Chatbook bundles.",
                     )
                     yield Button(
-                        "Console launch unavailable",
-                        id="artifacts-use-in-console",
+                        "Open Library",
+                        id="artifacts-open-library",
+                        tooltip="Open Library source material that can produce or contextualize artifacts.",
+                    )
+                    yield Button(
+                        "Import Artifact",
+                        id="artifacts-import-artifact",
                         disabled=True,
-                        tooltip=recovery_state.disabled_tooltip,
+                        tooltip="Artifact import is a later-stage path for this shell.",
                     )
+                    yield Static(
+                        "Generated outputs from local and server output services will appear here.",
+                        id="artifacts-output-status",
+                        classes="destination-purpose",
+                    )
+                with Vertical(id="artifacts-detail-pane", classes="destination-workbench-pane"):
+                    yield Static("Artifact Detail", classes="destination-section")
+                    if not self._chatbook_context_loaded:
+                        yield Static(
+                            "Loading latest local Chatbook artifact...",
+                            id="artifacts-loading-state",
+                        )
+                    elif launch_kwargs is not None:
+                        yield Static("Latest Chatbook artifact is available.", id="artifacts-detail-ready")
+                    else:
+                        yield Static("No local Chatbook artifact is selected.", id="artifacts-detail-empty")
+                with Vertical(id="artifacts-inspector-pane", classes="destination-workbench-pane ds-inspector"):
+                    yield Static("Console Inspector", classes="destination-section")
+                    if launch_kwargs is not None:
+                        title = str(launch_kwargs["title"])
+                        payload = launch_kwargs.get("payload") or {}
+                        target_id = str(payload.get("target_id") or "").strip()
+                        is_requested = bool(
+                            self._requested_chatbook_target_id
+                            and target_id == self._requested_chatbook_target_id
+                        )
+                        launch_scope = "requested" if is_requested else "latest"
+                        description = str(payload.get("description") or "").strip()
+                        provenance = self._console_saved_artifact_provenance(payload)
+                        content_preview = str(payload.get("content_preview") or "").strip()
+                        yield Static("Console launch available", classes="destination-section")
+                        yield Static(
+                            Text.from_markup(
+                                f"Console can launch {launch_scope} Chatbook artifact: "
+                                f"{escape_markup(title)}."
+                            ),
+                            id="artifacts-console-available",
+                        )
+                        if description:
+                            yield Static(
+                                Text.from_markup(escape_markup(description)),
+                                id="artifacts-chatbook-description",
+                            )
+                        if provenance:
+                            yield Static(
+                                Text.from_markup(escape_markup(provenance)),
+                                id="artifacts-chatbook-provenance",
+                            )
+                        if content_preview:
+                            yield Static(
+                                Text.from_markup(f"Preview: {escape_markup(content_preview)}"),
+                                id="artifacts-chatbook-content-preview",
+                            )
+                        yield Button(
+                            Text.from_markup(f"Launch {escape_markup(title)} in Console"),
+                            id="artifacts-use-in-console",
+                            tooltip=f"Open the {launch_scope} local Chatbook artifact in Console.",
+                        )
+                    else:
+                        yield Static("Console launch unavailable", classes="destination-section")
+                        recovery_state = self._blocked_chatbook_recovery_state
+                        yield Static(
+                            recovery_state.visible_copy,
+                            id=recovery_state.stable_selector,
+                        )
+                        yield Button(
+                            "Console launch unavailable",
+                            id="artifacts-use-in-console",
+                            disabled=True,
+                            tooltip=recovery_state.disabled_tooltip,
+                        )
 
     @on(Button.Pressed, "#artifacts-open-chatbooks")
     def open_chatbooks(self) -> None:
         self.post_message(NavigateToScreen("chatbooks"))
+
+    @on(Button.Pressed, "#artifacts-open-library")
+    def open_library(self) -> None:
+        self.post_message(NavigateToScreen("library"))
 
     @on(Button.Pressed, "#artifacts-use-in-console")
     def use_in_console(self, event: Button.Pressed) -> None:

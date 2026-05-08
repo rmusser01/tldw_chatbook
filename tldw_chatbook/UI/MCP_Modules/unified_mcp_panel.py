@@ -15,6 +15,10 @@ from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from .unified_mcp_sections import render_unified_mcp_section
 
 
+LAYOUT_MODE_FULL = "full"
+LAYOUT_MODE_COMPACT_WORKBENCH = "compact-workbench"
+
+
 class UnifiedMCPPanel(Container):
     """Minimal Slice 1 Unified MCP host inside Tools & Settings."""
 
@@ -22,6 +26,11 @@ class UnifiedMCPPanel(Container):
     UnifiedMCPPanel {
         height: 100%;
         width: 100%;
+    }
+
+    UnifiedMCPPanel.compact-workbench-panel {
+        height: 1fr;
+        min-height: 0;
     }
 
     .unified-mcp-shell {
@@ -86,9 +95,19 @@ class UnifiedMCPPanel(Container):
     }
     """
 
-    def __init__(self, app_instance: Any = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        app_instance: Any = None,
+        *,
+        layout_mode: str = LAYOUT_MODE_FULL,
+        **kwargs: Any,
+    ) -> None:
+        classes = kwargs.pop("classes", "")
+        if layout_mode == LAYOUT_MODE_COMPACT_WORKBENCH:
+            classes = f"compact-workbench-panel {classes}".strip()
+        super().__init__(classes=classes, **kwargs)
         self._app_instance = app_instance
+        self.layout_mode = layout_mode
         self.context = UnifiedMCPContext(selected_section="overview")
         self._refreshing_controls = False
         self._pending_view_state: dict[str, Any] | None = None
@@ -128,6 +147,17 @@ class UnifiedMCPPanel(Container):
         if initial_scope_ref not in (None, ""):
             initial_scope_ref_value = str(initial_scope_ref)
             initial_scope_ref_options = [(f"Scope {initial_scope_ref_value}", initial_scope_ref_value)]
+
+        if self.layout_mode == LAYOUT_MODE_COMPACT_WORKBENCH:
+            yield from self._compose_compact_workbench(
+                initial_source=initial_source,
+                initial_section=initial_section,
+                initial_scope=initial_scope,
+                initial_scope_options=initial_scope_options,
+                initial_scope_ref_options=initial_scope_ref_options,
+                initial_scope_ref_value=initial_scope_ref_value,
+            )
+            return
 
         with Vertical(classes="unified-mcp-shell"):
             with Container(classes="settings-group"):
@@ -179,6 +209,76 @@ class UnifiedMCPPanel(Container):
                             )
                 yield Static("", id="unified-mcp-status", classes="unified-mcp-status")
                 yield Static("Unified MCP is loading...", id="unified-mcp-content", classes="unified-mcp-content")
+                with Vertical(classes="unified-mcp-actions"):
+                    yield Label("Action", classes="form-label")
+                    yield Select(
+                        [("No actions available", Select.BLANK)],
+                        id="unified-mcp-action",
+                        value=Select.BLANK,
+                    )
+                    yield Label("Payload (JSON)", classes="form-label")
+                    yield TextArea("{}", id="unified-mcp-action-payload")
+                    with Horizontal(classes="unified-mcp-action-row"):
+                        yield Button(
+                            "Run Action",
+                            id="unified-mcp-action-run",
+                            variant="primary",
+                            tooltip="Run the selected Unified MCP action with the JSON payload above.",
+                        )
+                    yield Static("", id="unified-mcp-action-result", classes="help-text")
+
+    def _compose_compact_workbench(
+        self,
+        *,
+        initial_source: str,
+        initial_section: str,
+        initial_scope: str,
+        initial_scope_options: list[tuple[str, str]],
+        initial_scope_ref_options: list[tuple[str, object]],
+        initial_scope_ref_value: object,
+    ) -> ComposeResult:
+        with Horizontal(id="mcp-workbench", classes="ds-panel destination-workbench"):
+            with Vertical(id="mcp-server-tree-pane", classes="destination-workbench-pane"):
+                yield Static("Servers And Scope", classes="destination-section")
+                yield Label("Source", classes="form-label")
+                yield Select(
+                    [("Local", "local"), ("Server", "server")],
+                    id="unified-mcp-source",
+                    allow_blank=False,
+                    value=initial_source,
+                )
+                yield Label("Server", classes="form-label")
+                yield Select(
+                    [("No configured servers", Select.BLANK)],
+                    id="unified-mcp-server-target",
+                    value=Select.BLANK,
+                )
+                yield Label("Scope", classes="form-label")
+                yield Select(
+                    initial_scope_options,
+                    id="unified-mcp-scope",
+                    allow_blank=False,
+                    value=initial_scope,
+                )
+                yield Label("Scope Entity", classes="form-label")
+                yield Select(
+                    initial_scope_ref_options,
+                    id="unified-mcp-scope-ref",
+                    value=initial_scope_ref_value,
+                )
+                yield Label("Section", classes="form-label")
+                yield Select(
+                    [("Overview", "overview"), ("Inventory", "inventory"), ("External Servers", "external_servers")],
+                    id="unified-mcp-section",
+                    allow_blank=False,
+                    value=initial_section,
+                )
+            with Vertical(id="mcp-detail-pane", classes="destination-workbench-pane"):
+                yield Static("Server Detail", classes="destination-section")
+                yield Static("", id="unified-mcp-status", classes="unified-mcp-status")
+                yield Static("Unified MCP is loading...", id="unified-mcp-content", classes="unified-mcp-content")
+            with Vertical(id="mcp-readiness-pane", classes="destination-workbench-pane ds-inspector"):
+                yield Static("Readiness And Actions", classes="destination-section")
                 with Vertical(classes="unified-mcp-actions"):
                     yield Label("Action", classes="form-label")
                     yield Select(
