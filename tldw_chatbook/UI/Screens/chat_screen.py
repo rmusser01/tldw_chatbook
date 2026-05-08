@@ -40,6 +40,7 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkSourceReadinessState,
     ConsoleLiveWorkStatusCardState,
 )
+from ...config import coerce_bool_setting
 from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
@@ -719,7 +720,7 @@ class ChatScreen(BaseAppScreen):
         console_config = app_config.get("console", {})
         if not isinstance(console_config, dict):
             return True
-        return console_config.get("collapse_large_pastes", True) is not False
+        return coerce_bool_setting(console_config.get("collapse_large_pastes", True), True)
     
     def on_mount(self) -> None:
         """Run diagnostics when first mounted (only once)."""

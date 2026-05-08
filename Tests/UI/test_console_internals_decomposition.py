@@ -298,10 +298,11 @@ async def test_console_paste_under_threshold_remains_literal():
         assert "Pasted Text:" not in visible_plain
 
 
+@pytest.mark.parametrize("collapse_setting", [False, "false"])
 @pytest.mark.asyncio
-async def test_console_large_paste_collapse_can_be_disabled_from_config():
+async def test_console_large_paste_collapse_can_be_disabled_from_config(collapse_setting):
     app = _build_test_app()
-    app.app_config["console"] = {"collapse_large_pastes": False}
+    app.app_config["console"] = {"collapse_large_pastes": collapse_setting}
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:

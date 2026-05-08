@@ -15,6 +15,8 @@ from textual.css.query import NoMatches
 from textual.events import Click
 from textual.widgets import Button, Input, Static
 
+from ...config import coerce_bool_setting
+
 
 _CollapseState = Literal["literal", "collapsed", "confirm", "expanded"]
 
@@ -54,7 +56,7 @@ class ConsoleComposerBar(Horizontal):
         self.styles.height = 5
         self.styles.min_height = 5
         self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
-        self.collapse_large_pastes = bool(collapse_large_pastes)
+        self.collapse_large_pastes = coerce_bool_setting(collapse_large_pastes, True)
         self._segments: list[_DraftSegment] = []
         self._segments_initialized = False
 

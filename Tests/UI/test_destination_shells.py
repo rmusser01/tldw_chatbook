@@ -1538,10 +1538,22 @@ async def test_settings_appearance_action_routes_to_customize_surface():
     assert seen_routes[-1] == "customize"
 
 
+@pytest.mark.parametrize(
+    ("initial_value", "expected_checkbox_value", "expected_saved_value"),
+    [
+        (True, True, False),
+        ("false", False, True),
+    ],
+)
 @pytest.mark.asyncio
-async def test_settings_console_paste_collapse_checkbox_reflects_and_persists_config(monkeypatch):
+async def test_settings_console_paste_collapse_checkbox_reflects_and_persists_config(
+    monkeypatch,
+    initial_value,
+    expected_checkbox_value,
+    expected_saved_value,
+):
     app = _build_test_app()
-    app.app_config["console"] = {"collapse_large_pastes": True}
+    app.app_config["console"] = {"collapse_large_pastes": initial_value}
     saved_settings = []
 
     def fake_save_setting(section, key, value):
@@ -1564,13 +1576,13 @@ async def test_settings_console_paste_collapse_checkbox_reflects_and_persists_co
             Checkbox,
         )
 
-        assert checkbox.value is True
+        assert checkbox.value is expected_checkbox_value
 
         await pilot.click("#settings-console-collapse-large-pastes-checkbox")
         await pilot.pause(0.1)
 
-    assert app.app_config["console"]["collapse_large_pastes"] is False
-    assert saved_settings == [("console", "collapse_large_pastes", False)]
+    assert app.app_config["console"]["collapse_large_pastes"] is expected_saved_value
+    assert saved_settings == [("console", "collapse_large_pastes", expected_saved_value)]
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Checkbox, Static
 
 from ...Widgets.destination_workbench import DestinationModeStrip
-from ...config import save_setting_to_cli_config
+from ...config import coerce_bool_setting, save_setting_to_cli_config
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -29,7 +29,10 @@ class SettingsScreen(BaseAppScreen):
         return console_settings
 
     def _collapse_large_pastes_enabled(self) -> bool:
-        return self._console_settings().get("collapse_large_pastes", True) is not False
+        return coerce_bool_setting(
+            self._console_settings().get("collapse_large_pastes", True),
+            True,
+        )
 
     def compose_content(self) -> ComposeResult:
         with Vertical(id="settings-shell"):

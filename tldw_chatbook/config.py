@@ -526,6 +526,11 @@ def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type 
         logger.warning(f"Config key '{key}' has value '{value}' which could not be converted to {target_type}. Using default: '{default}'. Error: {e}")
         return default
 
+
+def coerce_bool_setting(value: Any, default: bool = True) -> bool:
+    """Coerce config/app setting values with the same bool rules as load_settings."""
+    return _get_typed_value({"value": value}, "value", default, bool)
+
 # Global cache for load_settings to avoid redundant file I/O
 _SETTINGS_CACHE: Optional[Dict[str, Any]] = None
 _SETTINGS_CACHE_SOURCE: Optional[Path] = None
@@ -648,7 +653,13 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_chat_defaults_cli = get_toml_section('chat_defaults')
     final_character_defaults_cli = get_toml_section('character_defaults')
     final_notes_settings_cli = get_toml_section('notes')
-    final_console_settings_cli = get_toml_section('console')
+    final_console_settings_cli = copy.deepcopy(get_toml_section('console'))
+    if not isinstance(final_console_settings_cli, dict):
+        final_console_settings_cli = {}
+    final_console_settings_cli["collapse_large_pastes"] = coerce_bool_setting(
+        final_console_settings_cli.get("collapse_large_pastes", True),
+        True,
+    )
 
     # --- Application Mode ---
     single_user_mode_str = os.getenv("APP_MODE", _get_typed_value(processing_section, "app_mode", "single")).lower()
