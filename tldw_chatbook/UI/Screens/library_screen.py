@@ -185,6 +185,15 @@ class LibraryScreen(BaseAppScreen):
         return value
 
     @staticmethod
+    async def _run_library_collections_call(callable_obj: Any, *args: Any, **kwargs: Any) -> Any:
+        if inspect.iscoroutinefunction(callable_obj):
+            return await callable_obj(*args, **kwargs)
+        result = await asyncio.to_thread(lambda: callable_obj(*args, **kwargs))
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    @staticmethod
     def _safe_text(value: Any, fallback: str = "", *, max_length: int = 500) -> str:
         text = sanitize_string(str(value or ""), max_length=max_length).strip()
         if not text:
@@ -762,6 +771,37 @@ class LibraryScreen(BaseAppScreen):
             after="#library-active-mode-next-action",
         )
 
+    async def _refresh_collections_panel_action_state_widgets(self) -> None:
+        if self._active_mode != "collections" or not list(self.query("#library-collections-panel")):
+            return
+
+        panel_state = self._library_collections_panel_state()
+        for action in (
+            panel_state.create_action,
+            panel_state.rename_action,
+            panel_state.delete_action,
+        ):
+            buttons = list(self.query(f"#{action.widget_id}"))
+            if buttons:
+                buttons[0].disabled = not action.enabled
+                buttons[0].tooltip = action.tooltip
+
+        confirm_buttons = list(self.query("#library-confirm-delete-collection"))
+        if not self._library_collection_pending_delete_id:
+            for button in confirm_buttons:
+                await button.remove()
+            return
+        if not confirm_buttons:
+            actions = list(self.query("#library-collection-actions"))
+            if actions:
+                await actions[0].mount(
+                    Button(
+                        "Confirm delete",
+                        id="library-confirm-delete-collection",
+                        tooltip="Delete the selected local Collection.",
+                    )
+                )
+
     async def _refresh_library_collections_snapshot(self) -> None:
         service = getattr(self.app_instance, "library_collections_service", None)
         list_collections = getattr(service, "list_collections", None)
@@ -771,7 +811,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_collections_error = "Library Collections are unavailable in this runtime."
             return
         try:
-            records = await self._resolve_maybe_awaitable(list_collections())
+            records = await self._run_library_collections_call(list_collections)
         except Exception:
             logger.warning("Failed to load Library Collections.", exc_info=True)
             self._library_collections_records = ()
@@ -789,6 +829,10 @@ class LibraryScreen(BaseAppScreen):
             )
         ):
             self._library_collections_selected_id = ""
+        if not self._library_collections_selected_id and self._library_collections_records:
+            self._library_collections_selected_id = (
+                getattr(self._library_collections_records[0], "collection_id", "") or ""
+            )
 
     def _sync_collection_scoped_action_buttons(self) -> None:
         deferred = self._active_mode == "collections"
@@ -851,12 +895,13 @@ class LibraryScreen(BaseAppScreen):
         if event.value == self._library_collection_name_input:
             return
         self._library_collection_name_input = event.value
-        await self._sync_collections_panel(refresh_snapshot=False)
+        await self._refresh_collections_panel_action_state_widgets()
 
     @on(Input.Changed, "#library-collection-description-input")
     async def update_library_collection_description_input(self, event: Input.Changed) -> None:
         event.stop()
         self._library_collection_description_input = event.value
+        await self._refresh_collections_panel_action_state_widgets()
 
     def _reset_library_rag_retrieval_state(self) -> None:
         self._library_rag_results = ()
@@ -899,11 +944,10 @@ class LibraryScreen(BaseAppScreen):
             await self._sync_collections_panel(refresh_snapshot=False)
             return
         try:
-            created = await self._resolve_maybe_awaitable(
-                create_collection(
-                    self._library_collection_name_input,
-                    description=self._library_collection_description_input,
-                )
+            created = await self._run_library_collections_call(
+                create_collection,
+                self._library_collection_name_input,
+                description=self._library_collection_description_input,
             )
         except LibraryCollectionsServiceError as exc:
             self._notify_library_collections_warning(str(exc))
@@ -926,12 +970,11 @@ class LibraryScreen(BaseAppScreen):
             await self._sync_collections_panel(refresh_snapshot=False)
             return
         try:
-            renamed = await self._resolve_maybe_awaitable(
-                rename_collection(
-                    self._library_collections_selected_id,
-                    self._library_collection_name_input,
-                    description=self._library_collection_description_input,
-                )
+            renamed = await self._run_library_collections_call(
+                rename_collection,
+                self._library_collections_selected_id,
+                self._library_collection_name_input,
+                description=self._library_collection_description_input,
             )
         except LibraryCollectionsServiceError as exc:
             self._notify_library_collections_warning(str(exc))
@@ -948,7 +991,7 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_collections_selected_id:
             return
         self._library_collection_pending_delete_id = self._library_collections_selected_id
-        await self._sync_collections_panel(refresh_snapshot=False)
+        await self._refresh_collections_panel_action_state_widgets()
 
     @on(Button.Pressed, "#library-confirm-delete-collection")
     async def confirm_library_collection_delete(self, event: Button.Pressed) -> None:
@@ -963,9 +1006,12 @@ class LibraryScreen(BaseAppScreen):
             await self._sync_collections_panel(refresh_snapshot=False)
             return
         try:
-            await self._resolve_maybe_awaitable(delete_collection(target_id))
+            deleted = await self._run_library_collections_call(delete_collection, target_id)
         except LibraryCollectionsServiceError as exc:
             self._notify_library_collections_warning(str(exc))
+            return
+        if not deleted:
+            self._notify_library_collections_warning("Failed to delete Collection.")
             return
         self._library_collections_selected_id = ""
         self._library_collection_pending_delete_id = ""

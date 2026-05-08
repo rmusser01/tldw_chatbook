@@ -90,6 +90,12 @@ class RaisingLibraryCollectionsService:
         raise RuntimeError("collections database unavailable")
 
 
+class DeleteFailsLibraryCollectionsService(FakeLibraryCollectionsService):
+    def delete_collection(self, collection_id):
+        self.deleted.append(collection_id)
+        return False
+
+
 def _seed_library_sources(app) -> None:
     app.notes_scope_service = StaticLibraryNotesScopeService(
         [{"title": "Research Note", "id": "note-1"}]
@@ -204,6 +210,72 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
         )
 
     assert service.deleted == ["collection-1"]
+
+
+@pytest.mark.asyncio
+async def test_library_collection_form_input_keeps_focus_and_updates_actions() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_collections_service = FakeLibraryCollectionsService()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+
+        name_input = screen.query_one("#library-collection-name-input", Input)
+        name_input.focus()
+        await pilot.pause()
+        name_input.value = "Research"
+        await pilot.pause()
+
+        assert screen.focused is name_input
+        assert screen.query_one("#library-collections-panel").is_mounted
+        assert screen.query_one("#library-create-collection", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_collections_delete_failure_keeps_selection_and_warns_user() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    service = DeleteFailsLibraryCollectionsService(
+        (
+            LibraryCollectionRecord(
+                collection_id="collection-1",
+                name="Research",
+                description="Policy sources",
+                item_count=0,
+                source_authority="local",
+                sync_status="local-only",
+                created_at="2026-05-08T04:00:00Z",
+                updated_at="2026-05-08T04:00:00Z",
+            ),
+        )
+    )
+    app.library_collections_service = service
+    notifications = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        screen.query_one("#library-delete-collection", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
+        screen.query_one("#library-confirm-delete-collection", Button).press()
+        await _wait_for_text(screen, pilot, "Research")
+
+        assert service.deleted == ["collection-1"]
+        assert "Research" in _visible_text(screen)
+        assert notifications
+        assert notifications[-1][0] == "Failed to delete Collection."
+        assert notifications[-1][1]["severity"] == "warning"
 
 
 @pytest.mark.asyncio

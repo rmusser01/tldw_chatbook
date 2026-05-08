@@ -22,6 +22,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBErro
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError as MediaDBError, SchemaError as MediaSchemaError, ConflictError as MediaConflictError
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase, DatabaseError as PromptsDBError, SchemaError as PromptsSchemaError, ConflictError as PromptsConflictError
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 #
 #######################################################################################################################
 #
@@ -3266,7 +3267,7 @@ def get_media_db_path() -> Path:
 def get_library_collections_db_path() -> Path:
     custom_path = get_cli_setting("database", "library_collections_db_path", None)
     if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("library_collections_db_path"):
-        db_path = Path(custom_path).expanduser().resolve()
+        db_path = validate_path_simple(Path(str(custom_path)).expanduser(), require_exists=False).resolve()
     else:
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_library_collections.db"

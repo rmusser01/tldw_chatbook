@@ -29,6 +29,19 @@ class LibraryCollectionsDB(BaseDB):
         with closing(self._get_connection()) as conn:
             yield conn
 
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Open a write transaction that rolls back on failure."""
+        with closing(self._get_connection()) as conn:
+            conn.execute("BEGIN")
+            try:
+                yield conn
+            except Exception:
+                conn.rollback()
+                raise
+            else:
+                conn.commit()
+
     def _initialize_schema(self) -> None:
         """Initialize the local Collections schema."""
         with self.connection() as conn:
