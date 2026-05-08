@@ -469,19 +469,19 @@ def test_console_live_work_status_card_state_exposes_wc_primary_action():
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     ConsoleLiveWorkStatusCardState = _load_console_live_work_status_card_state()
     launch = ConsoleLiveWorkLaunch.from_values(
-        source="W+C",
+        source="Watchlists",
         title="Daily security feed",
         payload={"target_id": "local:watchlist_run:91", "run_id": 91},
         status="failed",
-        recovery="Review the W+C run details or retry from W+C.",
-        action_label="Open W+C run",
+        recovery="Review the Watchlists run details or retry from Watchlists.",
+        action_label="Open Watchlists run",
     )
 
     card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
 
     assert card_state.primary_action is not None
     assert card_state.primary_action.widget_id == "console-live-work-primary-action"
-    assert card_state.primary_action.label == "Open W+C run"
+    assert card_state.primary_action.label == "Open Watchlists run"
     assert card_state.primary_action.target_route == "subscriptions"
     assert card_state.primary_action.target_id == "local:watchlist_run:91"
 
@@ -512,7 +512,7 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
     assert "console-live-work-source-readiness" in state.container_classes
     rows_by_id = {row.widget_id: row for row in state.rows}
     assert rows_by_id["console-live-work-source-wc"].text == (
-        "W+C: Connected - Home W+C active work can open and route run details in Console."
+        "Watchlists: Connected - Home Watchlists active work can open and route run details in Console."
     )
     assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-wc"].classes
     assert rows_by_id["console-live-work-source-schedules"].text == (
@@ -549,12 +549,12 @@ def test_app_console_live_work_primary_action_routes_wc_run_details():
     app.post_message = Mock()
     app.notify = Mock()
     launch = ConsoleLiveWorkLaunch.from_values(
-        source="W+C",
+        source="Watchlists",
         title="Daily security feed",
         payload={"target_id": "local:watchlist_run:91", "run_id": 91},
         status="failed",
-        recovery="Review the W+C run details or retry from W+C.",
-        action_label="Open W+C run",
+        recovery="Review the Watchlists run details or retry from Watchlists.",
+        action_label="Open Watchlists run",
     )
 
     handled = app.open_console_live_work_primary_action(launch)
@@ -889,7 +889,7 @@ async def test_schedules_destination_routes_latest_active_run_to_console():
             HomeActiveWorkItem(
                 item_id="local:watchlist_run:9",
                 title="Watchlist run",
-                source="W+C",
+                source="Watchlists",
                 status="failed",
                 detail_route="subscriptions",
                 console_available=True,
@@ -1071,7 +1071,7 @@ async def test_watchlists_destination_keeps_console_follow_disabled_without_acti
         assert button.disabled is True
         assert str(button.label) == "Console follow unavailable"
         text = _screen_static_text(screen)
-        assert "No active W+C run is available for Console follow." in text
+        assert "No active Watchlists run is available for Console follow." in text
 
     app.open_active_home_item_in_console.assert_not_called()
 
@@ -1084,7 +1084,7 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
             HomeActiveWorkItem(
                 item_id="local:watchlist_run:5",
                 title="Daily security feed",
-                source="W+C",
+                source="Watchlists",
                 status="failed",
                 detail_route="subscriptions",
                 console_available=True,
@@ -1092,7 +1092,7 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
             HomeActiveWorkItem(
                 item_id="local:watchlist_run:9",
                 title="Other source",
-                source="W+C",
+                source="Watchlists",
                 status="queued",
                 detail_route="subscriptions",
                 console_available=False,
@@ -1137,10 +1137,10 @@ async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(m
         button = screen.query_one("#watchlists-follow-in-console")
 
         assert button.disabled is True
-        assert "No active W+C run is available for Console follow." in _screen_static_text(screen)
+        assert "No active Watchlists run is available for Console follow." in _screen_static_text(screen)
 
     logger.warning.assert_called_once()
-    assert "W+C Console follow" in logger.warning.call_args.args[0]
+    assert "Watchlists Console follow" in logger.warning.call_args.args[0]
     assert logger.warning.call_args.kwargs["exc_info"] is True
     app.open_active_home_item_in_console.assert_not_called()
 
@@ -1153,7 +1153,7 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt
             HomeActiveWorkItem(
                 item_id="local:watchlist_run:11",
                 title="Recovered run",
-                source="W+C",
+                source="Watchlists",
                 status="running",
                 detail_route="subscriptions",
                 console_available=True,
@@ -1194,7 +1194,7 @@ async def test_watchlists_destination_click_uses_item_promised_by_button_label()
             HomeActiveWorkItem(
                 item_id="local:watchlist_run:5",
                 title="First visible run",
-                source="W+C",
+                source="Watchlists",
                 status="failed",
                 detail_route="subscriptions",
                 console_available=True,
@@ -1204,7 +1204,7 @@ async def test_watchlists_destination_click_uses_item_promised_by_button_label()
             HomeActiveWorkItem(
                 item_id="local:watchlist_run:7",
                 title="Newer unseen run",
-                source="W+C",
+                source="Watchlists",
                 status="running",
                 detail_route="subscriptions",
                 console_available=True,
@@ -1239,7 +1239,7 @@ async def test_watchlists_destination_escapes_console_follow_markup_labels():
             HomeActiveWorkItem(
                 item_id="local:watchlist_run:5",
                 title="[red]Daily[/red] feed",
-                source="W+C",
+                source="Watchlists",
                 status="[bold]failed[/bold]",
                 detail_route="subscriptions",
                 console_available=True,
@@ -1727,7 +1727,7 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
         assert screen.query_one("#console-live-work-source-readiness")
         assert screen.query_one("#console-live-work-source-readiness-title").renderable == "Live work sources"
         assert screen.query_one("#console-live-work-source-wc").renderable == (
-            "W+C: Connected - Home W+C active work can open and route run details in Console."
+            "Watchlists: Connected - Home Watchlists active work can open and route run details in Console."
         )
         assert "Workflows: Connected" in str(screen.query_one("#console-live-work-source-workflows").renderable)
         assert "Schedules: Connected" in str(screen.query_one("#console-live-work-source-schedules").renderable)
@@ -1741,12 +1741,12 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
 async def test_console_wc_live_work_action_button_routes_run_details():
     app = _build_test_app()
     app.pending_console_launch = {
-        "source": "W+C",
+        "source": "Watchlists",
         "title": "Daily security feed",
         "payload": {"target_id": "local:watchlist_run:91", "run_id": 91},
         "status": "failed",
-        "recovery": "Review the W+C run details or retry from W+C.",
-        "action_label": "Open W+C run",
+        "recovery": "Review the Watchlists run details or retry from Watchlists.",
+        "action_label": "Open Watchlists run",
     }
     app.post_message = Mock()
     app.notify = Mock()
@@ -1756,7 +1756,7 @@ async def test_console_wc_live_work_action_button_routes_run_details():
         await pilot.pause(0.1)
         screen = _active_console_screen(host)
         button = screen.query_one("#console-live-work-primary-action")
-        assert str(button.label) == "Open W+C run"
+        assert str(button.label) == "Open Watchlists run"
 
         await pilot.click("#console-live-work-primary-action")
         await pilot.pause(0.1)

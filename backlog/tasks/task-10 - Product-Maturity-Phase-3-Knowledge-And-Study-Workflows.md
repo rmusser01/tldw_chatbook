@@ -4,7 +4,7 @@ title: 'Product Maturity Phase 3: Knowledge And Study Workflows'
 status: In Progress
 assignee: []
 created_date: '2026-05-05 15:11'
-updated_date: '2026-05-08 02:30'
+updated_date: '2026-05-08 04:41'
 labels:
   - product-maturity
   - phase-3-knowledge-study
@@ -48,4 +48,6 @@ Planned Gate 1.6 with TASK-10.8. The Library-native Search/RAG gate is split int
 Continued Gate 1.6 with TASK-10.8.2. The Library destination now mounts a native Search/RAG panel for source scope, query controls, evidence/results, retrieval inspector, and Console handoff readiness without embedding the legacy Search/RAG route. Parent remains open for retrieval execution, evidence normalization, Console handoff/invocation, QA closeout, Workspaces, Library Collections, and deeper Import/Export/Search/RAG study workflows.
 
 Closed Gate 1.6 with TASK-10.8. Library-native Search/RAG now verifies source scope, query controls, retrieval execution, evidence/results, citations/snippets, selected evidence review, Console staged evidence, Console-initiated Library RAG, and recoverable blocked states. Parent remains open for Workspaces, Library Collections, deeper Import/Export/Search/RAG study flows, and later server-parity depth.
+
+Continued Phase 3 with TASK-10.9. Watchlists is now the top-level monitored-source destination while Library owns local Collections management with honest local-only or sync-unavailable status. Parent remains open for Workspaces, deeper Import/Export, full server sync, collection item membership, deeper Study/Search/RAG flows, citations/snippets in downstream collection workflows, and Citation/snippet carry-through into Chat artifacts and exported Chatbooks.
 <!-- SECTION:NOTES:END -->

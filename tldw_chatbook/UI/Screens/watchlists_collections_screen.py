@@ -1,4 +1,9 @@
-"""W+C destination shell."""
+"""Watchlists destination shell.
+
+The route, class name, and stable widget selectors retain the historical
+``watchlists_collections``/``wc`` identifiers so older tests, shortcuts, and
+handoffs keep working while Collections moves under Library.
+"""
 
 from __future__ import annotations
 
@@ -23,13 +28,13 @@ from .destination_recovery import DestinationRecoveryState, policy_denied_recove
 
 logger = logger.bind(module="WatchlistsCollectionsScreen")
 WC_LOCAL_PAGE_SIZE = 5
-WC_SERVICE_ERROR_COPY = "W+C services unavailable; retry W+C later."
-WC_SERVICE_UNAVAILABLE_COPY = "W+C services are unavailable in this runtime."
-WC_EMPTY_COPY = "No local Watchlists or Collections are available yet."
+WC_SERVICE_ERROR_COPY = "Watchlists services unavailable; retry Watchlists later."
+WC_SERVICE_UNAVAILABLE_COPY = "Watchlists services are unavailable in this runtime."
+WC_EMPTY_COPY = "No local Watchlists are available yet."
 
 
 class WatchlistsCollectionsScreen(BaseAppScreen):
-    """Monitored sources and curated reading/content collections."""
+    """Monitored sources, runs, alerts, and recovery."""
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "watchlists_collections", **kwargs)
@@ -150,10 +155,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         DestinationRecoveryState | None,
     ]:
         watchlist_service = getattr(self.app_instance, "watchlist_scope_service", None)
-        collection_service = getattr(self.app_instance, "media_reading_scope_service", None)
         list_watch_items = getattr(watchlist_service, "list_watch_items", None)
-        list_read_it_later = getattr(collection_service, "list_read_it_later", None)
-        if not callable(list_watch_items) or not callable(list_read_it_later):
+        if not callable(list_watch_items):
             return (), (), 0, 0, True, True, WC_SERVICE_UNAVAILABLE_COPY, None
 
         try:
@@ -162,42 +165,36 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 limit=WC_LOCAL_PAGE_SIZE,
                 offset=0,
             )
-            collection_result = await list_read_it_later(
-                mode="local",
-                limit=WC_LOCAL_PAGE_SIZE,
-                offset=0,
-            )
         except PolicyDeniedError as exc:
             policy_message = self._safe_text(exc.user_message, WC_SERVICE_ERROR_COPY)
             recovery_state = policy_denied_recovery_state(
                 exc,
-                unavailable_what="Stage W+C context in Console",
+                unavailable_what="Stage Watchlists context in Console",
                 stable_selector="wc-service-error",
                 policy_message=policy_message,
             )
             return (), (), 0, 0, True, True, recovery_state.visible_copy, recovery_state
         except Exception:
             logger.debug(
-                "Failed to load local W+C snapshot.",
+                "Failed to load local Watchlists snapshot.",
                 exc_info=True,
             )
             return (), (), 0, 0, True, True, WC_SERVICE_ERROR_COPY, None
 
         watchlists, watchlist_count, watchlist_total_known = self._response_records_and_count(watchlist_result)
-        collections, collection_count, collection_total_known = self._response_records_and_count(collection_result)
         return (
             watchlists,
-            collections,
+            (),
             watchlist_count,
-            collection_count,
+            0,
             watchlist_total_known,
-            collection_total_known,
+            True,
             None,
             None,
         )
 
     def _has_local_wc_context(self) -> bool:
-        return self._local_watchlist_count > 0 or self._local_collection_count > 0
+        return self._local_watchlist_count > 0
 
     def _count_label(self, label: str, count: int, total_known: bool) -> str:
         if total_known:
@@ -205,24 +202,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return f"{label} (showing up to {WC_LOCAL_PAGE_SIZE}): {count}"
 
     def _snapshot_body(self) -> str:
-        lines = ["Local W+C snapshot staged for Console:", ""]
+        lines = ["Local Watchlists snapshot staged for Console:", ""]
         lines.append(self._count_label("Watchlists", self._local_watchlist_count, self._watchlist_total_known))
         for index, record in enumerate(self._local_watchlist_records, start=1):
-            lines.append(f"  {index}. {self._record_title(record)}")
-        lines.append("")
-        lines.append(self._count_label("Collections", self._local_collection_count, self._collection_total_known))
-        for index, record in enumerate(self._local_collection_records, start=1):
             lines.append(f"  {index}. {self._record_title(record)}")
         return "\n".join(lines).strip()
 
     def _snapshot_metadata(self) -> dict[str, Any]:
         return {
             "watchlist_count": self._local_watchlist_count,
-            "collection_count": self._local_collection_count,
             "watchlist_sample_count": len(self._local_watchlist_records),
-            "collection_sample_count": len(self._local_collection_records),
             "watchlist_titles": [self._record_title(record) for record in self._local_watchlist_records],
-            "collection_titles": [self._record_title(record) for record in self._local_collection_records],
             "backend": "local",
         }
 
@@ -244,7 +234,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except Exception:
             if not self._latest_console_follow_error_logged:
                 logger.warning(
-                    "Failed to load W+C Console follow item from Home active-work adapter.",
+                    "Failed to load Watchlists Console follow item from Home active-work adapter.",
                     exc_info=True,
                 )
                 self._latest_console_follow_error_logged = True
@@ -253,7 +243,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         selected_item = None
         for item in tuple(getattr(dashboard_input, "active_work_items", ()) or ()):
             if (
-                getattr(item, "source", None) == "W+C"
+                str(getattr(item, "source", None) or "").strip().lower()
+                in {"watchlists", "w+c", "watchlists+collections"}
                 and bool(getattr(item, "console_available", False))
                 and getattr(item, "item_id", None)
             ):
@@ -273,12 +264,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         with Vertical(id="watchlists-collections-shell"):
             yield Static(
-                "W+C",
+                "Watchlists",
                 id="watchlists-collections-title",
                 classes="ds-destination-header",
             )
             yield Static(
-                "Monitored sources and curated reading/content collections.",
+                "Monitored sources, runs, alerts, and recovery.",
                 id="watchlists-collections-purpose",
                 classes="destination-purpose",
             )
@@ -287,17 +278,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 yield Static(
                     "Monitored sources, filters, jobs, runs, outputs, templates, alerts, telemetry, retry/backoff."
                 )
-                yield Static("Collections", classes="destination-section")
                 yield Static(
-                    "Reading/content items, highlights, saved searches, archive state, note links, templates, feeds, import/export."
+                    "Library now owns curated source groups, imports, saved searches, and reading workflows."
                 )
                 if not self._wc_loaded:
                     yield Static(
-                        "Loading local W+C snapshot...",
+                        "Loading local Watchlists snapshot...",
                         id="wc-loading-state",
                     )
                     attach_disabled = True
-                    attach_tooltip = "Stage local W+C context after the local snapshot loads."
+                    attach_tooltip = "Stage local Watchlists context after the local snapshot loads."
                 elif self._wc_lookup_error:
                     recovery_state = self._wc_lookup_recovery_state
                     yield Static(
@@ -312,7 +302,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     attach_tooltip = (
                         recovery_state.disabled_tooltip
                         if recovery_state is not None
-                        else "W+C services are unavailable; retry W+C before staging Console context."
+                        else "Watchlists services are unavailable; retry Watchlists before staging Console context."
                     )
                 elif not self._has_local_wc_context():
                     yield Static(
@@ -320,10 +310,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         id="wc-empty-state",
                     )
                     attach_disabled = True
-                    attach_tooltip = "Stage local W+C context once local watchlists or collections exist."
+                    attach_tooltip = "Stage local Watchlists context once local watchlists exist."
                 else:
                     yield Static(
-                        "Local W+C snapshot",
+                        "Local Watchlists snapshot",
                         id="wc-snapshot-title",
                         classes="destination-section",
                     )
@@ -340,23 +330,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                             Text.from_markup(escape_markup(self._record_title(record))),
                             id=f"wc-watchlist-item-{index}",
                         )
-                    yield Static(
-                        self._count_label(
-                            "Collections",
-                            self._local_collection_count,
-                            self._collection_total_known,
-                        ),
-                        id="wc-collections-summary",
-                    )
-                    for index, record in enumerate(self._local_collection_records):
-                        yield Static(
-                            Text.from_markup(escape_markup(self._record_title(record))),
-                            id=f"wc-collection-item-{index}",
-                        )
                     attach_disabled = False
-                    attach_tooltip = "Stage local W+C context in Console."
+                    attach_tooltip = "Stage local Watchlists context in Console."
                 yield Button(
-                    "Stage W+C Context in Console",
+                    "Stage Watchlists Context in Console",
                     id="wc-attach-to-console",
                     disabled=attach_disabled,
                     tooltip=attach_tooltip,
@@ -371,7 +348,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     status = str(getattr(latest_console_item, "status", None) or "unknown")
                     yield Static(
                         Text.from_markup(
-                            "Console can follow latest W+C run: "
+                            "Console can follow latest Watchlists run: "
                             f"{escape_markup(title)} ({escape_markup(status)})."
                         ),
                         id="watchlists-console-available",
@@ -379,18 +356,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     yield Button(
                         Text.from_markup(f"Follow {escape_markup(title)} in Console"),
                         id="watchlists-follow-in-console",
-                        tooltip="Open the latest active W+C run in Console.",
+                        tooltip="Open the latest active Watchlists run in Console.",
                     )
                 else:
                     yield Static(
-                        "No active W+C run is available for Console follow.",
+                        "No active Watchlists run is available for Console follow.",
                         id="watchlists-console-unavailable",
                     )
                     yield Button(
                         "Console follow unavailable",
                         id="watchlists-follow-in-console",
                         disabled=True,
-                        tooltip="Unavailable until W+C has an active run with Console context.",
+                        tooltip="Unavailable until Watchlists has an active run with Console context.",
                     )
 
     @on(Button.Pressed, "#wc-open-watchlists")
@@ -413,7 +390,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(
-                    "Console handoff is unavailable for W+C in this runtime.",
+                    "Console handoff is unavailable for Watchlists in this runtime.",
                     severity="warning",
                 )
             return
@@ -421,10 +398,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             ChatHandoffPayload(
                 source="watchlists_collections",
                 item_type="wc-context",
-                title="Local W+C snapshot",
+                title="Local Watchlists snapshot",
                 body=self._snapshot_body(),
-                display_summary="Local W+C snapshot staged.",
-                suggested_prompt="Use these monitored sources and saved collection items as context.",
+                display_summary="Local Watchlists snapshot staged.",
+                suggested_prompt="Use these monitored sources as context.",
                 runtime_backend="local",
                 source_owner="local",
                 source_selector_state="local",
@@ -438,14 +415,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         target_id = self._latest_console_follow_item_id
         if not target_id:
             self.app_instance.notify(
-                "No active W+C run is available for Console follow.",
+                "No active Watchlists run is available for Console follow.",
                 severity="warning",
             )
             return
         open_in_console = getattr(self.app_instance, "open_active_home_item_in_console", None)
         if not callable(open_in_console):
             self.app_instance.notify(
-                "Console follow is unavailable for W+C in this runtime.",
+                "Console follow is unavailable for Watchlists in this runtime.",
                 severity="warning",
             )
             return

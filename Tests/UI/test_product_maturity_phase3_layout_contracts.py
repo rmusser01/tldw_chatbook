@@ -17,6 +17,12 @@ PHASE_3_0_EVIDENCE = Path(
 GATE16_PLAN = Path(
     "Docs/superpowers/plans/2026-05-07-gate-1-6-library-native-search-rag.md"
 )
+PHASE_3_9_SPEC = Path(
+    "Docs/superpowers/specs/2026-05-08-library-collections-ia-split-design.md"
+)
+PHASE_3_9_EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-3/2026-05-08-phase-3-9-library-collections.md"
+)
 TASK_10 = Path(
     "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md"
 )
@@ -34,6 +40,12 @@ TASK_10_8_2 = Path(
 )
 TASK_10_8_3 = Path(
     "backlog/tasks/task-10.8.3 - Gate-1.6.3-Retrieval-adapter-and-evidence-results.md"
+)
+TASK_10_9 = Path(
+    "backlog/tasks/task-10.9 - Product-Maturity-Phase-3.9-Library-Collections-IA-Split.md"
+)
+TASK_10_9_4 = Path(
+    "backlog/tasks/task-10.9.4 - Phase-3.9.4-Library-Collections-QA-closeout-and-tracking.md"
 )
 PROMPT_MANIFEST = Path("Docs/Design/destination-layout-image-reference-prompts.md")
 
@@ -197,7 +209,8 @@ def test_phase30_collections_are_library_owned_with_later_citation_snippet_scope
     assert "snippet" in spec.lower()
 
     phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
-    assert "Collections-in-Library" in phase_three_row[5]
+    assert "Library-owned local Collections management are verified" in phase_three_row[5]
+    assert "collection item membership" in phase_three_row[5]
     assert "citations/snippets" in phase_three_row[5]
 
 
@@ -236,9 +249,10 @@ def test_phase3_gate16_library_rag_plan_and_tasks_are_tracked() -> None:
     for child_task in ("TASK-10.8.1", "TASK-10.8.2", "TASK-10.8.3", "TASK-10.8.4", "TASK-10.8.5"):
         assert child_task in plan
         assert child_task in tracker
-    assert "status: In Progress" in task
+    assert "status: Done" in task
     for ac_number in range(1, 5):
-        assert f"- [ ] #{ac_number}" in task
+        assert f"- [x] #{ac_number}" in task
+    assert "## Implementation Notes" in task
     assert "status: Done" in display_state_task
     for ac_number in range(1, 4):
         assert f"- [x] #{ac_number}" in display_state_task
@@ -251,6 +265,48 @@ def test_phase3_gate16_library_rag_plan_and_tasks_are_tracked() -> None:
     for ac_number in range(1, 4):
         assert f"- [x] #{ac_number}" in retrieval_adapter_task
     assert "## Implementation Notes" in retrieval_adapter_task
+
+
+def test_phase39_library_collections_split_is_tracked_with_followup_risks() -> None:
+    tracker = _text(TRACKER)
+    readme = _text(PHASE_3_README)
+    spec = _text(PHASE_3_9_SPEC)
+    parent_task = _text(TASK_10)
+    task = _text(TASK_10_9)
+    qa_task = _text(TASK_10_9_4)
+
+    assert "Phase 3.9: Library Collections IA Split - `TASK-10.9`" in tracker
+    assert PHASE_3_9_EVIDENCE.as_posix() in tracker
+    assert PHASE_3_9_EVIDENCE.name in readme
+    assert "TASK-10.9" in task
+    assert "Continued Phase 3 with TASK-10.9" in parent_task
+    assert "status: Done" in task
+    assert "status: Done" in qa_task
+    for ac_number in range(1, 5):
+        assert f"- [x] #{ac_number}" in task
+        assert f"- [x] #{ac_number}" in qa_task
+    assert "## Implementation Notes" in task
+    assert "## Implementation Notes" in qa_task
+
+    evidence_row = _markdown_table_row(tracker, "Phase 3.9")
+    assert PHASE_3_9_EVIDENCE.as_posix() in evidence_row[1]
+    assert evidence_row[2] == "verified; TASK-10.9.1 through TASK-10.9.4 done"
+
+    phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
+    assert "Phase 3.9 verified" in phase_three_row[2]
+    assert "TASK-10.9" in phase_three_row[3]
+    assert "phase-3/2026-05-08-phase-3-9-library-collections.md" in phase_three_row[4]
+    for residual_risk in (
+        "Workspaces",
+        "Import/Export",
+        "server sync",
+        "deeper Study/Search/RAG flows",
+    ):
+        assert residual_risk in phase_three_row[5]
+
+    for later_stage_term in ("citations/snippets", "Citation/snippet carry-through"):
+        assert later_stage_term in spec
+        assert later_stage_term in tracker
 
 
 def test_phase30_qa_evidence_is_verified() -> None:

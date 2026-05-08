@@ -12,7 +12,7 @@ def test_master_shell_destination_order_matches_spec():
         "Library",
         "Artifacts",
         "Personas",
-        "W+C",
+        "Watchlists",
         "Schedules",
         "Workflows",
         "MCP",

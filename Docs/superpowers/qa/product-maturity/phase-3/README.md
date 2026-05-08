@@ -14,6 +14,12 @@ Phase 3.0 destination layout contract status: verified
 
 Phase 3.0 records destination layout and IA contracts before additional Phase 3 Knowledge/Study visual rewrites continue. It does not rewrite runtime screens; TASK-10.0 closeout is verified.
 
+Phase 3.9 Library Collections IA split status: verified
+
+- `2026-05-08-phase-3-9-library-collections.md`
+
+Phase 3.9 verifies that Watchlists is the top-level monitored-source destination while Collections is owned by Library, locally manageable, and honest about deferred sync and scoped downstream workflows.
+
 ## Evidence
 
 - `2026-05-06-phase-3-0-destination-layout-contracts.md`
@@ -25,3 +31,4 @@ Phase 3.0 records destination layout and IA contracts before additional Phase 3 
 - `2026-05-07-gate-1-5-console-internals-decomposition.md`
 - `2026-05-07-phase-3-7-source-study-pack-completion-reuse.md`
 - `2026-05-07-gate-1-6-library-native-search-rag.md`
+- `2026-05-08-phase-3-9-library-collections.md`

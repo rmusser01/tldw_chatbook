@@ -187,7 +187,7 @@ class PolicyDeniedWatchlistsScopeService:
         self,
         *,
         reason_code="server_session_invalid",
-        user_message="The W+C server session has expired.",
+        user_message="The Watchlists server session has expired.",
         effective_source="server",
         authority_owner="active server",
     ):
@@ -346,14 +346,13 @@ async def _wait_for_wc_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
         "#wc-service-error",
         "#wc-empty-state",
         "#wc-watchlists-summary",
-        "#wc-collections-summary",
     )
     while time.monotonic() < deadline:
         if any(screen.query(selector) for selector in terminal_selectors):
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for W+C snapshot. Visible text: {_visible_text(screen)}")
+    raise AssertionError(f"Timed out waiting for Watchlists snapshot. Visible text: {_visible_text(screen)}")
 
 
 async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -475,10 +474,10 @@ async def test_watchlists_collections_uses_compact_title_and_clear_sections():
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
-        assert _static_text(screen.query_one("#watchlists-collections-title", Static)) == "W+C"
+        assert _static_text(screen.query_one("#watchlists-collections-title", Static)) == "Watchlists"
         visible_text = _visible_text(screen)
         assert "Watchlists" in visible_text
-        assert "Collections" in visible_text
+        assert "Collections" not in visible_text
 
 
 @pytest.mark.asyncio
@@ -503,12 +502,11 @@ async def test_watchlists_collections_lists_local_snapshot_from_services():
         text = _visible_text(screen)
         button = screen.query_one("#wc-attach-to-console", Button)
 
-        assert "Local W+C snapshot" in text
+        assert "Local Watchlists snapshot" in text
         assert "Watchlists (showing up to 5): 2" in text
-        assert "Collections: 1" in text
         assert "Research feeds" in text
         assert "Vendor changelogs" in text
-        assert "Saved article" in text
+        assert "Saved article" not in text
         assert button.disabled is False
 
     assert app.watchlist_scope_service.calls[0] == {
@@ -516,11 +514,7 @@ async def test_watchlists_collections_lists_local_snapshot_from_services():
         "limit": getattr(wc_screen_module, "WC_LOCAL_PAGE_SIZE", None),
         "offset": 0,
     }
-    assert app.media_reading_scope_service.calls[0] == {
-        "mode": "local",
-        "limit": getattr(wc_screen_module, "WC_LOCAL_PAGE_SIZE", None),
-        "offset": 0,
-    }
+    assert app.media_reading_scope_service.calls == []
 
 
 @pytest.mark.asyncio
@@ -535,9 +529,9 @@ async def test_watchlists_collections_empty_state_disables_console_attach():
         await _wait_for_wc_snapshot(screen, pilot)
         button = screen.query_one("#wc-attach-to-console", Button)
 
-        assert "No local Watchlists or Collections are available yet." in _visible_text(screen)
+        assert "No local Watchlists are available yet." in _visible_text(screen)
         assert button.disabled is True
-        assert "Stage local W+C context" in str(button.tooltip)
+        assert "Stage local Watchlists context" in str(button.tooltip)
 
 
 @pytest.mark.asyncio
@@ -552,9 +546,9 @@ async def test_watchlists_collections_service_failure_uses_recovery_copy():
         await _wait_for_wc_snapshot(screen, pilot)
         button = screen.query_one("#wc-attach-to-console", Button)
 
-        assert "W+C services unavailable; retry W+C later." in _visible_text(screen)
+        assert "Watchlists services unavailable; retry Watchlists later." in _visible_text(screen)
         assert button.disabled is True
-        assert "W+C services are unavailable" in str(button.tooltip)
+        assert "Watchlists services are unavailable" in str(button.tooltip)
 
 
 @pytest.mark.asyncio
@@ -574,8 +568,8 @@ async def test_watchlists_collections_policy_denial_uses_runtime_recovery_taxono
             visible_text=_static_text(error),
             button=button,
             status_label="Server session expired",
-            unavailable_what="Stage W+C context in Console",
-            why="The W+C server session has expired",
+            unavailable_what="Stage Watchlists context in Console",
+            why="The Watchlists server session has expired",
             next_action="Re-authenticate the active server profile before retrying.",
             recovery_action="Settings",
             authority_owner="active server",
@@ -625,11 +619,11 @@ async def test_watchlists_collections_attach_to_console_uses_listed_context():
     assert isinstance(payload, ChatHandoffPayload)
     assert payload.source == "watchlists_collections"
     assert payload.item_type == "wc-context"
-    assert payload.title == "Local W+C snapshot"
+    assert payload.title == "Local Watchlists snapshot"
     assert "Research feeds" in payload.body
-    assert "Saved article" in payload.body
+    assert "Saved article" not in payload.body
     assert payload.metadata["watchlist_count"] == 1
-    assert payload.metadata["collection_count"] == 1
+    assert "collection_count" not in payload.metadata
 
 
 @pytest.mark.asyncio
@@ -1154,7 +1148,7 @@ async def test_destination_action_buttons_explain_their_outcome(route):
 @pytest.mark.parametrize(
     ("route", "expected_sections"),
     [
-        ("watchlists_collections", ["Watchlists", "Collections"]),
+        ("watchlists_collections", ["Watchlists", "Monitored sources"]),
         ("schedules", ["Next Run", "Paused", "Failed"]),
         ("workflows", ["Recipes", "Dry Run", "Console launch unavailable"]),
     ],

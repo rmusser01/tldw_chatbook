@@ -12,9 +12,9 @@ def test_compact_navigation_labels_preserve_full_meaning():
 
     wc = get_shell_destination("watchlists_collections")
 
-    assert wc.label == "W+C"
-    assert wc.full_label == "Watchlists+Collections"
-    assert "Watchlists+Collections" in wc.tooltip
+    assert wc.label == "Watchlists"
+    assert wc.full_label == "Watchlists"
+    assert "Collections" not in wc.tooltip
     assert wc.navigation_priority < get_shell_destination("settings").navigation_priority
 
 
@@ -37,7 +37,7 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-library", "Library"),
         ("nav-artifacts", "Artifacts"),
         ("nav-personas", "Personas"),
-        ("nav-watchlists_collections", "W+C"),
+        ("nav-watchlists_collections", "Watchlists"),
         ("nav-schedules", "Schedules"),
         ("nav-workflows", "Workflows"),
         ("nav-mcp", "MCP"),

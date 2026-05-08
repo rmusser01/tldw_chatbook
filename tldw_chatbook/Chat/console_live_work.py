@@ -234,7 +234,7 @@ class ConsoleLiveWorkSourceReadinessState:
         """Build the default Console live-work source readiness summary.
 
         Returns:
-            ConsoleLiveWorkSourceReadinessState: Readiness state that marks W+C,
+            ConsoleLiveWorkSourceReadinessState: Readiness state that marks Watchlists,
                 Schedules, Workflows, RAG, and Artifacts as connected while
                 planned future Console live-work sources stay unavailable until
                 their payload producers are wired.
@@ -245,9 +245,9 @@ class ConsoleLiveWorkSourceReadinessState:
             rows=(
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-wc",
-                    label="W+C",
+                    label="Watchlists",
                     status="Connected",
-                    recovery="Home W+C active work can open and route run details in Console.",
+                    recovery="Home Watchlists active work can open and route run details in Console.",
                     classes=connected,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(

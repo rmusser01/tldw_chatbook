@@ -33,7 +33,7 @@ EXPECTED_NAV = [
     ("nav-library", "Library"),
     ("nav-artifacts", "Artifacts"),
     ("nav-personas", "Personas"),
-    ("nav-watchlists_collections", "W+C"),
+    ("nav-watchlists_collections", "Watchlists"),
     ("nav-schedules", "Schedules"),
     ("nav-workflows", "Workflows"),
     ("nav-mcp", "MCP"),
@@ -143,7 +143,7 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                     "nav-console",
                     "chat",
                     "ChatScreen",
-                    ("Live work sources", "W+C: Connected"),
+                    ("Live work sources", "Watchlists: Connected"),
                 ),
                 (
                     "nav-library",

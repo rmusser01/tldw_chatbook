@@ -144,7 +144,7 @@ class ConsoleStagedContextState:
         return cls(
             heading="Staged Context",
             summary="No live work item is staged.",
-            recovery="Attach sources from Library, W+C, Schedules, Artifacts, or RAG.",
+            recovery="Attach sources from Library, Watchlists, Schedules, Artifacts, or RAG.",
         )
 
 

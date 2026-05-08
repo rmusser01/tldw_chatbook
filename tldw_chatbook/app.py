@@ -64,6 +64,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import handl
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from .Widgets.AppFooterStatus import AppFooterStatus
 from .config import (
+    get_library_collections_db_path,
     get_media_db_path,
     get_notifications_db_path,
     get_prompts_db_path,
@@ -90,6 +91,7 @@ from tldw_chatbook.Chat.chat_loop_scope_service import ServerChatLoopScopeServic
 from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
 from tldw_chatbook.Chat.server_chat_loop_service import ServerChatLoopService
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Chat import (
@@ -98,6 +100,7 @@ from tldw_chatbook.Chat import (
     ServerChatConversationService,
 )
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
+from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -505,7 +508,7 @@ class TabNavigationProvider(Provider):
         TAB_LIBRARY: "Open Library for source material, imports, notes, media, conversations, and Search/RAG",
         TAB_ARTIFACTS: "Open Artifacts for generated outputs, reports, datasets, and Chatbooks",
         TAB_PERSONAS: "Open Personas for characters, prompts, dictionaries, and behavior profiles",
-        TAB_WATCHLISTS_COLLECTIONS: "Open W+C for monitored sources and curated collections",
+        TAB_WATCHLISTS_COLLECTIONS: "Open Watchlists for monitored sources, runs, alerts, and recovery",
         TAB_SCHEDULES: "Open Schedules for run timing, triggers, pauses, retries, and recovery",
         TAB_WORKFLOWS: "Open Workflows for reusable procedures, dry-runs, and outputs",
         TAB_MCP: "Open MCP for servers, tools, permissions, auth, and audit",
@@ -1514,6 +1517,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_media_reading_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self._wire_library_collections_services()
         self._wire_prompt_chatbook_services()
         self._wire_watchlists_and_notifications_services()
         self._wire_writing_services()
@@ -1886,6 +1890,25 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_writing_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+
+    def _wire_library_collections_services(self) -> None:
+        try:
+            self.local_library_collections_db = LibraryCollectionsDB(
+                get_library_collections_db_path(),
+                CLI_APP_CLIENT_ID,
+            )
+            self.local_library_collections_service = LocalLibraryCollectionsService(
+                self.local_library_collections_db,
+            )
+            self.library_collections_service = self.local_library_collections_service
+        except Exception:
+            logger.warning(
+                "Local Library Collections service unavailable during app wiring",
+                exc_info=True,
+            )
+            self.local_library_collections_db = None
+            self.local_library_collections_service = None
+            self.library_collections_service = None
 
     def _build_chatbook_db_paths(self) -> dict[str, str]:
         return {

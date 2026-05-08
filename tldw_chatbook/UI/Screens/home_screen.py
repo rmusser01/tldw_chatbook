@@ -1,5 +1,7 @@
 """Home dashboard screen for the master shell."""
 
+from collections.abc import Callable
+
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -34,6 +36,20 @@ HOME_CONTROL_METHODS_WITH_TARGET_ROUTE = {
     "home-open-chatbook-details",
     "home-open-chatbook-in-console",
 }
+
+
+class HomeActionButton(Button):
+    """Home button that emits press events even when app chrome hides layout."""
+
+    def __init__(self, *args, fallback_press: Callable[[], None] | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._fallback_press = fallback_press
+
+    def press(self):
+        if not self.display and self._fallback_press is not None:
+            self._fallback_press()
+            return self
+        return super().press()
 
 
 class HomeScreen(BaseAppScreen):
@@ -122,19 +138,23 @@ class HomeScreen(BaseAppScreen):
             with Horizontal(id="home-dashboard-grid", classes="ds-panel"):
                 with Vertical(id="home-attention-queue", classes="home-dashboard-region"):
                     yield Static("Attention Queue", id="home-attention", classes="ds-panel")
-                    yield Button(
+                    yield HomeActionButton(
                         dashboard.next_action.label,
                         id="home-primary-action",
                         classes="ds-toolbar",
+                        fallback_press=self._activate_home_primary_action,
                     )
                     yield Static(section_text("attention"), id="home-attention-body")
                 with Vertical(id="home-active-work-region", classes="home-dashboard-region"):
                     yield Static("Active Work", id="home-active-work", classes="ds-panel")
                     for control in dashboard.controls:
-                        yield Button(
+                        yield HomeActionButton(
                             control.label,
                             id=control.control_id,
                             classes="ds-toolbar",
+                            fallback_press=lambda control_id=control.control_id: (
+                                self._activate_home_control(control_id)
+                            ),
                         )
                     yield Static(section_text("active_work"), id="home-active-work-body")
                 with Vertical(id="home-inspector", classes="home-dashboard-region"):
@@ -157,17 +177,28 @@ class HomeScreen(BaseAppScreen):
     @on(Button.Pressed)
     def handle_home_button(self, event: Button.Pressed) -> None:
         button_id = event.button.id
-        dashboard = self._current_dashboard
-        if not button_id or dashboard is None:
+        if not button_id:
             return
 
         if button_id == "home-primary-action":
-            prepare = getattr(self.app_instance, "prepare_home_primary_action", None)
-            if callable(prepare):
-                prepare(dashboard.next_action)
-            self.post_message(NavigateToScreen(dashboard.next_action.target_route))
+            self._activate_home_primary_action()
             return
 
+        self._activate_home_control(button_id)
+
+    def _activate_home_primary_action(self) -> None:
+        dashboard = self._current_dashboard
+        if dashboard is None:
+            return
+        prepare = getattr(self.app_instance, "prepare_home_primary_action", None)
+        if callable(prepare):
+            prepare(dashboard.next_action)
+        self.post_message(NavigateToScreen(dashboard.next_action.target_route))
+
+    def _activate_home_control(self, button_id: str) -> None:
+        dashboard = self._current_dashboard
+        if dashboard is None:
+            return
         control = next((item for item in dashboard.controls if item.control_id == button_id), None)
         if control is None:
             return

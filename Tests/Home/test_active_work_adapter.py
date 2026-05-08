@@ -109,7 +109,7 @@ def test_local_notification_adapter_maps_local_watchlist_runs_to_active_work():
         "local:watchlist_run:3",
     ]
     assert dashboard_input.active_work_items[0].title == "Daily security feed"
-    assert dashboard_input.active_work_items[0].source == "W+C"
+    assert dashboard_input.active_work_items[0].source == "Watchlists"
     assert dashboard_input.active_work_items[0].status == "failed"
     assert dashboard_input.active_work_items[0].detail_route == "subscriptions"
     assert dashboard_input.active_work_items[0].console_available is True
@@ -147,7 +147,7 @@ def test_local_notification_adapter_opens_local_watchlist_run_details():
     assert result.status is HomeControlResultStatus.HANDLED
     assert result.target_id == "local:watchlist_run:5"
     assert result.target_route == "subscriptions"
-    assert result.message == "Opening W+C run details for Daily security feed."
+    assert result.message == "Opening Watchlists run details for Daily security feed."
 
     assert missing_result.status is HomeControlResultStatus.UNAVAILABLE
     assert missing_result.target_id == "local:watchlist_run:404"
@@ -179,7 +179,7 @@ def test_local_notification_adapter_opens_local_watchlist_run_details_with_synth
     assert result.status is HomeControlResultStatus.HANDLED
     assert result.target_id == "local:watchlist_run:6"
     assert result.target_route == "subscriptions"
-    assert result.message == "Opening W+C run details for Running release feed."
+    assert result.message == "Opening Watchlists run details for Running release feed."
 
 
 def test_local_notification_adapter_opens_local_watchlist_run_in_console():
@@ -219,11 +219,11 @@ def test_local_notification_adapter_opens_local_watchlist_run_in_console():
     assert dashboard_input.active_work_items[0].console_available is True
     assert result.status is HomeControlResultStatus.HANDLED
     assert result.console_launch is not None
-    assert result.console_launch.source == "W+C"
+    assert result.console_launch.source == "Watchlists"
     assert result.console_launch.title == "Daily security feed"
     assert result.console_launch.status == "failed"
-    assert result.console_launch.recovery == "Review the W+C run details or retry from W+C."
-    assert result.console_launch.action_label == "Open W+C run"
+    assert result.console_launch.recovery == "Review the Watchlists run details or retry from Watchlists."
+    assert result.console_launch.action_label == "Open Watchlists run"
     assert result.console_launch.payload == {
         "run_id": 5,
         "job_id": 31,

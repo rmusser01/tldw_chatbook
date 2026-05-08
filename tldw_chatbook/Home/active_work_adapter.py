@@ -231,7 +231,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 return HomeControlResult(
                     action=action,
                     status=HomeControlResultStatus.HANDLED,
-                    message=f"Opening W+C run details for {title}.",
+                    message=f"Opening Watchlists run details for {title}.",
                     target_route=target_route or "subscriptions",
                     target_id=target_id,
                 )
@@ -245,12 +245,12 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     message=f"Opening Console for {title}.",
                     target_id=target_id,
                     console_launch=HomeConsoleLaunch(
-                        source="W+C",
+                        source="Watchlists",
                         title=title,
                         payload=self._watchlist_console_payload(run, str(target_id)),
                         status=str(_mapping_value(run, "status") or "pending").strip().lower(),
-                        recovery="Review the W+C run details or retry from W+C.",
-                        action_label="Open W+C run",
+                        recovery="Review the Watchlists run details or retry from Watchlists.",
+                        action_label="Open Watchlists run",
                     ),
                 )
         if action is HomeControlAction.OPEN_DETAILS and _is_local_chatbook_id(target_id):
@@ -328,7 +328,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 HomeActiveWorkItem(
                     item_id=item_id,
                     title=title,
-                    source="W+C",
+                    source="Watchlists",
                     status=status,
                     detail_route="subscriptions",
                     console_available=True,

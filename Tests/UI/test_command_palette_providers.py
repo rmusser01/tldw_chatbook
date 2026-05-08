@@ -310,22 +310,25 @@ class TestTabNavigationProvider:
         assert "LLM Management" not in joined_text
         assert "Tools & Settings" not in joined_text
 
-    def test_tab_navigation_provider_exposes_full_label_for_compact_destinations(self, tab_provider):
+    def test_tab_navigation_provider_uses_watchlists_label(self, tab_provider):
         command_text, tab_id, help_text = tab_provider._tab_command(TAB_WATCHLISTS_COLLECTIONS)
 
         assert tab_id == TAB_WATCHLISTS_COLLECTIONS
-        assert "W+C" in command_text
-        assert "Watchlists+Collections" in command_text
-        assert "Watchlists+Collections" in help_text
+        assert "Watchlists" in command_text
+        assert "Watchlists" in help_text
+        assert "W+C" not in command_text
+        assert "Watchlists+Collections" not in command_text
+        assert "Watchlists+Collections" not in help_text
 
     @pytest.mark.asyncio
-    async def test_search_finds_watchlists_collections_by_full_label(self, tab_provider):
+    async def test_search_finds_watchlists_by_visible_label(self, tab_provider):
         hits = []
-        async for hit in tab_provider.search("Watchlists+Collections"):
+        async for hit in tab_provider.search("Watchlists"):
             hits.append(hit)
 
-        assert any("Watchlists+Collections" in hit.text for hit in hits)
-        assert any("Watchlists+Collections" in (hit.help or "") for hit in hits)
+        assert any("Watchlists" in hit.text for hit in hits)
+        assert all("Watchlists+Collections" not in hit.text for hit in hits)
+        assert all("Watchlists+Collections" not in (hit.help or "") for hit in hits)
 
     @pytest.mark.asyncio
     async def test_search_matches_destination_help_keywords(self, tab_provider):
