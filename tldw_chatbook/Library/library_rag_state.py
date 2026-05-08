@@ -521,6 +521,7 @@ class LibraryRagPanelState:
     selected_result_id: str = ""
     selected_result: LibraryRagResultRow | None = None
     recovery_copy: str = ""
+    recovery_selector: str = ""
 
     @classmethod
     def from_values(
@@ -532,6 +533,8 @@ class LibraryRagPanelState:
         results: Sequence[LibraryRagResultRow | Mapping[str, Any]] = (),
         selected_result_id: Any = "",
         retrieval_status: Any = "",
+        recovery_copy: Any = "",
+        recovery_selector: Any = "",
         dependencies_ready: bool = True,
         index_ready: bool = True,
         provider_ready: bool = True,
@@ -546,6 +549,8 @@ class LibraryRagPanelState:
             results: Retrieval result rows or mappings.
             selected_result_id: Result ID selected for inspector/Console handoff.
             retrieval_status: Explicit retrieval status override.
+            recovery_copy: Explicit retrieval recovery copy from a service outcome.
+            recovery_selector: Stable selector used for explicit retrieval recovery.
             dependencies_ready: Whether Search/RAG optional dependencies are available.
             index_ready: Whether the selected source scope has an index.
             provider_ready: Whether a provider/model is ready for RAG-answer mode.
@@ -589,6 +594,18 @@ class LibraryRagPanelState:
             None,
         )
         explicit_status = _clean_text(retrieval_status).lower()
+        explicit_recovery_copy = _sanitize_display_text(
+            recovery_copy,
+            "",
+            preserve_newlines=True,
+        )
+        explicit_recovery_selector = _sanitize_display_text(
+            recovery_selector,
+            "",
+            max_length=128,
+            escape=False,
+        )
+        active_recovery_selector = ""
         if query_state.status == "blocked":
             normalized_status = "blocked"
             recovery_copy = scope.recovery_copy or query_state.recovery_copy
@@ -597,11 +614,25 @@ class LibraryRagPanelState:
             normalized_status = "searching"
             recovery_copy = ""
             next_action = "Wait for retrieval results."
+        elif explicit_status in {"blocked", "failed"}:
+            normalized_status = explicit_status
+            recovery_copy = explicit_recovery_copy or _recovery_copy(
+                status_label="Retrieval unavailable",
+                unavailable_what="Library Search/RAG retrieval",
+                why="Library retrieval could not complete",
+                next_action="Retry the query or check Library indexing",
+                recovery_action="Retry",
+                owner="Library retrieval",
+            )
+            next_action = _blocked_next_action(recovery_copy)
+            active_recovery_selector = (
+                explicit_recovery_selector or "library-rag-service-error"
+            )
         elif explicit_status == "empty" or (
             explicit_status == "ready" and not result_rows
         ):
             normalized_status = "empty"
-            recovery_copy = _recovery_copy(
+            recovery_copy = explicit_recovery_copy or _recovery_copy(
                 status_label="No results",
                 unavailable_what="Library Search/RAG evidence",
                 why="No evidence matched the current query",
@@ -610,6 +641,7 @@ class LibraryRagPanelState:
                 owner="Library retrieval",
             )
             next_action = "Revise the query or broaden the source scope."
+            active_recovery_selector = explicit_recovery_selector
         elif result_rows:
             normalized_status = "ready"
             recovery_copy = ""
@@ -637,6 +669,7 @@ class LibraryRagPanelState:
             selected_result_id=normalized_selected_result_id,
             selected_result=selected_result,
             recovery_copy=recovery_copy,
+            recovery_selector=active_recovery_selector,
         )
 
 

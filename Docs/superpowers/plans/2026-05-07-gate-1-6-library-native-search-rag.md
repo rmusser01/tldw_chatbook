@@ -211,7 +211,7 @@ Backlog: `TASK-10.8.3`
 - Modify: `tldw_chatbook/UI/Screens/library_screen.py`
 - Modify: `Tests/UI/test_product_maturity_gate16_library_search_rag.py`
 
-- [ ] **Step 1: Add adapter red tests**
+- [x] **Step 1: Add adapter red tests**
 
 Cover:
 
@@ -220,15 +220,15 @@ Cover:
 - returning `DestinationRecoveryState` when dependencies are unavailable
 - returning policy-blocked recovery when runtime source is incompatible
 
-- [ ] **Step 2: Implement adapter protocol**
+- [x] **Step 2: Implement adapter protocol**
 
 Create `LibraryRagSearchService` seam with async `search(query, scope, mode)` and a normalizer. In tests, use `app_instance.library_rag_search_service` fake first. If absent, return a recoverable unavailable state rather than calling the legacy widget directly.
 
-- [ ] **Step 3: Wire query execution**
+- [x] **Step 3: Wire query execution**
 
 `LibraryScreen` should run retrieval in a worker, set status to `searching`, then apply results on the Textual message thread. Empty results should show a visible no-results state with recovery suggestions.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 $PY -m pytest -q Tests/Library/test_library_rag_service.py Tests/UI/test_product_maturity_gate16_library_search_rag.py Tests/UI/test_disabled_action_recovery_tooltips.py --tb=short

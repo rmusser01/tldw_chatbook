@@ -4,7 +4,7 @@ title: 'Product Maturity Phase 3.8: Gate 1.6 Library Native Search/RAG'
 status: In Progress
 assignee: []
 created_date: '2026-05-07 12:00'
-updated_date: '2026-05-07 19:53'
+updated_date: '2026-05-08 01:56'
 labels:
   - product-maturity
   - phase-3-knowledge-study
@@ -50,4 +50,6 @@ Primary implementation plan: `Docs/superpowers/plans/2026-05-07-gate-1-6-library
 Started Gate 1.6 execution with TASK-10.8.1. The first slice adds pure Library Search/RAG display-state contracts for source scope query blockers evidence rows citations/snippets and panel action readiness; remaining child tasks cover the mounted Library panel retrieval adapter Console handoff/invocation and QA closeout.
 
 Continued Gate 1.6 with TASK-10.8.2. Library Search/RAG mode now mounts a native panel with source scope query controls evidence/results inspector and Console handoff action inside the existing Library shell, while keeping the legacy Search/RAG route button as a compatibility fallback. Remaining child tasks cover retrieval adapter execution, evidence normalization, Console handoff/invocation, and QA closeout.
+
+Continued Gate 1.6 with TASK-10.8.3. Library Search/RAG now has a retrieval adapter seam, normalized evidence rows with citations/snippets, worker-backed query execution from the Library panel, and stable recovery states for unavailable, policy-denied, empty, and failed retrieval outcomes. Remaining child tasks cover Console handoff/invocation and QA closeout.
 <!-- SECTION:NOTES:END -->

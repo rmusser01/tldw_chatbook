@@ -32,6 +32,9 @@ TASK_10_8_1 = Path(
 TASK_10_8_2 = Path(
     "backlog/tasks/task-10.8.2 - Gate-1.6.2-Library-native-Search-RAG-panel.md"
 )
+TASK_10_8_3 = Path(
+    "backlog/tasks/task-10.8.3 - Gate-1.6.3-Retrieval-adapter-and-evidence-results.md"
+)
 PROMPT_MANIFEST = Path("Docs/Design/destination-layout-image-reference-prompts.md")
 
 DESTINATIONS = (
@@ -213,6 +216,7 @@ def test_phase3_gate16_library_rag_plan_and_tasks_are_tracked() -> None:
     task = _text(TASK_10_8)
     display_state_task = _text(TASK_10_8_1)
     native_panel_task = _text(TASK_10_8_2)
+    retrieval_adapter_task = _text(TASK_10_8_3)
 
     assert "Gate 1.6 / Phase 3.8" in tracker
     assert "TASK-10.8" in tracker
@@ -243,6 +247,10 @@ def test_phase3_gate16_library_rag_plan_and_tasks_are_tracked() -> None:
     for ac_number in range(1, 5):
         assert f"- [x] #{ac_number}" in native_panel_task
     assert "## Implementation Notes" in native_panel_task
+    assert "status: Done" in retrieval_adapter_task
+    for ac_number in range(1, 4):
+        assert f"- [x] #{ac_number}" in retrieval_adapter_task
+    assert "## Implementation Notes" in retrieval_adapter_task
 
 
 def test_phase30_qa_evidence_is_verified() -> None:

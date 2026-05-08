@@ -66,8 +66,18 @@ class LibrarySearchRagPanel(Vertical):
                         result.snippet,
                         id=f"library-rag-result-snippet-{index}",
                     )
+                    if result.citation_labels:
+                        yield Static(
+                            f"Citations: {', '.join(result.citation_labels)}",
+                            id=f"library-rag-result-citations-{index}",
+                        )
             elif self.state.retrieval_status == "searching":
                 yield Static("Searching Library sources...", id="library-rag-searching")
+            elif self.state.recovery_copy and self.state.recovery_selector:
+                yield Static(
+                    self.state.recovery_copy,
+                    id=self.state.recovery_selector,
+                )
             else:
                 yield Static(self.state.next_action, id="library-rag-results-empty")
 
