@@ -246,6 +246,32 @@
     min-height: 1;
 }
 
+#console-composer-title {
+    width: 8;
+    min-width: 8;
+}
+
+#console-composer-status {
+    width: 1;
+    min-width: 0;
+}
+
+#console-send-message,
+#console-stop-generation {
+    width: 8;
+    min-width: 8;
+}
+
+#console-attach-context {
+    width: 10;
+    min-width: 10;
+}
+
+#console-save-chatbook {
+    width: 12;
+    min-width: 12;
+}
+
 .console-control-label,
 .console-staged-context-row,
 .console-staged-context-summary,

@@ -1,0 +1,12 @@
+route: settings
+terminal_size: 100x32
+global_nav: MainNavigationBar region=(x=0, y=0, w=100, h=3)
+global_nav_buttons: nav-home, nav-console, nav-library, nav-artifacts, nav-personas, nav-watchlists_collections, nav-schedules, nav-workflows, nav-mcp, nav-acp, nav-skills, nav-settings
+identity: #settings-title region=(x=0, y=3, w=100, h=1)
+mode_or_filter_strip: #settings-category-strip region=(x=0, y=5, w=100, h=1)
+workbench: #settings-workbench region=(x=0, y=6, w=100, h=26)
+list_or_object_pane: #settings-category-pane region=(x=0, y=6, w=33, h=26)
+detail_pane: #settings-detail-pane region=(x=33, y=6, w=33, h=26)
+inspector_or_actions_pane: #settings-impact-pane region=(x=66, y=6, w=34, h=26)
+action: #settings-open-appearance region=(x=66, y=9, w=17, h=3) disabled=False
+state_marker: #settings-boundary-note region=(x=66, y=7, w=34, h=2)

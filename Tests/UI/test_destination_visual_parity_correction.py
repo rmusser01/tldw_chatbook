@@ -42,8 +42,18 @@ def _assert_no_horizontal_overlap(left, right, *, context: str) -> None:
     assert lx + lw <= rx or rx + rw <= lx, context
 
 
-def _assert_visible_in_viewport(widget, *, height: int, context: str) -> None:
-    x, y, width, widget_height = _region(widget)
+def _assert_visible_in_viewport(
+    widget,
+    *,
+    height: int,
+    context: str,
+    viewport_width: int | None = None,
+) -> None:
+    x, y, widget_width, widget_height = _region(widget)
+    assert x >= 0, context
+    if viewport_width is not None:
+        assert x < viewport_width, context
+        assert x + widget_width <= viewport_width, context
     assert y >= 0, context
     assert y < height, context
     assert y + widget_height <= height, context
@@ -63,13 +73,25 @@ def _assert_horizontal_panes(screen, selectors: tuple[str, str, str]) -> None:
         assert pane.region.height > 0, f"{selector} has no height"
 
 
-def _assert_any_action_visible(screen, selectors: tuple[str, ...], *, height: int, context: str) -> None:
+def _assert_any_action_visible(
+    screen,
+    selectors: tuple[str, ...],
+    *,
+    height: int,
+    context: str,
+    viewport_width: int | None = None,
+) -> None:
     for selector in selectors:
         matches = list(screen.query(selector))
         if not matches:
             continue
         try:
-            _assert_visible_in_viewport(matches[0], height=height, context=f"{context}:{selector}")
+            _assert_visible_in_viewport(
+                matches[0],
+                height=height,
+                context=f"{context}:{selector}",
+                viewport_width=viewport_width,
+            )
             return
         except AssertionError:
             continue
@@ -779,3 +801,199 @@ async def test_runtime_and_settings_default_states_preserve_workbench_geometry(
             marker_container,
             context=f"{route} non-happy marker escaped workbench pane",
         )
+
+
+COMPACT_DESTINATION_CONTRACTS = {
+    "home": {
+        "identity": "#home-title",
+        "workbench": "#home-dashboard-grid",
+        "object": "#home-attention-queue",
+        "detail": "#home-active-work-region",
+        "actions": ("#home-primary-action", "#home-open-details", "#home-open-chatbook-details"),
+    },
+    "chat": {
+        "identity": "#console-title",
+        "workbench": "#console-workspace-grid",
+        "object": "#console-staged-context-tray",
+        "detail": "#console-session-surface",
+        "actions": ("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
+    },
+    "library": {
+        "identity": "#library-title",
+        "workbench": "#library-contract-grid",
+        "object": "#library-source-browser",
+        "detail": "#library-source-detail",
+        "actions": ("#library-open-search", "#library-use-in-console", "#library-open-notes"),
+    },
+    "artifacts": {
+        "identity": "#artifacts-title",
+        "workbench": "#artifacts-workbench",
+        "object": "#artifacts-list-pane",
+        "detail": "#artifacts-detail-pane",
+        "actions": (
+            "#artifacts-open-chatbooks",
+            "#artifacts-open-library",
+            "#artifacts-import-artifact",
+            "#artifacts-use-in-console",
+        ),
+    },
+    "personas": {
+        "identity": "#personas-title",
+        "workbench": "#personas-workbench",
+        "object": "#personas-list-pane",
+        "detail": "#personas-detail-pane",
+        "actions": ("#personas-open-profiles", "#personas-attach-to-console"),
+    },
+    "watchlists_collections": {
+        "identity": "#watchlists-collections-title",
+        "workbench": "#watchlists-workbench",
+        "object": "#watchlists-list-pane",
+        "detail": "#watchlists-detail-pane",
+        "actions": ("#wc-open-watchlists", "#watchlists-follow-in-console"),
+    },
+    "schedules": {
+        "identity": "#schedules-title",
+        "workbench": "#schedules-workbench",
+        "object": "#schedules-list-pane",
+        "detail": "#schedules-detail-pane",
+        "actions": ("#schedules-follow-in-console",),
+    },
+    "workflows": {
+        "identity": "#workflows-title",
+        "workbench": "#workflows-workbench",
+        "object": "#workflows-list-pane",
+        "detail": "#workflows-detail-pane",
+        "actions": ("#workflows-launch-in-console",),
+    },
+    "mcp": {
+        "identity": "#mcp-title",
+        "workbench": "#mcp-workbench",
+        "object": "#mcp-server-tree-pane",
+        "detail": "#mcp-detail-pane",
+        "actions": ("#unified-mcp-action-run",),
+    },
+    "acp": {
+        "identity": "#acp-title",
+        "workbench": "#acp-workbench",
+        "object": "#acp-list-pane",
+        "detail": "#acp-detail-pane",
+        "actions": ("#acp-follow-in-console", "#acp-launch-agent"),
+    },
+    "skills": {
+        "identity": "#skills-title",
+        "workbench": "#skills-workbench",
+        "object": "#skills-list-pane",
+        "detail": "#skills-detail-pane",
+        "actions": ("#skills-import-skill", "#skills-attach-to-console"),
+    },
+    "settings": {
+        "identity": "#settings-title",
+        "workbench": "#settings-workbench",
+        "object": "#settings-category-pane",
+        "detail": "#settings-detail-pane",
+        "actions": ("#settings-open-appearance",),
+    },
+}
+
+
+TOP_LEVEL_WORKBENCH_SELECTORS = {
+    route: contract["workbench"] for route, contract in COMPACT_DESTINATION_CONTRACTS.items()
+}
+
+
+@pytest.mark.parametrize("route,contract", COMPACT_DESTINATION_CONTRACTS.items())
+@pytest.mark.asyncio
+async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_size(route, contract):
+    app = _build_test_app()
+    if route == "home":
+        host = HomeHarness(app)
+    elif route == "chat":
+        host = ConsoleHarness(app)
+    else:
+        host = DestinationHarness(app, route)
+    async with host.run_test(size=(100, 32)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, contract["workbench"])
+        nav = screen.query_one(MainNavigationBar)
+        assert nav.region.y == 0, f"{route}: global nav is not docked at top: {nav.region}"
+        assert nav.region.height <= 3, f"{route}: global nav is too tall: {nav.region}"
+        _assert_visible_in_viewport(nav, height=32, context=f"{route}:global-nav", viewport_width=100)
+        assert list(nav.query(Button)), f"{route}: global nav has no visible destination buttons"
+        for required in ("identity", "workbench", "object", "detail"):
+            _assert_visible_in_viewport(
+                screen.query_one(contract[required]),
+                height=32,
+                context=f"{route}:{required}:{contract[required]}",
+                viewport_width=100,
+            )
+        _assert_any_action_visible(
+            screen,
+            contract["actions"],
+            height=32,
+            context=f"{route}:compact-action",
+            viewport_width=100,
+        )
+
+
+VISIBLE_FOCUS_TARGETS = {
+    "home": {"home-primary-action", "home-open-details", "home-open-in-console", "home-open-chatbook-details"},
+    "chat": {"console-send-message", "console-attach-context", "console-save-chatbook", "console-run-library-rag"},
+    "library": {"library-open-notes", "library-open-media", "library-open-search", "library-use-in-console"},
+    "artifacts": {
+        "artifacts-open-chatbooks",
+        "artifacts-open-library",
+        "artifacts-import-artifact",
+        "artifacts-use-in-console",
+    },
+    "personas": {"personas-open-profiles", "personas-attach-to-console"},
+    "watchlists_collections": {"wc-open-watchlists", "wc-attach-to-console", "watchlists-follow-in-console"},
+    "schedules": {"schedules-follow-in-console"},
+    "workflows": {"workflows-launch-in-console"},
+    "mcp": {"unified-mcp-action-run"},
+    "acp": {"acp-follow-in-console", "acp-launch-agent"},
+    "skills": {"skills-import-skill", "skills-attach-to-console"},
+    "settings": {"settings-open-appearance"},
+}
+
+
+@pytest.mark.parametrize("route,targets", VISIBLE_FOCUS_TARGETS.items())
+@pytest.mark.asyncio
+async def test_tab_order_reaches_visible_primary_action(route, targets):
+    app = _build_test_app()
+    if route == "home":
+        host = HomeHarness(app)
+    elif route == "chat":
+        host = ConsoleHarness(app)
+    else:
+        host = DestinationHarness(app, route)
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = host.screen_stack[-1]
+        workbench = TOP_LEVEL_WORKBENCH_SELECTORS[route]
+        await _wait_for_selector(screen, pilot, workbench)
+        target_buttons = [
+            screen.query_one(f"#{target}", Button)
+            for target in targets
+            if list(screen.query(f"#{target}"))
+        ]
+        enabled_targets = {button.id for button in target_buttons if button.id and not button.disabled}
+        if not enabled_targets:
+            _assert_any_action_visible(
+                screen,
+                tuple(f"#{target}" for target in targets),
+                height=42,
+                context=f"{route}:disabled-recovery-action",
+                viewport_width=140,
+            )
+            return
+        for _ in range(24):
+            await pilot.press("tab")
+            focused = host.focused
+            if focused is not None and focused.id in enabled_targets:
+                _assert_visible_in_viewport(
+                    focused,
+                    height=42,
+                    context=f"{route}:{focused.id} focused below viewport",
+                    viewport_width=140,
+                )
+                return
+        pytest.fail(f"{route} did not focus a visible primary action from {sorted(enabled_targets)}")
