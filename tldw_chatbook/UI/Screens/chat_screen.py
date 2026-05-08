@@ -1323,7 +1323,7 @@ class ChatScreen(BaseAppScreen):
             or focused.has_class("chat-input")
         ):
             return
-        composer.insert_text(event.text)
+        composer.insert_pasted_text(event.text)
         event.stop()
 
     def _sync_compact_shell_controls(
