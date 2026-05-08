@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import pytest
+from textual.app import App, ComposeResult
 from textual.widgets import Button
+from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.Widgets.destination_workbench import DestinationWorkbench, WorkbenchPane
 
 
 def _region(widget):
@@ -48,3 +51,25 @@ async def test_destination_content_starts_immediately_below_nav():
         dashboard = home.query_one("#home-dashboard")
         assert content.region.y == 3
         assert dashboard.region.y <= 4
+
+
+class WorkbenchHarness(App[None]):
+    def compose(self) -> ComposeResult:
+        yield DestinationWorkbench(
+            WorkbenchPane("List", Static("left"), id="test-list-pane"),
+            WorkbenchPane("Detail", Static("center"), id="test-detail-pane"),
+            WorkbenchPane("Inspector", Static("right"), id="test-inspector-pane"),
+            id="test-workbench",
+        )
+
+
+@pytest.mark.asyncio
+async def test_destination_workbench_renders_three_horizontal_panes():
+    app = WorkbenchHarness()
+    async with app.run_test(size=(100, 20)) as pilot:
+        await _wait_for_selector(app.screen, pilot, "#test-workbench")
+        left = app.query_one("#test-list-pane")
+        center = app.query_one("#test-detail-pane")
+        right = app.query_one("#test-inspector-pane")
+        assert left.region.x < center.region.x < right.region.x
+        assert left.region.y == center.region.y == right.region.y
