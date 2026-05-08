@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
@@ -25,6 +27,27 @@ from Tests.UI.test_destination_shells import (
     _wait_for_library_snapshot,
     _wait_for_selector,
 )
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+GATE16_EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-3/"
+    "2026-05-07-gate-1-6-library-native-search-rag.md"
+)
+ROADMAP = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
+PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
+TASK_10 = Path("backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md")
+TASK_10_8 = Path(
+    "backlog/tasks/task-10.8 - "
+    "Product-Maturity-Phase-3.8-Gate-1.6-Library-Native-Search-RAG.md"
+)
+TASK_10_8_5 = Path(
+    "backlog/tasks/task-10.8.5 - Gate-1.6.5-Library-Search-RAG-QA-closeout.md"
+)
+
+
+def _repo_text(path: Path) -> str:
+    return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
 def _seed_library_sources(app) -> None:
@@ -83,6 +106,67 @@ async def _wait_for_query_ready(screen, pilot, query: str, *, timeout: float = 2
                 return
         await pilot.pause(0.01)
     raise AssertionError(f"Timed out waiting for Library Search/RAG query readiness: {query!r}")
+
+
+async def _wait_for_inspector_selection(
+    screen,
+    pilot,
+    title: str,
+    *,
+    timeout: float = 2.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    expected = f"Selected: {title}"
+    while time.monotonic() < deadline:
+        selected_widgets = list(screen.query("#library-rag-selected-result"))
+        console_buttons = list(screen.query("#library-rag-use-in-console"))
+        if selected_widgets and console_buttons:
+            selected_widget = selected_widgets[0]
+            console_button = console_buttons[0]
+            if (
+                selected_widget.display is True
+                and expected in str(selected_widget.renderable)
+                and console_button.disabled is False
+            ):
+                await pilot.pause()
+                return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for Library Search/RAG selection: {title!r}")
+
+
+def test_gate16_library_search_rag_evidence_is_tracked() -> None:
+    evidence = _repo_text(GATE16_EVIDENCE)
+    roadmap = _repo_text(ROADMAP)
+    readme = _repo_text(PHASE_3_README)
+    task_10 = _repo_text(TASK_10)
+    task_10_8 = _repo_text(TASK_10_8)
+    task_10_8_5 = _repo_text(TASK_10_8_5)
+
+    for heading in (
+        "## Scope",
+        "## Walkthrough",
+        "## Functional Result",
+        "## Verification",
+        "## Residual Risk",
+    ):
+        assert heading in evidence
+    for selector in (
+        "#library-search-rag-panel",
+        "#library-rag-query-input",
+        "#library-rag-results",
+        "#library-rag-use-in-console",
+        "#console-run-library-rag",
+        "#console-live-work-payload-source-id",
+    ):
+        assert selector in evidence
+    assert "Console staged evidence" in evidence
+    assert GATE16_EVIDENCE.name in readme
+    assert GATE16_EVIDENCE.name in roadmap
+    assert "Gate 1.6 / Phase 3.8" in roadmap
+    assert "TASK-10.8.5" in roadmap
+    assert "status: Done" in task_10_8
+    assert "status: Done" in task_10_8_5
+    assert "Closed Gate 1.6 with TASK-10.8" in task_10
 
 
 @pytest.mark.asyncio
@@ -242,6 +326,123 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
         assert "Incident Review p.2" in visible_text
         assert "Status: Ready" in visible_text
         assert len(screen.query("#library-rag-service-error")) == 0
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_selected_result_launches_console_live_work() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "citations": [{"label": "Incident Review p.2"}],
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.open_console_for_live_work = Mock()
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "library")
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+        assert screen.query_one("#library-rag-use-in-console", Button).disabled is True
+
+        screen.query_one("#library-rag-select-result-0", Button).press()
+        await _wait_for_inspector_selection(screen, pilot, "Incident Review")
+
+        assert screen.query_one("#library-rag-use-in-console", Button).disabled is False
+        assert "Selected: Incident Review" in _visible_text(screen)
+
+        screen.query_one("#library-rag-use-in-console", Button).press()
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once_with(
+        source="Library Search/RAG",
+        title="Incident Review",
+        payload={
+            "target_id": "local:library-rag:note-42:chunk-7",
+            "result_id": "note-42:chunk-7",
+            "query": query,
+            "title": "Incident Review",
+            "source_id": "note-42",
+            "chunk_id": "chunk-7",
+            "snippet": "Expired credential caused the incident.",
+            "citations": ["Incident Review p.2"],
+            "score": 0.93,
+            "runtime_backend": "local-fts",
+            "source_authority": "local",
+            "source_selector_state": "local",
+        },
+        status="staged",
+        recovery="Review citations before sending.",
+        action_label="Review evidence in Console",
+    )
+    app.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_inspector_pre_mounts_selection_states() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                }
+            ],
+        }
+    )
+    host = DestinationHarness(app, "library")
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        empty_state = screen.query_one("#library-rag-inspector-empty", Static)
+        selected_state = screen.query_one("#library-rag-selected-result", Static)
+        assert empty_state.display is True
+        assert selected_state.display is False
+
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+        screen.query_one("#library-rag-select-result-0", Button).press()
+
+        await _wait_for_inspector_selection(screen, pilot, "Incident Review")
+
+        assert screen.query_one("#library-rag-inspector-empty", Static) is empty_state
+        assert screen.query_one("#library-rag-selected-result", Static) is selected_state
+        assert empty_state.display is False
+        assert selected_state.display is True
+        assert "Selected: Incident Review" in str(selected_state.renderable)
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,47 @@ TASK_10_6 = Path(
 
 def _repo_text(path: Path) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+class StaticConsoleLibraryRagSearchService:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    async def search(self, query, scope, mode, **kwargs):
+        self.calls.append(
+            {
+                "query": query,
+                "scope": scope,
+                "mode": mode,
+                **kwargs,
+            }
+        )
+        return self.result
+
+
+async def _wait_for_console_library_rag_button_state(
+    console,
+    pilot,
+    *,
+    disabled: bool,
+    tooltip_contains: str = "",
+    timeout: float = 2.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        buttons = list(console.query("#console-run-library-rag"))
+        if buttons:
+            button = buttons[0]
+            tooltip = str(button.tooltip or "")
+            if button.disabled is disabled and tooltip_contains in tooltip:
+                await pilot.pause()
+                return
+        await pilot.pause(0.01)
+    raise AssertionError(
+        "Timed out waiting for Console Library RAG run button "
+        f"disabled={disabled!r} tooltip={tooltip_contains!r}"
+    )
 
 
 def test_gate15_console_internals_evidence_is_tracked():
@@ -337,3 +379,103 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         assert console.query_one("#console-inspector-review-tool-call", Button).disabled is False
         assert console.query_one("#console-inspector-save-chatbook", Button).disabled is False
         assert console.query_one("#console-live-work-primary-action", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_rag_action_requests_library_retrieval_and_stages_result():
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "citations": [{"label": "Incident Review p.2"}],
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        assert "Library scope: notes, media, conversations" in _visible_text(console)
+        query_input = console.query_one("#console-library-rag-query-input", Input)
+        query_input.value = query
+        await pilot.pause(0.1)
+
+        run_button = console.query_one("#console-run-library-rag", Button)
+        assert run_button.disabled is False
+        run_button.press()
+        await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
+
+        assert service.calls == [
+            {
+                "query": query,
+                "scope": ("notes", "media", "conversations"),
+                "mode": "rag",
+                "top_k": 5,
+                "include_citations": True,
+            }
+        ]
+        text = _visible_text(console)
+        assert "RAG/source: staged from Library Search/RAG" in text
+        assert "Title: Incident Review" in text
+        assert "source_id: note-42" in text
+        assert "chunk_id: chunk-7" in text
+        assert "Review citations before sending." in text
+
+
+@pytest.mark.asyncio
+async def test_console_rag_query_validation_blocks_unsafe_markup():
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        console.query_one("#console-library-rag-query-input", Input).value = (
+            "<script>alert('bad')</script>"
+        )
+        await _wait_for_console_library_rag_button_state(
+            console,
+            pilot,
+            disabled=True,
+            tooltip_contains="valid Library RAG query",
+        )
+
+        assert console._console_library_rag_query == ""
+        assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_console_rag_action_without_service_stages_recoverable_blocker():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        console.query_one("#console-library-rag-query-input", Input).value = "What changed?"
+        await pilot.pause(0.1)
+        console.query_one("#console-run-library-rag", Button).press()
+        await _wait_for_selector(console, pilot, "#console-live-work-status")
+
+        text = _visible_text(console)
+        assert "Status: blocked" in text
+        assert "RAG/source: unavailable" in text
+        assert "Unavailable: Library Search/RAG retrieval." in text
+        assert "Owner: Library retrieval service." in text

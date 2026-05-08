@@ -27,6 +27,7 @@ from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.Library import LibrarySearchRagInspectorPanel, LibrarySearchRagPanel
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
@@ -704,6 +705,51 @@ class LibraryScreen(BaseAppScreen):
         await self._refresh_search_rag_panel_state_widgets()
         self._execute_library_rag_search(request)
 
+    @on(Button.Pressed, ".library-rag-result-action")
+    async def select_library_rag_result(self, event: Button.Pressed) -> None:
+        """Select an evidence row for inspector review and Console handoff."""
+        event.stop()
+        button_id = event.button.id or ""
+        try:
+            result_index = int(button_id.rsplit("-", 1)[-1])
+        except ValueError:
+            return
+        if result_index < 0 or result_index >= len(self._library_rag_results):
+            return
+        self._library_rag_selected_result_id = self._library_rag_results[result_index].result_id
+        await self._refresh_search_rag_panel_state_widgets()
+
+    @on(Button.Pressed, "#library-rag-use-in-console")
+    def use_library_rag_result_in_console(self, event: Button.Pressed) -> None:
+        """Stage the selected Library Search/RAG evidence result in Console."""
+        event.stop()
+        panel_state = self._library_rag_panel_state()
+        console_action = panel_state.use_in_console_action
+        if not console_action.enabled or panel_state.selected_result is None:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(console_action.disabled_reason, severity="warning")
+            return
+
+        opener = getattr(self.app_instance, "open_console_for_live_work", None)
+        if not callable(opener):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Use in Console is unavailable for Library Search/RAG.", severity="warning")
+            return
+
+        opener(
+            source="Library Search/RAG",
+            title=panel_state.selected_result.title,
+            payload=build_library_rag_console_live_work_payload(
+                panel_state.selected_result,
+                query=panel_state.query_state.query,
+            ),
+            status="staged",
+            recovery="Review citations before sending.",
+            action_label="Review evidence in Console",
+        )
+
     @work(exclusive=True)
     async def _execute_library_rag_search(self, request: LibraryRagSearchRequest) -> None:
         outcome = await run_library_rag_search(self.app_instance, request)
@@ -757,21 +803,19 @@ class LibraryScreen(BaseAppScreen):
             for widget in recovery_widgets:
                 await widget.remove()
 
-        for selector, value in (
-            ("#library-rag-retrieval-status", f"Status: {panel_state.retrieval_status.title()}"),
-            ("#library-rag-next-action", panel_state.next_action),
-            ("#library-rag-inspector-empty", panel_state.use_in_console_action.disabled_reason),
-        ):
-            widgets = list(self.query(selector))
-            if widgets:
-                widgets[0].update(value)
-
+        self._refresh_library_rag_inspector(panel_state)
         await self._refresh_library_rag_results_widgets(panel_state)
 
-        console_action = panel_state.use_in_console_action
-        console_button = self.query_one("#library-rag-use-in-console", Button)
-        console_button.disabled = not console_action.enabled
-        console_button.tooltip = console_action.tooltip
+    def _refresh_library_rag_inspector(
+        self,
+        panel_state: LibraryRagPanelState,
+    ) -> None:
+        inspector_widgets = list(self.query("#library-rag-inspector"))
+        if not inspector_widgets:
+            return
+        inspector = inspector_widgets[0]
+        if isinstance(inspector, LibrarySearchRagInspectorPanel):
+            inspector.refresh_from_state(panel_state)
 
     async def _refresh_library_rag_results_widgets(
         self,
@@ -788,6 +832,14 @@ class LibraryScreen(BaseAppScreen):
                     Static(
                         f"{index + 1}. {result.title}{score}",
                         id=f"library-rag-result-{index}",
+                    )
+                )
+                await results_container.mount(
+                    Button(
+                        "Select evidence",
+                        id=f"library-rag-select-result-{index}",
+                        classes="library-rag-result-action",
+                        tooltip="Select this evidence result for Console handoff.",
                     )
                 )
                 await results_container.mount(

@@ -13,7 +13,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 from textual.events import Key
-from textual import on
+from textual import on, work
 from textual.reactive import reactive
 from textual.css.query import NoMatches, QueryError
 
@@ -38,7 +38,12 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkSourceReadinessState,
     ConsoleLiveWorkStatusCardState,
 )
+from ...Library.library_rag_service import (
+    LibraryRagSearchRequest,
+    run_library_rag_search,
+)
 from ...Utils.chat_diagnostics import ChatDiagnostics
+from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
@@ -50,6 +55,7 @@ from ...Widgets.Console import (
     ConsoleStagedContextTray,
 )
 from ...Widgets.compact_model_bar import CompactModelBar
+from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 
 # Import the existing chat window to reuse its functionality
 from ..Chat_Window_Enhanced import ChatWindowEnhanced
@@ -59,6 +65,13 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 logger = logger.bind(module="ChatScreen")
+CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
+CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
+CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
+CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP = "Type a Library RAG query before running retrieval."
+CONSOLE_LIBRARY_RAG_QUERY_INVALID_TOOLTIP = (
+    "Enter a valid Library RAG query without scripts or unsafe markup."
+)
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -92,6 +105,24 @@ def _source_mentions_rag(source: Any) -> bool:
     """
     tokens = re.split(r"[^a-z0-9]+", str(source or "").lower())
     return "rag" in tokens
+
+
+def _sanitize_console_library_rag_query(value: Any) -> str:
+    """Return a centralized-validation-safe Console Library RAG query."""
+    sanitized = sanitize_string(
+        str(value or ""),
+        max_length=CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH,
+    )
+    query = " ".join(sanitized.strip().split())
+    if not query:
+        return ""
+    if not validate_text_input(
+        query,
+        max_length=CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH,
+        allow_html=False,
+    ):
+        return ""
+    return query
 
 
 def _has_selected_text(value: Any) -> bool:
@@ -210,6 +241,7 @@ class ChatScreen(BaseAppScreen):
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._console_control_provider: Optional[Any] = None
         self._console_control_model: Optional[Any] = None
+        self._console_library_rag_query = ""
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -339,6 +371,13 @@ class ChatScreen(BaseAppScreen):
         if pending_launch is None:
             return "not staged"
         if _source_mentions_rag(pending_launch.source):
+            launch_status = str(pending_launch.status or "").strip().lower()
+            if launch_status in {"blocked", "failed", "unavailable"}:
+                return "unavailable"
+            if launch_status == "empty":
+                return "no results"
+            if launch_status == "searching":
+                return "retrieving from Library Search/RAG"
             if self._launch_has_rag_source_payload(pending_launch):
                 return "staged from Library Search/RAG"
             return "missing source"
@@ -416,6 +455,9 @@ class ChatScreen(BaseAppScreen):
             for row in card_state.rows:
                 yield Static(row.text, id=row.widget_id, classes=row.classes)
 
+    def _console_library_rag_scope_label(self) -> str:
+        return f"Library scope: {', '.join(CONSOLE_LIBRARY_RAG_SOURCE_SCOPE)}"
+
     def _render_console_live_work_source_readiness(self) -> ComposeResult:
         """Render Console source readiness when no live-work item is staged."""
         readiness = ConsoleLiveWorkSourceReadinessState.default()
@@ -424,6 +466,26 @@ class ChatScreen(BaseAppScreen):
                 readiness.title,
                 id=readiness.title_id,
                 classes=readiness.title_classes,
+            )
+            yield Static(
+                self._console_library_rag_scope_label(),
+                id="console-library-rag-scope",
+                classes="destination-section console-library-rag-scope",
+            )
+            yield Input(
+                value=self._console_library_rag_query,
+                placeholder="Ask Library sources before sending",
+                id="console-library-rag-query-input",
+            )
+            query_ready = bool(
+                _sanitize_console_library_rag_query(self._console_library_rag_query)
+            )
+            yield Button(
+                "Run Library RAG",
+                id="console-run-library-rag",
+                disabled=not query_ready,
+                tooltip="" if query_ready else CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP,
+                classes="destination-action-button console-library-rag-run",
             )
             for row in readiness.rows:
                 yield Static(row.text, id=row.widget_id, classes=row.classes)
@@ -441,6 +503,112 @@ class ChatScreen(BaseAppScreen):
         self.app_instance.notify(
             "Console action is unavailable for this live-work item.",
             severity="warning",
+        )
+
+    @on(Input.Changed, "#console-library-rag-query-input")
+    def update_console_library_rag_query(self, event: Input.Changed) -> None:
+        """Track the Console-side Library RAG query and refresh the run action."""
+        event.stop()
+        raw_query = str(event.value or "")
+        self._console_library_rag_query = _sanitize_console_library_rag_query(raw_query)
+        try:
+            run_button = self.query_one("#console-run-library-rag", Button)
+        except QueryError:
+            return
+        query_ready = bool(self._console_library_rag_query)
+        run_button.disabled = not query_ready
+        invalid_query = bool(raw_query.strip()) and not query_ready
+        disabled_tooltip = (
+            CONSOLE_LIBRARY_RAG_QUERY_INVALID_TOOLTIP
+            if invalid_query
+            else CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP
+        )
+        run_button.tooltip = "" if query_ready else disabled_tooltip
+
+    @on(Button.Pressed, "#console-run-library-rag")
+    def handle_console_run_library_rag(self, event: Button.Pressed) -> None:
+        """Request Library retrieval from the Console source-readiness seam."""
+        event.stop()
+        query = _sanitize_console_library_rag_query(self._console_library_rag_query)
+        if not query:
+            self.app_instance.notify(
+                CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP,
+                severity="warning",
+            )
+            return
+        request = LibraryRagSearchRequest(
+            query=query,
+            source_types=CONSOLE_LIBRARY_RAG_SOURCE_SCOPE,
+            mode="rag",
+            top_k=5,
+            include_citations=True,
+        )
+        self._stage_console_library_rag_launch(
+            ConsoleLiveWorkLaunch.from_values(
+                source="Library Search/RAG",
+                title="Library Search/RAG retrieval",
+                payload={
+                    "query": request.query,
+                    "source_scope": ", ".join(request.source_types),
+                },
+                status="searching",
+                recovery="Retrieving Library Search/RAG evidence.",
+                action_label="Review evidence in Console",
+            )
+        )
+        self._execute_console_library_rag_search(request)
+
+    def _stage_console_library_rag_launch(self, launch: ConsoleLiveWorkLaunch) -> None:
+        self._pending_console_launch_context = launch
+        self.refresh(recompose=True)
+
+    @work(exclusive=True)
+    async def _execute_console_library_rag_search(self, request: LibraryRagSearchRequest) -> None:
+        outcome = await run_library_rag_search(self.app_instance, request)
+        await self._apply_console_library_rag_search_outcome(request, outcome)
+
+    async def _apply_console_library_rag_search_outcome(
+        self,
+        request: LibraryRagSearchRequest,
+        outcome: Any,
+    ) -> None:
+        if not self.is_mounted:
+            return
+        if outcome.results:
+            result = outcome.results[0]
+            self._stage_console_library_rag_launch(
+                ConsoleLiveWorkLaunch.from_values(
+                    source="Library Search/RAG",
+                    title=result.title,
+                    payload=build_library_rag_console_live_work_payload(
+                        result,
+                        query=request.query,
+                    ),
+                    status="staged",
+                    recovery=CONSOLE_LIBRARY_RAG_RECOVERY_COPY,
+                    action_label="Review evidence in Console",
+                )
+            )
+            return
+
+        recovery_state = outcome.recovery_state
+        recovery_copy = (
+            recovery_state.visible_copy
+            if recovery_state is not None
+            else "Library Search/RAG did not return usable evidence."
+        )
+        self._stage_console_library_rag_launch(
+            ConsoleLiveWorkLaunch.from_values(
+                source="Library Search/RAG",
+                title="Library Search/RAG retrieval",
+                payload={
+                    "query": request.query,
+                    "source_scope": ", ".join(request.source_types),
+                },
+                status=outcome.status or "blocked",
+                recovery=recovery_copy,
+                action_label="Resolve Library RAG setup",
+            )
         )
         
     def compose_content(self) -> ComposeResult:
@@ -676,9 +844,11 @@ class ChatScreen(BaseAppScreen):
             pass
 
         try:
+            if self.chat_window is not None:
+                tab_container = getattr(self.chat_window, "_tab_container", None)
+                if tab_container is not None:
+                    return tab_container
             if isinstance(self.chat_window, ChatWindowEnhanced):
-                if self.chat_window._tab_container is not None:
-                    return self.chat_window._tab_container
                 return self.chat_window.query_one("ChatTabContainer")
         except NoMatches:
             return None

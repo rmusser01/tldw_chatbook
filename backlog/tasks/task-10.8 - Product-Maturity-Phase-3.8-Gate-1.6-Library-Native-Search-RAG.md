@@ -1,10 +1,10 @@
 ---
 id: TASK-10.8
 title: 'Product Maturity Phase 3.8: Gate 1.6 Library Native Search/RAG'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-07 12:00'
-updated_date: '2026-05-08 01:56'
+updated_date: '2026-05-08 02:30'
 labels:
   - product-maturity
   - phase-3-knowledge-study
@@ -24,10 +24,10 @@ Plan and execute the required Gate 1.6 Library-native Search/RAG workflow so use
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Library Search/RAG mode exposes source scope query input retrieval status evidence/results citations/snippets and setup/error recovery inside the Library shell.
-- [ ] #2 Library Search/RAG results can stage evidence into Console with source authority citations/snippets and recovery copy preserved.
-- [ ] #3 Console can invoke RAG against Library sources with visible retrieval state or explicit recovery.
-- [ ] #4 Focused automated and QA walkthrough evidence prove the workflow is usable rather than only selectable.
+- [x] #1 Library Search/RAG mode exposes source scope query input retrieval status evidence/results citations/snippets and setup/error recovery inside the Library shell.
+- [x] #2 Library Search/RAG results can stage evidence into Console with source authority citations/snippets and recovery copy preserved.
+- [x] #3 Console can invoke RAG against Library sources with visible retrieval state or explicit recovery.
+- [x] #4 Focused automated and QA walkthrough evidence prove the workflow is usable rather than only selectable.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,4 +52,8 @@ Started Gate 1.6 execution with TASK-10.8.1. The first slice adds pure Library S
 Continued Gate 1.6 with TASK-10.8.2. Library Search/RAG mode now mounts a native panel with source scope query controls evidence/results inspector and Console handoff action inside the existing Library shell, while keeping the legacy Search/RAG route button as a compatibility fallback. Remaining child tasks cover retrieval adapter execution, evidence normalization, Console handoff/invocation, and QA closeout.
 
 Continued Gate 1.6 with TASK-10.8.3. Library Search/RAG now has a retrieval adapter seam, normalized evidence rows with citations/snippets, worker-backed query execution from the Library panel, and stable recovery states for unavailable, policy-denied, empty, and failed retrieval outcomes. Remaining child tasks cover Console handoff/invocation and QA closeout.
+
+Continued Gate 1.6 with TASK-10.8.4. Library Search/RAG evidence can now be selected and staged into Console with query, source IDs, chunk ID, snippet, citations, score, runtime backend, source authority, and review recovery copy preserved. Console can also invoke Library RAG against the visible local Library scope or stage a recoverable blocked state when the retrieval service is unavailable.
+
+Closed Gate 1.6 with TASK-10.8.5. QA evidence and roadmap/backlog tracking now mark Gate 1.6 / Phase 3.8 verified for Library-native Search/RAG source scope, query execution, evidence review, Console handoff, Console-initiated RAG, and persistent recovery states. Residual risks remain for deeper Workspaces, Collections, full legacy SearchRAG replacement, and full conversational answer synthesis.
 <!-- SECTION:NOTES:END -->

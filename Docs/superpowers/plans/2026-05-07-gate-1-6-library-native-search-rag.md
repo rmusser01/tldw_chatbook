@@ -250,7 +250,7 @@ Backlog: `TASK-10.8.4`
 - Modify: `Tests/UI/test_console_internals_decomposition.py`
 - Test: `Tests/UI/test_search_handoffs.py`
 
-- [ ] **Step 1: Add handoff red tests**
+- [x] **Step 1: Add handoff red tests**
 
 Assert that selecting a Library RAG result and pressing `#library-rag-use-in-console` calls `open_console_for_live_work` with:
 
@@ -259,19 +259,19 @@ Assert that selecting a Library RAG result and pressing `#library-rag-use-in-con
 - payload fields for `query`, `source_id`, `chunk_id`, `snippet`, `citations`, `score`, and `runtime_backend`
 - recovery copy: `Review citations before sending.`
 
-- [ ] **Step 2: Add Console-invoked RAG red test**
+- [x] **Step 2: Add Console-invoked RAG red test**
 
 Add a mounted Console test proving a Console RAG action can request Library retrieval against visible Library source scope and shows retrieval state in `#console-run-inspector` or staged context. Keep this as a seam test; do not implement full conversational retrieval rewriting.
 
-- [ ] **Step 3: Implement handoff builders**
+- [x] **Step 3: Implement handoff builders**
 
 Reuse `build_search_chat_handoff_payload` metadata rules where possible. Add a Library-specific builder only if the payload needs Library source scope fields that legacy Search/RAG does not expose.
 
-- [ ] **Step 4: Wire Console action**
+- [x] **Step 4: Wire Console action**
 
 Expose a minimal Console RAG invocation seam that stages a Library RAG query/result with visible status. If runtime support is missing, render a blocked state with owner and next action.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 $PY -m pytest -q Tests/UI/test_product_maturity_gate16_library_search_rag.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_search_handoffs.py Tests/UI/test_console_live_work_handoffs.py --tb=short
@@ -292,11 +292,11 @@ Backlog: `TASK-10.8.5`
 - Modify: `backlog/tasks/task-10.8*.md`
 - Test: `Tests/UI/test_product_maturity_gate16_library_search_rag.py`
 
-- [ ] **Step 1: Add evidence tracking red test**
+- [x] **Step 1: Add evidence tracking red test**
 
 Add a test that verifies the Gate 1.6 QA evidence doc exists, includes `## Scope`, `## Walkthrough`, `## Verification`, `## Residual Risk`, and records selectors for `#library-search-rag-panel`, `#library-rag-query-input`, `#library-rag-results`, `#library-rag-use-in-console`, and Console staged evidence.
 
-- [ ] **Step 2: Run focused verification**
+- [x] **Step 2: Run focused verification**
 
 ```bash
 $PY -m pytest -q Tests/Library/test_library_rag_state.py Tests/Library/test_library_rag_service.py Tests/UI/test_product_maturity_gate16_library_search_rag.py Tests/UI/test_product_maturity_phase3_library_contract_layout.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_search_handoffs.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_console_live_work_handoffs.py --tb=short
@@ -304,7 +304,7 @@ $PY -m pytest -q Tests/Library/test_library_rag_state.py Tests/Library/test_libr
 
 Expected: pass with known warnings only.
 
-- [ ] **Step 3: Perform manual QA walkthrough**
+- [x] **Step 3: Perform manual QA walkthrough**
 
 Run:
 
@@ -321,7 +321,7 @@ Walk through:
 - Stage a selected result into Console and verify the staged context preserves source authority and citations/snippets.
 - Start from Console and invoke Library RAG, verifying retrieval state or a recoverable blocker.
 
-- [ ] **Step 4: Update tracking and commit**
+- [x] **Step 4: Update tracking and commit**
 
 ```bash
 git add Docs/superpowers/qa/product-maturity/phase-3/2026-05-07-gate-1-6-library-native-search-rag.md Docs/superpowers/qa/product-maturity/phase-3/README.md Docs/superpowers/trackers/product-maturity-roadmap.md "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md" backlog/tasks/task-10.8*
@@ -334,20 +334,20 @@ git commit -m "Record Gate 1.6 Library Search RAG verification"
 - Read: all modified files
 - Verify: focused suite and diff hygiene
 
-- [ ] **Step 1: Run the full Gate 1.6 focused suite**
+- [x] **Step 1: Run the full Gate 1.6 focused suite**
 
 ```bash
 $PY -m pytest -q Tests/Library/test_library_rag_state.py Tests/Library/test_library_rag_service.py Tests/UI/test_product_maturity_gate16_library_search_rag.py Tests/UI/test_product_maturity_phase3_library_contract_layout.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_search_handoffs.py Tests/UI/test_ux_audit_smoke.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_disabled_action_recovery_tooltips.py --tb=short
 ```
 
-- [ ] **Step 2: Run diff hygiene**
+- [x] **Step 2: Run diff hygiene**
 
 ```bash
 git diff --check
 git status --short --branch
 ```
 
-- [ ] **Step 3: Self-review against binding specs**
+- [x] **Step 3: Self-review against binding specs**
 
 Confirm:
 
@@ -358,7 +358,7 @@ Confirm:
 - Console-initiated RAG has visible retrieval state or explicit recovery.
 - Workspaces/Collections deeper behavior remains documented residual risk if not implemented in this gate.
 
-- [ ] **Step 4: Prepare PR summary**
+- [x] **Step 4: Prepare PR summary**
 
 ```markdown
 ## Summary
