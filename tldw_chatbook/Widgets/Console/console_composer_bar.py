@@ -302,12 +302,27 @@ class ConsoleComposerBar(Horizontal):
         click_y = max(0, event.y)
         display_text = self._display_draft_text()
         wrapped_lines = self._wrap_draft_lines(display_text, self._draft_render_width())
-        if len(wrapped_lines) > self.MAX_DRAFT_ROWS or click_y >= len(wrapped_lines):
+        first_visible_line = max(0, len(wrapped_lines) - self.MAX_DRAFT_ROWS)
+        visible_lines = wrapped_lines[first_visible_line:]
+        if click_y >= len(visible_lines):
             return None
-        clicked_line = wrapped_lines[click_y]
+        clicked_line = visible_lines[click_y]
+        line_start = sum(len(line) for line in wrapped_lines[: first_visible_line + click_y])
+
+        if first_visible_line and click_y == 0:
+            ellipsis_prefix = "... "
+            stripped_line = clicked_line.lstrip()
+            if not stripped_line or click_x < len(ellipsis_prefix):
+                return None
+            trimmed_columns = len(clicked_line) - len(stripped_line)
+            underlying_x = trimmed_columns + click_x - len(ellipsis_prefix)
+            if underlying_x >= len(clicked_line):
+                return None
+            return line_start + underlying_x
+
         if click_x >= len(clicked_line):
             return None
-        return sum(len(line) for line in wrapped_lines[:click_y]) + click_x
+        return line_start + click_x
 
     def _target_unfurl_segment(self, event: Click) -> _DraftSegment | None:
         """Return the collapsed paste segment targeted by the click position."""

@@ -465,6 +465,45 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
 
 
 @pytest.mark.asyncio
+async def test_console_collapsed_paste_click_targets_token_after_visible_clipping():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        prefix = "preceding wrapped composer text " * 40
+        pasted_text = "visible clipped paste " * 10
+        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+
+        composer.insert_text(prefix)
+        composer.insert_pasted_text(pasted_text)
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
+        visible_lines = visible_plain.splitlines()
+        assert len(composer._wrap_draft_lines(composer._display_draft_text(), composer._draft_render_width())) > (
+            ConsoleComposerBar.MAX_DRAFT_ROWS
+        )
+        assert visible_lines[0].startswith("...")
+        token_row = next(index for index, line in enumerate(visible_lines) if expected_token in line)
+        token_column = visible_lines[token_row].index(expected_token)
+
+        await pilot.click(
+            "#console-command-visible-text",
+            offset=(token_column + 1, token_row),
+        )
+        await pilot.pause(0.1)
+
+        assert "Unfurl?" in visible_draft.renderable.plain
+        assert expected_token not in visible_draft.renderable.plain
+        assert composer.draft_text() == f"{prefix}{pasted_text}"
+
+
+@pytest.mark.asyncio
 async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
     app = _build_test_app()
     host = ConsoleHarness(app)
