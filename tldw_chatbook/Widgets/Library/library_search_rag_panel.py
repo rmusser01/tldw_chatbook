@@ -62,6 +62,12 @@ class LibrarySearchRagPanel(Vertical):
                         f"{index + 1}. {result.title}{score}",
                         id=f"library-rag-result-{index}",
                     )
+                    yield Button(
+                        "Select evidence",
+                        id=f"library-rag-select-result-{index}",
+                        classes="library-rag-result-action",
+                        tooltip="Select this evidence result for Console handoff.",
+                    )
                     yield Static(
                         result.snippet,
                         id=f"library-rag-result-snippet-{index}",

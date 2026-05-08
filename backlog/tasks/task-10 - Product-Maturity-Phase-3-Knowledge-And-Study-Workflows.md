@@ -4,7 +4,7 @@ title: 'Product Maturity Phase 3: Knowledge And Study Workflows'
 status: In Progress
 assignee: []
 created_date: '2026-05-05 15:11'
-updated_date: '2026-05-07 07:05'
+updated_date: '2026-05-08 02:30'
 labels:
   - product-maturity
   - phase-3-knowledge-study
@@ -46,4 +46,6 @@ Closed Gate 1.5 with TASK-10.6. Console now uses native workbench internals for 
 Planned Gate 1.6 with TASK-10.8. The Library-native Search/RAG gate is split into display-state contracts, a Library-owned Search/RAG panel, retrieval adapter and evidence normalization, Console handoff/Console-invoked RAG seams, and QA closeout. Parent remains open for execution of TASK-10.8 and later Workspaces, Library Collections, and deeper Import/Export/Search/RAG study workflows.
 
 Continued Gate 1.6 with TASK-10.8.2. The Library destination now mounts a native Search/RAG panel for source scope, query controls, evidence/results, retrieval inspector, and Console handoff readiness without embedding the legacy Search/RAG route. Parent remains open for retrieval execution, evidence normalization, Console handoff/invocation, QA closeout, Workspaces, Library Collections, and deeper Import/Export/Search/RAG study workflows.
+
+Closed Gate 1.6 with TASK-10.8. Library-native Search/RAG now verifies source scope, query controls, retrieval execution, evidence/results, citations/snippets, selected evidence review, Console staged evidence, Console-initiated Library RAG, and recoverable blocked states. Parent remains open for Workspaces, Library Collections, deeper Import/Export/Search/RAG study flows, and later server-parity depth.
 <!-- SECTION:NOTES:END -->

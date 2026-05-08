@@ -14,6 +14,9 @@ from tldw_chatbook.UI import SearchWindow as search_window_module
 from tldw_chatbook.UI.Views.RAGSearch import search_rag_window
 from tldw_chatbook.UI.SearchWindow import SearchWindow
 from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
+from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
+    build_library_rag_console_live_work_payload,
+)
 from tldw_chatbook.UI.Views.RAGSearch.search_result import SearchResult
 
 
@@ -104,6 +107,39 @@ def test_search_rag_window_use_in_chat_handler_routes_to_app(tmp_path):
     payload = app.open_chat_with_handoff.call_args.args[0]
     assert payload.source == "search-rag"
     assert payload.body == "Retrieved text"
+
+
+def test_library_rag_console_payload_preserves_evidence_fields():
+    result = {
+        "result_id": "note-42:chunk-7",
+        "title": "Incident Review",
+        "snippet": "Expired credential caused the incident.",
+        "source_id": "note-42",
+        "chunk_id": "chunk-7",
+        "score": 0.93,
+        "runtime_backend": "local-fts",
+        "citations": [{"label": "Incident Review p.2"}],
+    }
+
+    payload = build_library_rag_console_live_work_payload(
+        result,
+        query="Why did the incident happen?",
+    )
+
+    assert payload == {
+        "target_id": "local:library-rag:note-42:chunk-7",
+        "result_id": "note-42:chunk-7",
+        "query": "Why did the incident happen?",
+        "title": "Incident Review",
+        "source_id": "note-42",
+        "chunk_id": "chunk-7",
+        "snippet": "Expired credential caused the incident.",
+        "citations": ["Incident Review p.2"],
+        "score": 0.93,
+        "runtime_backend": "local-fts",
+        "source_authority": "local",
+        "source_selector_state": "local",
+    }
 
 
 def test_search_rag_window_use_in_chat_unavailable_explains_recovery(tmp_path):
