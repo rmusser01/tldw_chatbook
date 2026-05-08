@@ -16,6 +16,8 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Library.library_collections_service import LibraryCollectionsServiceError
+from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -24,7 +26,11 @@ from ...Library.library_rag_service import (
 from ...Library.library_rag_state import LibraryRagPanelState
 from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
-from ...Widgets.Library import LibrarySearchRagInspectorPanel, LibrarySearchRagPanel
+from ...Widgets.Library import (
+    LibraryCollectionsPanel,
+    LibrarySearchRagInspectorPanel,
+    LibrarySearchRagPanel,
+)
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
@@ -74,7 +80,10 @@ LIBRARY_MODES = {
         "label": "Collections",
         "button_id": "library-mode-collections",
         "description": "Collections mode: manage Library-owned reusable source sets.",
-        "next_action": "Collections can feed Search/RAG citations/snippets, study generation, and Console.",
+        "next_action": (
+            "Create local source groups now; Collection-scoped Search/RAG citations/snippets, "
+            "Study, and Console are later-stage."
+        ),
     },
     "study": {
         "label": "Study",
@@ -129,6 +138,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state: DestinationRecoveryState | None = None
         self._library_rag_selected_result_id = ""
+        self._library_collections_loaded = False
+        self._library_collections_records = ()
+        self._library_collections_selected_id = ""
+        self._library_collections_error = ""
+        self._library_collection_name_input = ""
+        self._library_collection_description_input = ""
+        self._library_collection_pending_delete_id = ""
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -448,6 +464,21 @@ class LibraryScreen(BaseAppScreen):
             provider_ready=True,
         )
 
+    def _library_collections_panel_state(self) -> LibraryCollectionsPanelState:
+        status = "loading"
+        if self._library_collections_error:
+            status = "error"
+        elif self._library_collections_loaded:
+            status = "ready"
+        return LibraryCollectionsPanelState.from_values(
+            collections=self._library_collections_records,
+            selected_collection_id=self._library_collections_selected_id,
+            status=status,
+            error_message=self._library_collections_error,
+            create_name=self._library_collection_name_input,
+            rename_name=self._library_collection_name_input,
+        )
+
     def compose_content(self) -> ComposeResult:
         has_sources = self._has_local_sources()
         status_label = self._status_label()
@@ -456,6 +487,12 @@ class LibraryScreen(BaseAppScreen):
         search_rag_panel_state = (
             self._library_rag_panel_state() if self._active_mode == "search" else None
         )
+        collections_panel_state = (
+            self._library_collections_panel_state()
+            if self._active_mode == "collections"
+            else None
+        )
+        collection_scoped_actions_deferred = self._active_mode == "collections"
 
         with Vertical(id="library-shell"):
             yield Static("Library", id="library-title", classes="ds-destination-header")
@@ -529,6 +566,14 @@ class LibraryScreen(BaseAppScreen):
                             search_rag_panel_state,
                             id="library-search-rag-panel",
                         )
+                    if collections_panel_state is not None:
+                        yield LibraryCollectionsPanel(
+                            collections_panel_state,
+                            name_value=self._library_collection_name_input,
+                            description_value=self._library_collection_description_input,
+                            delete_pending=bool(self._library_collection_pending_delete_id),
+                            id="library-collections-panel",
+                        )
                     yield Static("Local Library snapshot", classes="destination-section")
                     if not self._library_loaded:
                         yield Static(
@@ -591,33 +636,62 @@ class LibraryScreen(BaseAppScreen):
                         )
                     yield Static("Knowledge workflow", classes="destination-section")
                     yield Static(
-                        "Turn Library material into study sessions, flashcards, and quizzes.",
+                        (
+                            "Collection-scoped Study, Flashcards, Quizzes, and Console "
+                            "are later-stage."
+                            if collection_scoped_actions_deferred
+                            else "Turn Library material into study sessions, flashcards, and quizzes."
+                        ),
                         id="library-study-purpose",
                     )
                     yield Static(
-                        "Study generation entry uses the visible Library source snapshot.",
+                        (
+                            "Use Collections to organize source groups locally; scoped "
+                            "execution remains deferred."
+                            if collection_scoped_actions_deferred
+                            else "Study generation entry uses the visible Library source snapshot."
+                        ),
                         id="library-study-generation-entry",
                     )
                     yield Button(
                         "Study Dashboard",
                         id="library-open-study",
-                        tooltip="Open the Study dashboard for due cards, decks, quizzes, and resume actions.",
+                        disabled=collection_scoped_actions_deferred,
+                        tooltip=(
+                            "Collection-scoped Study is not available yet."
+                            if collection_scoped_actions_deferred
+                            else "Open the Study dashboard for due cards, decks, quizzes, and resume actions."
+                        ),
                     )
                     yield Button(
                         "Flashcards",
                         id="library-open-flashcards",
-                        tooltip="Open flashcards for selected or imported Library material.",
+                        disabled=collection_scoped_actions_deferred,
+                        tooltip=(
+                            "Collection-scoped Flashcards are not available yet."
+                            if collection_scoped_actions_deferred
+                            else "Open flashcards for selected or imported Library material."
+                        ),
                     )
                     yield Button(
                         "Quizzes",
                         id="library-open-quizzes",
-                        tooltip="Open quizzes for selected or imported Library material.",
+                        disabled=collection_scoped_actions_deferred,
+                        tooltip=(
+                            "Collection-scoped Quizzes are not available yet."
+                            if collection_scoped_actions_deferred
+                            else "Open quizzes for selected or imported Library material."
+                        ),
                     )
                     yield Button(
                         "Use in Console",
                         id="library-use-in-console",
-                        disabled=handoff_disabled,
-                        tooltip=handoff_tooltip,
+                        disabled=handoff_disabled or collection_scoped_actions_deferred,
+                        tooltip=(
+                            "Collection-scoped Console handoff is not available yet."
+                            if collection_scoped_actions_deferred
+                            else handoff_tooltip
+                        ),
                     )
 
     @on(Button.Pressed, ".library-mode-chip")
@@ -642,6 +716,8 @@ class LibraryScreen(BaseAppScreen):
                 "is-active",
             )
         await self._sync_search_rag_panel()
+        await self._sync_collections_panel(refresh_snapshot=True)
+        self._sync_collection_scoped_action_buttons()
 
     async def _sync_search_rag_panel(self) -> None:
         mounted_widgets = list(self.query("#library-search-rag-panel, #library-rag-inspector"))
@@ -665,6 +741,101 @@ class LibraryScreen(BaseAppScreen):
             after="#library-rag-entry-point",
         )
 
+    async def _sync_collections_panel(self, *, refresh_snapshot: bool = False) -> None:
+        for widget in list(self.query("#library-collections-panel")):
+            await widget.remove()
+        if self._active_mode != "collections":
+            self._library_collection_pending_delete_id = ""
+            return
+        if refresh_snapshot:
+            await self._refresh_library_collections_snapshot()
+        panel_state = self._library_collections_panel_state()
+        detail = self.query_one("#library-source-detail", Vertical)
+        await detail.mount(
+            LibraryCollectionsPanel(
+                panel_state,
+                name_value=self._library_collection_name_input,
+                description_value=self._library_collection_description_input,
+                delete_pending=bool(self._library_collection_pending_delete_id),
+                id="library-collections-panel",
+            ),
+            after="#library-active-mode-next-action",
+        )
+
+    async def _refresh_library_collections_snapshot(self) -> None:
+        service = getattr(self.app_instance, "library_collections_service", None)
+        list_collections = getattr(service, "list_collections", None)
+        if not callable(list_collections):
+            self._library_collections_records = ()
+            self._library_collections_loaded = True
+            self._library_collections_error = "Library Collections are unavailable in this runtime."
+            return
+        try:
+            records = await self._resolve_maybe_awaitable(list_collections())
+        except Exception:
+            logger.warning("Failed to load Library Collections.", exc_info=True)
+            self._library_collections_records = ()
+            self._library_collections_loaded = True
+            self._library_collections_error = "Library Collections are unavailable."
+            return
+        self._library_collections_records = tuple(records or ())
+        self._library_collections_loaded = True
+        self._library_collections_error = ""
+        if (
+            self._library_collections_selected_id
+            and not any(
+                getattr(record, "collection_id", None) == self._library_collections_selected_id
+                for record in self._library_collections_records
+            )
+        ):
+            self._library_collections_selected_id = ""
+
+    def _sync_collection_scoped_action_buttons(self) -> None:
+        deferred = self._active_mode == "collections"
+        for selector, deferred_tooltip, normal_tooltip in (
+            (
+                "#library-open-study",
+                "Collection-scoped Study is not available yet.",
+                "Open the Study dashboard for due cards, decks, quizzes, and resume actions.",
+            ),
+            (
+                "#library-open-flashcards",
+                "Collection-scoped Flashcards are not available yet.",
+                "Open flashcards for selected or imported Library material.",
+            ),
+            (
+                "#library-open-quizzes",
+                "Collection-scoped Quizzes are not available yet.",
+                "Open quizzes for selected or imported Library material.",
+            ),
+            (
+                "#library-use-in-console",
+                "Collection-scoped Console handoff is not available yet.",
+                "Stage Library source context in Console.",
+            ),
+        ):
+            buttons = list(self.query(selector))
+            if buttons:
+                if selector == "#library-use-in-console" and not deferred:
+                    buttons[0].disabled = not self._has_local_sources()
+                else:
+                    buttons[0].disabled = deferred
+                buttons[0].tooltip = deferred_tooltip if deferred else normal_tooltip
+        purpose_widgets = list(self.query("#library-study-purpose"))
+        if purpose_widgets:
+            purpose_widgets[0].update(
+                "Collection-scoped Study, Flashcards, Quizzes, and Console are later-stage."
+                if deferred
+                else "Turn Library material into study sessions, flashcards, and quizzes."
+            )
+        entry_widgets = list(self.query("#library-study-generation-entry"))
+        if entry_widgets:
+            entry_widgets[0].update(
+                "Use Collections to organize source groups locally; scoped execution remains deferred."
+                if deferred
+                else "Study generation entry uses the visible Library source snapshot."
+            )
+
     @on(Input.Changed, "#library-rag-query-input")
     async def update_library_rag_query(self, event: Input.Changed) -> None:
         event.stop()
@@ -673,6 +844,19 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_query = event.value
         self._reset_library_rag_retrieval_state()
         await self._refresh_search_rag_panel_state_widgets()
+
+    @on(Input.Changed, "#library-collection-name-input")
+    async def update_library_collection_name_input(self, event: Input.Changed) -> None:
+        event.stop()
+        if event.value == self._library_collection_name_input:
+            return
+        self._library_collection_name_input = event.value
+        await self._sync_collections_panel(refresh_snapshot=False)
+
+    @on(Input.Changed, "#library-collection-description-input")
+    async def update_library_collection_description_input(self, event: Input.Changed) -> None:
+        event.stop()
+        self._library_collection_description_input = event.value
 
     def _reset_library_rag_retrieval_state(self) -> None:
         self._library_rag_results = ()
@@ -704,6 +888,103 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = "searching"
         await self._refresh_search_rag_panel_state_widgets()
         self._execute_library_rag_search(request)
+
+    @on(Button.Pressed, "#library-create-collection")
+    async def create_library_collection(self, event: Button.Pressed) -> None:
+        event.stop()
+        service = getattr(self.app_instance, "library_collections_service", None)
+        create_collection = getattr(service, "create_collection", None)
+        if not callable(create_collection):
+            self._library_collections_error = "Library Collections are unavailable."
+            await self._sync_collections_panel(refresh_snapshot=False)
+            return
+        try:
+            created = await self._resolve_maybe_awaitable(
+                create_collection(
+                    self._library_collection_name_input,
+                    description=self._library_collection_description_input,
+                )
+            )
+        except LibraryCollectionsServiceError as exc:
+            self._notify_library_collections_warning(str(exc))
+            return
+        self._library_collections_selected_id = getattr(created, "collection_id", "") or ""
+        self._library_collection_name_input = ""
+        self._library_collection_description_input = ""
+        self._library_collection_pending_delete_id = ""
+        await self._sync_collections_panel(refresh_snapshot=True)
+
+    @on(Button.Pressed, "#library-rename-collection")
+    async def rename_library_collection(self, event: Button.Pressed) -> None:
+        event.stop()
+        if not self._library_collections_selected_id:
+            return
+        service = getattr(self.app_instance, "library_collections_service", None)
+        rename_collection = getattr(service, "rename_collection", None)
+        if not callable(rename_collection):
+            self._library_collections_error = "Library Collections are unavailable."
+            await self._sync_collections_panel(refresh_snapshot=False)
+            return
+        try:
+            renamed = await self._resolve_maybe_awaitable(
+                rename_collection(
+                    self._library_collections_selected_id,
+                    self._library_collection_name_input,
+                    description=self._library_collection_description_input,
+                )
+            )
+        except LibraryCollectionsServiceError as exc:
+            self._notify_library_collections_warning(str(exc))
+            return
+        self._library_collections_selected_id = getattr(renamed, "collection_id", "") or ""
+        self._library_collection_name_input = ""
+        self._library_collection_description_input = ""
+        self._library_collection_pending_delete_id = ""
+        await self._sync_collections_panel(refresh_snapshot=True)
+
+    @on(Button.Pressed, "#library-delete-collection")
+    async def arm_library_collection_delete(self, event: Button.Pressed) -> None:
+        event.stop()
+        if not self._library_collections_selected_id:
+            return
+        self._library_collection_pending_delete_id = self._library_collections_selected_id
+        await self._sync_collections_panel(refresh_snapshot=False)
+
+    @on(Button.Pressed, "#library-confirm-delete-collection")
+    async def confirm_library_collection_delete(self, event: Button.Pressed) -> None:
+        event.stop()
+        target_id = self._library_collection_pending_delete_id
+        if not target_id:
+            return
+        service = getattr(self.app_instance, "library_collections_service", None)
+        delete_collection = getattr(service, "delete_collection", None)
+        if not callable(delete_collection):
+            self._library_collections_error = "Library Collections are unavailable."
+            await self._sync_collections_panel(refresh_snapshot=False)
+            return
+        try:
+            await self._resolve_maybe_awaitable(delete_collection(target_id))
+        except LibraryCollectionsServiceError as exc:
+            self._notify_library_collections_warning(str(exc))
+            return
+        self._library_collections_selected_id = ""
+        self._library_collection_pending_delete_id = ""
+        await self._sync_collections_panel(refresh_snapshot=True)
+
+    @on(Button.Pressed, ".library-collection-row")
+    async def select_library_collection(self, event: Button.Pressed) -> None:
+        event.stop()
+        collection_id = getattr(event.button, "collection_id", "")
+        if not collection_id:
+            return
+        self._library_collections_selected_id = collection_id
+        self._library_collection_pending_delete_id = ""
+        await self._sync_collections_panel(refresh_snapshot=False)
+
+    def _notify_library_collections_warning(self, message: str) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message or "Library Collections action failed.", severity="warning")
 
     @on(Button.Pressed, ".library-rag-result-action")
     async def select_library_rag_result(self, event: Button.Pressed) -> None:
