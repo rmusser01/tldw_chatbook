@@ -6,6 +6,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
+from ...Widgets.destination_workbench import DestinationModeStrip
 from ..MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from ..Navigation.base_app_screen import BaseAppScreen
 
@@ -25,7 +26,17 @@ class MCPScreen(BaseAppScreen):
                 id="mcp-purpose",
                 classes="destination-purpose",
             )
-            self.mcp_panel = UnifiedMCPPanel(self.app_instance, id="unified-mcp-panel", classes="ds-panel")
+            with DestinationModeStrip(id="mcp-mode-strip", classes="destination-mode-strip"):
+                yield Static(
+                    "Mode: Servers | Tools | Permissions | Audit",
+                    id="mcp-mode-label",
+                    classes="destination-section",
+                )
+            self.mcp_panel = UnifiedMCPPanel(
+                self.app_instance,
+                id="unified-mcp-panel",
+                layout_mode="compact-workbench",
+            )
             self.mcp_panel.set_initial_view_state(self.state_data.get("unified_mcp_view_state"))
             yield self.mcp_panel
 

@@ -15,6 +15,7 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 from Tests.UI.test_screen_navigation import _build_test_app
+from tldw_chatbook.UI.MCP_Modules import unified_mcp_panel as unified_mcp_panel_module
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Screens import (
     artifacts_screen as artifacts_screen_module,
@@ -620,4 +621,75 @@ async def test_operational_loading_states_preserve_workbench_geometry(
             loading_marker,
             loading_container,
             context=f"{route} loading state escaped workbench geometry",
+        )
+
+
+@pytest.mark.asyncio
+async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow():
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#mcp-workbench")
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench="#mcp-workbench",
+            strip="#mcp-mode-strip",
+            panes=("#mcp-server-tree-pane", "#mcp-detail-pane", "#mcp-readiness-pane"),
+            actions=("#unified-mcp-action-run",),
+            height=42,
+        )
+
+
+@pytest.mark.asyncio
+async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry():
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#mcp-workbench")
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench="#mcp-workbench",
+            strip="#mcp-mode-strip",
+            panes=("#mcp-server-tree-pane", "#mcp-detail-pane", "#mcp-readiness-pane"),
+            actions=("#unified-mcp-action-run",),
+            height=42,
+        )
+        _assert_marker_inside_container(
+            screen,
+            "#unified-mcp-content",
+            "#mcp-detail-pane",
+            context="MCP loading/status content escaped detail pane",
+        )
+
+
+@pytest.mark.asyncio
+async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
+    async def keep_initial_loading_state(self):
+        return self.context
+
+    monkeypatch.setattr(
+        unified_mcp_panel_module.UnifiedMCPPanel,
+        "load_context",
+        keep_initial_loading_state,
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#unified-mcp-content")
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench="#mcp-workbench",
+            strip="#mcp-mode-strip",
+            panes=("#mcp-server-tree-pane", "#mcp-detail-pane", "#mcp-readiness-pane"),
+            actions=("#unified-mcp-action-run",),
+            height=42,
+        )
+        _assert_marker_inside_container(
+            screen,
+            "#unified-mcp-content",
+            "#mcp-detail-pane",
+            context="MCP forced loading state escaped detail pane",
         )
