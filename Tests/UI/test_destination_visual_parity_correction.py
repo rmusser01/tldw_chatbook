@@ -15,8 +15,14 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.UI.Screens import (
+    artifacts_screen as artifacts_screen_module,
+    library_screen as library_screen_module,
+    personas_screen as personas_screen_module,
+    skills_screen as skills_screen_module,
+    watchlists_collections_screen as wc_screen_module,
+)
 from tldw_chatbook.Widgets.destination_workbench import DestinationWorkbench, WorkbenchPane
 
 
@@ -306,4 +312,159 @@ async def test_library_loading_state_preserves_workbench_geometry(monkeypatch):
             "#library-source-loading",
             "#library-source-detail",
             context="Library loading state escaped source detail pane",
+        )
+
+
+SOURCE_PREP_WORKBENCHES = {
+    "artifacts": {
+        "workbench": "#artifacts-workbench",
+        "strip": "#artifacts-mode-strip",
+        "panes": ("#artifacts-list-pane", "#artifacts-detail-pane", "#artifacts-inspector-pane"),
+        "actions": (
+            "#artifacts-open-chatbooks",
+            "#artifacts-open-library",
+            "#artifacts-import-artifact",
+            "#artifacts-use-in-console",
+        ),
+        "markers": ("#artifacts-console-unavailable",),
+        "marker_container": "#artifacts-inspector-pane",
+    },
+    "personas": {
+        "workbench": "#personas-workbench",
+        "strip": "#personas-mode-strip",
+        "panes": ("#personas-list-pane", "#personas-detail-pane", "#personas-inspector-pane"),
+        "actions": ("#personas-open-profiles", "#personas-attach-to-console"),
+        "markers": ("#personas-empty-state", "#personas-service-error", "#personas-loading-state"),
+        "marker_container": "#personas-detail-pane",
+    },
+    "watchlists_collections": {
+        "workbench": "#watchlists-workbench",
+        "strip": "#watchlists-filter-strip",
+        "panes": ("#watchlists-list-pane", "#watchlists-detail-pane", "#watchlists-inspector-pane"),
+        "actions": ("#wc-open-watchlists", "#wc-attach-to-console", "#watchlists-follow-in-console"),
+        "markers": ("#wc-empty-state", "#wc-service-error", "#wc-loading-state"),
+        "marker_container": "#watchlists-detail-pane",
+    },
+    "skills": {
+        "workbench": "#skills-workbench",
+        "strip": "#skills-mode-strip",
+        "panes": ("#skills-list-pane", "#skills-detail-pane", "#skills-inspector-pane"),
+        "actions": ("#skills-import-skill", "#skills-attach-to-console"),
+        "markers": ("#skills-empty-state", "#skills-service-error", "#skills-loading-state"),
+        "marker_container": "#skills-detail-pane",
+    },
+}
+
+
+@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES.items())
+@pytest.mark.asyncio
+async def test_source_prep_destinations_use_list_detail_inspector_workbench(route, contract):
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, contract["workbench"])
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench=contract["workbench"],
+            strip=contract["strip"],
+            panes=contract["panes"],
+            actions=contract["actions"],
+            height=42,
+        )
+        _assert_any_marker_inside_container(
+            screen,
+            contract["markers"],
+            contract["marker_container"],
+            context=f"{route} non-happy marker escaped workbench pane",
+        )
+
+
+@pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES.items())
+@pytest.mark.asyncio
+async def test_source_prep_default_empty_or_unavailable_states_preserve_workbench_geometry(route, contract):
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, contract["workbench"])
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench=contract["workbench"],
+            strip=contract["strip"],
+            panes=contract["panes"],
+            actions=contract["actions"],
+            height=42,
+        )
+
+
+SOURCE_PREP_LOADING_CONTRACTS = [
+    (
+        "artifacts",
+        artifacts_screen_module.ArtifactsScreen,
+        "_refresh_latest_chatbook_context",
+        "#artifacts-loading-state",
+        SOURCE_PREP_WORKBENCHES["artifacts"],
+        "#artifacts-detail-pane",
+    ),
+    (
+        "personas",
+        personas_screen_module.PersonasScreen,
+        "_refresh_local_behavior_snapshot",
+        "#personas-loading-state",
+        SOURCE_PREP_WORKBENCHES["personas"],
+        "#personas-detail-pane",
+    ),
+    (
+        "watchlists_collections",
+        wc_screen_module.WatchlistsCollectionsScreen,
+        "_refresh_local_wc_snapshot",
+        "#wc-loading-state",
+        SOURCE_PREP_WORKBENCHES["watchlists_collections"],
+        "#watchlists-detail-pane",
+    ),
+    (
+        "skills",
+        skills_screen_module.SkillsScreen,
+        "_refresh_local_skills_context",
+        "#skills-loading-state",
+        SOURCE_PREP_WORKBENCHES["skills"],
+        "#skills-detail-pane",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "route,screen_cls,refresh_method,loading_marker,contract,loading_container",
+    SOURCE_PREP_LOADING_CONTRACTS,
+)
+@pytest.mark.asyncio
+async def test_source_prep_loading_states_preserve_workbench_geometry(
+    monkeypatch,
+    route,
+    screen_cls,
+    refresh_method,
+    loading_marker,
+    contract,
+    loading_container,
+):
+    monkeypatch.setattr(screen_cls, refresh_method, lambda self: None)
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, loading_marker)
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench=contract["workbench"],
+            strip=contract["strip"],
+            panes=contract["panes"],
+            actions=contract["actions"],
+            height=42,
+        )
+        _assert_marker_inside_container(
+            screen,
+            loading_marker,
+            loading_container,
+            context=f"{route} loading state escaped workbench geometry",
         )
