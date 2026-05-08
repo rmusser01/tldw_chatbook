@@ -23,6 +23,20 @@ class NavigateToScreen(Message):
         self.screen_name = screen_name
 
 
+class NavigationButton(Button):
+    """Navigation button that remains pressable when mounted in hidden chrome."""
+
+    def __init__(self, *args, target_route: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._target_route = target_route
+
+    def press(self):
+        if not self.display:
+            self.app.post_message(NavigateToScreen(self._target_route))
+            return self
+        return super().press()
+
+
 class MainNavigationBar(Container):
     """
     Main navigation bar for the application.
@@ -83,7 +97,6 @@ class MainNavigationBar(Container):
     }
 
     .nav-overflow-hint {
-        dock: right;
         width: auto;
         padding: 0 1;
         color: $text-muted;
@@ -113,17 +126,18 @@ class MainNavigationBar(Container):
                 if index > 0:
                     yield Static("·", classes="nav-separator")
 
-                button = Button(
+                button = NavigationButton(
                     destination.label,
                     id=f"nav-{destination.destination_id}",
                     classes="nav-button",
                     tooltip=destination.tooltip,
+                    target_route=destination.primary_route,
                 )
                 if destination.destination_id == self.active_destination_id:
                     button.add_class("is-active")
                 yield button
-        yield Static("More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint")
-    
+            yield Static("More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint")
+
     @on(Button.Pressed, ".nav-button")
     def handle_navigation(self, event: Button.Pressed) -> None:
         """Handle navigation button clicks."""

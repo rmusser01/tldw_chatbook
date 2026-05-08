@@ -72,7 +72,7 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             )
             console_text = _screen_text(app)
             assert "Live work sources" in console_text
-            assert "W+C: Connected" in console_text
+            assert "Watchlists: Connected" in console_text
             assert "More: Ctrl+P" in console_text
             assert any(binding.key == "ctrl+p" for binding in TldwCli.BINDINGS)
 
@@ -109,21 +109,21 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             )
 
             app.open_console_for_live_work(
-                source="W+C",
+                source="Watchlists",
                 title="Daily security feed",
                 payload={"target_id": "local:watchlist_run:91", "run_id": 91},
                 status="failed",
-                recovery="Review the W+C run details or retry from W+C.",
-                action_label="Open W+C run",
+                recovery="Review the Watchlists run details or retry from Watchlists.",
+                action_label="Open Watchlists run",
             )
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
             )
             live_work_text = _screen_text(app)
-            assert "Source: W+C" in live_work_text
+            assert "Source: Watchlists" in live_work_text
             assert "Title: Daily security feed" in live_work_text
-            assert "Action: Open W+C run" in live_work_text
+            assert "Action: Open Watchlists run" in live_work_text
 
             app.screen.query_one("#console-live-work-primary-action", Button).press()
             await _wait_until(

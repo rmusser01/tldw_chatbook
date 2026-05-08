@@ -505,7 +505,7 @@ class TabNavigationProvider(Provider):
         TAB_LIBRARY: "Open Library for source material, imports, notes, media, conversations, and Search/RAG",
         TAB_ARTIFACTS: "Open Artifacts for generated outputs, reports, datasets, and Chatbooks",
         TAB_PERSONAS: "Open Personas for characters, prompts, dictionaries, and behavior profiles",
-        TAB_WATCHLISTS_COLLECTIONS: "Open W+C for monitored sources and curated collections",
+        TAB_WATCHLISTS_COLLECTIONS: "Open Watchlists for monitored sources, runs, alerts, and recovery",
         TAB_SCHEDULES: "Open Schedules for run timing, triggers, pauses, retries, and recovery",
         TAB_WORKFLOWS: "Open Workflows for reusable procedures, dry-runs, and outputs",
         TAB_MCP: "Open MCP for servers, tools, permissions, auth, and audit",

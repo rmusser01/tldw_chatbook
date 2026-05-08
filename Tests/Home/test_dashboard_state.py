@@ -71,7 +71,7 @@ def test_failed_active_work_item_prioritizes_recovery_before_resume():
                 HomeActiveWorkItem(
                     item_id="local:watchlist_run:5",
                     title="Daily security feed",
-                    source="W+C",
+                    source="Watchlists",
                     status="failed",
                     detail_route="subscriptions",
                 ),
@@ -97,14 +97,14 @@ def test_failed_work_details_follow_failed_item_when_mixed_with_running_work():
                 HomeActiveWorkItem(
                     item_id="local:watchlist_run:6",
                     title="Queued release feed",
-                    source="W+C",
+                    source="Watchlists",
                     status="queued",
                     detail_route="subscriptions",
                 ),
                 HomeActiveWorkItem(
                     item_id="local:watchlist_run:5",
                     title="Daily security feed",
-                    source="W+C",
+                    source="Watchlists",
                     status="failed",
                     detail_route="subscriptions",
                 ),
@@ -134,7 +134,7 @@ def test_home_selected_item_uses_same_priority_as_default_details_control():
             HomeActiveWorkItem(
                 item_id="local:watchlist_run:5",
                 title="Daily security feed",
-                source="W+C",
+                source="Watchlists",
                 status="failed",
                 detail_route="subscriptions",
                 console_available=True,
@@ -254,7 +254,7 @@ def test_dashboard_summary_keeps_chatbook_artifact_reachable_when_mixed_with_wat
                 HomeActiveWorkItem(
                     item_id="local:watchlist_run:5",
                     title="Daily feed",
-                    source="W+C",
+                    source="Watchlists",
                     status="running",
                     detail_route="watchlists",
                     console_available=True,
