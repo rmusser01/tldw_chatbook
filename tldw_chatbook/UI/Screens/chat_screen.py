@@ -1328,7 +1328,7 @@ class ChatScreen(BaseAppScreen):
 
     def on_click(self, event: Click) -> None:
         """Reset pending paste unfurl confirmation when clicking outside the token."""
-        target = getattr(event, "target", None)
+        target = getattr(event, "widget", None) or getattr(event, "control", None)
         if getattr(target, "id", None) == "console-command-visible-text":
             return
         try:

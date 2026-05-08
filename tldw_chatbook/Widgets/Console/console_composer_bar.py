@@ -21,10 +21,19 @@ _CollapseState = Literal["literal", "collapsed", "confirm", "expanded"]
 
 @dataclass
 class _DraftSegment:
-    """Private composer segment with canonical payload and optional collapsed display."""
+    """Private composer segment with canonical payload and display state."""
 
     text: str
     collapse_state: _CollapseState = "literal"
+
+
+@dataclass(frozen=True)
+class _DraftSegmentDisplayRange:
+    """Visible character range occupied by a segment display token."""
+
+    segment: _DraftSegment
+    start: int
+    end: int
 
 
 class ConsoleComposerBar(Horizontal):
@@ -88,6 +97,17 @@ class ConsoleComposerBar(Horizontal):
         if segment.collapse_state == "confirm":
             return "Unfurl?"
         return segment.text
+
+    def _segment_display_ranges(self) -> list[_DraftSegmentDisplayRange]:
+        """Return segment ranges in the unwrapped visible draft string."""
+        ranges: list[_DraftSegmentDisplayRange] = []
+        offset = 0
+        for segment in self._segments:
+            display_text = self._segment_display_text(segment)
+            next_offset = offset + len(display_text)
+            ranges.append(_DraftSegmentDisplayRange(segment, offset, next_offset))
+            offset = next_offset
+        return ranges
 
     def _sync_hidden_input(self) -> None:
         """Keep the hidden compatibility input aligned with canonical payload."""
@@ -210,6 +230,7 @@ class ConsoleComposerBar(Horizontal):
             existing = self.draft_text()
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
+        self._reset_pending_unfurl_state()
         self._segments.append(_DraftSegment(text))
         self._sync_hidden_input()
         self._refresh_visible_draft()
@@ -222,6 +243,7 @@ class ConsoleComposerBar(Horizontal):
             existing = self.draft_text()
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
+        self._reset_pending_unfurl_state()
         self._segments.append(
             _DraftSegment(
                 text,
@@ -255,31 +277,56 @@ class ConsoleComposerBar(Horizontal):
         self._sync_hidden_input()
         self._refresh_visible_draft()
 
-    def reset_pending_unfurl(self) -> bool:
-        """Reset any pending paste unfurl confirmations back to collapsed tokens."""
+    def _reset_pending_unfurl_state(self) -> bool:
+        """Reset pending paste unfurl confirmations without refreshing display."""
         changed = False
         for segment in self._segments:
             if segment.collapse_state == "confirm":
                 segment.collapse_state = "collapsed"
                 changed = True
+        return changed
+
+    def reset_pending_unfurl(self) -> bool:
+        """Reset any pending paste unfurl confirmations back to collapsed tokens."""
+        changed = self._reset_pending_unfurl_state()
         if changed:
             self._refresh_visible_draft()
         return changed
 
-    def _target_unfurl_segment(self) -> _DraftSegment | None:
-        """Return the deterministic paste segment targeted by visible-draft clicks."""
-        for segment in self._segments:
-            if segment.collapse_state == "confirm":
-                return segment
-        for segment in self._segments:
-            if segment.collapse_state == "collapsed":
+    def _click_display_index(self, event: Click) -> int | None:
+        """Map a visible-draft click to an unwrapped display-string offset."""
+        widget = getattr(event, "widget", None) or getattr(event, "control", None)
+        padding_left = getattr(getattr(widget, "styles", None), "padding", None)
+        padding_left = getattr(padding_left, "left", 0)
+        click_x = max(0, event.x - padding_left)
+        click_y = max(0, event.y)
+        display_text = self._display_draft_text()
+        wrapped_lines = self._wrap_draft_lines(display_text, self._draft_render_width())
+        if len(wrapped_lines) > self.MAX_DRAFT_ROWS or click_y >= len(wrapped_lines):
+            return None
+        clicked_line = wrapped_lines[click_y]
+        if click_x >= len(clicked_line):
+            return None
+        return sum(len(line) for line in wrapped_lines[:click_y]) + click_x
+
+    def _target_unfurl_segment(self, event: Click) -> _DraftSegment | None:
+        """Return the collapsed paste segment targeted by the click position."""
+        display_index = self._click_display_index(event)
+        if display_index is None:
+            return None
+        for display_range in self._segment_display_ranges():
+            segment = display_range.segment
+            if (
+                display_range.start <= display_index < display_range.end
+                and segment.collapse_state in {"collapsed", "confirm"}
+            ):
                 return segment
         return None
 
     @on(Click, "#console-command-visible-text")
     def _handle_visible_draft_click(self, event: Click) -> None:
         """Advance the simple two-step unfurl flow for collapsed paste segments."""
-        segment = self._target_unfurl_segment()
+        segment = self._target_unfurl_segment(event)
         if segment is None:
             return
         if segment.collapse_state == "collapsed":

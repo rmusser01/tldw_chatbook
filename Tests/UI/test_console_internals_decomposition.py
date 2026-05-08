@@ -393,6 +393,78 @@ async def test_console_collapsed_paste_second_click_unfurls_literal_text():
 
 
 @pytest.mark.asyncio
+async def test_console_collapsed_paste_click_targets_second_chunk_independently():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        first_paste = "first large paste " * 10
+        second_paste = "second large paste " * 10
+        first_token = f"Pasted Text: {len(first_paste)} Characters"
+        second_token = f"Pasted Text: {len(second_paste)} Characters"
+
+        composer.insert_pasted_text(first_paste)
+        composer.insert_pasted_text(second_paste)
+        await pilot.pause(0.1)
+        assert visible_draft.renderable.plain == f"{first_token}{second_token}"
+
+        await pilot.click(
+            "#console-command-visible-text",
+            offset=(len(first_token) + 2, 0),
+        )
+        await pilot.pause(0.1)
+        assert visible_draft.renderable.plain == f"{first_token}Unfurl?"
+
+        await pilot.click(
+            "#console-command-visible-text",
+            offset=(len(first_token) + 2, 0),
+        )
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
+        assert first_token in visible_plain
+        assert "second large paste" in visible_plain
+        assert "first large paste" not in visible_plain
+        assert "Unfurl?" not in visible_plain
+        assert composer.draft_text() == f"{first_paste}{second_paste}"
+
+
+@pytest.mark.asyncio
+async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "typing resets pending paste " * 10
+        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+
+        composer.insert_pasted_text(pasted_text)
+        await pilot.click("#console-command-visible-text", offset=(1, 0))
+        await pilot.pause(0.1)
+        assert visible_draft.renderable.plain == "Unfurl?"
+
+        await pilot.press("x")
+        await pilot.pause(0.1)
+        assert visible_draft.renderable.plain == f"{expected_token}x"
+        assert composer.draft_text() == f"{pasted_text}x"
+
+        await pilot.click("#console-command-visible-text", offset=(1, 0))
+        await pilot.pause(0.1)
+        assert visible_draft.renderable.plain == "Unfurl?x"
+        assert composer.draft_text() == f"{pasted_text}x"
+
+
+@pytest.mark.asyncio
 async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
     app = _build_test_app()
     host = ConsoleHarness(app)
