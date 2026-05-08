@@ -701,7 +701,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_recovery_state = None
         self._library_rag_selected_result_id = ""
         self._library_rag_retrieval_status = "searching"
-        await self._sync_search_rag_panel()
+        await self._refresh_search_rag_panel_state_widgets()
         self._execute_library_rag_search(request)
 
     @work(exclusive=True)
@@ -714,6 +714,10 @@ class LibraryScreen(BaseAppScreen):
         request: LibraryRagSearchRequest,
         outcome: LibraryRagSearchOutcome,
     ) -> None:
+        if not self.is_mounted:
+            return
+        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
+            return
         current_query = self._library_rag_panel_state().query_state.query
         if request.query != current_query:
             return
@@ -721,7 +725,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = outcome.status
         self._library_rag_recovery_state = outcome.recovery_state
         self._library_rag_selected_result_id = ""
-        await self._sync_search_rag_panel()
+        await self._refresh_search_rag_panel_state_widgets()
 
     async def _refresh_search_rag_panel_state_widgets(self) -> None:
         if self._active_mode != "search" or not self.query("#library-search-rag-panel"):

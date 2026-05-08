@@ -28,6 +28,8 @@ LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
 LIBRARY_RAG_DEFAULT_TOP_K = 5
 LIBRARY_RAG_RUN_ACTION_ID = "library-rag-run-query"
 LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID = "library-rag-use-in-console"
+LIBRARY_RAG_SERVICE_ERROR_SELECTOR = "library-rag-service-error"
+LIBRARY_RAG_EMPTY_STATE_SELECTOR = "library-rag-empty-state"
 LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON = (
     "Run a query and select usable evidence before sending to Console."
 )
@@ -626,7 +628,7 @@ class LibraryRagPanelState:
             )
             next_action = _blocked_next_action(recovery_copy)
             active_recovery_selector = (
-                explicit_recovery_selector or "library-rag-service-error"
+                explicit_recovery_selector or LIBRARY_RAG_SERVICE_ERROR_SELECTOR
             )
         elif explicit_status == "empty" or (
             explicit_status == "ready" and not result_rows
@@ -641,7 +643,9 @@ class LibraryRagPanelState:
                 owner="Library retrieval",
             )
             next_action = "Revise the query or broaden the source scope."
-            active_recovery_selector = explicit_recovery_selector
+            active_recovery_selector = (
+                explicit_recovery_selector or LIBRARY_RAG_EMPTY_STATE_SELECTOR
+            )
         elif result_rows:
             normalized_status = "ready"
             recovery_copy = ""

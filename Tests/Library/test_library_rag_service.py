@@ -6,9 +6,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Library import library_rag_service
 from tldw_chatbook.Library.library_rag_service import (
+    LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
+    LibraryRagSearchService,
     LibraryRagSearchRequest,
     run_library_rag_search,
+)
+from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_SERVICE_ERROR_SELECTOR as STATE_SERVICE_ERROR_SELECTOR,
 )
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 
@@ -44,6 +50,17 @@ class PolicyDeniedLibraryRagSearchService:
             effective_source="local",
             authority_owner="active server",
         )
+
+
+def test_library_rag_search_service_public_docstring_is_google_style() -> None:
+    docstring = LibraryRagSearchService.search.__doc__ or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+
+
+def test_service_error_selector_is_shared_from_state_contract() -> None:
+    assert LIBRARY_RAG_SERVICE_ERROR_SELECTOR == STATE_SERVICE_ERROR_SELECTOR
 
 
 @pytest.mark.asyncio
@@ -149,3 +166,33 @@ async def test_run_library_rag_search_maps_empty_and_failed_results_to_recovery(
     assert failed.recovery_state is not None
     assert "Library Search/RAG retrieval failed." in failed.recovery_state.visible_copy
     assert "index unavailable" not in failed.recovery_state.visible_copy
+
+
+@pytest.mark.asyncio
+async def test_run_library_rag_search_logs_failed_retrieval_without_query_text(monkeypatch) -> None:
+    calls = []
+
+    def record_warning(message, *args, **kwargs):
+        calls.append((message, args, kwargs))
+
+    monkeypatch.setattr(library_rag_service.logger, "warning", record_warning)
+
+    failed = await run_library_rag_search(
+        SimpleNamespace(library_rag_search_service=RaisingLibraryRagSearchService()),
+        LibraryRagSearchRequest(
+            query="sensitive private query",
+            source_types=("notes", "media"),
+            mode="search",
+            top_k=7,
+        ),
+    )
+
+    assert failed.status == "failed"
+    assert calls
+    message, _args, kwargs = calls[0]
+    assert "Library Search/RAG retrieval failed." in message
+    assert kwargs["mode"] == "search"
+    assert kwargs["top_k"] == 7
+    assert kwargs["source_types"] == ("notes", "media")
+    assert kwargs["exc_info"] is True
+    assert "sensitive private query" not in str((message, kwargs))

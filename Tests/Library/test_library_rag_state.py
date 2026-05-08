@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_EMPTY_STATE_SELECTOR,
+    LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
     LibraryRagPanelState,
     LibraryRagQueryState,
     LibraryRagResultRow,
@@ -239,6 +241,26 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
 
     assert searching.retrieval_status == "searching"
     assert searching.next_action == "Wait for retrieval results."
+
+
+def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
+    failed = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Find policy evidence",
+        retrieval_status="failed",
+    )
+
+    assert failed.recovery_selector == LIBRARY_RAG_SERVICE_ERROR_SELECTOR
+    assert "Library retrieval could not complete" in failed.recovery_copy
+
+    empty = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Find policy evidence",
+        retrieval_status="empty",
+    )
+
+    assert empty.recovery_selector == LIBRARY_RAG_EMPTY_STATE_SELECTOR
+    assert "No evidence matched the current query." in empty.recovery_copy
 
 
 def test_explicit_empty_scope_selection_is_not_defaulted_to_all_sources() -> None:

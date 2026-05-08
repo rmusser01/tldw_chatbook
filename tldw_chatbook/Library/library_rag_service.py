@@ -7,7 +7,13 @@ from dataclasses import dataclass
 import inspect
 from typing import Any, Protocol
 
-from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
+from loguru import logger
+
+from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_EMPTY_STATE_SELECTOR,
+    LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
+    LibraryRagResultRow,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.UI.destination_recovery import (
     DestinationRecoveryState,
@@ -15,7 +21,7 @@ from tldw_chatbook.UI.destination_recovery import (
 )
 
 
-LIBRARY_RAG_SERVICE_ERROR_SELECTOR = "library-rag-service-error"
+logger = logger.bind(module="LibraryRagService")
 
 
 class LibraryRagSearchService(Protocol):
@@ -28,7 +34,18 @@ class LibraryRagSearchService(Protocol):
         mode: str,
         **kwargs: Any,
     ) -> Any:
-        """Run a Library-native retrieval request."""
+        """Run a Library-native retrieval request.
+
+        Args:
+            query: User question or search query to run against Library sources.
+            scope: Selected Library source type identifiers, such as notes or media.
+            mode: Retrieval mode, currently `rag` or `search`.
+            **kwargs: Backend-specific options such as `top_k` and
+                `include_citations`.
+
+        Returns:
+            Raw retrieval backend result that can be normalized into evidence rows.
+        """
 
 
 @dataclass(frozen=True)
@@ -95,6 +112,13 @@ async def run_library_rag_search(
             ),
         )
     except Exception:
+        logger.warning(
+            "Library Search/RAG retrieval failed.",
+            mode=request.mode,
+            top_k=request.top_k,
+            source_types=request.source_types,
+            exc_info=True,
+        )
         return LibraryRagSearchOutcome(
             status="failed",
             recovery_state=_retrieval_failed_recovery_state(),
@@ -191,7 +215,7 @@ def _empty_results_recovery_state() -> DestinationRecoveryState:
         next_action="Revise the query or broaden the source scope",
         recovery_action="Query input or source scope",
         authority_owner="Library retrieval",
-        stable_selector="library-rag-empty-state",
+        stable_selector=LIBRARY_RAG_EMPTY_STATE_SELECTOR,
         disabled_tooltip=(
             "No evidence matched the current query. "
             "Revise the query or broaden the source scope."
