@@ -693,3 +693,89 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
             "#mcp-detail-pane",
             context="MCP forced loading state escaped detail pane",
         )
+
+
+@pytest.mark.parametrize(
+    "route,strip,workbench,panes,actions",
+    [
+        (
+            "acp",
+            "#acp-mode-strip",
+            "#acp-workbench",
+            ("#acp-list-pane", "#acp-detail-pane", "#acp-inspector-pane"),
+            ("#acp-follow-in-console", "#acp-launch-agent"),
+        ),
+        (
+            "settings",
+            "#settings-category-strip",
+            "#settings-workbench",
+            ("#settings-category-pane", "#settings-detail-pane", "#settings-impact-pane"),
+            ("#settings-open-appearance",),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_runtime_and_settings_destinations_use_pane_layouts(
+    route, strip, workbench, panes, actions
+):
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, workbench)
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench=workbench,
+            strip=strip,
+            panes=panes,
+            actions=actions,
+            height=42,
+        )
+
+
+@pytest.mark.parametrize(
+    "route,strip,workbench,panes,actions,markers,marker_container",
+    [
+        (
+            "acp",
+            "#acp-mode-strip",
+            "#acp-workbench",
+            ("#acp-list-pane", "#acp-detail-pane", "#acp-inspector-pane"),
+            ("#acp-follow-in-console", "#acp-launch-agent"),
+            ("#acp-empty-state", "#acp-console-unavailable"),
+            "#acp-detail-pane",
+        ),
+        (
+            "settings",
+            "#settings-category-strip",
+            "#settings-workbench",
+            ("#settings-category-pane", "#settings-detail-pane", "#settings-impact-pane"),
+            ("#settings-open-appearance",),
+            ("#settings-boundary-note",),
+            "#settings-impact-pane",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_runtime_and_settings_default_states_preserve_workbench_geometry(
+    route, strip, workbench, panes, actions, markers, marker_container
+):
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, workbench)
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench=workbench,
+            strip=strip,
+            panes=panes,
+            actions=actions,
+            height=42,
+        )
+        _assert_any_marker_inside_container(
+            screen,
+            markers,
+            marker_container,
+            context=f"{route} non-happy marker escaped workbench pane",
+        )
