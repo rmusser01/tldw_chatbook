@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import textwrap
 from typing import Any
 
@@ -13,11 +14,21 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Static
 
 
+@dataclass
+class _DraftSegment:
+    """Private composer segment with canonical payload and optional collapsed display."""
+
+    text: str
+    collapse_display: bool = False
+
+
 class ConsoleComposerBar(Horizontal):
     """Expose Console-owned composer actions while reusing active chat sessions."""
 
     DEFAULT_STATUS = "No active Console session."
     DRAFT_PLACEHOLDER = "Type message or command"
+    PASTE_COLLAPSE_THRESHOLD = 50
+    PASTE_COLLAPSE_ENABLED = True
     MIN_DRAFT_ROWS = 1
     MAX_DRAFT_ROWS = 4
     COMPOSER_CHROME_ROWS = 4
@@ -29,6 +40,8 @@ class ConsoleComposerBar(Horizontal):
         self.styles.height = 5
         self.styles.min_height = 5
         self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
+        self._segments: list[_DraftSegment] = []
+        self._segments_initialized = False
 
     @staticmethod
     def _bounded_button(label: str, *, width: int, **kwargs: Any) -> Button:
@@ -41,11 +54,40 @@ class ConsoleComposerBar(Horizontal):
         return button
 
     def draft_text(self) -> str:
-        """Return the visible native Console draft."""
+        """Return the canonical native Console draft payload."""
+        if self._segments_initialized:
+            return self._canonical_draft_text()
         try:
             return self.query_one("#console-command-input", Input).value
         except NoMatches:
             return ""
+
+    def _canonical_draft_text(self) -> str:
+        """Return the full payload represented by composer segments."""
+        return "".join(segment.text for segment in self._segments)
+
+    def _display_draft_text(self) -> str:
+        """Return the display-only draft text represented by composer segments."""
+        if not self._segments_initialized:
+            try:
+                return self.query_one("#console-command-input", Input).value
+            except NoMatches:
+                return ""
+        return "".join(
+            (
+                f"Pasted Text: {len(segment.text)} Characters"
+                if segment.collapse_display
+                else segment.text
+            )
+            for segment in self._segments
+        )
+
+    def _sync_hidden_input(self) -> None:
+        """Keep the hidden compatibility input aligned with canonical payload."""
+        try:
+            self.query_one("#console-command-input", Input).value = self._canonical_draft_text()
+        except NoMatches:
+            return
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
@@ -123,7 +165,7 @@ class ConsoleComposerBar(Horizontal):
 
     def _refresh_visible_draft(self) -> None:
         try:
-            draft = self.query_one("#console-command-input", Input).value
+            draft = self._display_draft_text()
             width = self._draft_render_width()
             row_count = self._visible_draft_row_count(draft, width)
             self.query_one("#console-command-visible-text", Static).update(
@@ -140,22 +182,50 @@ class ConsoleComposerBar(Horizontal):
         self._refresh_visible_draft()
 
     def load_draft(self, text: str) -> None:
-        """Replace the visible native Console draft."""
-        try:
-            self.query_one("#console-command-input", Input).value = text
-        except NoMatches:
-            return
+        """Replace the native Console draft with literal text."""
+        self._segments = [_DraftSegment(text)] if text else []
+        self._segments_initialized = True
+        self._sync_hidden_input()
         self._refresh_visible_draft()
 
     def clear_draft(self) -> None:
-        """Clear the visible native Console draft."""
-        self.load_draft("")
+        """Clear the native Console draft without falling back to stale input."""
+        self._segments = []
+        self._segments_initialized = True
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
 
     def insert_text(self, text: str) -> None:
-        """Append user-entered text to the visible Console draft."""
+        """Append user-entered text to the Console draft as literal text."""
         if not text:
             return
-        self.load_draft(f"{self.draft_text()}{text}")
+        if not self._segments_initialized:
+            existing = self.draft_text()
+            self._segments = [_DraftSegment(existing)] if existing else []
+            self._segments_initialized = True
+        self._segments.append(_DraftSegment(text))
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+
+    def insert_pasted_text(self, text: str) -> None:
+        """Append pasted text, collapsing only large inserted chunks for display."""
+        if not text:
+            return
+        if not self._segments_initialized:
+            existing = self.draft_text()
+            self._segments = [_DraftSegment(existing)] if existing else []
+            self._segments_initialized = True
+        self._segments.append(
+            _DraftSegment(
+                text,
+                collapse_display=(
+                    self.PASTE_COLLAPSE_ENABLED
+                    and len(text) > self.PASTE_COLLAPSE_THRESHOLD
+                ),
+            )
+        )
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
 
     def delete_left(self) -> None:
         """Delete the last draft character for simple terminal-style editing."""

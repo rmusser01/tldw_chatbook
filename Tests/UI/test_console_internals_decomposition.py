@@ -2,7 +2,6 @@ import time
 from pathlib import Path
 
 import pytest
-from textual.events import Paste
 from textual.widgets import Button, Footer, Input, Select, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -248,7 +247,7 @@ async def test_console_native_composer_auto_expands_for_long_drafts():
 
 
 @pytest.mark.asyncio
-async def test_console_native_composer_paste_keeps_large_draft_bounded_and_visible():
+async def test_console_large_paste_collapses_visible_token_but_preserves_payload():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -259,16 +258,85 @@ async def test_console_native_composer_paste_keeps_large_draft_bounded_and_visib
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "pasted composer qa " * 80
+        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
 
-        console.on_paste(Paste(pasted_text))
+        composer.insert_pasted_text(pasted_text)
         await pilot.pause(0.2)
 
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == pasted_text
         assert composer.region.height <= 10
         assert visible_draft.region.height <= 4
-        assert "pasted composer qa" in visible_plain
+        assert expected_token in visible_plain
+        assert pasted_text not in visible_plain
         assert len(visible_plain) < len(pasted_text)
+
+
+@pytest.mark.asyncio
+async def test_console_paste_under_threshold_remains_literal():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "x" * ConsoleComposerBar.PASTE_COLLAPSE_THRESHOLD
+
+        composer.insert_pasted_text(pasted_text)
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
+        assert composer.draft_text() == pasted_text
+        assert visible_plain == pasted_text
+        assert "Pasted Text:" not in visible_plain
+
+
+@pytest.mark.asyncio
+async def test_console_clear_draft_keeps_canonical_payload_empty():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "clear me " * 20
+
+        composer.insert_pasted_text(pasted_text)
+        composer.clear_draft()
+        await pilot.pause(0.1)
+
+        assert composer.draft_text() == ""
+        assert visible_draft.renderable.plain == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        assert pasted_text not in visible_draft.renderable.plain
+
+
+@pytest.mark.asyncio
+async def test_console_normal_insert_text_remains_literal_over_paste_threshold():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        typed_text = "normal typed composer text " * 4
+
+        composer.insert_text(typed_text)
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
+        assert len(typed_text) > ConsoleComposerBar.PASTE_COLLAPSE_THRESHOLD
+        assert composer.draft_text() == typed_text
+        assert "Pasted Text:" not in visible_plain
+        assert "normal typed composer text" in visible_plain
 
 
 @pytest.mark.asyncio
