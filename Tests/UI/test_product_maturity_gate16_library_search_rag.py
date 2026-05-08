@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from textual.widgets import Button, Input
 
@@ -28,6 +30,21 @@ def _seed_library_sources(app) -> None:
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
         [{"title": "Planning Chat", "id": "chat-1"}]
     )
+
+
+async def _wait_for_query_ready(screen, pilot, query: str, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        inputs = list(screen.query("#library-rag-query-input"))
+        buttons = list(screen.query("#library-rag-run-query"))
+        if inputs and buttons:
+            input_widget = inputs[0]
+            run_button = buttons[0]
+            if input_widget.value == query and run_button.disabled is False:
+                await pilot.pause()
+                return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for Library Search/RAG query readiness: {query!r}")
 
 
 @pytest.mark.asyncio
@@ -102,3 +119,35 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
         assert "Conversations: 1 source" in visible_text
         assert "Enter a question or search query" in visible_text
         assert "Run a query and select usable evidence before sending to Console" in visible_text
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_query_updates_action_and_survives_recompose() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    host = DestinationHarness(app, "library")
+    query = "What does the research note say?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+
+        run_button = screen.query_one("#library-rag-run-query", Button)
+        assert run_button.disabled is False
+        assert str(run_button.tooltip) == ""
+        assert len(screen.query("#library-rag-query-recovery")) == 0
+
+        screen.refresh(recompose=True)
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        await _wait_for_selector(screen, pilot, "#library-rag-inspector")
+
+        assert len(screen.query("#library-search-rag-panel")) == 1
+        assert len(screen.query("#library-rag-inspector")) == 1
+        assert screen.query_one("#library-rag-query-input", Input).value == query
+        assert screen.query_one("#library-rag-run-query", Button).disabled is False
