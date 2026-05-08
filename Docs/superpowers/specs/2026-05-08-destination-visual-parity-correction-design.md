@@ -8,13 +8,14 @@ Target branch: `dev` after PR #282 / `75c6f76f`
 
 The current destination screens often render the right labels and stable selectors, but the actual terminal layouts do not match the approved ASCII destination contracts. Several screens are visually unusable at normal terminal sizes because mode bars, control bars, or explanatory stacks consume the viewport before the primary workbench appears.
 
-This correction pass brings the visible Textual layouts into parity with the ASCII contracts before other agents continue deeper feature work. The goal is full visual parity across the major destinations, not full backend feature completion.
+This correction pass brings the visible Textual layouts into parity with the ASCII contracts before other agents continue deeper feature work. The goal is full layout and affordance parity across the major destinations, not full backend feature completion. When a destination lacks backend depth, it must still use the approved pane layout with honest placeholder, blocked, or recovery rows.
 
 ## Source Of Truth
 
 - Binding layout contract: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`
 - Merged Collections split: `Docs/superpowers/specs/2026-05-08-library-collections-ia-split-design.md`
 - Design system direction: `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md`
+- User-facing IA precedence: after PR #282, **Watchlists** is the top-level destination label and **Collections** is Library-owned. Older `W+C` wording in pre-split contracts is a compatibility reference only.
 - Current visual evidence from mounted `140x42` harness:
   - Home dashboard primary grid is visible, but next-best and recent work fall below the viewport.
   - Console renders a two-column stacked layout; the ASCII contract requires staged context, transcript, and inspector as three horizontal workbench panes with composer at the bottom.
@@ -43,6 +44,8 @@ The shared principle is a terminal-native workspace that keeps the active object
 - Do not reintroduce Collections under Watchlists.
 - Do not absorb MCP, ACP, Skills, Personas, Schedules, or Workflows setup into Settings.
 - Do not rewrite Chat provider execution, RAG retrieval semantics, or artifact persistence unless required by layout wiring.
+- Do not treat visual parity as permission to invent working-looking controls for unavailable services. Use disabled actions with specific reasons.
+- Do not manually edit generated CSS. Edit source TCSS/design-system files and regenerate bundled CSS through the existing build path.
 
 ## Shared Visual Grammar
 
@@ -77,6 +80,8 @@ Exceptions:
 - Primary workbench panes must have at least 20 visible rows at `140x42`, unless the screen is intentionally in an empty/recovery state.
 - No primary action footer or selected-item inspector may render below the visible viewport at `140x42`.
 - At `100x32`, each destination must still expose nav, destination identity, primary object list, selected detail, and one recovery/action path. Less important panes may collapse under the detail pane only with explicit labels.
+- Empty, blocked, loading, and unavailable states must render inside the same list/detail/inspector geometry instead of replacing the workbench with a vertical explanation page.
+- Focus path must be predictable: mode/filter strip -> list/tree/scope pane -> detail/workspace pane -> inspector/actions -> footer shortcuts. Home and Console may adapt this path to their documented exceptions.
 
 ## Destination Corrections
 
@@ -220,6 +225,7 @@ Target layout:
 Required correction:
 
 - Remove any visual implication that Collections are managed here.
+- Use Watchlists in user-facing labels, help text, command palette copy, and destination body copy. `W+C` may remain only as an internal compatibility route or legacy test fixture name.
 - Use a list/detail/inspector structure.
 - Keep stage-to-Console and follow-in-Console actions in the inspector.
 
@@ -287,10 +293,11 @@ Target layout:
 
 Required correction:
 
-- Wrap or refactor `UnifiedMCPPanel` into the shared three-pane grammar.
+- Preserve existing MCP service and action behavior while adapting the visible layout into the shared three-pane grammar.
 - Make Source/Server/Scope/Section compact controls, not vertical blocks.
 - Ensure no MCP controls render outside the viewport at `140x42`.
 - Use server-first grouping with visible tool readiness/permission.
+- Avoid broad MCP control-plane rewrites in this pass; if the existing panel cannot be safely reflowed, introduce a layout adapter around current state/action seams.
 
 ### ACP
 
@@ -365,12 +372,15 @@ Add mounted visual-geometry tests that verify:
 - Global nav does not overlap `More: Ctrl+P` with a visible destination label at `140x42`.
 - Each destination's primary workbench starts by row 12 at `140x42`.
 - Mode/filter strips are no more than 2 rows high.
+- Empty, loading, blocked, and unavailable states preserve the approved pane geometry.
 - Home's next-best and recent work regions are visible at `140x42`.
 - Console has three horizontal primary panes and a visible composer.
 - Library has a compact mode strip and visible source/detail/inspector panes.
 - Skeleton destinations expose list/detail/inspector geometry rather than a single vertical stack.
 - MCP content and actions do not render outside the viewport at `140x42`.
 - Compact `100x32` screens still show identity, primary object list, detail, and at least one recovery/action path.
+- Keyboard/focus traversal follows the documented mode/list/detail/inspector/action order.
+- Style changes are made in source TCSS/design-system files, and generated CSS is produced only by the existing regeneration command.
 
 Manual QA must include a mounted or live Textual walkthrough of all top-level destinations at `140x42` and `100x32`, with saved geometry or screenshot evidence.
 
@@ -381,8 +391,10 @@ The implementation plan should split work into reviewable slices:
 1. Shared shell/nav/density and reusable layout classes.
 2. Home, Console, and Library visual corrections.
 3. Output/source-prep destinations: Artifacts, Personas, Watchlists, Skills.
-4. Operational destinations: Schedules, Workflows, MCP, ACP, Settings.
-5. QA closeout and roadmap/backlog tracking.
+4. Operational procedure destinations: Schedules and Workflows.
+5. MCP visual adapter and overflow correction.
+6. Runtime/config destinations: ACP and Settings.
+7. QA closeout and roadmap/backlog tracking.
 
 Each slice should use TDD:
 
@@ -396,6 +408,7 @@ Each slice should use TDD:
 - The app no longer relies on vertical explanatory stacks for top-level destination screens.
 - At `140x42`, all top-level destinations show their primary workbench and primary action/recovery path without scrolling.
 - At `100x32`, all top-level destinations remain usable through explicit compact behavior.
+- Empty, blocked, loading, and unavailable states remain visually consistent with each destination's workbench layout.
 - Collections remain Library-owned, and Watchlists remains top-level without Collections management.
 - Console remains the primary live agentic control surface.
 - No destination falsely implies unavailable backend functionality is implemented; blocked or placeholder states remain honest and recoverable.
