@@ -1423,6 +1423,8 @@ media_db_path = "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
 research_db_path = "~/.local/share/tldw_cli/tldw_chatbook_research.db"
 # Path to the local writing suite database.
 writing_db_path = "~/.local/share/tldw_cli/tldw_chatbook_writing.db"
+# Path to the local Library Collections database.
+library_collections_db_path = "~/.local/share/tldw_cli/tldw_chatbook_library_collections.db"
 USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
 
 # Database integrity checking
@@ -3259,6 +3261,15 @@ def get_media_db_path() -> Path:
         # Use user-specific folder
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_media_v2.db"
+    return db_path
+
+def get_library_collections_db_path() -> Path:
+    custom_path = get_cli_setting("database", "library_collections_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("library_collections_db_path"):
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "tldw_chatbook_library_collections.db"
     return db_path
 
 def get_subscriptions_db_path() -> Path:
