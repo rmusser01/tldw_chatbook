@@ -16,6 +16,11 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Library.library_rag_service import (
+    LibraryRagSearchOutcome,
+    LibraryRagSearchRequest,
+    run_library_rag_search,
+)
 from ...Library.library_rag_state import LibraryRagPanelState
 from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
@@ -119,6 +124,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_loaded = False
         self._active_mode = "sources"
         self._library_rag_query = ""
+        self._library_rag_results = ()
+        self._library_rag_retrieval_status = ""
+        self._library_rag_recovery_state: DestinationRecoveryState | None = None
+        self._library_rag_selected_result_id = ""
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -420,8 +429,19 @@ class LibraryScreen(BaseAppScreen):
             },
             query=self._library_rag_query,
             mode="rag",
-            results=(),
-            retrieval_status="",
+            results=self._library_rag_results,
+            selected_result_id=self._library_rag_selected_result_id,
+            retrieval_status=self._library_rag_retrieval_status,
+            recovery_copy=(
+                self._library_rag_recovery_state.visible_copy
+                if self._library_rag_recovery_state is not None
+                else ""
+            ),
+            recovery_selector=(
+                self._library_rag_recovery_state.stable_selector
+                if self._library_rag_recovery_state is not None
+                else ""
+            ),
             dependencies_ready=True,
             index_ready=True,
             provider_ready=True,
@@ -647,7 +667,64 @@ class LibraryScreen(BaseAppScreen):
     @on(Input.Changed, "#library-rag-query-input")
     async def update_library_rag_query(self, event: Input.Changed) -> None:
         event.stop()
+        if event.value == self._library_rag_query:
+            return
         self._library_rag_query = event.value
+        self._reset_library_rag_retrieval_state()
+        await self._refresh_search_rag_panel_state_widgets()
+
+    def _reset_library_rag_retrieval_state(self) -> None:
+        self._library_rag_results = ()
+        self._library_rag_retrieval_status = ""
+        self._library_rag_recovery_state = None
+        self._library_rag_selected_result_id = ""
+
+    @on(Button.Pressed, "#library-rag-run-query")
+    async def run_library_rag_query(self, event: Button.Pressed) -> None:
+        event.stop()
+        panel_state = self._library_rag_panel_state()
+        run_action = panel_state.query_state.run_action
+        if not run_action.enabled:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(run_action.disabled_reason, severity="warning")
+            return
+
+        request = LibraryRagSearchRequest(
+            query=panel_state.query_state.query,
+            source_types=panel_state.scope.selected_source_types,
+            mode=panel_state.query_state.mode,
+            top_k=panel_state.query_state.top_k,
+            include_citations=panel_state.query_state.include_citations,
+        )
+        self._library_rag_results = ()
+        self._library_rag_recovery_state = None
+        self._library_rag_selected_result_id = ""
+        self._library_rag_retrieval_status = "searching"
+        await self._refresh_search_rag_panel_state_widgets()
+        self._execute_library_rag_search(request)
+
+    @work(exclusive=True)
+    async def _execute_library_rag_search(self, request: LibraryRagSearchRequest) -> None:
+        outcome = await run_library_rag_search(self.app_instance, request)
+        await self._apply_library_rag_search_outcome(request, outcome)
+
+    async def _apply_library_rag_search_outcome(
+        self,
+        request: LibraryRagSearchRequest,
+        outcome: LibraryRagSearchOutcome,
+    ) -> None:
+        if not self.is_mounted:
+            return
+        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
+            return
+        current_query = self._library_rag_panel_state().query_state.query
+        if request.query != current_query:
+            return
+        self._library_rag_results = outcome.results
+        self._library_rag_retrieval_status = outcome.status
+        self._library_rag_recovery_state = outcome.recovery_state
+        self._library_rag_selected_result_id = ""
         await self._refresh_search_rag_panel_state_widgets()
 
     async def _refresh_search_rag_panel_state_widgets(self) -> None:
@@ -681,7 +758,6 @@ class LibraryScreen(BaseAppScreen):
                 await widget.remove()
 
         for selector, value in (
-            ("#library-rag-results-empty", panel_state.next_action),
             ("#library-rag-retrieval-status", f"Status: {panel_state.retrieval_status.title()}"),
             ("#library-rag-next-action", panel_state.next_action),
             ("#library-rag-inspector-empty", panel_state.use_in_console_action.disabled_reason),
@@ -690,10 +766,58 @@ class LibraryScreen(BaseAppScreen):
             if widgets:
                 widgets[0].update(value)
 
+        await self._refresh_library_rag_results_widgets(panel_state)
+
         console_action = panel_state.use_in_console_action
         console_button = self.query_one("#library-rag-use-in-console", Button)
         console_button.disabled = not console_action.enabled
         console_button.tooltip = console_action.tooltip
+
+    async def _refresh_library_rag_results_widgets(
+        self,
+        panel_state: LibraryRagPanelState,
+    ) -> None:
+        results_container = self.query_one("#library-rag-results", Vertical)
+        for child in list(results_container.children)[1:]:
+            await child.remove()
+
+        if panel_state.results:
+            for index, result in enumerate(panel_state.results):
+                score = "" if result.score is None else f" | score {result.score:.3f}"
+                await results_container.mount(
+                    Static(
+                        f"{index + 1}. {result.title}{score}",
+                        id=f"library-rag-result-{index}",
+                    )
+                )
+                await results_container.mount(
+                    Static(
+                        result.snippet,
+                        id=f"library-rag-result-snippet-{index}",
+                    )
+                )
+                if result.citation_labels:
+                    await results_container.mount(
+                        Static(
+                            f"Citations: {', '.join(result.citation_labels)}",
+                            id=f"library-rag-result-citations-{index}",
+                        )
+                    )
+        elif panel_state.retrieval_status == "searching":
+            await results_container.mount(
+                Static("Searching Library sources...", id="library-rag-searching")
+            )
+        elif panel_state.recovery_copy and panel_state.recovery_selector:
+            await results_container.mount(
+                Static(
+                    panel_state.recovery_copy,
+                    id=panel_state.recovery_selector,
+                )
+            )
+        else:
+            await results_container.mount(
+                Static(panel_state.next_action, id="library-rag-results-empty")
+            )
 
     @on(Button.Pressed, "#library-open-notes")
     def open_notes(self) -> None:
