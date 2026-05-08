@@ -11,6 +11,9 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 
+DESTINATION_MODE_STRIP_HEIGHT = 1
+
+
 @dataclass(frozen=True)
 class WorkbenchPane:
     """A titled pane in a destination workbench."""
@@ -58,3 +61,12 @@ class DestinationWorkbench(Horizontal):
                     yield content
                 else:
                     yield from content
+
+
+class DestinationModeStrip(Horizontal):
+    """Compact one-row mode/action strip for destination screens."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.styles.height = DESTINATION_MODE_STRIP_HEIGHT
+        self.styles.min_height = DESTINATION_MODE_STRIP_HEIGHT

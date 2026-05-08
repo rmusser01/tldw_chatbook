@@ -31,6 +31,7 @@ from ...Widgets.Library import (
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
 )
+from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
@@ -515,7 +516,7 @@ class LibraryScreen(BaseAppScreen):
                 id="library-status-row",
                 classes="destination-status-row",
             )
-            with Horizontal(id="library-mode-bar", classes="ds-panel"):
+            with DestinationModeStrip(id="library-mode-bar", classes="destination-mode-strip"):
                 mode_label = Static(
                     "Modes:",
                     id="library-mode-label",
@@ -533,8 +534,8 @@ class LibraryScreen(BaseAppScreen):
                         tooltip=mode["description"],
                     )
 
-            with Horizontal(id="library-contract-grid", classes="ds-panel"):
-                with Vertical(id="library-source-browser", classes="library-region"):
+            with Horizontal(id="library-contract-grid", classes="ds-panel destination-workbench"):
+                with Vertical(id="library-source-browser", classes="library-region destination-workbench-pane"):
                     yield Static("Source Browser", classes="destination-section")
                     yield Button("Open Notes", id="library-open-notes", tooltip="Open saved notes and workspaces.")
                     yield Button("Open Media", id="library-open-media", tooltip="Open ingested media and transcripts.")
@@ -554,7 +555,7 @@ class LibraryScreen(BaseAppScreen):
                         id="library-workspace-scope",
                     )
 
-                with Vertical(id="library-source-detail", classes="library-region"):
+                with Vertical(id="library-source-detail", classes="library-region destination-workbench-pane"):
                     yield Static("Source Detail / Search Results", classes="destination-section")
                     active_mode = self._active_mode_contract()
                     yield Static(
@@ -630,7 +631,7 @@ class LibraryScreen(BaseAppScreen):
                         handoff_disabled = False
                         handoff_tooltip = "Stage Library source context in Console."
 
-                with Vertical(id="library-source-inspector", classes="library-region"):
+                with Vertical(id="library-source-inspector", classes="library-region destination-workbench-pane"):
                     yield Static("Source Inspector", classes="destination-section")
                     yield Static("Authority: local", id="library-source-authority")
                     yield Static(

@@ -103,6 +103,42 @@
     color: $ds-text-primary;
 }
 
+#home-dashboard,
+#console-shell,
+#library-shell {
+    height: 100%;
+    min-height: 0;
+}
+
+#home-title,
+#console-title,
+#library-title {
+    height: $ds-destination-header-height;
+    min-height: $ds-destination-header-height;
+    padding: 0 1;
+    margin: 0;
+    border: none;
+}
+
+#home-purpose,
+#console-purpose,
+#library-purpose,
+#console-status-row,
+#library-status-row,
+#console-mode-bar {
+    height: $ds-destination-compact-strip-height;
+    min-height: $ds-destination-compact-strip-height;
+    padding: 0 1;
+    margin: 0;
+    border: none;
+}
+
+.destination-action-button {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
 .home-dashboard-region,
 .console-region,
 .library-region {
@@ -114,6 +150,8 @@
 #home-dashboard-grid {
     height: $ds-home-dashboard-grid-height;
     min-height: $ds-home-dashboard-grid-height;
+    padding: 0 1;
+    margin: 0;
 }
 
 #home-status-row,
@@ -124,10 +162,35 @@
     min-height: $ds-home-compact-row-height;
     padding: 0 1;
     margin: 0;
+    border: none;
 }
 
 .home-dashboard-region {
     min-height: 0;
+}
+
+#home-attention,
+#home-active-work,
+#home-next-best-action,
+#home-recent-work {
+    height: $ds-home-compact-row-height;
+    min-height: $ds-home-compact-row-height;
+    padding: 0 1;
+    margin: 0;
+    border: none;
+}
+
+#home-followup-row {
+    height: $ds-home-followup-row-height;
+    min-height: 0;
+}
+
+.home-followup-region {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    margin: 0;
 }
 
 #home-active-work-region .ds-toolbar {
@@ -140,11 +203,47 @@
 
 #console-workspace-grid {
     height: $ds-console-workspace-grid-height;
+    min-height: 20;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
 }
 
 #console-control-bar {
-    height: auto;
-    min-height: 3;
+    height: $ds-console-control-bar-height;
+    min-height: $ds-console-control-bar-height;
+    padding: 0 1;
+    margin: 0;
+    overflow: hidden;
+}
+
+#console-staged-context-tray,
+#console-main-column,
+#console-run-inspector {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 20;
+}
+
+#console-transcript-region,
+#console-session-surface {
+    height: 1fr;
+    min-height: 0;
+}
+
+#console-native-composer {
+    height: $ds-console-composer-height;
+    min-height: $ds-console-composer-height;
+    padding: 0 1;
+    margin: 0;
+}
+
+#console-composer-title,
+#console-composer-status,
+.console-control-label {
+    height: 1;
+    min-height: 1;
 }
 
 .console-control-label,
@@ -164,10 +263,15 @@
 #library-mode-bar {
     height: $ds-library-mode-bar-height;
     min-height: $ds-library-mode-bar-height;
+    padding: 0 1;
+    margin: 0;
+    overflow: hidden;
 }
 
 #library-mode-label {
     width: $ds-library-mode-label-width;
+    height: $ds-library-mode-bar-height;
+    min-height: $ds-library-mode-bar-height;
 }
 
 .library-mode-chip {
@@ -175,6 +279,25 @@
     min-width: $ds-library-mode-chip-min-width;
     height: $ds-library-mode-chip-height;
     min-height: $ds-library-mode-chip-height;
+    padding: 0 1;
+}
+
+#library-contract-grid {
+    height: 1fr;
+    min-height: 20;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+}
+
+#library-source-browser,
+#library-source-detail,
+#library-source-inspector {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 20;
+    overflow-y: auto;
 }
 
 .ds-shortcut-bar {
