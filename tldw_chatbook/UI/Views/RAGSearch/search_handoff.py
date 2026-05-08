@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
+from urllib.parse import quote
 
 from ....Chat.chat_handoff_models import ChatHandoffPayload
+from ....Utils.input_validation import sanitize_string, validate_text_input
+
+
+LIBRARY_RAG_PAYLOAD_TEXT_MAX_LENGTH = 1_000
+LIBRARY_RAG_PAYLOAD_QUERY_MAX_LENGTH = 2_000
+LIBRARY_RAG_PAYLOAD_SNIPPET_MAX_LENGTH = 4_000
+LIBRARY_RAG_PAYLOAD_ID_MAX_LENGTH = 512
 
 
 def _normalize_runtime_backend(value: Any) -> str:
@@ -30,21 +37,45 @@ def _result_value(result: Any, key: str, default: Any = None) -> Any:
     return getattr(result, key, default)
 
 
-def _clean_payload_text(value: Any) -> str:
-    return " ".join(str(value or "").strip().split())
+def _validated_payload_text(
+    value: Any,
+    *,
+    fallback: str = "",
+    max_length: int = LIBRARY_RAG_PAYLOAD_TEXT_MAX_LENGTH,
+) -> str:
+    sanitized = sanitize_string(str(value or ""), max_length=max_length)
+    text = " ".join(sanitized.strip().split())
+    if not text:
+        return fallback
+    if not validate_text_input(text, max_length=max_length, allow_html=False):
+        return fallback
+    return text
 
 
 def _safe_target_part(value: Any) -> str:
-    text = _clean_payload_text(value)
-    return re.sub(r"[^a-zA-Z0-9_.:-]+", "-", text).strip("-") or "result"
+    text = _validated_payload_text(
+        value,
+        fallback="result",
+        max_length=LIBRARY_RAG_PAYLOAD_ID_MAX_LENGTH,
+    )
+    return quote(text, safe="._:-") or "result"
 
 
 def _library_rag_result_id(result: Any) -> str:
-    explicit_result_id = _clean_payload_text(_result_value(result, "result_id"))
+    explicit_result_id = _validated_payload_text(
+        _result_value(result, "result_id"),
+        max_length=LIBRARY_RAG_PAYLOAD_ID_MAX_LENGTH,
+    )
     if explicit_result_id:
         return explicit_result_id
-    source_id = _clean_payload_text(_result_value(result, "source_id"))
-    chunk_id = _clean_payload_text(_result_value(result, "chunk_id"))
+    source_id = _validated_payload_text(
+        _result_value(result, "source_id"),
+        max_length=LIBRARY_RAG_PAYLOAD_ID_MAX_LENGTH,
+    )
+    chunk_id = _validated_payload_text(
+        _result_value(result, "chunk_id"),
+        max_length=LIBRARY_RAG_PAYLOAD_ID_MAX_LENGTH,
+    )
     if source_id and chunk_id:
         return f"{source_id}:{chunk_id}"
     if source_id:
@@ -57,7 +88,12 @@ def _library_rag_result_id(result: Any) -> str:
 def _library_rag_citation_labels(result: Any) -> list[str]:
     citation_labels = _result_value(result, "citation_labels")
     if citation_labels:
-        return [_clean_payload_text(label) for label in citation_labels if _clean_payload_text(label)]
+        labels: list[str] = []
+        for label in citation_labels:
+            cleaned = _validated_payload_text(label)
+            if cleaned:
+                labels.append(cleaned)
+        return labels
 
     labels: list[str] = []
     citations = _result_value(result, "citations", ()) or ()
@@ -73,14 +109,14 @@ def _library_rag_citation_labels(result: Any) -> list[str]:
             )
         else:
             label = getattr(citation, "label", citation)
-        cleaned = _clean_payload_text(label)
+        cleaned = _validated_payload_text(label)
         if cleaned:
             labels.append(cleaned)
     return labels
 
 
 def _library_rag_source_authority(runtime_backend: Any) -> str:
-    backend = _clean_payload_text(runtime_backend).lower()
+    backend = _validated_payload_text(runtime_backend).lower()
     return "server" if backend.startswith("server") or "server" in backend else "local"
 
 
@@ -89,22 +125,50 @@ def build_library_rag_console_live_work_payload(
     *,
     query: Any,
 ) -> dict[str, Any]:
-    """Build a Console live-work payload for one Library Search/RAG evidence row."""
+    """Build a Console live-work payload for one Library Search/RAG evidence row.
+
+    Args:
+        result: Library Search/RAG result object or mapping containing evidence
+            metadata such as title, snippet, source ID, chunk ID, runtime backend,
+            score, and citations.
+        query: User-provided Library Search/RAG query to preserve with the
+            staged Console payload after centralized validation.
+
+    Returns:
+        A sanitized Console live-work payload containing a stable target ID,
+        evidence metadata, citation labels, runtime authority, and source
+        selector state.
+    """
     result_id = _library_rag_result_id(result)
-    runtime_backend = _clean_payload_text(_result_value(result, "runtime_backend")) or "local"
+    runtime_backend = (
+        _validated_payload_text(_result_value(result, "runtime_backend")) or "local"
+    )
     source_authority = _library_rag_source_authority(runtime_backend)
     return {
         "target_id": f"local:library-rag:{_safe_target_part(result_id)}",
         "result_id": result_id,
-        "query": _clean_payload_text(query),
-        "title": _clean_payload_text(
+        "query": _validated_payload_text(
+            query,
+            max_length=LIBRARY_RAG_PAYLOAD_QUERY_MAX_LENGTH,
+        ),
+        "title": _validated_payload_text(
             _result_value(result, "title")
             or _result_value(result, "document_title")
-            or "Untitled source"
+            or "",
+            fallback="Untitled source",
         ),
-        "source_id": _clean_payload_text(_result_value(result, "source_id")),
-        "chunk_id": _clean_payload_text(_result_value(result, "chunk_id")),
-        "snippet": _clean_payload_text(_result_value(result, "snippet")),
+        "source_id": _validated_payload_text(
+            _result_value(result, "source_id"),
+            max_length=LIBRARY_RAG_PAYLOAD_ID_MAX_LENGTH,
+        ),
+        "chunk_id": _validated_payload_text(
+            _result_value(result, "chunk_id"),
+            max_length=LIBRARY_RAG_PAYLOAD_ID_MAX_LENGTH,
+        ),
+        "snippet": _validated_payload_text(
+            _result_value(result, "snippet"),
+            max_length=LIBRARY_RAG_PAYLOAD_SNIPPET_MAX_LENGTH,
+        ),
         "citations": _library_rag_citation_labels(result),
         "score": _result_value(result, "score"),
         "runtime_backend": runtime_backend,

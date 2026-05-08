@@ -43,6 +43,7 @@ from ...Library.library_rag_service import (
     run_library_rag_search,
 )
 from ...Utils.chat_diagnostics import ChatDiagnostics
+from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
@@ -66,6 +67,11 @@ if TYPE_CHECKING:
 logger = logger.bind(module="ChatScreen")
 CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
+CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
+CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP = "Type a Library RAG query before running retrieval."
+CONSOLE_LIBRARY_RAG_QUERY_INVALID_TOOLTIP = (
+    "Enter a valid Library RAG query without scripts or unsafe markup."
+)
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -99,6 +105,24 @@ def _source_mentions_rag(source: Any) -> bool:
     """
     tokens = re.split(r"[^a-z0-9]+", str(source or "").lower())
     return "rag" in tokens
+
+
+def _sanitize_console_library_rag_query(value: Any) -> str:
+    """Return a centralized-validation-safe Console Library RAG query."""
+    sanitized = sanitize_string(
+        str(value or ""),
+        max_length=CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH,
+    )
+    query = " ".join(sanitized.strip().split())
+    if not query:
+        return ""
+    if not validate_text_input(
+        query,
+        max_length=CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH,
+        allow_html=False,
+    ):
+        return ""
+    return query
 
 
 def _has_selected_text(value: Any) -> bool:
@@ -453,12 +477,14 @@ class ChatScreen(BaseAppScreen):
                 placeholder="Ask Library sources before sending",
                 id="console-library-rag-query-input",
             )
-            query_ready = bool(self._console_library_rag_query.strip())
+            query_ready = bool(
+                _sanitize_console_library_rag_query(self._console_library_rag_query)
+            )
             yield Button(
                 "Run Library RAG",
                 id="console-run-library-rag",
                 disabled=not query_ready,
-                tooltip="" if query_ready else "Type a Library RAG query before running retrieval.",
+                tooltip="" if query_ready else CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP,
                 classes="destination-action-button console-library-rag-run",
             )
             for row in readiness.rows:
@@ -483,23 +509,30 @@ class ChatScreen(BaseAppScreen):
     def update_console_library_rag_query(self, event: Input.Changed) -> None:
         """Track the Console-side Library RAG query and refresh the run action."""
         event.stop()
-        self._console_library_rag_query = " ".join(str(event.value or "").strip().split())
+        raw_query = str(event.value or "")
+        self._console_library_rag_query = _sanitize_console_library_rag_query(raw_query)
         try:
             run_button = self.query_one("#console-run-library-rag", Button)
         except QueryError:
             return
         query_ready = bool(self._console_library_rag_query)
         run_button.disabled = not query_ready
-        run_button.tooltip = "" if query_ready else "Type a Library RAG query before running retrieval."
+        invalid_query = bool(raw_query.strip()) and not query_ready
+        disabled_tooltip = (
+            CONSOLE_LIBRARY_RAG_QUERY_INVALID_TOOLTIP
+            if invalid_query
+            else CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP
+        )
+        run_button.tooltip = "" if query_ready else disabled_tooltip
 
     @on(Button.Pressed, "#console-run-library-rag")
     def handle_console_run_library_rag(self, event: Button.Pressed) -> None:
         """Request Library retrieval from the Console source-readiness seam."""
         event.stop()
-        query = self._console_library_rag_query.strip()
+        query = _sanitize_console_library_rag_query(self._console_library_rag_query)
         if not query:
             self.app_instance.notify(
-                "Type a Library RAG query before running retrieval.",
+                CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP,
                 severity="warning",
             )
             return

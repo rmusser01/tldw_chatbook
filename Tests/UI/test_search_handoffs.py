@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -140,6 +141,41 @@ def test_library_rag_console_payload_preserves_evidence_fields():
         "source_authority": "local",
         "source_selector_state": "local",
     }
+
+
+def test_library_rag_console_payload_uses_shared_validation_for_unsafe_text():
+    result = {
+        "result_id": "note-42:chunk-7",
+        "title": "<script>alert('bad')</script>",
+        "snippet": "javascript:alert(1)",
+        "source_id": "note-42<script>",
+        "chunk_id": "chunk-7",
+        "runtime_backend": "server-rag",
+        "citations": [{"label": "onclick=bad"}],
+    }
+
+    payload = build_library_rag_console_live_work_payload(
+        result,
+        query="javascript:alert(1)",
+    )
+
+    assert payload["target_id"] == "local:library-rag:note-42:chunk-7"
+    assert payload["result_id"] == "note-42:chunk-7"
+    assert payload["query"] == ""
+    assert payload["title"] == "Untitled source"
+    assert payload["source_id"] == ""
+    assert payload["chunk_id"] == "chunk-7"
+    assert payload["snippet"] == ""
+    assert payload["citations"] == []
+    assert payload["source_authority"] == "server"
+
+
+def test_library_rag_console_payload_helper_documents_contract():
+    docstring = inspect.getdoc(build_library_rag_console_live_work_payload)
+
+    assert docstring is not None
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
 
 
 def test_search_rag_window_use_in_chat_unavailable_explains_recovery(tmp_path):

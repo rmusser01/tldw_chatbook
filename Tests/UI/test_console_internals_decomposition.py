@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,30 @@ class StaticConsoleLibraryRagSearchService:
             }
         )
         return self.result
+
+
+async def _wait_for_console_library_rag_button_state(
+    console,
+    pilot,
+    *,
+    disabled: bool,
+    tooltip_contains: str = "",
+    timeout: float = 2.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        buttons = list(console.query("#console-run-library-rag"))
+        if buttons:
+            button = buttons[0]
+            tooltip = str(button.tooltip or "")
+            if button.disabled is disabled and tooltip_contains in tooltip:
+                await pilot.pause()
+                return
+        await pilot.pause(0.01)
+    raise AssertionError(
+        "Timed out waiting for Console Library RAG run button "
+        f"disabled={disabled!r} tooltip={tooltip_contains!r}"
+    )
 
 
 def test_gate15_console_internals_evidence_is_tracked():
@@ -408,6 +433,31 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
         assert "source_id: note-42" in text
         assert "chunk_id: chunk-7" in text
         assert "Review citations before sending." in text
+
+
+@pytest.mark.asyncio
+async def test_console_rag_query_validation_blocks_unsafe_markup():
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        console.query_one("#console-library-rag-query-input", Input).value = (
+            "<script>alert('bad')</script>"
+        )
+        await _wait_for_console_library_rag_button_state(
+            console,
+            pilot,
+            disabled=True,
+            tooltip_contains="valid Library RAG query",
+        )
+
+        assert console._console_library_rag_query == ""
+        assert service.calls == []
 
 
 @pytest.mark.asyncio
