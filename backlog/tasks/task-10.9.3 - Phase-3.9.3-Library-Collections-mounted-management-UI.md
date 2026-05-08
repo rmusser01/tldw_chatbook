@@ -26,7 +26,7 @@ Mount local Collections management inside the existing Library shell so users ca
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Library Collections mode renders list detail and inspector regions inside the existing Library shell
-- [ ] #2 Users can create select rename and delete local collections with persistent visible status and recovery copy
-- [ ] #3 The UI does not expose server sync or collection-scoped RAG Study or Console actions as enabled unless implemented
+- [ ] #2 Users can create select rename and delete local collections with persistent visible status updated-at display and delete confirmation or recovery
+- [ ] #3 The UI does not expose server sync or collection-scoped RAG Study Flashcards Quizzes or Console actions as enabled unless implemented
 - [ ] #4 Mounted tests cover the management workflow and preserve Gate 1.6 Library Search/RAG regressions
 <!-- AC:END -->

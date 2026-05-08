@@ -26,7 +26,7 @@ Split the combined Watchlists+Collections product model by making Watchlists the
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Visible navigation command palette help and destination copy use Watchlists for monitored-source workflows and do not present Collections as part of the top-level Watchlists destination
-- [ ] #2 Library Collections mode lets users list create select rename and delete local collections with honest local-only or sync-unavailable status
+- [ ] #2 Library Collections mode lets users list create select rename and safely delete local collections with updated-at display and honest local-only or sync-unavailable status
 - [ ] #3 Existing Watchlists active-run Home and Console follow-through remains usable through compatibility route IDs where needed
 - [ ] #4 Focused automated tests and QA walkthrough evidence prove the split and local Collections management are usable rather than merely renderable
 <!-- AC:END -->

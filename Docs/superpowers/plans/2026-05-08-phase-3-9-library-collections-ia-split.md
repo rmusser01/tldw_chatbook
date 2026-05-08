@@ -158,6 +158,14 @@ Backlog: `TASK-10.9.1`
 - Test: `Tests/UI/test_destination_shells.py`
 - Test: `Tests/Home/test_active_work_adapter.py`
 - Test: `Tests/UI/test_console_live_work_handoffs.py`
+- Test: `Tests/UI/test_unified_shell_phase6_first_time_replay.py`
+- Test: `Tests/UI/test_unified_shell_phase6_power_user_replay.py`
+
+- [ ] **Step 0: Start Backlog task**
+
+```bash
+backlog task edit TASK-10.9.1 -s "In Progress" --plan "1. Run the current Watchlists/W+C baseline. 2. Add red tests for Watchlists labels and compatibility. 3. Update shell metadata, command palette, Watchlists screen, Home, and Console visible copy. 4. Run focused verification and diff hygiene. 5. Check ACs, add implementation notes, and mark Done."
+```
 
 - [ ] **Step 1: Run the current Watchlists/W+C baseline**
 
@@ -186,6 +194,8 @@ assert "Collections" not in wc.tooltip
 ```
 
 Update command palette tests to search for `Watchlists` and assert `Watchlists+Collections` is not in command/help text.
+
+Update Phase 6 replay tests that still assert top-level `W+C` labels so the first-time and power-user walkthroughs prove the new visible model.
 
 Update destination tests to assert:
 
@@ -256,12 +266,25 @@ $PY -m pytest -q \
   Tests/UI/test_destination_shells.py \
   Tests/Home/test_active_work_adapter.py \
   Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_unified_shell_phase6_first_time_replay.py \
+  Tests/UI/test_unified_shell_phase6_power_user_replay.py \
   --tb=short
 
 git diff --check
 ```
 
-- [ ] **Step 7: Commit Task 1**
+- [ ] **Step 7: Close Task 1 Backlog state**
+
+Only after verification passes, update the task file before committing:
+
+```bash
+backlog task edit TASK-10.9.1 \
+  --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 \
+  --notes "Implemented Watchlists IA split while preserving compatibility route IDs and active-run follow-through." \
+  -s Done
+```
+
+- [ ] **Step 8: Commit Task 1**
 
 ```bash
 git add \
@@ -277,7 +300,9 @@ git add \
   Tests/UI/test_command_palette_providers.py \
   Tests/UI/test_destination_shells.py \
   Tests/Home/test_active_work_adapter.py \
-  Tests/UI/test_console_live_work_handoffs.py
+  Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_unified_shell_phase6_first_time_replay.py \
+  Tests/UI/test_unified_shell_phase6_power_user_replay.py
 git commit -m "Split Watchlists IA from Collections"
 ```
 
@@ -297,6 +322,12 @@ Backlog: `TASK-10.9.2`
 - Create: `Tests/Library/test_library_collections_state.py`
 - Create: `Tests/Library/test_library_collections_service.py`
 
+- [ ] **Step 0: Start Backlog task**
+
+```bash
+backlog task edit TASK-10.9.2 -s "In Progress" --plan "1. Add pure state and service red tests. 2. Implement versioned SQLite persistence and service contracts. 3. Wire app/config service creation. 4. Run focused verification and diff hygiene. 5. Check ACs, add implementation notes, and mark Done."
+```
+
 - [ ] **Step 1: Add pure state red tests**
 
 Create `Tests/Library/test_library_collections_state.py` covering:
@@ -305,6 +336,7 @@ Create `Tests/Library/test_library_collections_state.py` covering:
 - Ready state selects the first collection by default when no selected ID is provided.
 - Invalid create/rename input disables actions with a visible reason.
 - Sync status renders `local-only` or `sync-unavailable`.
+- Selected collection detail exposes a stable updated timestamp display value.
 - Delete action is disabled when no collection is selected.
 
 Expected before implementation: import failure for `tldw_chatbook.Library.library_collections_state`.
@@ -320,15 +352,33 @@ Cover:
 - Duplicate normalized names are rejected.
 - `rename_collection()` updates `name`, optional `description`, and `updated_at`.
 - `delete_collection()` hides/deletes the record from list/get.
+- Schema version is initialized and foreign-key constraints are enabled.
+- The same source item can belong to multiple collections, while duplicate membership inside one collection is prevented.
 - Invalid names are rejected before SQL.
 
 Expected before implementation: import failure for `tldw_chatbook.Library.library_collections_service`.
 
 - [ ] **Step 3: Implement local SQLite persistence**
 
-Create `tldw_chatbook/DB/Library_Collections_DB.py` with:
+Create `tldw_chatbook/DB/Library_Collections_DB.py` with a `BaseDB`-style schema initializer modeled after `Subscriptions_DB.py`.
+
+Requirements:
+
+- Define `_CURRENT_SCHEMA_VERSION = 1`.
+- Enable `PRAGMA foreign_keys = ON` for every connection used by the DB wrapper.
+- Create and maintain a `schema_version` table.
+- Use a membership primary key that does not prevent the same source item from belonging to multiple collections.
+
+Initial schema:
 
 ```sql
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY NOT NULL
+);
+INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+
 CREATE TABLE IF NOT EXISTS library_collections (
     collection_id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -339,13 +389,14 @@ CREATE TABLE IF NOT EXISTS library_collections (
 );
 
 CREATE TABLE IF NOT EXISTS library_collection_items (
-    item_id TEXT PRIMARY KEY,
+    membership_id TEXT PRIMARY KEY,
     collection_id TEXT NOT NULL,
     source_type TEXT NOT NULL,
     source_id TEXT NOT NULL,
     title TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
-    FOREIGN KEY(collection_id) REFERENCES library_collections(collection_id)
+    FOREIGN KEY(collection_id) REFERENCES library_collections(collection_id) ON DELETE CASCADE,
+    UNIQUE(collection_id, source_type, source_id)
 );
 ```
 
@@ -359,6 +410,8 @@ Create frozen dataclasses:
 - `LibraryCollectionDetail`
 - `LibraryCollectionActionState`
 - `LibraryCollectionsPanelState`
+
+Summary/detail models must carry `updated_at` and a user-facing `updated_at_label`/equivalent so the mounted UI can render a stable `#library-collection-updated-at` selector.
 
 Recommended builder:
 
@@ -420,7 +473,18 @@ $PY -m pytest -q \
 git diff --check
 ```
 
-- [ ] **Step 8: Commit Task 2**
+- [ ] **Step 8: Close Task 2 Backlog state**
+
+Only after verification passes, update the task file before committing:
+
+```bash
+backlog task edit TASK-10.9.2 \
+  --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 \
+  --notes "Implemented Library Collections display-state and local service contracts with versioned local persistence." \
+  -s Done
+```
+
+- [ ] **Step 9: Commit Task 2**
 
 ```bash
 git add \
@@ -450,6 +514,12 @@ Backlog: `TASK-10.9.3`
 - Create/modify: `Tests/UI/test_product_maturity_phase39_library_collections.py`
 - Verify: `Tests/UI/test_product_maturity_gate16_library_search_rag.py`
 
+- [ ] **Step 0: Start Backlog task**
+
+```bash
+backlog task edit TASK-10.9.3 -s "In Progress" --plan "1. Add mounted UI red tests. 2. Implement the Library Collections panel. 3. Wire LibraryScreen handlers and mode-specific affordance suppression. 4. Run focused verification and diff hygiene. 5. Check ACs, add implementation notes, and mark Done."
+```
+
 - [ ] **Step 1: Add mounted red tests**
 
 Create `Tests/UI/test_product_maturity_phase39_library_collections.py`.
@@ -462,9 +532,11 @@ Cover:
 - Empty state copy explains Collections without claiming sync or RAG execution.
 - Creating a collection through `#library-collection-name-input` and `#library-create-collection` adds it to the list and selects it.
 - Renaming through `#library-collection-name-input` and `#library-rename-collection` updates detail copy.
-- Deleting through `#library-delete-collection` removes it and returns to empty state.
+- Delete requires confirmation or immediate undo. Prefer confirm-first: first press `#library-delete-collection` arms `#library-confirm-delete-collection`, second press removes it and returns to empty state.
+- Selected collection detail renders `#library-collection-updated-at`.
 - A service exception renders `#library-collections-error` with retry/recovery copy.
 - `#library-rag-run-query` is not mounted in Collections mode.
+- Study, Flashcards, Quizzes, and Use in Console are hidden, disabled, or relabeled in Collections mode so the UI does not imply collection-scoped Study/Console execution is ready.
 
 Expected before implementation: missing selectors.
 
@@ -482,8 +554,10 @@ Create `LibraryCollectionsPanel` with stable selectors:
 - `#library-create-collection`
 - `#library-rename-collection`
 - `#library-delete-collection`
+- `#library-confirm-delete-collection` or `#library-undo-delete-collection`
 - `#library-collection-sync-status`
 - `#library-collection-item-count`
+- `#library-collection-updated-at`
 
 The widget should receive a `LibraryCollectionsPanelState` and render only. Keep service mutation in `LibraryScreen`.
 
@@ -510,6 +584,7 @@ When `_active_mode == "collections"`:
 
 - Mount `LibraryCollectionsPanel` in `#library-source-detail` after `#library-active-mode-next-action`.
 - Mount lightweight inspector status in `#library-source-inspector` if the panel does not already show it.
+- Hide, disable, or explicitly relabel the always-present Library Study/Flashcards/Quizzes/Use in Console controls while Collections mode is active. The user must not see an enabled action that appears to run Study, RAG, or Console against a selected Collection.
 - Remove Search/RAG widgets when leaving `search` mode.
 - Do not recompose the whole Library shell unnecessarily if targeted widget refresh is enough.
 
@@ -536,6 +611,7 @@ Rules:
 
 - Notify and keep form input visible on invalid names.
 - Refresh panel state after success.
+- Implement delete confirmation or undo. Confirm-first is preferred for this gate because it is smaller and easier to test: first delete press sets a pending delete ID and visible confirmation copy; confirm press calls the service.
 - Use service methods only, not direct DB calls.
 - Keep sync copy as status text only.
 
@@ -563,7 +639,18 @@ $PY -m pytest -q \
 git diff --check
 ```
 
-- [ ] **Step 8: Commit Task 3**
+- [ ] **Step 8: Close Task 3 Backlog state**
+
+Only after verification passes, update the task file before committing:
+
+```bash
+backlog task edit TASK-10.9.3 \
+  --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 \
+  --notes "Implemented mounted Library Collections management UI with safe delete, updated-at visibility, and disabled/deferred scoped workflow actions." \
+  -s Done
+```
+
+- [ ] **Step 9: Commit Task 3**
 
 ```bash
 git add \
@@ -591,6 +678,12 @@ Backlog: `TASK-10.9.4`
 - Modify: `backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md`
 - Modify: `backlog/tasks/task-10.9 - Product-Maturity-Phase-3.9-Library-Collections-IA-Split.md`
 - Modify: `backlog/tasks/task-10.9.4 - Phase-3.9.4-Library-Collections-QA-closeout-and-tracking.md`
+
+- [ ] **Step 0: Start Backlog task**
+
+```bash
+backlog task edit TASK-10.9.4 -s "In Progress" --plan "1. Add tracking red test. 2. Record QA evidence. 3. Update roadmap, QA index, and parent Backlog tracking. 4. Run focused verification and manual QA walkthrough. 5. Check ACs, add implementation notes, and mark Done."
+```
 
 - [ ] **Step 1: Add tracking red test**
 
@@ -631,19 +724,19 @@ Update:
 
 Roadmap status should say Phase 3.9 verified only after the tests and QA walkthrough pass.
 
-- [ ] **Step 4: Update Backlog via CLI**
+- [ ] **Step 4: Update parent Backlog tracking via CLI**
 
-Use Backlog CLI from the implementation worktree:
+Use Backlog CLI from the implementation worktree. Child task start/closeout commands belong to each child task above; this step only updates parent tracking.
 
 ```bash
 backlog task edit TASK-10.9 --plan "1. TASK-10.9.1: Watchlists IA split and compatibility labels.\n2. TASK-10.9.2: Library Collections display-state and local service contracts.\n3. TASK-10.9.3: Library Collections mounted management UI.\n4. TASK-10.9.4: QA closeout and tracking.\n\nPrimary implementation plan: Docs/superpowers/plans/2026-05-08-phase-3-9-library-collections-ia-split.md."
 ```
 
-At closeout, check ACs and set done only after verification:
+At parent closeout, confirm `TASK-10.9.1` through `TASK-10.9.4` are already Done, then check parent ACs and set the parent Done only after all children are Done:
 
 ```bash
-backlog task edit TASK-10.9 --status Done
-backlog task edit TASK-10.9.4 --status Done
+backlog task edit TASK-10.9.4 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --notes "Recorded Phase 3.9 QA closeout..." -s Done
+backlog task edit TASK-10.9 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --notes "Closed Phase 3.9 with Watchlists split and Library Collections verified..." -s Done
 ```
 
 Do not mark tasks done before ACs, implementation notes, and QA evidence are complete.
@@ -661,6 +754,8 @@ $PY -m pytest -q \
   Tests/UI/test_command_palette_providers.py \
   Tests/Home/test_active_work_adapter.py \
   Tests/UI/test_console_live_work_handoffs.py \
+  Tests/UI/test_unified_shell_phase6_first_time_replay.py \
+  Tests/UI/test_unified_shell_phase6_power_user_replay.py \
   Tests/UI/test_product_maturity_gate16_library_search_rag.py \
   Tests/UI/test_product_maturity_phase3_layout_contracts.py \
   --tb=short
@@ -682,7 +777,7 @@ Walk through:
 - Create collection.
 - Select collection.
 - Rename collection.
-- Delete collection.
+- Delete collection through the implemented confirmation or recovery path.
 - Confirm sync is local-only/unavailable, not an enabled fake action.
 - Open Watchlists and confirm it is Watchlists-only.
 - Confirm Watchlists active-run follow-through still works in fixture-backed tests.

@@ -26,6 +26,6 @@ Replay the Library Collections and Watchlists split workflows, record QA evidenc
 <!-- AC:BEGIN -->
 - [ ] #1 QA evidence documents first-time discovery power-user management flow Watchlists continuity and sync honesty
 - [ ] #2 Product maturity roadmap Phase 3 entries record Phase 3.9 evidence and remaining Workspaces Import/Export and deeper study-flow risks
-- [ ] #3 Parent TASK-10 and TASK-10.9 notes are updated with the verified outcome or accepted residual risks
+- [ ] #3 Parent TASK-10 and TASK-10.9 plus child TASK-10.9.1 through TASK-10.9.4 notes are updated with the verified outcome or accepted residual risks
 - [ ] #4 Focused verification commands and git diff hygiene are recorded and pass before closeout
 <!-- AC:END -->
