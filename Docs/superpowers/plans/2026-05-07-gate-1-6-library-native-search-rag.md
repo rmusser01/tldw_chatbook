@@ -169,7 +169,7 @@ Backlog: `TASK-10.8.2`
 - Modify: `tldw_chatbook/UI/Screens/library_screen.py`
 - Create/modify: `Tests/UI/test_product_maturity_gate16_library_search_rag.py`
 
-- [ ] **Step 1: Add mounted red tests**
+- [x] **Step 1: Add mounted red tests**
 
 Add tests proving that pressing `#library-mode-search` keeps the user inside Library and mounts:
 
@@ -184,15 +184,15 @@ Add tests proving that pressing `#library-mode-search` keeps the user inside Lib
 Also assert legacy `#search-rag-container` is not mounted inside Library.
 Keep the existing `Search/RAG` compatibility route action available and tested, but do not make it the primary Library mode experience.
 
-- [ ] **Step 2: Implement panel widget**
+- [x] **Step 2: Implement panel widget**
 
 `LibrarySearchRagPanel` should compose source scope, query input, run button, result/evidence area, and inspector using `LibraryRagPanelState`.
 
-- [ ] **Step 3: Wire Library mode**
+- [x] **Step 3: Wire Library mode**
 
 When `_active_mode == "search"`, `LibraryScreen` should render the native panel in the existing Library detail/inspector shell. Keep `#library-open-search` available as a fallback route button, but the mode itself must be usable without route navigation.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 $PY -m pytest -q Tests/UI/test_product_maturity_gate16_library_search_rag.py Tests/UI/test_product_maturity_phase3_library_contract_layout.py --tb=short
