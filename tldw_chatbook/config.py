@@ -648,6 +648,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_chat_defaults_cli = get_toml_section('chat_defaults')
     final_character_defaults_cli = get_toml_section('character_defaults')
     final_notes_settings_cli = get_toml_section('notes')
+    final_console_settings_cli = get_toml_section('console')
 
     # --- Application Mode ---
     single_user_mode_str = os.getenv("APP_MODE", _get_typed_value(processing_section, "app_mode", "single")).lower()
@@ -729,6 +730,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "chat_defaults": final_chat_defaults_cli,
         "character_defaults": final_character_defaults_cli,
         "notes": final_notes_settings_cli,  # For notes auto-save settings
+        "console": final_console_settings_cli,  # For Console behavior settings
 
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
@@ -1354,6 +1356,9 @@ use_dropdown_navigation = false  # Use dropdown instead of horizontal tabs (true
 palette_theme_limit = 1  # Maximum number of themes to show in command palette (0 = show all)
 log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 users_name = "default_user" # Default user name for the TUI
+
+[console]
+collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 
 [tldw_api]
 base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint

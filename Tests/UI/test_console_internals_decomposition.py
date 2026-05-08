@@ -299,6 +299,30 @@ async def test_console_paste_under_threshold_remains_literal():
 
 
 @pytest.mark.asyncio
+async def test_console_large_paste_collapse_can_be_disabled_from_config():
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": False}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "literal paste chunk " * 10
+        assert len(pasted_text) > ConsoleComposerBar.PASTE_COLLAPSE_THRESHOLD
+
+        composer.insert_pasted_text(pasted_text)
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
+        assert composer.draft_text() == pasted_text
+        assert "Pasted Text:" not in visible_plain
+        assert visible_plain.replace("\n", "") == pasted_text
+
+
+@pytest.mark.asyncio
 async def test_console_clear_draft_keeps_canonical_payload_empty():
     app = _build_test_app()
     host = ConsoleHarness(app)

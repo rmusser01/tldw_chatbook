@@ -706,8 +706,20 @@ class ChatScreen(BaseAppScreen):
                     else:
                         yield from self._render_console_live_work_source_readiness()
             yield self._frame_console_region(
-                ConsoleComposerBar(id="console-native-composer", classes="ds-panel")
+                ConsoleComposerBar(
+                    id="console-native-composer",
+                    classes="ds-panel",
+                    collapse_large_pastes=self._console_collapse_large_pastes_enabled(),
+                )
             )
+
+    def _console_collapse_large_pastes_enabled(self) -> bool:
+        """Return the app-level Console paste-collapse preference."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        console_config = app_config.get("console", {})
+        if not isinstance(console_config, dict):
+            return True
+        return console_config.get("collapse_large_pastes", True) is not False
     
     def on_mount(self) -> None:
         """Run diagnostics when first mounted (only once)."""

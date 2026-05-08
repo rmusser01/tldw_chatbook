@@ -48,14 +48,20 @@ class ConsoleComposerBar(Horizontal):
     COMPOSER_CHROME_ROWS = 4
     FALLBACK_DRAFT_WIDTH = 80
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, *, collapse_large_pastes: bool = True, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.can_focus = True
         self.styles.height = 5
         self.styles.min_height = 5
         self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
+        self.collapse_large_pastes = bool(collapse_large_pastes)
         self._segments: list[_DraftSegment] = []
         self._segments_initialized = False
+
+    @property
+    def collapse_large_pastes_enabled(self) -> bool:
+        """Return whether pasted chunks over the threshold should display compactly."""
+        return self.collapse_large_pastes
 
     @staticmethod
     def _bounded_button(label: str, *, width: int, **kwargs: Any) -> Button:
@@ -248,7 +254,7 @@ class ConsoleComposerBar(Horizontal):
             _DraftSegment(
                 text,
                 collapse_state="collapsed"
-                if self.PASTE_COLLAPSE_ENABLED
+                if self.collapse_large_pastes_enabled
                 and len(text) > self.PASTE_COLLAPSE_THRESHOLD
                 else "literal",
             )

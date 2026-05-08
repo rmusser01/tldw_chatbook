@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, Select, Static, TextArea
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_unified_mcp_panel import FakeUnifiedMCPService
@@ -25,6 +25,7 @@ from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.skills_screen import SkillsScreen
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
@@ -1535,6 +1536,41 @@ async def test_settings_appearance_action_routes_to_customize_surface():
         await pilot.pause(0.1)
 
     assert seen_routes[-1] == "customize"
+
+
+@pytest.mark.asyncio
+async def test_settings_console_paste_collapse_checkbox_reflects_and_persists_config(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    saved_settings = []
+
+    def fake_save_setting(section, key, value):
+        saved_settings.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(
+        settings_screen_module,
+        "save_setting_to_cli_config",
+        fake_save_setting,
+        raising=False,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+        checkbox = screen.query_one(
+            "#settings-console-collapse-large-pastes-checkbox",
+            Checkbox,
+        )
+
+        assert checkbox.value is True
+
+        await pilot.click("#settings-console-collapse-large-pastes-checkbox")
+        await pilot.pause(0.1)
+
+    assert app.app_config["console"]["collapse_large_pastes"] is False
+    assert saved_settings == [("console", "collapse_large_pastes", False)]
 
 
 @pytest.mark.asyncio
