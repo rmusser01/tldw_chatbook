@@ -4,14 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import textwrap
-from typing import Any
+from typing import Any, Literal
 
 from rich.markup import escape
 from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
+from textual.events import Click
 from textual.widgets import Button, Input, Static
+
+
+_CollapseState = Literal["literal", "collapsed", "confirm", "expanded"]
 
 
 @dataclass
@@ -19,7 +24,7 @@ class _DraftSegment:
     """Private composer segment with canonical payload and optional collapsed display."""
 
     text: str
-    collapse_display: bool = False
+    collapse_state: _CollapseState = "literal"
 
 
 class ConsoleComposerBar(Horizontal):
@@ -73,14 +78,16 @@ class ConsoleComposerBar(Horizontal):
                 return self.query_one("#console-command-input", Input).value
             except NoMatches:
                 return ""
-        return "".join(
-            (
-                f"Pasted Text: {len(segment.text)} Characters"
-                if segment.collapse_display
-                else segment.text
-            )
-            for segment in self._segments
-        )
+        return "".join(self._segment_display_text(segment) for segment in self._segments)
+
+    @staticmethod
+    def _segment_display_text(segment: _DraftSegment) -> str:
+        """Return display text for a single draft segment."""
+        if segment.collapse_state == "collapsed":
+            return f"Pasted Text: {len(segment.text)} Characters"
+        if segment.collapse_state == "confirm":
+            return "Unfurl?"
+        return segment.text
 
     def _sync_hidden_input(self) -> None:
         """Keep the hidden compatibility input aligned with canonical payload."""
@@ -218,10 +225,10 @@ class ConsoleComposerBar(Horizontal):
         self._segments.append(
             _DraftSegment(
                 text,
-                collapse_display=(
-                    self.PASTE_COLLAPSE_ENABLED
-                    and len(text) > self.PASTE_COLLAPSE_THRESHOLD
-                ),
+                collapse_state="collapsed"
+                if self.PASTE_COLLAPSE_ENABLED
+                and len(text) > self.PASTE_COLLAPSE_THRESHOLD
+                else "literal",
             )
         )
         self._sync_hidden_input()
@@ -236,13 +243,52 @@ class ConsoleComposerBar(Horizontal):
             return
 
         last_segment = self._segments[-1]
+        if last_segment.collapse_state in {"collapsed", "confirm"}:
+            self._segments.pop()
+            self._sync_hidden_input()
+            self._refresh_visible_draft()
+            return
+
         last_segment.text = last_segment.text[:-1]
-        if last_segment.collapse_display:
-            last_segment.collapse_display = len(last_segment.text) > self.PASTE_COLLAPSE_THRESHOLD
         if not last_segment.text:
             self._segments.pop()
         self._sync_hidden_input()
         self._refresh_visible_draft()
+
+    def reset_pending_unfurl(self) -> bool:
+        """Reset any pending paste unfurl confirmations back to collapsed tokens."""
+        changed = False
+        for segment in self._segments:
+            if segment.collapse_state == "confirm":
+                segment.collapse_state = "collapsed"
+                changed = True
+        if changed:
+            self._refresh_visible_draft()
+        return changed
+
+    def _target_unfurl_segment(self) -> _DraftSegment | None:
+        """Return the deterministic paste segment targeted by visible-draft clicks."""
+        for segment in self._segments:
+            if segment.collapse_state == "confirm":
+                return segment
+        for segment in self._segments:
+            if segment.collapse_state == "collapsed":
+                return segment
+        return None
+
+    @on(Click, "#console-command-visible-text")
+    def _handle_visible_draft_click(self, event: Click) -> None:
+        """Advance the simple two-step unfurl flow for collapsed paste segments."""
+        segment = self._target_unfurl_segment()
+        if segment is None:
+            return
+        if segment.collapse_state == "collapsed":
+            segment.collapse_state = "confirm"
+        elif segment.collapse_state == "confirm":
+            segment.collapse_state = "expanded"
+        self._refresh_visible_draft()
+        event.stop()
+        event.prevent_default()
 
     def sync_session_data(self, session_data: Any | None) -> None:
         """Refresh composer status copy from the active chat session contract."""

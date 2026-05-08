@@ -13,7 +13,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
-from textual.events import Key, Paste
+from textual.events import Click, Key, Paste
 from textual import on, work
 from textual.reactive import reactive
 from textual.css.query import NoMatches, QueryError
@@ -1325,6 +1325,17 @@ class ChatScreen(BaseAppScreen):
             return
         composer.insert_pasted_text(event.text)
         event.stop()
+
+    def on_click(self, event: Click) -> None:
+        """Reset pending paste unfurl confirmation when clicking outside the token."""
+        target = getattr(event, "target", None)
+        if getattr(target, "id", None) == "console-command-visible-text":
+            return
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+        composer.reset_pending_unfurl()
 
     def _sync_compact_shell_controls(
         self,

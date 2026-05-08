@@ -321,7 +321,7 @@ async def test_console_clear_draft_keeps_canonical_payload_empty():
 
 
 @pytest.mark.asyncio
-async def test_console_delete_left_after_collapsed_paste_keeps_visible_token():
+async def test_console_collapsed_paste_backspace_deletes_whole_chunk():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -331,18 +331,93 @@ async def test_console_delete_left_after_collapsed_paste_keeps_visible_token():
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
+        prefix = "literal prefix "
         pasted_text = "delete after paste " * 10
-        expected_payload = pasted_text[:-1]
-        expected_token = f"Pasted Text: {len(expected_payload)} Characters"
 
+        composer.insert_text(prefix)
         composer.insert_pasted_text(pasted_text)
         composer.delete_left()
         await pilot.pause(0.1)
 
         visible_plain = visible_draft.renderable.plain
-        assert composer.draft_text() == expected_payload
+        assert composer.draft_text() == prefix
+        assert visible_plain == prefix
+        assert pasted_text not in composer.draft_text()
+        assert "Pasted Text:" not in visible_plain
+
+
+@pytest.mark.asyncio
+async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "click to confirm paste " * 10
+
+        composer.insert_pasted_text(pasted_text)
+        await pilot.click("#console-command-visible-text")
+        await pilot.pause(0.1)
+
+        assert visible_draft.renderable.plain == "Unfurl?"
+        assert composer.draft_text() == pasted_text
+
+
+@pytest.mark.asyncio
+async def test_console_collapsed_paste_second_click_unfurls_literal_text():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "literal unfurled paste " * 10
+
+        composer.insert_pasted_text(pasted_text)
+        await pilot.click("#console-command-visible-text")
+        await pilot.click("#console-command-visible-text")
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
+        assert "literal unfurled paste" in visible_plain
+        assert "Pasted Text:" not in visible_plain
+        assert "Unfurl?" not in visible_plain
+        assert composer.draft_text() == pasted_text
+
+
+@pytest.mark.asyncio
+async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "reset pending unfurl " * 10
+        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+
+        composer.insert_pasted_text(pasted_text)
+        await pilot.click("#console-command-visible-text")
+        await pilot.pause(0.1)
+        assert visible_draft.renderable.plain == "Unfurl?"
+
+        await pilot.click("#console-workspace-grid")
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
         assert expected_token in visible_plain
-        assert expected_payload not in visible_plain
+        assert "Unfurl?" not in visible_plain
+        assert composer.draft_text() == pasted_text
 
 
 @pytest.mark.asyncio
