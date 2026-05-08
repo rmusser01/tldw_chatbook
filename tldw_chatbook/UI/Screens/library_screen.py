@@ -803,21 +803,19 @@ class LibraryScreen(BaseAppScreen):
             for widget in recovery_widgets:
                 await widget.remove()
 
-        for selector, value in (
-            ("#library-rag-retrieval-status", f"Status: {panel_state.retrieval_status.title()}"),
-            ("#library-rag-next-action", panel_state.next_action),
-        ):
-            widgets = list(self.query(selector))
-            if widgets:
-                widgets[0].update(value)
-        await self._refresh_library_rag_inspector_selection(panel_state)
-
+        self._refresh_library_rag_inspector(panel_state)
         await self._refresh_library_rag_results_widgets(panel_state)
 
-        console_action = panel_state.use_in_console_action
-        console_button = self.query_one("#library-rag-use-in-console", Button)
-        console_button.disabled = not console_action.enabled
-        console_button.tooltip = console_action.tooltip
+    def _refresh_library_rag_inspector(
+        self,
+        panel_state: LibraryRagPanelState,
+    ) -> None:
+        inspector_widgets = list(self.query("#library-rag-inspector"))
+        if not inspector_widgets:
+            return
+        inspector = inspector_widgets[0]
+        if isinstance(inspector, LibrarySearchRagInspectorPanel):
+            inspector.refresh_from_state(panel_state)
 
     async def _refresh_library_rag_results_widgets(
         self,
@@ -871,40 +869,6 @@ class LibraryScreen(BaseAppScreen):
         else:
             await results_container.mount(
                 Static(panel_state.next_action, id="library-rag-results-empty")
-            )
-
-    async def _refresh_library_rag_inspector_selection(
-        self,
-        panel_state: LibraryRagPanelState,
-    ) -> None:
-        inspector_widgets = list(self.query("#library-rag-inspector"))
-        if not inspector_widgets:
-            return
-
-        selected_widgets = list(self.query("#library-rag-selected-result"))
-        empty_widgets = list(self.query("#library-rag-inspector-empty"))
-        if panel_state.selected_result is not None:
-            selected_text = f"Selected: {panel_state.selected_result.title}"
-            for widget in empty_widgets:
-                await widget.remove()
-            if selected_widgets:
-                selected_widgets[0].update(selected_text)
-            else:
-                await inspector_widgets[0].mount(
-                    Static(selected_text, id="library-rag-selected-result"),
-                    before="#library-rag-use-in-console",
-                )
-            return
-
-        for widget in selected_widgets:
-            await widget.remove()
-        disabled_reason = panel_state.use_in_console_action.disabled_reason
-        if empty_widgets:
-            empty_widgets[0].update(disabled_reason)
-        else:
-            await inspector_widgets[0].mount(
-                Static(disabled_reason, id="library-rag-inspector-empty"),
-                before="#library-rag-use-in-console",
             )
 
     @on(Button.Pressed, "#library-open-notes")

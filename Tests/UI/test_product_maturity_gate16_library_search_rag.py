@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
@@ -106,6 +106,32 @@ async def _wait_for_query_ready(screen, pilot, query: str, *, timeout: float = 2
                 return
         await pilot.pause(0.01)
     raise AssertionError(f"Timed out waiting for Library Search/RAG query readiness: {query!r}")
+
+
+async def _wait_for_inspector_selection(
+    screen,
+    pilot,
+    title: str,
+    *,
+    timeout: float = 2.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    expected = f"Selected: {title}"
+    while time.monotonic() < deadline:
+        selected_widgets = list(screen.query("#library-rag-selected-result"))
+        console_buttons = list(screen.query("#library-rag-use-in-console"))
+        if selected_widgets and console_buttons:
+            selected_widget = selected_widgets[0]
+            console_button = console_buttons[0]
+            if (
+                selected_widget.display is True
+                and expected in str(selected_widget.renderable)
+                and console_button.disabled is False
+            ):
+                await pilot.pause()
+                return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for Library Search/RAG selection: {title!r}")
 
 
 def test_gate16_library_search_rag_evidence_is_tracked() -> None:
@@ -341,7 +367,7 @@ async def test_library_search_rag_selected_result_launches_console_live_work() -
         assert screen.query_one("#library-rag-use-in-console", Button).disabled is True
 
         screen.query_one("#library-rag-select-result-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-rag-selected-result")
+        await _wait_for_inspector_selection(screen, pilot, "Incident Review")
 
         assert screen.query_one("#library-rag-use-in-console", Button).disabled is False
         assert "Selected: Incident Review" in _visible_text(screen)
@@ -371,6 +397,52 @@ async def test_library_search_rag_selected_result_launches_console_live_work() -
         action_label="Review evidence in Console",
     )
     app.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_inspector_pre_mounts_selection_states() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                }
+            ],
+        }
+    )
+    host = DestinationHarness(app, "library")
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        empty_state = screen.query_one("#library-rag-inspector-empty", Static)
+        selected_state = screen.query_one("#library-rag-selected-result", Static)
+        assert empty_state.display is True
+        assert selected_state.display is False
+
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+        screen.query_one("#library-rag-select-result-0", Button).press()
+
+        await _wait_for_inspector_selection(screen, pilot, "Incident Review")
+
+        assert screen.query_one("#library-rag-inspector-empty", Static) is empty_state
+        assert screen.query_one("#library-rag-selected-result", Static) is selected_state
+        assert empty_state.display is False
+        assert selected_state.display is True
+        assert "Selected: Incident Review" in str(selected_state.renderable)
 
 
 @pytest.mark.asyncio
