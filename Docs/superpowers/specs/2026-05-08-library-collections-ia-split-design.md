@@ -1,7 +1,7 @@
 # Library Collections IA Split Design
 
 Date: 2026-05-08
-Status: User-approved design direction; pending implementation plan
+Status: User-approved design direction; implementation plan drafted
 Branch baseline: `origin/dev` at `df63b49f` (`Close Gate 1.6 Library Search/RAG (#281)`)
 
 ## Related Documents
@@ -12,6 +12,7 @@ Branch baseline: `origin/dev` at `df63b49f` (`Close Gate 1.6 Library Search/RAG 
 - `Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-design.md`
 - `Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md`
 - `Docs/superpowers/trackers/product-maturity-roadmap.md`
+- `Docs/superpowers/plans/2026-05-08-phase-3-9-library-collections-ia-split.md`
 
 ## Summary
 
@@ -80,6 +81,8 @@ Visible primary navigation should use these concepts:
 ### Compatibility
 
 Existing internal names such as `watchlists_collections` may remain as compatibility aliases for the Watchlists destination during this gate. User-facing labels, command palette copy, help text, breadcrumbs, and empty states should say **Watchlists**, not `W+C` or `Watchlists+Collections`.
+
+Home, Console, and active-work surfaces should also use **Watchlists** as the user-facing source label for monitored-source runs. Internal payload values may remain compatibility-oriented where changing them would break existing routing, but visible copy and new tests should not teach users that `W+C` is the product model.
 
 ### Library Mode Placement
 
@@ -182,17 +185,17 @@ Existing Watchlist, read-it-later, feed, and media-reading services may later be
 Collections should fit the existing Library shell rather than introduce a new visual language.
 
 ```text
-┌─ Library ───────────────────────────────────────────────────────────────┐
-│ Modes: Sources  Search/RAG  Collections  Import/Export                  │
-├────────────────────┬────────────────────────────────┬──────────────────┤
-│ Collection List    │ Selected Collection             │ Inspector        │
-│                    │                                │                  │
-│ + New Collection   │ Name                            │ Actions          │
-│                    │ Description                     │ Rename           │
-│ Recent Collections │                                │ Delete           │
-│                    │ Items                           │                  │
-│ Empty/Error state  │ Empty membership / future seam  │ Sync: local-only │
-└────────────────────┴────────────────────────────────┴──────────────────┘
++- Library --------------------------------------------------------------+
+| Modes: Sources  Search/RAG  Collections  Import/Export                 |
++--------------------+-------------------------------+------------------+
+| Collection List    | Selected Collection           | Inspector        |
+|                    |                               |                  |
+| + New Collection   | Name                          | Actions          |
+|                    | Description                   | Rename           |
+| Recent Collections |                               | Delete           |
+|                    | Items                         |                  |
+| Empty/Error state  | Empty membership/future seam  | Sync: local-only |
++--------------------+-------------------------------+------------------+
 ```
 
 This is a structural contract, not a pixel-level mockup. The implementation should reuse existing Library layout, tokens, buttons, and shell patterns.
