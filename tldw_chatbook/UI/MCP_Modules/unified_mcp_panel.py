@@ -15,6 +15,10 @@ from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from .unified_mcp_sections import render_unified_mcp_section
 
 
+LAYOUT_MODE_FULL = "full"
+LAYOUT_MODE_COMPACT_WORKBENCH = "compact-workbench"
+
+
 class UnifiedMCPPanel(Container):
     """Minimal Slice 1 Unified MCP host inside Tools & Settings."""
 
@@ -95,11 +99,11 @@ class UnifiedMCPPanel(Container):
         self,
         app_instance: Any = None,
         *,
-        layout_mode: str = "full",
+        layout_mode: str = LAYOUT_MODE_FULL,
         **kwargs: Any,
     ) -> None:
         classes = kwargs.pop("classes", "")
-        if layout_mode == "compact-workbench":
+        if layout_mode == LAYOUT_MODE_COMPACT_WORKBENCH:
             classes = f"compact-workbench-panel {classes}".strip()
         super().__init__(classes=classes, **kwargs)
         self._app_instance = app_instance
@@ -144,7 +148,7 @@ class UnifiedMCPPanel(Container):
             initial_scope_ref_value = str(initial_scope_ref)
             initial_scope_ref_options = [(f"Scope {initial_scope_ref_value}", initial_scope_ref_value)]
 
-        if self.layout_mode == "compact-workbench":
+        if self.layout_mode == LAYOUT_MODE_COMPACT_WORKBENCH:
             yield from self._compose_compact_workbench(
                 initial_source=initial_source,
                 initial_section=initial_section,

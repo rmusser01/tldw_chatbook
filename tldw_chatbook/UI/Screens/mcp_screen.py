@@ -7,7 +7,7 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from ...Widgets.destination_workbench import DestinationModeStrip
-from ..MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
+from ..MCP_Modules.unified_mcp_panel import LAYOUT_MODE_COMPACT_WORKBENCH, UnifiedMCPPanel
 from ..Navigation.base_app_screen import BaseAppScreen
 
 
@@ -35,7 +35,7 @@ class MCPScreen(BaseAppScreen):
             self.mcp_panel = UnifiedMCPPanel(
                 self.app_instance,
                 id="unified-mcp-panel",
-                layout_mode="compact-workbench",
+                layout_mode=LAYOUT_MODE_COMPACT_WORKBENCH,
             )
             self.mcp_panel.set_initial_view_state(self.state_data.get("unified_mcp_view_state"))
             yield self.mcp_panel

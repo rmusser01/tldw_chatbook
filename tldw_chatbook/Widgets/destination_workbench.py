@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -47,7 +48,7 @@ class DestinationWorkbench(Horizontal):
     }
     """
 
-    def __init__(self, *panes: WorkbenchPane, **kwargs) -> None:
+    def __init__(self, *panes: WorkbenchPane, **kwargs: Any) -> None:
         classes = kwargs.pop("classes", "")
         super().__init__(classes=f"destination-workbench {classes}".strip(), **kwargs)
         self.panes = panes
@@ -66,7 +67,7 @@ class DestinationWorkbench(Horizontal):
 class DestinationModeStrip(Horizontal):
     """Compact one-row mode/action strip for destination screens."""
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.styles.height = DESTINATION_MODE_STRIP_HEIGHT
         self.styles.min_height = DESTINATION_MODE_STRIP_HEIGHT
