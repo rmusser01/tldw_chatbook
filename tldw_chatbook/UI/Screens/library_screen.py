@@ -13,11 +13,13 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Library.library_rag_state import LibraryRagPanelState
 from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Widgets.Library import LibrarySearchRagInspectorPanel, LibrarySearchRagPanel
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
@@ -45,10 +47,10 @@ LIBRARY_MODES = {
         "label": "Search/RAG",
         "button_id": "library-mode-search",
         "description": (
-            "Search/RAG mode: ask over indexed Library sources or open the existing "
-            "Search/RAG surface."
+            "Search/RAG mode: ask over selected Library sources inside Library; "
+            "standalone Search/RAG remains available from Source Browser."
         ),
-        "next_action": "Ask in Console by staging selected Library context with Use in Console.",
+        "next_action": "Run Search/RAG, inspect cited evidence, then Use in Console.",
     },
     "import-export": {
         "label": "Import/Export",
@@ -116,6 +118,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_lookup_recovery_state: DestinationRecoveryState | None = None
         self._library_loaded = False
         self._active_mode = "sources"
+        self._library_rag_query = ""
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -406,11 +409,32 @@ class LibraryScreen(BaseAppScreen):
     def _active_mode_contract(self) -> Mapping[str, str]:
         return LIBRARY_MODES.get(self._active_mode, LIBRARY_MODES["sources"])
 
+    def _library_rag_panel_state(self) -> LibraryRagPanelState:
+        return LibraryRagPanelState.from_values(
+            source_counts={
+                "notes": self._local_source_counts.get("notes", 0),
+                "media": self._local_source_counts.get("media", 0),
+                "conversations": self._local_source_counts.get("conversations", 0),
+                "workspaces": 0,
+                "collections": 0,
+            },
+            query=self._library_rag_query,
+            mode="rag",
+            results=(),
+            retrieval_status="",
+            dependencies_ready=True,
+            index_ready=True,
+            provider_ready=True,
+        )
+
     def compose_content(self) -> ComposeResult:
         has_sources = self._has_local_sources()
         status_label = self._status_label()
         handoff_disabled = True
         handoff_tooltip = "Stage Library source context after Library finishes loading."
+        search_rag_panel_state = (
+            self._library_rag_panel_state() if self._active_mode == "search" else None
+        )
 
         with Vertical(id="library-shell"):
             yield Static("Library", id="library-title", classes="ds-destination-header")
@@ -479,6 +503,11 @@ class LibraryScreen(BaseAppScreen):
                         active_mode["next_action"],
                         id="library-active-mode-next-action",
                     )
+                    if search_rag_panel_state is not None:
+                        yield LibrarySearchRagPanel(
+                            search_rag_panel_state,
+                            id="library-search-rag-panel",
+                        )
                     yield Static("Local Library snapshot", classes="destination-section")
                     if not self._library_loaded:
                         yield Static(
@@ -533,6 +562,12 @@ class LibraryScreen(BaseAppScreen):
                         "Search/RAG: query selected Library sources or stage evidence in Console.",
                         id="library-rag-entry-point",
                     )
+                    if search_rag_panel_state is not None:
+                        yield LibrarySearchRagInspectorPanel(
+                            search_rag_panel_state,
+                            id="library-rag-inspector",
+                            classes="library-rag-region",
+                        )
                     yield Static("Knowledge workflow", classes="destination-section")
                     yield Static(
                         "Turn Library material into study sessions, flashcards, and quizzes.",
@@ -565,7 +600,7 @@ class LibraryScreen(BaseAppScreen):
                     )
 
     @on(Button.Pressed, ".library-mode-chip")
-    def switch_library_mode(self, event: Button.Pressed) -> None:
+    async def switch_library_mode(self, event: Button.Pressed) -> None:
         mode_id = LIBRARY_MODE_BY_BUTTON_ID.get(event.button.id or "")
         if mode_id is None:
             return
@@ -573,9 +608,9 @@ class LibraryScreen(BaseAppScreen):
         if mode_id == self._active_mode:
             return
         self._active_mode = mode_id
-        self._refresh_active_mode_widgets()
+        await self._refresh_active_mode_widgets()
 
-    def _refresh_active_mode_widgets(self) -> None:
+    async def _refresh_active_mode_widgets(self) -> None:
         active_mode = self._active_mode_contract()
         self.query_one("#library-active-mode-title", Static).update(f"{active_mode['label']} mode")
         self.query_one("#library-active-mode-description", Static).update(active_mode["description"])
@@ -585,6 +620,80 @@ class LibraryScreen(BaseAppScreen):
                 mode_id == self._active_mode,
                 "is-active",
             )
+        await self._sync_search_rag_panel()
+
+    async def _sync_search_rag_panel(self) -> None:
+        mounted_widgets = list(self.query("#library-search-rag-panel, #library-rag-inspector"))
+        for widget in mounted_widgets:
+            await widget.remove()
+        if self._active_mode != "search":
+            return
+        panel_state = self._library_rag_panel_state()
+        detail = self.query_one("#library-source-detail", Vertical)
+        await detail.mount(
+            LibrarySearchRagPanel(panel_state, id="library-search-rag-panel"),
+            after="#library-active-mode-next-action",
+        )
+        inspector = self.query_one("#library-source-inspector", Vertical)
+        await inspector.mount(
+            LibrarySearchRagInspectorPanel(
+                panel_state,
+                id="library-rag-inspector",
+                classes="library-rag-region",
+            ),
+            after="#library-rag-entry-point",
+        )
+
+    @on(Input.Changed, "#library-rag-query-input")
+    async def update_library_rag_query(self, event: Input.Changed) -> None:
+        event.stop()
+        self._library_rag_query = event.value
+        await self._refresh_search_rag_panel_state_widgets()
+
+    async def _refresh_search_rag_panel_state_widgets(self) -> None:
+        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
+            return
+
+        panel_state = self._library_rag_panel_state()
+        self.query_one("#library-rag-query-status", Static).update(
+            f"Mode: {panel_state.query_state.mode_label} | Top {panel_state.query_state.top_k}"
+        )
+        run_action = panel_state.query_state.run_action
+        run_button = self.query_one("#library-rag-run-query", Button)
+        run_button.disabled = not run_action.enabled
+        run_button.tooltip = run_action.tooltip
+
+        recovery_widgets = list(self.query("#library-rag-query-recovery"))
+        if panel_state.query_state.recovery_copy:
+            if recovery_widgets:
+                recovery_widgets[0].update(panel_state.query_state.recovery_copy)
+            else:
+                query_controls = self.query_one("#library-rag-query-controls", Vertical)
+                await query_controls.mount(
+                    Static(
+                        panel_state.query_state.recovery_copy,
+                        id="library-rag-query-recovery",
+                    ),
+                    after="#library-rag-query-row",
+                )
+        else:
+            for widget in recovery_widgets:
+                await widget.remove()
+
+        for selector, value in (
+            ("#library-rag-results-empty", panel_state.next_action),
+            ("#library-rag-retrieval-status", f"Status: {panel_state.retrieval_status.title()}"),
+            ("#library-rag-next-action", panel_state.next_action),
+            ("#library-rag-inspector-empty", panel_state.use_in_console_action.disabled_reason),
+        ):
+            widgets = list(self.query(selector))
+            if widgets:
+                widgets[0].update(value)
+
+        console_action = panel_state.use_in_console_action
+        console_button = self.query_one("#library-rag-use-in-console", Button)
+        console_button.disabled = not console_action.enabled
+        console_button.tooltip = console_action.tooltip
 
     @on(Button.Pressed, "#library-open-notes")
     def open_notes(self) -> None:

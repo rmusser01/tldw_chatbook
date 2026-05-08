@@ -48,4 +48,6 @@ Primary implementation plan: `Docs/superpowers/plans/2026-05-07-gate-1-6-library
 
 <!-- SECTION:NOTES:BEGIN -->
 Started Gate 1.6 execution with TASK-10.8.1. The first slice adds pure Library Search/RAG display-state contracts for source scope query blockers evidence rows citations/snippets and panel action readiness; remaining child tasks cover the mounted Library panel retrieval adapter Console handoff/invocation and QA closeout.
+
+Continued Gate 1.6 with TASK-10.8.2. Library Search/RAG mode now mounts a native panel with source scope query controls evidence/results inspector and Console handoff action inside the existing Library shell, while keeping the legacy Search/RAG route button as a compatibility fallback. Remaining child tasks cover retrieval adapter execution, evidence normalization, Console handoff/invocation, and QA closeout.
 <!-- SECTION:NOTES:END -->
