@@ -72,13 +72,13 @@ Result: `19 passed`.
 
 Result: `2 passed`.
 
-Final closeout verification:
+Final closeout verification after rebasing onto current `origin/dev`:
 
 ```bash
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Library/test_library_collections_state.py Tests/Library/test_library_collections_service.py Tests/UI/test_product_maturity_phase39_library_collections.py Tests/UI/test_destination_shells.py Tests/UI/test_shell_destinations.py Tests/UI/test_master_shell_navigation.py Tests/UI/test_command_palette_providers.py Tests/Home/test_active_work_adapter.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_unified_shell_phase6_first_time_replay.py Tests/UI/test_unified_shell_phase6_power_user_replay.py Tests/UI/test_product_maturity_gate16_library_search_rag.py Tests/UI/test_product_maturity_phase3_layout_contracts.py --tb=short
 ```
 
-Result: `248 passed, 8 warnings in 131.60s`.
+Result: `248 passed, 8 warnings in 132.34s`.
 
 ```bash
 git diff --check
