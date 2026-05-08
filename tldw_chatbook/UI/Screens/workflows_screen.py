@@ -5,9 +5,10 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
+from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from .destination_recovery import DestinationRecoveryState
 
@@ -33,6 +34,7 @@ class WorkflowsScreen(BaseAppScreen):
         super().__init__(app_instance, "workflows", **kwargs)
         self._current_console_follow_item = None
         self._latest_console_follow_item_id = None
+        self._latest_console_context_loaded = False
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -50,6 +52,7 @@ class WorkflowsScreen(BaseAppScreen):
             if latest_console_item is not None
             else None
         )
+        self._latest_console_context_loaded = True
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -98,41 +101,67 @@ class WorkflowsScreen(BaseAppScreen):
                 id="workflows-purpose",
                 classes="destination-purpose",
             )
-            with Vertical(id="workflows-sections", classes="ds-panel"):
-                yield Static("Recipes", classes="destination-section")
-                yield Static("Inputs", classes="destination-section")
-                yield Static("Steps", classes="destination-section")
-                yield Static("Dry Run", classes="destination-section")
-                yield Static("Approvals", classes="destination-section")
-                yield Static("Outputs", classes="destination-section")
-                if latest_console_item is not None:
-                    title = str(getattr(latest_console_item, "title", None) or "Untitled")
-                    status = str(getattr(latest_console_item, "status", None) or "unknown")
-                    yield Static("Console launch available", classes="destination-section")
-                    yield Static(
-                        Text.from_markup(
-                            "Console can launch active workflow run: "
-                            f"{escape_markup(title)} ({escape_markup(status)})."
-                        ),
-                        id="workflows-console-available",
-                    )
-                    yield Button(
-                        Text.from_markup(f"Launch {escape_markup(title)} in Console"),
-                        id="workflows-launch-in-console",
-                        tooltip="Open the active workflow run in Console.",
-                    )
-                else:
-                    yield Static("Console launch unavailable", classes="destination-section")
-                    yield Static(
-                        WORKFLOWS_EMPTY_CONSOLE_RECOVERY.visible_copy,
-                        id=WORKFLOWS_EMPTY_CONSOLE_RECOVERY.stable_selector,
-                    )
-                    yield Button(
-                        "Console launch unavailable",
-                        id="workflows-launch-in-console",
-                        disabled=True,
-                        tooltip=WORKFLOWS_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
-                    )
+            with DestinationModeStrip(id="workflows-mode-strip", classes="destination-mode-strip"):
+                yield Static(
+                    "Mode: Recipes | Inputs | Dry run | Approvals | Outputs",
+                    id="workflows-mode-label",
+                    classes="destination-section",
+                )
+            with Horizontal(id="workflows-workbench", classes="ds-panel destination-workbench"):
+                with Vertical(id="workflows-list-pane", classes="destination-workbench-pane"):
+                    yield Static("Procedure Library", classes="destination-section")
+                    yield Static("Recipes", classes="destination-section")
+                    yield Static("Inputs", classes="destination-section")
+                    yield Static("Steps", classes="destination-section")
+                    yield Static("Dry Run", classes="destination-section")
+                    yield Static("Approvals", classes="destination-section")
+                    yield Static("Outputs", classes="destination-section")
+                with Vertical(id="workflows-detail-pane", classes="destination-workbench-pane"):
+                    if not self._latest_console_context_loaded:
+                        yield Static(
+                            "Loading workflow and Console launch context...",
+                            id="workflows-loading-state",
+                        )
+                    elif latest_console_item is not None:
+                        title = str(getattr(latest_console_item, "title", None) or "Untitled")
+                        status = str(getattr(latest_console_item, "status", None) or "unknown")
+                        yield Static("Console launch available", classes="destination-section")
+                        yield Static(
+                            Text.from_markup(
+                                "Console can launch active workflow run: "
+                                f"{escape_markup(title)} ({escape_markup(status)})."
+                            ),
+                            id="workflows-console-available",
+                        )
+                    else:
+                        yield Static("Console launch unavailable", classes="destination-section")
+                        yield Static(
+                            WORKFLOWS_EMPTY_CONSOLE_RECOVERY.visible_copy,
+                            id=WORKFLOWS_EMPTY_CONSOLE_RECOVERY.stable_selector,
+                        )
+                with Vertical(id="workflows-inspector-pane", classes="destination-workbench-pane ds-inspector"):
+                    yield Static("Workflow Actions", classes="destination-section")
+                    if not self._latest_console_context_loaded:
+                        yield Button(
+                            "Console launch unavailable",
+                            id="workflows-launch-in-console",
+                            disabled=True,
+                            tooltip="Launch workflow context after Workflows finishes loading.",
+                        )
+                    elif latest_console_item is not None:
+                        title = str(getattr(latest_console_item, "title", None) or "Untitled")
+                        yield Button(
+                            Text.from_markup(f"Launch {escape_markup(title)} in Console"),
+                            id="workflows-launch-in-console",
+                            tooltip="Open the active workflow run in Console.",
+                        )
+                    else:
+                        yield Button(
+                            "Console launch unavailable",
+                            id="workflows-launch-in-console",
+                            disabled=True,
+                            tooltip=WORKFLOWS_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
+                        )
 
     @on(Button.Pressed, "#workflows-launch-in-console")
     def launch_latest_workflow_run_in_console(self, event: Button.Pressed) -> None:

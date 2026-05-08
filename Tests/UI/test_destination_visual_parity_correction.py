@@ -20,8 +20,10 @@ from tldw_chatbook.UI.Screens import (
     artifacts_screen as artifacts_screen_module,
     library_screen as library_screen_module,
     personas_screen as personas_screen_module,
+    schedules_screen as schedules_screen_module,
     skills_screen as skills_screen_module,
     watchlists_collections_screen as wc_screen_module,
+    workflows_screen as workflows_screen_module,
 )
 from tldw_chatbook.Widgets.destination_workbench import DestinationWorkbench, WorkbenchPane
 
@@ -460,6 +462,157 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
             strip=contract["strip"],
             panes=contract["panes"],
             actions=contract["actions"],
+            height=42,
+        )
+        _assert_marker_inside_container(
+            screen,
+            loading_marker,
+            loading_container,
+            context=f"{route} loading state escaped workbench geometry",
+        )
+
+
+@pytest.mark.parametrize(
+    "route,strip,workbench,panes,actions",
+    [
+        (
+            "schedules",
+            "#schedules-filter-strip",
+            "#schedules-workbench",
+            ("#schedules-list-pane", "#schedules-detail-pane", "#schedules-inspector-pane"),
+            ("#schedules-follow-in-console",),
+        ),
+        (
+            "workflows",
+            "#workflows-mode-strip",
+            "#workflows-workbench",
+            ("#workflows-list-pane", "#workflows-detail-pane", "#workflows-inspector-pane"),
+            ("#workflows-launch-in-console",),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_operational_destinations_use_timing_or_procedure_workbench(
+    route, strip, workbench, panes, actions
+):
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, workbench)
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench=workbench,
+            strip=strip,
+            panes=panes,
+            actions=actions,
+            height=42,
+        )
+
+
+@pytest.mark.parametrize(
+    "route,strip,workbench,panes,actions,markers,marker_container",
+    [
+        (
+            "schedules",
+            "#schedules-filter-strip",
+            "#schedules-workbench",
+            ("#schedules-list-pane", "#schedules-detail-pane", "#schedules-inspector-pane"),
+            ("#schedules-follow-in-console",),
+            ("#schedules-empty-state", "#schedules-console-unavailable"),
+            "#schedules-detail-pane",
+        ),
+        (
+            "workflows",
+            "#workflows-mode-strip",
+            "#workflows-workbench",
+            ("#workflows-list-pane", "#workflows-detail-pane", "#workflows-inspector-pane"),
+            ("#workflows-launch-in-console",),
+            ("#workflows-console-unavailable",),
+            "#workflows-detail-pane",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_operational_empty_or_blocked_states_preserve_workbench_geometry(
+    route, strip, workbench, panes, actions, markers, marker_container
+):
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, workbench)
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench=workbench,
+            strip=strip,
+            panes=panes,
+            actions=actions,
+            height=42,
+        )
+        _assert_any_marker_inside_container(
+            screen,
+            markers,
+            marker_container,
+            context=f"{route} non-happy marker escaped workbench pane",
+        )
+
+
+OPERATIONAL_LOADING_CONTRACTS = [
+    (
+        "schedules",
+        schedules_screen_module.SchedulesScreen,
+        "_refresh_latest_console_context",
+        "#schedules-loading-state",
+        "#schedules-detail-pane",
+        "#schedules-filter-strip",
+        "#schedules-workbench",
+        ("#schedules-list-pane", "#schedules-detail-pane", "#schedules-inspector-pane"),
+        ("#schedules-follow-in-console",),
+    ),
+    (
+        "workflows",
+        workflows_screen_module.WorkflowsScreen,
+        "_refresh_latest_console_context",
+        "#workflows-loading-state",
+        "#workflows-detail-pane",
+        "#workflows-mode-strip",
+        "#workflows-workbench",
+        ("#workflows-list-pane", "#workflows-detail-pane", "#workflows-inspector-pane"),
+        ("#workflows-launch-in-console",),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "route,screen_cls,refresh_method,loading_marker,loading_container,strip,workbench,panes,actions",
+    OPERATIONAL_LOADING_CONTRACTS,
+)
+@pytest.mark.asyncio
+async def test_operational_loading_states_preserve_workbench_geometry(
+    monkeypatch,
+    route,
+    screen_cls,
+    refresh_method,
+    loading_marker,
+    loading_container,
+    strip,
+    workbench,
+    panes,
+    actions,
+):
+    monkeypatch.setattr(screen_cls, refresh_method, lambda self: None)
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, loading_marker)
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench=workbench,
+            strip=strip,
+            panes=panes,
+            actions=actions,
             height=42,
         )
         _assert_marker_inside_container(
