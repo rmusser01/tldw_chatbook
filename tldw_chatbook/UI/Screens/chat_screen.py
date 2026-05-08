@@ -8,11 +8,12 @@ import uuid
 from loguru import logger
 import toml
 from pathlib import Path
+from rich.text import Text
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
-from textual.events import Key
+from textual.events import Key, Paste
 from textual import on, work
 from textual.reactive import reactive
 from textual.css.query import NoMatches, QueryError
@@ -33,6 +34,7 @@ from ...Chat.console_display_state import (
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
+from ...Chat.provider_readiness import get_provider_readiness
 from ...Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     ConsoleLiveWorkSourceReadinessState,
@@ -68,10 +70,8 @@ logger = logger.bind(module="ChatScreen")
 CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
-CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP = "Type a Library RAG query before running retrieval."
-CONSOLE_LIBRARY_RAG_QUERY_INVALID_TOOLTIP = (
-    "Enter a valid Library RAG query without scripts or unsafe markup."
-)
+CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = "Type a Library RAG query before running retrieval."
+CONSOLE_FRAME_BORDER = ("solid", "#6f7782")
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -456,12 +456,41 @@ class ChatScreen(BaseAppScreen):
                 yield Static(row.text, id=row.widget_id, classes=row.classes)
 
     def _console_library_rag_scope_label(self) -> str:
-        return f"Library scope: {', '.join(CONSOLE_LIBRARY_RAG_SOURCE_SCOPE)}"
+        return f"Scope: {', '.join(CONSOLE_LIBRARY_RAG_SOURCE_SCOPE)}"
+
+    @staticmethod
+    def _hidden_static(text: str, *, id: str, classes: str = "") -> Static:
+        widget = Static(text, id=id, classes=f"{classes} console-hidden-control".strip())
+        widget.styles.display = "none"
+        widget.styles.height = 0
+        widget.styles.min_height = 0
+        return widget
+
+    @staticmethod
+    def _console_mode_summary(control_state: ConsoleControlState) -> str:
+        return " | ".join(
+            (
+                "Mode: Chat / RAG / Run Follow",
+                control_state.persona_label,
+                control_state.sources_label,
+                control_state.tools_label,
+                control_state.approvals_label,
+            )
+        )
+
+    @staticmethod
+    def _frame_console_region(widget: Any) -> Any:
+        """Apply a visible Textual-native workbench frame."""
+        widget.styles.border = CONSOLE_FRAME_BORDER
+        return widget
 
     def _render_console_live_work_source_readiness(self) -> ComposeResult:
         """Render Console source readiness when no live-work item is staged."""
         readiness = ConsoleLiveWorkSourceReadinessState.default()
-        with Container(id=readiness.container_id, classes=readiness.container_classes):
+        container = Container(id=readiness.container_id, classes=readiness.container_classes)
+        container.styles.height = "auto"
+        container.styles.min_height = 0
+        with container:
             yield Static(
                 readiness.title,
                 id=readiness.title_id,
@@ -484,7 +513,6 @@ class ChatScreen(BaseAppScreen):
                 "Run Library RAG",
                 id="console-run-library-rag",
                 disabled=not query_ready,
-                tooltip="" if query_ready else CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP,
                 classes="destination-action-button console-library-rag-run",
             )
             for row in readiness.rows:
@@ -517,13 +545,7 @@ class ChatScreen(BaseAppScreen):
             return
         query_ready = bool(self._console_library_rag_query)
         run_button.disabled = not query_ready
-        invalid_query = bool(raw_query.strip()) and not query_ready
-        disabled_tooltip = (
-            CONSOLE_LIBRARY_RAG_QUERY_INVALID_TOOLTIP
-            if invalid_query
-            else CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP
-        )
-        run_button.tooltip = "" if query_ready else disabled_tooltip
+        run_button.tooltip = ""
 
     @on(Button.Pressed, "#console-run-library-rag")
     def handle_console_run_library_rag(self, event: Button.Pressed) -> None:
@@ -532,7 +554,7 @@ class ChatScreen(BaseAppScreen):
         query = _sanitize_console_library_rag_query(self._console_library_rag_query)
         if not query:
             self.app_instance.notify(
-                CONSOLE_LIBRARY_RAG_QUERY_EMPTY_TOOLTIP,
+                CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE,
                 severity="warning",
             )
             return
@@ -618,19 +640,23 @@ class ChatScreen(BaseAppScreen):
         staged_context_state = self._build_console_staged_context_state(pending_launch)
         inspector_state = self._build_console_inspector_state(pending_launch)
         with Vertical(id="console-shell"):
-            yield Static("Console", id="console-title", classes="ds-destination-header")
             yield Static(
+                "Console | Live agent control, chat, RAG, tools, approvals | Local",
+                id="console-title",
+                classes="destination-status-row",
+            )
+            yield self._hidden_static(
                 "Agent workbench for chat, source handoffs, live runs, and control actions.",
                 id="console-purpose",
                 classes="destination-purpose",
             )
-            yield Static(
+            yield self._hidden_static(
                 "Console | Agentic control surface | Chat-first | Local runtime",
                 id="console-status-row",
                 classes="destination-status-row",
             )
             yield Static(
-                "Mode: Chat + agent control | Context: staged sources | Runs: live work",
+                self._console_mode_summary(control_state),
                 id="console-mode-bar",
                 classes="ds-panel",
             )
@@ -639,22 +665,38 @@ class ChatScreen(BaseAppScreen):
                 self.app_instance,
                 on_sidebar_toggle_requested=self._toggle_console_chat_sidebar,
                 id="console-control-bar",
-                classes="ds-panel",
+                classes="ds-panel console-hidden-control",
             )
-            with Horizontal(id="console-workspace-grid", classes="ds-panel destination-workbench"):
-                yield ConsoleStagedContextTray(
+            workspace_grid = self._frame_console_region(
+                Horizontal(id="console-workspace-grid", classes="ds-panel destination-workbench")
+            )
+            with workspace_grid:
+                staged_context_tray = ConsoleStagedContextTray(
                     staged_context_state,
                     id="console-staged-context-tray",
                     classes="console-region destination-workbench-pane",
                 )
-                with Vertical(id="console-main-column"):
-                    with Vertical(id="console-transcript-region", classes="console-region"):
+                staged_context_tray.styles.width = "5fr"
+                staged_context_tray.styles.min_width = 40
+                yield self._frame_console_region(staged_context_tray)
+
+                main_column = Vertical(id="console-main-column")
+                main_column.styles.width = "9fr"
+                main_column.styles.min_width = 52
+                with main_column:
+                    transcript_region = self._frame_console_region(
+                        Vertical(id="console-transcript-region", classes="console-region")
+                    )
+                    with transcript_region:
                         yield self._ensure_console_session_surface()
-                    yield ConsoleComposerBar(id="console-native-composer", classes="console-region ds-panel")
-                with Vertical(
+
+                run_inspector = Vertical(
                     id="console-run-inspector",
                     classes="console-region destination-workbench-pane",
-                ):
+                )
+                run_inspector.styles.width = "5fr"
+                run_inspector.styles.min_width = 40
+                with self._frame_console_region(run_inspector):
                     yield ConsoleRunInspector(
                         inspector_state,
                         id="console-run-inspector-state",
@@ -663,6 +705,9 @@ class ChatScreen(BaseAppScreen):
                         yield from self._render_console_live_work_status_card(pending_launch)
                     else:
                         yield from self._render_console_live_work_source_readiness()
+            yield self._frame_console_region(
+                ConsoleComposerBar(id="console-native-composer", classes="ds-panel")
+            )
     
     def on_mount(self) -> None:
         """Run diagnostics when first mounted (only once)."""
@@ -678,6 +723,9 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
         self.set_timer(0.15, self._consume_pending_chat_handoff)
+        self._focus_console_composer_if_needed(force=True)
+        self.call_after_refresh(lambda: self._focus_console_composer_if_needed(force=True))
+        self.set_timer(0.2, lambda: self._focus_console_composer_if_needed(force=True))
     
     def save_state(self) -> Dict[str, Any]:
         """
@@ -1007,6 +1055,34 @@ class ChatScreen(BaseAppScreen):
         if callable(set_draft_text):
             set_draft_text(payload.default_prompt())
 
+    async def _append_console_system_event(self, message: str) -> None:
+        """Append a Console-native status event without legacy chat message chrome."""
+        try:
+            session = self._get_active_chat_session()
+            if session is None:
+                raise QueryError("No active Console chat session")
+            await session.get_chat_log().mount(
+                Static(
+                    Text(message),
+                    classes="console-transcript-system-event",
+                )
+            )
+        except Exception:
+            self.app_instance.notify(message, severity="warning")
+
+    def _console_send_blocked_reason(self) -> str:
+        """Return a user-facing reason if Console send cannot safely run."""
+        provider, model = self._effective_console_provider_model()
+        readiness = get_provider_readiness(
+            str(provider or ""),
+            getattr(self.app_instance, "app_config", {}) or {},
+        )
+        if not readiness.ready:
+            return f"Console send blocked: {readiness.user_message}"
+        if not _has_selected_text(model):
+            return "Console send blocked: Select a model before sending."
+        return ""
+
     @on(Button.Pressed, "#console-send-message")
     async def handle_console_send_message(self, event: Button.Pressed) -> None:
         """Route the Console composer send action through the active chat session."""
@@ -1015,6 +1091,23 @@ class ChatScreen(BaseAppScreen):
         if session is None:
             self.app_instance.notify("No active Console chat session is available.", severity="error")
             return
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+            draft = composer.draft_text()
+        except QueryError:
+            composer = None
+            draft = ""
+        if not draft.strip():
+            self._focus_console_composer_if_needed(force=True)
+            return
+        if blocked_reason := self._console_send_blocked_reason():
+            await self._append_console_system_event(blocked_reason)
+            self._focus_console_composer_if_needed(force=True)
+            return
+        if draft.strip():
+            set_draft_text = getattr(session, "set_draft_text", None)
+            if callable(set_draft_text):
+                set_draft_text(draft)
         handler = getattr(session, "handle_send_stop_button", None)
         if not callable(handler):
             self.app_instance.notify("Console send is unavailable for this session.", severity="error")
@@ -1022,6 +1115,8 @@ class ChatScreen(BaseAppScreen):
         result = handler(event)
         if inspect.isawaitable(result):
             await result
+        if draft.strip() and composer is not None:
+            composer.clear_draft()
 
     @on(Button.Pressed, "#console-stop-generation")
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
@@ -1149,6 +1244,88 @@ class ChatScreen(BaseAppScreen):
             self._build_console_inspector_state(self._pending_console_launch_context)
         )
 
+    def _hide_console_legacy_chat_inputs(self) -> None:
+        """Keep Console on a single native composer surface."""
+        for widget in self.query(".chat-input-area"):
+            widget.styles.display = "none"
+            widget.styles.height = 0
+            widget.styles.min_height = 0
+            widget.disabled = True
+        for widget in self.query(".chat-input"):
+            widget.styles.display = "none"
+            widget.styles.height = 0
+            widget.styles.min_height = 0
+            widget.disabled = True
+            widget.can_focus = False
+
+    def _focus_console_composer_if_needed(self, *, force: bool = False) -> None:
+        """Route typing to the visible Console composer instead of hidden chat input."""
+        self._hide_console_legacy_chat_inputs()
+        focused = self.app.focused
+        if not force and focused is not None and not (
+            focused.id == "chat-input"
+            or (focused.id or "").startswith("chat-input-")
+            or focused.has_class("chat-input")
+        ):
+            return
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+            composer.focus()
+        except QueryError:
+            return
+
+    def on_key(self, event: Key) -> None:
+        """Treat the Console composer as the default printable text target."""
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+        focused = self.app.focused
+        if isinstance(focused, (Input, TextArea)) and not (
+            focused.id == "chat-input"
+            or (focused.id or "").startswith("chat-input-")
+            or focused.has_class("chat-input")
+        ):
+            return
+        if event.key in {"backspace", "ctrl+h"}:
+            composer.delete_left()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            try:
+                self.query_one("#console-send-message", Button).press()
+            except QueryError:
+                self.app_instance.notify("Console send is unavailable.", severity="error")
+            return
+        if event.key == "ctrl+u":
+            composer.clear_draft()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.is_printable and event.character is not None:
+            composer.insert_text(event.character)
+            event.stop()
+            event.prevent_default()
+
+    def on_paste(self, event: Paste) -> None:
+        """Treat pasted text as Console composer draft input by default."""
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+        focused = self.app.focused
+        if isinstance(focused, (Input, TextArea)) and not (
+            focused.id == "chat-input"
+            or (focused.id or "").startswith("chat-input-")
+            or focused.has_class("chat-input")
+        ):
+            return
+        composer.insert_text(event.text)
+        event.stop()
+
     def _sync_compact_shell_controls(
         self,
         *,
@@ -1237,9 +1414,15 @@ class ChatScreen(BaseAppScreen):
         """Push the live active session contract into the mounted shell bar."""
         shell_bar = self._get_shell_bar()
         if not shell_bar:
+            self._hide_console_legacy_chat_inputs()
             try:
                 composer = self.query_one("#console-native-composer", ConsoleComposerBar)
                 composer.sync_session_data(session_data)
+                session = self._get_active_chat_session()
+                draft = session.get_chat_input().text if session is not None else ""
+                if not composer.draft_text():
+                    composer.load_draft(draft)
+                self._focus_console_composer_if_needed()
             except QueryError:
                 pass
             logger.debug("No shell bar available for live session sync")
@@ -1247,6 +1430,17 @@ class ChatScreen(BaseAppScreen):
 
         try:
             shell_bar.sync_from_session_data(session_data)
+            self._hide_console_legacy_chat_inputs()
+            try:
+                composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+                session = self._get_active_chat_session()
+                draft = session.get_chat_input().text if session is not None else ""
+                composer.sync_session_data(session_data)
+                if not composer.draft_text():
+                    composer.load_draft(draft)
+                self._focus_console_composer_if_needed()
+            except (QueryError, NoMatches):
+                pass
             if session_data is None:
                 logger.debug("Synced shell bar from cleared live session")
             else:

@@ -2,7 +2,8 @@ import time
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, Input, Select, Static
+from textual.events import Paste
+from textual.widgets import Button, Footer, Input, Select, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -111,7 +112,7 @@ async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
+    async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
@@ -129,7 +130,7 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
+    async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
@@ -148,6 +149,379 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         assert console.query_one("#console-stop-generation", Button)
         assert console.query_one("#console-attach-context", Button)
         assert console.query_one("#console-save-chatbook", Button)
+
+
+@pytest.mark.asyncio
+async def test_console_native_composer_spans_below_workbench_with_single_input_surface():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        workbench = console.query_one("#console-workspace-grid")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        command_input = composer.query_one("#console-command-input", Input)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        send_button = composer.query_one("#console-send-message", Button)
+        stop_button = composer.query_one("#console-stop-generation", Button)
+        attach_button = composer.query_one("#console-attach-context", Button)
+        save_button = composer.query_one("#console-save-chatbook", Button)
+        legacy_inputs = [
+            widget
+            for widget in console.query(".chat-input-area")
+            if widget.region.height > 0 and widget.region.width > 0
+        ]
+
+        assert composer.region.x == workbench.region.x
+        assert composer.region.width == workbench.region.width
+        assert composer.region.y > workbench.region.y
+        assert composer.region.y + composer.region.height <= console.size.height
+        assert command_input.display is False
+        assert visible_draft.region.width > 20
+        assert 4 <= composer.region.height <= 6
+        assert visible_draft.region.height == 1
+        composer.load_draft("visible composer text")
+        await pilot.pause(0.1)
+        assert composer.draft_text() == "visible composer text"
+        assert "visible composer text" in visible_draft.renderable.plain
+        assert "visible composer text" in _visible_text(composer)
+        for action_button in (send_button, stop_button, attach_button, save_button):
+            assert action_button.compact is True
+            assert action_button.region.height == 1
+            assert action_button.region.y + action_button.region.height <= composer.region.y + composer.region.height
+        assert str(send_button.label) == "Send"
+        assert str(stop_button.label) == "Stop"
+        assert str(attach_button.label) == "Attach"
+        assert str(save_button.label) == "Save Chatbook"
+        assert save_button.region.width >= 20
+        assert legacy_inputs == []
+
+
+@pytest.mark.asyncio
+async def test_console_native_composer_receives_typing_on_open():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        command_input = composer.query_one("#console-command-input", Input)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+
+        assert command_input.display is False
+        await pilot.press("v", "i", "s", "i", "b", "l", "e")
+        await pilot.pause(0.1)
+
+        assert composer.draft_text() == "visible"
+        assert "visible" in visible_draft.renderable.plain
+        assert "visible" in _visible_text(composer)
+
+
+@pytest.mark.asyncio
+async def test_console_native_composer_auto_expands_for_long_drafts():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        long_draft = "long composer qa " * 20
+
+        composer.load_draft(long_draft)
+        await pilot.pause(0.2)
+
+        visible_plain = visible_draft.renderable.plain
+        assert composer.draft_text() == long_draft
+        assert composer.region.height > 5
+        assert composer.region.height <= 10
+        assert visible_draft.region.height > 1
+        assert visible_draft.region.height <= 4
+        assert "\n" in visible_plain
+        assert "long composer qa" in visible_plain
+
+
+@pytest.mark.asyncio
+async def test_console_native_composer_paste_keeps_large_draft_bounded_and_visible():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "pasted composer qa " * 80
+
+        console.on_paste(Paste(pasted_text))
+        await pilot.pause(0.2)
+
+        visible_plain = visible_draft.renderable.plain
+        assert composer.draft_text() == pasted_text
+        assert composer.region.height <= 10
+        assert visible_draft.region.height <= 4
+        assert "pasted composer qa" in visible_plain
+        assert len(visible_plain) < len(pasted_text)
+
+
+@pytest.mark.asyncio
+async def test_console_native_composer_captures_printable_typing_from_non_text_focus():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        command_input = composer.query_one("#console-command-input", Input)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        save_button = composer.query_one("#console-save-chatbook", Button)
+
+        save_button.focus()
+        await pilot.pause(0.1)
+        await pilot.press("k")
+        await pilot.pause(0.1)
+
+        assert command_input.display is False
+        assert composer.draft_text() == "k"
+        assert "k" in visible_draft.renderable.plain
+        assert "k" in _visible_text(composer)
+
+
+@pytest.mark.asyncio
+async def test_console_send_without_ready_runtime_shows_native_blocked_event(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config.setdefault("api_settings", {}).setdefault("openai", {})["api_key"] = ""
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello console")
+        send_button = console.query_one("#console-send-message", Button)
+        await console.handle_console_send_message(Button.Pressed(send_button))
+        await pilot.pause(0.2)
+
+        text = _visible_text(console)
+        assert "Console send blocked" in text
+        assert "Missing API key" in text
+        assert "Internal Error" not in text
+        assert "Missing UI elements" not in text
+        assert composer.draft_text() == "hello console"
+
+
+@pytest.mark.asyncio
+async def test_console_enter_sends_native_composer_draft(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config.setdefault("api_settings", {}).setdefault("openai", {})["api_key"] = ""
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        await pilot.press("h", "e", "l", "l", "o")
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+
+        text = _visible_text(console)
+        assert "Console send blocked" in text
+        assert "Missing API key" in text
+        assert "Internal Error" not in text
+        assert "Missing UI elements" not in text
+        assert composer.draft_text() == "hello"
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_new_tab_control_is_fully_visible():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#new-chat-tab-button")
+
+        transcript = console.query_one("#console-transcript-region")
+        new_tab_button = console.query_one("#new-chat-tab-button", Button)
+        label = str(new_tab_button.label)
+
+        assert label == "New tab"
+        assert new_tab_button.region.width >= len(label) + 2
+        assert new_tab_button.region.x >= transcript.region.x
+        assert new_tab_button.region.x + new_tab_button.region.width <= (
+            transcript.region.x + transcript.region.width
+        )
+        assert "New tab" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_app_footer_status_bar_remains_visible_below_console():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        footer = console.query_one(Footer)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        assert footer.region.height == 1
+        assert footer.region.y == console.size.height - 1
+        assert composer.region.y + composer.region.height <= footer.region.y
+
+
+@pytest.mark.asyncio
+async def test_console_inspector_live_work_sources_stay_near_top():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(220, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-live-work-source-readiness")
+
+        inspector = console.query_one("#console-run-inspector")
+        inspector_state = console.query_one("#console-run-inspector-state")
+        source_readiness = console.query_one("#console-live-work-source-readiness")
+
+        assert inspector_state.region.height <= 14
+        assert source_readiness.region.y <= inspector.region.y + inspector_state.region.height + 2
+        assert source_readiness.region.height <= 18
+
+
+@pytest.mark.asyncio
+async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overlay():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-live-work-source-readiness")
+
+        run_rag = console.query_one("#console-run-library-rag", Button)
+        scope = console.query_one("#console-library-rag-scope", Static)
+        rows = list(console.query(".console-live-work-source-row"))
+
+        assert run_rag.disabled is True
+        assert str(run_rag.tooltip or "") == ""
+        scope_plain = getattr(scope.render(), "plain", str(scope.render()))
+        assert len(scope_plain) <= scope.region.width
+        assert rows
+        for row in rows:
+            rendered = row.render()
+            plain = getattr(rendered, "plain", str(rendered))
+            assert len(plain) <= row.region.width
+
+
+@pytest.mark.asyncio
+async def test_console_empty_inspector_hides_disabled_actions_until_actionable():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-run-inspector-state")
+
+        for selector in (
+            "#console-inspector-review-approval",
+            "#console-inspector-review-tool-call",
+            "#console-inspector-save-chatbook",
+        ):
+            button = console.query_one(selector, Button)
+            assert button.disabled is True
+            assert button.region.height == 0
+            assert str(button.tooltip or "") == ""
+
+
+@pytest.mark.asyncio
+async def test_console_workbench_weights_transcript_as_primary_region():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-grid")
+
+        staged = console.query_one("#console-staged-context-tray")
+        main = console.query_one("#console-main-column")
+        inspector = console.query_one("#console-run-inspector")
+        transcript = console.query_one("#console-transcript-region")
+
+        assert main.region.width > staged.region.width
+        assert main.region.width > inspector.region.width
+        assert staged.region.width >= 40
+        assert inspector.region.width >= 40
+        assert transcript.region.width == main.region.width
+
+
+@pytest.mark.asyncio
+async def test_console_workbench_panes_have_visible_terminal_frames():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-grid")
+
+        for selector in (
+            "#console-workspace-grid",
+            "#console-staged-context-tray",
+            "#console-transcript-region",
+            "#console-run-inspector",
+            "#console-native-composer",
+        ):
+            border = console.query_one(selector).styles.border
+            assert border.top[0] == "solid", f"{selector} missing top frame"
+            assert border.right[0] == "solid", f"{selector} missing right frame"
+            assert border.bottom[0] == "solid", f"{selector} missing bottom frame"
+            assert border.left[0] == "solid", f"{selector} missing left frame"
+
+
+@pytest.mark.asyncio
+async def test_console_empty_staged_context_recovery_fits_tray():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-staged-context-recovery")
+
+        recovery = console.query_one("#console-staged-context-recovery")
+        rendered = recovery.render()
+        plain = getattr(rendered, "plain", str(rendered))
+
+        assert len(plain) <= recovery.region.width - 4
+
+
+@pytest.mark.asyncio
+async def test_console_control_bar_renders_readable_summary_line():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        summary = console.query_one("#console-control-status-line", Static)
+        plain = getattr(summary.render(), "plain", str(summary.render()))
+
+        assert "Provider:" in plain
+        assert " | Model:" in plain
+        assert " | Assistant:" in plain
+        assert " | Sources:" in plain
 
 
 @pytest.mark.asyncio
@@ -408,7 +782,7 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        assert "Library scope: notes, media, conversations" in _visible_text(console)
+        assert "Scope: notes, media, conversations" in _visible_text(console)
         query_input = console.query_one("#console-library-rag-query-input", Input)
         query_input.value = query
         await pilot.pause(0.1)
@@ -453,8 +827,8 @@ async def test_console_rag_query_validation_blocks_unsafe_markup():
             console,
             pilot,
             disabled=True,
-            tooltip_contains="valid Library RAG query",
         )
+        assert str(console.query_one("#console-run-library-rag", Button).tooltip or "") == ""
 
         assert console._console_library_rag_query == ""
         assert service.calls == []

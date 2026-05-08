@@ -31,6 +31,8 @@ class ConsoleRunInspector(Vertical):
     def __init__(self, state: ConsoleInspectorState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.state = state
+        self.styles.height = "auto"
+        self.styles.min_height = 0
 
     def sync_state(self, state: ConsoleInspectorState) -> None:
         """Refresh the mounted inspector from a new display-state snapshot."""
@@ -48,9 +50,18 @@ class ConsoleRunInspector(Vertical):
             id=action.widget_id,
             classes=action.classes,
             variant="primary" if action.enabled else "default",
-            tooltip=action.tooltip,
+            tooltip=action.tooltip if action.enabled else "",
         )
         button.disabled = not action.enabled
+        if action.enabled:
+            button.styles.height = 1
+            button.styles.min_height = 1
+        else:
+            button.styles.display = "none"
+            button.styles.width = 0
+            button.styles.min_width = 0
+            button.styles.height = 0
+            button.styles.min_height = 0
         return button
 
     def compose(self) -> ComposeResult:
@@ -68,8 +79,12 @@ class ConsoleRunInspector(Vertical):
         for action in self.state.actions:
             yield self._button_for_action(action)
             if not action.enabled and action.disabled_reason:
-                yield Static(
+                reason = Static(
                     action.disabled_reason,
                     id=f"{action.widget_id}-reason",
-                    classes="console-inspector-disabled-reason",
+                    classes="console-inspector-disabled-reason console-hidden-control",
                 )
+                reason.styles.display = "none"
+                reason.styles.height = 0
+                reason.styles.min_height = 0
+                yield reason
