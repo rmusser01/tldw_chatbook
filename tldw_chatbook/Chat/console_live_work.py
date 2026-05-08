@@ -134,6 +134,12 @@ def resolve_console_live_work_primary_action(
             target_route="subscriptions",
             target_id=target_id,
         )
+    if source in {"artifacts", "chatbooks"} and ":chatbook:" in target_id:
+        return ConsoleLiveWorkPrimaryAction(
+            label=launch.action_label,
+            target_route="artifacts",
+            target_id=target_id,
+        )
     return None
 
 

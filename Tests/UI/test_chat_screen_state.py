@@ -22,6 +22,33 @@ class EmptyChatLog:
         return []
 
 
+class QueryResult(list):
+    def first(self):
+        return self[0]
+
+
+class FakeChatLog:
+    children = []
+
+    def __init__(self, messages=()):
+        self.messages = list(messages)
+        self.mount = AsyncMock()
+        self.scroll_end = Mock()
+        self.display = False
+
+    def query(self, _selector):
+        return list(self.messages)
+
+
+class FakeMessageWidget:
+    def __init__(self, *, message_id, role, message_text):
+        self.message_id_internal = message_id
+        self.role = role
+        self.message_text = message_text
+        self.timestamp = None
+        self.image_data = None
+
+
 class TestChatSessionDataSerialization:
     def test_chat_session_data_round_trip_preserves_runtime_discovery_fields(self):
         session_data = ChatSessionData(
@@ -463,4 +490,73 @@ def test_extract_messages_clears_messages_when_direct_chat_log_lookup_succeeds()
     screen._extract_and_save_messages(tab_state)
 
     assert tab_state.messages == []
+    screen.chat_window.query.assert_not_called()
+
+
+def test_extract_messages_prefers_active_session_chat_log_over_first_matching_log():
+    app = Mock()
+    app.query_one = Mock(side_effect=LookupError("direct lookup unavailable"))
+    screen = ChatScreen(app)
+
+    inactive_log = FakeChatLog(
+        [FakeMessageWidget(message_id="inactive", role="user", message_text="wrong tab")]
+    )
+    active_log = FakeChatLog(
+        [FakeMessageWidget(message_id="active", role="user", message_text="active tab")]
+    )
+    screen.chat_window = Mock()
+    screen.chat_window.query = Mock(return_value=QueryResult([inactive_log, active_log]))
+
+    active_session = Mock()
+    active_session.get_chat_log.return_value = active_log
+    screen._get_active_chat_session = Mock(return_value=active_session)
+
+    tab_state = TabState(tab_id="active-tab", title="Active")
+
+    screen._extract_and_save_messages(tab_state)
+
+    assert [message.content for message in tab_state.messages] == ["active tab"]
+    screen.chat_window.query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_restore_messages_prefers_active_session_chat_log_over_first_matching_log():
+    app = Mock()
+    app.query_one = Mock(side_effect=LookupError("direct lookup unavailable"))
+    screen = ChatScreen(app)
+    screen.chat_state = ChatScreenState(
+        tabs=[
+            TabState(
+                tab_id="active-tab",
+                title="Active",
+                is_active=True,
+                messages=[
+                    MessageData(
+                        message_id="msg-active",
+                        role="user",
+                        content="restore into active tab",
+                        timestamp=datetime(2026, 5, 7, 1, 0, 0),
+                    )
+                ],
+            )
+        ],
+        active_tab_id="active-tab",
+        tab_order=["active-tab"],
+    )
+
+    inactive_log = FakeChatLog()
+    active_log = FakeChatLog()
+    screen.chat_window = Mock()
+    screen.chat_window.hide_empty_state = Mock()
+    screen.chat_window.query = Mock(return_value=QueryResult([inactive_log, active_log]))
+
+    active_session = Mock()
+    active_session.get_chat_log.return_value = active_log
+    screen._get_active_chat_session = Mock(return_value=active_session)
+
+    await screen._restore_messages()
+
+    active_log.mount.assert_awaited_once()
+    inactive_log.mount.assert_not_awaited()
+    active_log.scroll_end.assert_called_once_with(animate=False)
     screen.chat_window.query.assert_not_called()

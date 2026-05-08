@@ -4,7 +4,7 @@ title: 'Product Maturity Phase 3: Knowledge And Study Workflows'
 status: In Progress
 assignee: []
 created_date: '2026-05-05 15:11'
-updated_date: '2026-05-06 06:27'
+updated_date: '2026-05-08 02:30'
 labels:
   - product-maturity
   - phase-3-knowledge-study
@@ -40,4 +40,12 @@ Continued Phase 3 with TASK-10.4. Library-selected note and media source items n
 Continued Phase 3 with TASK-10.5. Gate 1 now adapts Home Console and Library into the core product-loop screen model: Home Command Center regions, Console Agent Workbench regions around the existing chat surface, and actionable Library modes. Parent remains open for required Gate 1.5 Console internals decomposition, Gate 1.6 Library-native Search/RAG with citations/snippets, Library-owned Collections, and later Knowledge/Study workflow depth.
 
 Continued Phase 3 with TASK-10.7. Queued server source study-pack jobs now observe bounded completion status and surface ready pack metadata as reusable Study dashboard state. Parent remains open for full server job history direct generated deck selection conversation message-level selection Workspaces Library Collections citations/snippets and deeper Import/Export Search/RAG workflows.
+
+Closed Gate 1.5 with TASK-10.6. Console now uses native workbench internals for provider/model controls, staged context, transcript/session, composer, run inspector, approvals, RAG/source state, and Chatbook artifact actions instead of presenting a full embedded legacy Chat screen. Parent remains open for Gate 1.6 Library-native Search/RAG with citations/snippets, Workspaces, Library Collections, and deeper Import/Export/Search/RAG study workflows.
+
+Planned Gate 1.6 with TASK-10.8. The Library-native Search/RAG gate is split into display-state contracts, a Library-owned Search/RAG panel, retrieval adapter and evidence normalization, Console handoff/Console-invoked RAG seams, and QA closeout. Parent remains open for execution of TASK-10.8 and later Workspaces, Library Collections, and deeper Import/Export/Search/RAG study workflows.
+
+Continued Gate 1.6 with TASK-10.8.2. The Library destination now mounts a native Search/RAG panel for source scope, query controls, evidence/results, retrieval inspector, and Console handoff readiness without embedding the legacy Search/RAG route. Parent remains open for retrieval execution, evidence normalization, Console handoff/invocation, QA closeout, Workspaces, Library Collections, and deeper Import/Export/Search/RAG study workflows.
+
+Closed Gate 1.6 with TASK-10.8. Library-native Search/RAG now verifies source scope, query controls, retrieval execution, evidence/results, citations/snippets, selected evidence review, Console staged evidence, Console-initiated Library RAG, and recoverable blocked states. Parent remains open for Workspaces, Library Collections, deeper Import/Export/Search/RAG study flows, and later server-parity depth.
 <!-- SECTION:NOTES:END -->

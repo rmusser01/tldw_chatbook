@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import pytest
 from textual.app import App
 
-from Tests.UI.test_destination_shells import DestinationHarness
+from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
@@ -1376,8 +1376,8 @@ async def test_artifacts_destination_keeps_console_launch_disabled_without_chatb
     host = DestinationHarness(app, "artifacts")
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-console-unavailable")
         button = screen.query_one("#artifacts-use-in-console")
 
         assert button.disabled is True
@@ -1388,7 +1388,6 @@ async def test_artifacts_destination_keeps_console_launch_disabled_without_chatb
         )
 
         await pilot.click("#artifacts-use-in-console")
-        await pilot.pause(0.1)
 
     app.open_console_for_live_work.assert_not_called()
     app.open_chat_with_handoff.assert_not_called()
@@ -1427,8 +1426,8 @@ async def test_artifacts_destination_launches_latest_local_chatbook_in_console()
     host = DestinationHarness(app, "artifacts")
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-console-available")
         button = screen.query_one("#artifacts-use-in-console")
 
         assert button.disabled is False
@@ -1438,7 +1437,6 @@ async def test_artifacts_destination_launches_latest_local_chatbook_in_console()
         assert "A portable research bundle" in text
 
         await pilot.click("#artifacts-use-in-console")
-        await pilot.pause(0.1)
 
     app.open_console_for_live_work.assert_called_once_with(
         source="artifacts",
@@ -1492,8 +1490,8 @@ async def test_artifacts_destination_reopens_console_saved_chatbook_with_provena
     host = DestinationHarness(app, "artifacts")
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-console-available")
         text = _screen_static_text(screen)
 
         assert "Console can launch latest Chatbook artifact: Grounded Answer." in text
@@ -1502,7 +1500,6 @@ async def test_artifacts_destination_reopens_console_saved_chatbook_with_provena
         assert "Grounded answer body from saved artifact." in text
 
         await pilot.click("#artifacts-use-in-console")
-        await pilot.pause(0.1)
 
     app.open_console_for_live_work.assert_called_once()
     launch_kwargs = app.open_console_for_live_work.call_args.kwargs
@@ -1561,9 +1558,9 @@ async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_
     host = DestinationHarness(app, "artifacts")
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-console-available")
         await pilot.click("#artifacts-use-in-console")
-        await pilot.pause(0.1)
 
     launch_kwargs = app.open_console_for_live_work.call_args.kwargs
     payload_strings = [launch_kwargs["title"]]
@@ -1604,17 +1601,54 @@ async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbo
     host = DestinationHarness(app, "artifacts")
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-console-available")
         button = screen.query_one("#artifacts-use-in-console")
 
         assert "Ten Pack" in str(button.label)
 
         await pilot.click("#artifacts-use-in-console")
-        await pilot.pause(0.1)
 
     app.open_console_for_live_work.assert_called_once()
     assert app.open_console_for_live_work.call_args.kwargs["payload"]["chatbook_id"] == 10
+
+
+@pytest.mark.asyncio
+async def test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback():
+    app = _build_test_app()
+    app.pending_artifacts_chatbook_target_id = "local:chatbook:77"
+    app.local_chatbook_service = StaticLocalChatbookService(
+        (
+            {
+                "chatbook_id": 77,
+                "id": "77",
+                "name": "Requested Pack",
+                "updated_at": "2026-05-01T20:00:00Z",
+            },
+            {
+                "chatbook_id": 99,
+                "id": "99",
+                "name": "Latest Pack",
+                "updated_at": "2026-05-05T20:00:00Z",
+            },
+        )
+    )
+    app.open_console_for_live_work = Mock()
+    host = DestinationHarness(app, "artifacts")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-console-available")
+
+        text = _screen_static_text(screen)
+        assert "Console can launch requested Chatbook artifact: Requested Pack." in text
+        assert "Latest Pack" not in text
+        assert getattr(app, "pending_artifacts_chatbook_target_id", None) is None
+
+        await pilot.click("#artifacts-use-in-console")
+
+    app.open_console_for_live_work.assert_called_once()
+    assert app.open_console_for_live_work.call_args.kwargs["payload"]["target_id"] == "local:chatbook:77"
 
 
 @pytest.mark.asyncio
@@ -1625,8 +1659,8 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from
     host = DestinationHarness(app, "artifacts")
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-console-unavailable")
         button = screen.query_one("#artifacts-use-in-console")
         text = _screen_static_text(screen)
 
@@ -1637,7 +1671,6 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from
         assert "Why: no local Chatbook artifact exists." not in text
 
         await pilot.click("#artifacts-use-in-console")
-        await pilot.pause(0.1)
 
     app.open_console_for_live_work.assert_not_called()
 
