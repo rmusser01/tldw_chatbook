@@ -13,6 +13,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.geometry import Spacing
 from textual.widgets import Button, Input, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -49,6 +50,18 @@ LIBRARY_SOURCE_PAGE_SIZE = 5
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
 LIBRARY_SERVICE_UNAVAILABLE_COPY = "Library source services are unavailable in this runtime."
 LIBRARY_EMPTY_COPY = "No local Library sources are available yet."
+LIBRARY_EMPTY_NEXT_ACTION_COPY = "Import/Export Sources or Open Notes/Media to add content."
+LIBRARY_INSPECTOR_EMPTY_COPY = "No source selected."
+LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
+    "Select a note, media item, conversation, collection, or RAG result to inspect."
+)
+LIBRARY_FRAME_BORDER = ("solid", "#6f7782")
+LIBRARY_FRAME_PADDING = Spacing(1, 1, 1, 1)
+LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
+LIBRARY_MODE_BAR_HEIGHT = 2
+LIBRARY_MODE_LABEL_WIDTH = 7
+LIBRARY_MODE_CHIP_MIN_WIDTH = 9
+LIBRARY_MODE_CHIP_WIDTH_PADDING = 5
 LIBRARY_MODES = {
     "sources": {
         "label": "Sources",
@@ -149,6 +162,10 @@ class LibraryScreen(BaseAppScreen):
 
     def on_mount(self) -> None:
         super().on_mount()
+        self.set_timer(
+            LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
+            self._apply_source_snapshot_timeout,
+        )
         self._refresh_local_source_snapshot()
 
     @work(exclusive=True)
@@ -179,20 +196,37 @@ class LibraryScreen(BaseAppScreen):
         if self.is_mounted:
             self.refresh(recompose=True)
 
-    @staticmethod
-    async def _resolve_maybe_awaitable(value: Any) -> Any:
-        if inspect.isawaitable(value):
-            return await value
-        return value
+    def _apply_source_snapshot_timeout(self) -> None:
+        """Avoid leaving Library in an indefinite loading state."""
+        if self._library_loaded:
+            return
+        self._apply_local_source_snapshot(
+            {"notes": (), "media": (), "conversations": ()},
+            {"notes": 0, "media": 0, "conversations": 0},
+            {"notes": True, "media": True, "conversations": True},
+            LIBRARY_SERVICE_ERROR_COPY,
+            None,
+        )
 
     @staticmethod
-    async def _run_library_collections_call(callable_obj: Any, *args: Any, **kwargs: Any) -> Any:
-        if inspect.iscoroutinefunction(callable_obj):
-            return await callable_obj(*args, **kwargs)
-        result = await asyncio.to_thread(lambda: callable_obj(*args, **kwargs))
-        if inspect.isawaitable(result):
-            return await result
-        return result
+    def _frame_library_region(widget: Any) -> Any:
+        """Apply visible terminal workbench framing to Library panes."""
+        widget.styles.border = LIBRARY_FRAME_BORDER
+        widget.styles.padding = LIBRARY_FRAME_PADDING
+        return widget
+
+    @staticmethod
+    async def _run_library_service_call(callable_obj: Any, *args: Any, **kwargs: Any) -> Any:
+        def invoke_service() -> Any:
+            result = callable_obj(*args, **kwargs)
+            if inspect.isawaitable(result):
+                async def await_result() -> Any:
+                    return await result
+
+                return asyncio.run(await_result())
+            return result
+
+        return await asyncio.to_thread(invoke_service)
 
     @staticmethod
     def _safe_text(value: Any, fallback: str = "", *, max_length: int = 500) -> str:
@@ -269,27 +303,30 @@ class LibraryScreen(BaseAppScreen):
             return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_UNAVAILABLE_COPY, None
 
         try:
-            notes_value = list_notes(
-                scope="local_note",
-                limit=LIBRARY_SOURCE_PAGE_SIZE,
-                offset=0,
-                user_id=getattr(self.app_instance, "notes_user_id", None) or "default_user",
-            )
-            media_value = list_media(
-                mode="local",
-                page=1,
-                results_per_page=LIBRARY_SOURCE_PAGE_SIZE,
-                include_keywords=False,
-            )
-            conversation_value = list_conversations(
-                mode="local",
-                limit=LIBRARY_SOURCE_PAGE_SIZE,
-                offset=0,
-            )
-            notes_result, media_result, conversation_result = await asyncio.gather(
-                self._resolve_maybe_awaitable(notes_value),
-                self._resolve_maybe_awaitable(media_value),
-                self._resolve_maybe_awaitable(conversation_value),
+            notes_result, media_result, conversation_result = await asyncio.wait_for(
+                asyncio.gather(
+                    self._run_library_service_call(
+                        list_notes,
+                        scope="local_note",
+                        limit=LIBRARY_SOURCE_PAGE_SIZE,
+                        offset=0,
+                        user_id=getattr(self.app_instance, "notes_user_id", None) or "default_user",
+                    ),
+                    self._run_library_service_call(
+                        list_media,
+                        mode="local",
+                        page=1,
+                        results_per_page=LIBRARY_SOURCE_PAGE_SIZE,
+                        include_keywords=False,
+                    ),
+                    self._run_library_service_call(
+                        list_conversations,
+                        mode="local",
+                        limit=LIBRARY_SOURCE_PAGE_SIZE,
+                        offset=0,
+                    ),
+                ),
+                timeout=LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             )
         except PolicyDeniedError as exc:
             policy_message = self._safe_text(exc.user_message, LIBRARY_SERVICE_ERROR_COPY)
@@ -437,7 +474,7 @@ class LibraryScreen(BaseAppScreen):
         if self._library_lookup_recovery_state is not None:
             return self._library_lookup_recovery_state.status_label
         if self._library_lookup_error is None:
-            return "Ready"
+            return "Ready" if self._has_local_sources() else "Empty"
         if "unavailable" in self._library_lookup_error.lower():
             return "Unavailable"
         return "Blocked"
@@ -516,46 +553,93 @@ class LibraryScreen(BaseAppScreen):
                 id="library-status-row",
                 classes="destination-status-row",
             )
-            with DestinationModeStrip(id="library-mode-bar", classes="destination-mode-strip"):
+            mode_bar = DestinationModeStrip(id="library-mode-bar", classes="destination-mode-strip")
+            mode_bar.styles.height = LIBRARY_MODE_BAR_HEIGHT
+            mode_bar.styles.min_height = LIBRARY_MODE_BAR_HEIGHT
+            with mode_bar:
                 mode_label = Static(
                     "Modes:",
                     id="library-mode-label",
                     classes="destination-section",
                 )
+                mode_label.styles.width = LIBRARY_MODE_LABEL_WIDTH
+                mode_label.styles.min_width = LIBRARY_MODE_LABEL_WIDTH
+                mode_label.styles.height = LIBRARY_MODE_BAR_HEIGHT
+                mode_label.styles.min_height = LIBRARY_MODE_BAR_HEIGHT
                 yield mode_label
                 for mode_id, mode in LIBRARY_MODES.items():
                     classes = "library-mode-chip"
                     if mode_id == self._active_mode:
                         classes = f"{classes} is-active"
-                    yield Button(
+                    mode_button = Button(
                         mode["label"],
                         id=mode["button_id"],
                         classes=classes,
                         tooltip=mode["description"],
                     )
+                    mode_button.styles.width = max(
+                        len(mode["label"]) + LIBRARY_MODE_CHIP_WIDTH_PADDING,
+                        LIBRARY_MODE_CHIP_MIN_WIDTH,
+                    )
+                    mode_button.styles.min_width = 0
+                    mode_button.styles.height = LIBRARY_MODE_BAR_HEIGHT
+                    mode_button.styles.min_height = LIBRARY_MODE_BAR_HEIGHT
+                    yield mode_button
 
-            with Horizontal(id="library-contract-grid", classes="ds-panel destination-workbench"):
-                with Vertical(id="library-source-browser", classes="library-region destination-workbench-pane"):
+            contract_grid = self._frame_library_region(
+                Horizontal(id="library-contract-grid", classes="ds-panel destination-workbench")
+            )
+            with contract_grid:
+                source_browser = self._frame_library_region(
+                    Vertical(id="library-source-browser", classes="library-region destination-workbench-pane")
+                )
+                with source_browser:
                     yield Static("Source Browser", classes="destination-section")
-                    yield Button("Open Notes", id="library-open-notes", tooltip="Open saved notes and workspaces.")
-                    yield Button("Open Media", id="library-open-media", tooltip="Open ingested media and transcripts.")
+                    yield Button(
+                        "Open Notes",
+                        id="library-open-notes",
+                        classes="library-source-action",
+                        tooltip="Open saved notes and workspaces.",
+                    )
+                    yield Button(
+                        "Open Media",
+                        id="library-open-media",
+                        classes="library-source-action",
+                        tooltip="Open ingested media and transcripts.",
+                    )
                     yield Button(
                         "Open Conversations",
                         id="library-open-conversations",
+                        classes="library-source-action",
                         tooltip="Open saved conversation browsing inside Library.",
                     )
                     yield Button(
                         "Import/Export Sources",
                         id="library-open-import-export",
+                        classes="library-source-action",
                         tooltip="Open source import and export tools.",
                     )
-                    yield Button("Search/RAG", id="library-open-search", tooltip="Search or ask over indexed sources.")
+                    yield Button(
+                        "Search/RAG",
+                        id="library-open-search",
+                        classes="library-source-action",
+                        tooltip="Search or ask over indexed sources.",
+                    )
+                    yield Button(
+                        "Collections",
+                        id="library-open-collections",
+                        classes="library-source-action",
+                        tooltip="Manage Library-owned reusable source sets.",
+                    )
                     yield Static(
                         "Workspaces: all local sources until workspace scoping is selected.",
                         id="library-workspace-scope",
                     )
 
-                with Vertical(id="library-source-detail", classes="library-region destination-workbench-pane"):
+                source_detail = self._frame_library_region(
+                    Vertical(id="library-source-detail", classes="library-region destination-workbench-pane")
+                )
+                with source_detail:
                     yield Static("Source Detail / Search Results", classes="destination-section")
                     active_mode = self._active_mode_contract()
                     yield Static(
@@ -610,6 +694,10 @@ class LibraryScreen(BaseAppScreen):
                             LIBRARY_EMPTY_COPY,
                             id="library-source-empty",
                         )
+                        yield Static(
+                            LIBRARY_EMPTY_NEXT_ACTION_COPY,
+                            id="library-source-empty-next-action",
+                        )
                         handoff_tooltip = "Stage Library source context after adding notes, media, or conversations."
                     else:
                         for source_type, label, widget_id in (
@@ -631,19 +719,24 @@ class LibraryScreen(BaseAppScreen):
                         handoff_disabled = False
                         handoff_tooltip = "Stage Library source context in Console."
 
-                with Vertical(id="library-source-inspector", classes="library-region destination-workbench-pane"):
-                    yield Static("Source Inspector", classes="destination-section")
-                    yield Static("Authority: local", id="library-source-authority")
-                    yield Static(
-                        "Search/RAG: query selected Library sources or stage evidence in Console.",
-                        id="library-rag-entry-point",
-                    )
-                    if search_rag_panel_state is not None:
-                        yield LibrarySearchRagInspectorPanel(
-                            search_rag_panel_state,
-                            id="library-rag-inspector",
-                            classes="library-rag-region",
-                        )
+                source_inspector = self._frame_library_region(
+                    Vertical(id="library-source-inspector", classes="library-region destination-workbench-pane")
+                )
+                with source_inspector:
+                    with Vertical(id="library-inspector-mode-region"):
+                        if search_rag_panel_state is not None:
+                            yield LibrarySearchRagInspectorPanel(
+                                search_rag_panel_state,
+                                id="library-rag-inspector",
+                                classes="library-rag-region",
+                            )
+                        else:
+                            yield Static("Inspector", id="library-inspector-title", classes="destination-section")
+                            yield Static(LIBRARY_INSPECTOR_EMPTY_COPY, id="library-inspector-empty")
+                            yield Static(
+                                LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY,
+                                id="library-inspector-empty-next-action",
+                            )
                     yield Static("Knowledge workflow", classes="destination-section")
                     yield Static(
                         (
@@ -710,6 +803,9 @@ class LibraryScreen(BaseAppScreen):
         if mode_id is None:
             return
         event.stop()
+        await self._set_active_mode(mode_id)
+
+    async def _set_active_mode(self, mode_id: str) -> None:
         if mode_id == self._active_mode:
             return
         self._active_mode = mode_id
@@ -730,10 +826,11 @@ class LibraryScreen(BaseAppScreen):
         self._sync_collection_scoped_action_buttons()
 
     async def _sync_search_rag_panel(self) -> None:
-        mounted_widgets = list(self.query("#library-search-rag-panel, #library-rag-inspector"))
+        mounted_widgets = list(self.query("#library-search-rag-panel"))
         for widget in mounted_widgets:
             await widget.remove()
         if self._active_mode != "search":
+            await self._sync_inspector_mode_region(None)
             return
         panel_state = self._library_rag_panel_state()
         detail = self.query_one("#library-source-detail", Vertical)
@@ -741,14 +838,36 @@ class LibraryScreen(BaseAppScreen):
             LibrarySearchRagPanel(panel_state, id="library-search-rag-panel"),
             after="#library-active-mode-next-action",
         )
-        inspector = self.query_one("#library-source-inspector", Vertical)
-        await inspector.mount(
-            LibrarySearchRagInspectorPanel(
-                panel_state,
-                id="library-rag-inspector",
-                classes="library-rag-region",
-            ),
-            after="#library-rag-entry-point",
+        await self._sync_inspector_mode_region(panel_state)
+
+    async def _sync_inspector_mode_region(
+        self,
+        panel_state: LibraryRagPanelState | None,
+    ) -> None:
+        regions = list(self.query("#library-inspector-mode-region"))
+        if not regions:
+            return
+        region = regions[0]
+        for child in list(region.children):
+            await child.remove()
+        if panel_state is not None:
+            await region.mount(
+                LibrarySearchRagInspectorPanel(
+                    panel_state,
+                    id="library-rag-inspector",
+                    classes="library-rag-region",
+                )
+            )
+            return
+        await region.mount(
+            Static("Inspector", id="library-inspector-title", classes="destination-section")
+        )
+        await region.mount(Static(LIBRARY_INSPECTOR_EMPTY_COPY, id="library-inspector-empty"))
+        await region.mount(
+            Static(
+                LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY,
+                id="library-inspector-empty-next-action",
+            )
         )
 
     async def _sync_collections_panel(self, *, refresh_snapshot: bool = False) -> None:
@@ -812,7 +931,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_collections_error = "Library Collections are unavailable in this runtime."
             return
         try:
-            records = await self._run_library_collections_call(list_collections)
+            records = await self._run_library_service_call(list_collections)
         except Exception:
             logger.warning("Failed to load Library Collections.", exc_info=True)
             self._library_collections_records = ()
@@ -945,7 +1064,7 @@ class LibraryScreen(BaseAppScreen):
             await self._sync_collections_panel(refresh_snapshot=False)
             return
         try:
-            created = await self._run_library_collections_call(
+            created = await self._run_library_service_call(
                 create_collection,
                 self._library_collection_name_input,
                 description=self._library_collection_description_input,
@@ -971,7 +1090,7 @@ class LibraryScreen(BaseAppScreen):
             await self._sync_collections_panel(refresh_snapshot=False)
             return
         try:
-            renamed = await self._run_library_collections_call(
+            renamed = await self._run_library_service_call(
                 rename_collection,
                 self._library_collections_selected_id,
                 self._library_collection_name_input,
@@ -1007,7 +1126,7 @@ class LibraryScreen(BaseAppScreen):
             await self._sync_collections_panel(refresh_snapshot=False)
             return
         try:
-            deleted = await self._run_library_collections_call(delete_collection, target_id)
+            deleted = await self._run_library_service_call(delete_collection, target_id)
         except LibraryCollectionsServiceError as exc:
             self._notify_library_collections_warning(str(exc))
             return
@@ -1216,8 +1335,14 @@ class LibraryScreen(BaseAppScreen):
         self.post_message(NavigateToScreen("ingest"))
 
     @on(Button.Pressed, "#library-open-search")
-    def open_search(self) -> None:
-        self.post_message(NavigateToScreen("search"))
+    async def open_search_mode(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._set_active_mode("search")
+
+    @on(Button.Pressed, "#library-open-collections")
+    async def open_collections_mode(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._set_active_mode("collections")
 
     def _open_study_section(self, initial_section: str = "dashboard") -> None:
         open_study_screen = getattr(self.app_instance, "open_study_screen", None)

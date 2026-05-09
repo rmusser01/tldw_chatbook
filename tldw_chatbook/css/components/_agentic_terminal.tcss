@@ -510,24 +510,28 @@
 
 #library-mode-label {
     width: $ds-library-mode-label-width;
+    min-width: $ds-library-mode-label-width;
     height: $ds-library-mode-bar-height;
     min-height: $ds-library-mode-bar-height;
 }
 
 .library-mode-chip {
     width: auto;
-    min-width: $ds-library-mode-chip-min-width;
+    min-width: 0;
     height: $ds-library-mode-chip-height;
     min-height: $ds-library-mode-chip-height;
     padding: 0 1;
+    border: none;
 }
 
 #library-contract-grid {
     height: 1fr;
     min-height: 20;
-    padding: 0;
+    padding: 1;
     margin: 0;
     overflow: hidden;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
 }
 
 #library-source-browser,
@@ -537,6 +541,9 @@
     min-width: 0;
     height: 100%;
     min-height: 20;
+    padding: 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
     overflow-y: auto;
 }
 
@@ -577,6 +584,21 @@
 .is-active {
     border: round $ds-action-focus;
     text-style: bold;
+}
+
+.library-mode-chip.is-active {
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.library-source-action {
+    width: $ds-library-source-action-width;
+    min-width: $ds-library-source-action-min-width;
+    height: $ds-library-source-action-height;
+    min-height: $ds-library-source-action-height;
+    margin: 0;
 }
 
 .is-disabled {

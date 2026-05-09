@@ -17,7 +17,7 @@ This folder tracks actual rendered screenshot approval for the 12 top-level dest
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Console | TASK-14.1 | `codex/screen-qa-console` | `console/baseline-2026-05-08-playwright-2048x1280.png` | `console/final-2026-05-08-playwright-console.png` | approved | #287 | merged |
 | 2 | Home | TASK-14.2 | `codex/screen-qa-home` | `home/baseline-2026-05-08-playwright-home.png` | `home/final-2026-05-09-playwright-home-polish2.png` | approved | #288 | pending |
-| 3 | Library | TASK-14.3 | `codex/screen-qa-library` | pending | pending | pending | pending | pending |
+| 3 | Library | TASK-14.3 | `codex/screen-qa-library` | `library/baseline-2026-05-09-playwright-library.png` | `library/review-2026-05-09-playwright-library-contextual-inspector.png` | approved | pending | pending |
 | 4 | Artifacts | TASK-14.4 | `codex/screen-qa-artifacts` | pending | pending | pending | pending | pending |
 | 5 | Personas | TASK-14.5 | `codex/screen-qa-personas` | pending | pending | pending | pending | pending |
 | 6 | Watchlists | TASK-14.6 | `codex/screen-qa-watchlists` | pending | pending | pending | pending | pending |
