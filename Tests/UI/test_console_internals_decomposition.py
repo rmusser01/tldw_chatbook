@@ -341,6 +341,12 @@ def test_console_literal_segments_merge_during_typing_and_small_pastes():
     assert composer._segments[0].collapse_state == "literal"
 
 
+def test_console_composer_empty_placeholder_is_task_oriented():
+    renderable = ConsoleComposerBar._draft_renderable("")
+
+    assert renderable.plain == "Ask, command, or paste task..."
+
+
 @pytest.mark.asyncio
 async def test_console_paste_under_threshold_remains_literal():
     app = _build_test_app()
@@ -791,6 +797,43 @@ async def test_console_enter_sends_native_composer_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_console_empty_transcript_promotes_start_here_and_provider_recovery():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-start-here")
+        await _wait_for_selector(console, pilot, "#console-provider-blocker")
+
+        text = _visible_text(console)
+        for expected in (
+            "Start here",
+            "Ask a question",
+            "Attach sources",
+            "Configure provider",
+            "Run command",
+            "Provider setup needed",
+            "OpenAI missing API key",
+            "Settings",
+            "Enter send",
+            "Ctrl+P commands",
+            "Attach stages context",
+            "Ask, command, or paste task...",
+        ):
+            assert expected in text
+
+
+@pytest.mark.asyncio
 async def test_console_transcript_new_tab_control_is_fully_visible():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -889,6 +932,23 @@ async def test_console_empty_inspector_hides_disabled_actions_until_actionable()
             assert button.disabled is True
             assert button.region.height == 0
             assert str(button.tooltip or "") == ""
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_groups_state_approvals_and_source_readiness():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-run-state-heading")
+        await _wait_for_selector(console, pilot, "#console-inspector-approvals-heading")
+        await _wait_for_selector(console, pilot, "#console-inspector-source-readiness-heading")
+
+        text = _visible_text(console)
+        assert "Run State" in text
+        assert "Approvals" in text
+        assert "Source Readiness" in text
 
 
 @pytest.mark.asyncio

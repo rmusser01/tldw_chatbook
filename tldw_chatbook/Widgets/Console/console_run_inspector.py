@@ -24,6 +24,24 @@ _ROW_IDS = {
     "Approvals": "console-inspector-approvals",
 }
 
+_ROW_GROUPS = (
+    (
+        "Run State",
+        "console-inspector-run-state-heading",
+        ("Live work", "Provider", "Tools"),
+    ),
+    (
+        "Approvals",
+        "console-inspector-approvals-heading",
+        ("Approvals",),
+    ),
+    (
+        "Source Readiness",
+        "console-inspector-source-readiness-heading",
+        ("RAG/source", "Artifacts"),
+    ),
+)
+
 
 class ConsoleRunInspector(Vertical):
     """Render Console run readiness, recovery, and action affordances."""
@@ -70,21 +88,46 @@ class ConsoleRunInspector(Vertical):
             id="console-run-inspector-title",
             classes="destination-section",
         )
+        rows_by_label = {row.label: (index, row) for index, row in enumerate(self.state.rows)}
+        rendered_labels: set[str] = set()
+
+        for heading, heading_id, labels in _ROW_GROUPS:
+            yield Static(
+                heading,
+                id=heading_id,
+                classes="console-inspector-group-heading destination-section",
+            )
+            for label in labels:
+                row_entry = rows_by_label.get(label)
+                if row_entry is None:
+                    continue
+                index, row = row_entry
+                rendered_labels.add(label)
+                yield Static(
+                    row.text,
+                    id=self._row_id(row, index),
+                    classes=f"console-inspector-row console-inspector-row-{row.status}",
+                )
+
+            if heading == "Approvals":
+                for action in self.state.actions:
+                    yield self._button_for_action(action)
+                    if not action.enabled and action.disabled_reason:
+                        reason = Static(
+                            action.disabled_reason,
+                            id=f"{action.widget_id}-reason",
+                            classes="console-inspector-disabled-reason console-hidden-control",
+                        )
+                        reason.styles.display = "none"
+                        reason.styles.height = 0
+                        reason.styles.min_height = 0
+                        yield reason
+
         for index, row in enumerate(self.state.rows):
+            if row.label in rendered_labels:
+                continue
             yield Static(
                 row.text,
                 id=self._row_id(row, index),
                 classes=f"console-inspector-row console-inspector-row-{row.status}",
             )
-        for action in self.state.actions:
-            yield self._button_for_action(action)
-            if not action.enabled and action.disabled_reason:
-                reason = Static(
-                    action.disabled_reason,
-                    id=f"{action.widget_id}-reason",
-                    classes="console-inspector-disabled-reason console-hidden-control",
-                )
-                reason.styles.display = "none"
-                reason.styles.height = 0
-                reason.styles.min_height = 0
-                yield reason

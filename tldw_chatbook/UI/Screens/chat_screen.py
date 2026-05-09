@@ -480,6 +480,29 @@ class ChatScreen(BaseAppScreen):
         )
 
     @staticmethod
+    def _lower_first_word(text: str) -> str:
+        if not text:
+            return text
+        return f"{text[0].lower()}{text[1:]}"
+
+    def _console_provider_blocker_copy(self) -> str:
+        """Return concise Console recovery copy for provider/model setup gaps."""
+        provider, model = self._effective_console_provider_model()
+        if not _has_selected_text(provider):
+            return "Provider setup needed: select a provider -> Settings"
+        if not _has_selected_text(model):
+            return "Provider setup needed: select a model -> Settings"
+
+        readiness = get_provider_readiness(
+            str(provider),
+            getattr(self.app_instance, "app_config", {}) or {},
+        )
+        if readiness.ready:
+            return ""
+        reason = self._lower_first_word(readiness.reason)
+        return f"Provider setup needed: {readiness.provider} {reason} -> Settings"
+
+    @staticmethod
     def _frame_console_region(widget: Any) -> Any:
         """Apply a visible Textual-native workbench frame."""
         widget.styles.border = CONSOLE_FRAME_BORDER
@@ -689,6 +712,28 @@ class ChatScreen(BaseAppScreen):
                         Vertical(id="console-transcript-region", classes="console-region")
                     )
                     with transcript_region:
+                        yield Static(
+                            (
+                                "Start here\n"
+                                "Ask a question in Composer. Attach sources from Library, "
+                                "runs, Artifacts, or RAG.\n"
+                                "Configure provider in Settings. Run command with Ctrl+P."
+                            ),
+                            id="console-start-here",
+                            classes="console-start-here",
+                        )
+                        provider_blocker = self._console_provider_blocker_copy()
+                        if provider_blocker:
+                            yield Static(
+                                provider_blocker,
+                                id="console-provider-blocker",
+                                classes="console-provider-blocker",
+                            )
+                        yield Static(
+                            "Enter send | Ctrl+P commands | Attach stages context",
+                            id="console-action-hints",
+                            classes="console-action-hints",
+                        )
                         yield self._ensure_console_session_surface()
 
                 run_inspector = Vertical(
