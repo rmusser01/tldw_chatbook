@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+from types import SimpleNamespace
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button
@@ -9,6 +13,9 @@ from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
+    StaticLibraryConversationScopeService,
+    StaticLibraryMediaScopeService,
+    StaticLibraryNotesScopeService,
     _active_destination_screen,
     _wait_for_selector,
 )
@@ -265,6 +272,225 @@ async def test_library_mode_strip_is_compact_and_workbench_visible():
         )
 
 
+@pytest.mark.asyncio
+async def test_library_mode_strip_keeps_all_mode_chips_visible():
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+    async with host.run_test(size=(140, 42)) as pilot:
+        library = _active_destination_screen(host)
+        await _wait_for_selector(library, pilot, "#library-contract-grid")
+        mode_bar = library.query_one("#library-mode-bar")
+        mode_label = library.query_one("#library-mode-label")
+        assert mode_bar.region.height <= 2
+        assert mode_label.region.width <= 8
+        for button in library.query(".library-mode-chip"):
+            assert button.region.x >= mode_bar.region.x
+            assert button.region.x + button.region.width <= mode_bar.region.x + mode_bar.region.width
+            assert button.region.y >= mode_bar.region.y
+            assert button.region.y + button.region.height <= mode_bar.region.y + mode_bar.region.height
+
+
+@pytest.mark.asyncio
+async def test_library_workbench_renders_terminal_borders():
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+    async with host.run_test(size=(140, 42)) as pilot:
+        library = _active_destination_screen(host)
+        await _wait_for_selector(library, pilot, "#library-contract-grid")
+        for selector in (
+            "#library-contract-grid",
+            "#library-source-browser",
+            "#library-source-detail",
+            "#library-source-inspector",
+        ):
+            widget = library.query_one(selector)
+            assert widget.styles.border_top[0], f"{selector} has no top border"
+            assert widget.styles.padding.top >= 1, f"{selector} needs readable pane padding"
+
+
+@pytest.mark.asyncio
+async def test_library_empty_state_reports_empty_with_next_action():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+    async with host.run_test(size=(140, 42)) as pilot:
+        library = _active_destination_screen(host)
+        await _wait_for_selector(library, pilot, "#library-source-empty")
+
+        status_row = str(library.query_one("#library-status-row", Static).renderable)
+        visible_text = " ".join(str(widget.renderable) for widget in library.query(Static))
+
+    assert "Empty" in status_row
+    assert "Ready" not in status_row
+    assert "Import/Export Sources or Open Notes/Media to add content." in visible_text
+
+
+@pytest.mark.asyncio
+async def test_library_inspector_uses_empty_state_until_item_selected():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+    async with host.run_test(size=(140, 42)) as pilot:
+        library = _active_destination_screen(host)
+        await _wait_for_selector(library, pilot, "#library-source-empty")
+
+        inspector_title = str(library.query_one("#library-inspector-title", Static).renderable)
+        inspector_text = " ".join(
+            str(widget.renderable)
+            for widget in library.query("#library-source-inspector Static")
+        )
+        has_source_authority = bool(list(library.query("#library-source-authority")))
+
+    assert inspector_title == "Inspector"
+    assert "No source selected." in inspector_text
+    assert "Select a note, media item, conversation, collection, or RAG result to inspect." in inspector_text
+    assert "Source Inspector" not in inspector_text
+    assert not has_source_authority
+
+
+@pytest.mark.asyncio
+async def test_library_source_browser_collections_action_switches_to_collections_mode():
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+    async with host.run_test(size=(140, 42)) as pilot:
+        library = _active_destination_screen(host)
+        await _wait_for_selector(library, pilot, "#library-open-collections")
+
+        library.query_one("#library-open-collections", Button).press()
+        await _wait_for_selector(library, pilot, "#library-collections-panel")
+
+        active_mode_title = str(library.query_one("#library-active-mode-title", Static).renderable)
+        active_chip = library.query_one("#library-mode-collections", Button)
+
+    assert active_mode_title == "Collections mode"
+    assert active_chip.has_class("is-active")
+
+
+@pytest.mark.asyncio
+async def test_library_source_browser_search_action_switches_to_search_mode():
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+    async with host.run_test(size=(140, 42)) as pilot:
+        library = _active_destination_screen(host)
+        await _wait_for_selector(library, pilot, "#library-open-search")
+
+        library.query_one("#library-open-search", Button).press()
+        await _wait_for_selector(library, pilot, "#library-search-rag-panel")
+
+        active_mode_title = str(library.query_one("#library-active-mode-title", Static).renderable)
+        active_chip = library.query_one("#library-mode-search", Button)
+        inspector_title = str(library.query_one("#library-rag-inspector-title", Static).renderable)
+        assert not list(library.query("#library-inspector-title"))
+
+    assert active_mode_title == "Search/RAG mode"
+    assert active_chip.has_class("is-active")
+    assert inspector_title == "Retrieval Inspector"
+
+
+@pytest.mark.asyncio
+async def test_library_source_snapshot_times_out_to_stable_error(monkeypatch):
+    class SlowNotesService:
+        async def list_notes(self, **_kwargs):
+            await asyncio.sleep(0.2)
+
+    class SlowMediaService:
+        async def list_media_items(self, **_kwargs):
+            await asyncio.sleep(0.2)
+
+    class SlowConversationService:
+        async def list_conversations(self, **_kwargs):
+            await asyncio.sleep(0.2)
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS",
+        0.01,
+    )
+    screen = library_screen_module.LibraryScreen(
+        SimpleNamespace(
+            notes_scope_service=SlowNotesService(),
+            media_reading_scope_service=SlowMediaService(),
+            chat_conversation_scope_service=SlowConversationService(),
+            notes_user_id="default_user",
+        )
+    )
+
+    start = time.perf_counter()
+    records, counts, total_known, error, recovery_state = await screen._list_local_source_snapshot()
+    elapsed = time.perf_counter() - start
+
+    assert records == {"notes": (), "media": (), "conversations": ()}
+    assert counts == {"notes": 0, "media": 0, "conversations": 0}
+    assert total_known == {"notes": True, "media": True, "conversations": True}
+    assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
+    assert recovery_state is None
+    assert elapsed < 0.05
+
+
+@pytest.mark.asyncio
+async def test_library_source_snapshot_timeout_handles_blocking_async_services(monkeypatch):
+    class BlockingAsyncNotesService:
+        async def list_notes(self, **_kwargs):
+            time.sleep(0.2)
+            return {"items": []}
+
+    class BlockingAsyncMediaService:
+        async def list_media_items(self, **_kwargs):
+            time.sleep(0.2)
+            return {"items": []}
+
+    class BlockingAsyncConversationService:
+        async def list_conversations(self, **_kwargs):
+            time.sleep(0.2)
+            return {"items": []}
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS",
+        0.01,
+    )
+    screen = library_screen_module.LibraryScreen(
+        SimpleNamespace(
+            notes_scope_service=BlockingAsyncNotesService(),
+            media_reading_scope_service=BlockingAsyncMediaService(),
+            chat_conversation_scope_service=BlockingAsyncConversationService(),
+            notes_user_id="default_user",
+        )
+    )
+
+    start = time.perf_counter()
+    records, counts, total_known, error, recovery_state = await screen._list_local_source_snapshot()
+    elapsed = time.perf_counter() - start
+
+    assert records == {"notes": (), "media": (), "conversations": ()}
+    assert counts == {"notes": 0, "media": 0, "conversations": 0}
+    assert total_known == {"notes": True, "media": True, "conversations": True}
+    assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
+    assert recovery_state is None
+    assert elapsed < 0.05
+
+
+@pytest.mark.asyncio
+async def test_library_service_call_awaits_coroutine_functions_without_worker(monkeypatch):
+    async def async_service_call():
+        return "direct-result"
+
+    async def fail_to_thread(*_args, **_kwargs):  # pragma: no cover - failure path
+        raise AssertionError("direct coroutine service calls should not use to_thread")
+
+    monkeypatch.setattr(library_screen_module.asyncio, "to_thread", fail_to_thread)
+
+    result = await library_screen_module.LibraryScreen._run_library_service_call(
+        async_service_call
+    )
+
+    assert result == "direct-result"
+
+
 @pytest.mark.parametrize(
     "route,host_factory,workbench,panes,actions,markers,marker_container",
     [
@@ -337,6 +563,32 @@ async def test_library_loading_state_preserves_workbench_geometry(monkeypatch):
             "#library-source-loading",
             "#library-source-detail",
             context="Library loading state escaped source detail pane",
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_loading_state_fails_safe_when_snapshot_never_applies(monkeypatch):
+    monkeypatch.setattr(
+        library_screen_module,
+        "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS",
+        0.01,
+    )
+    monkeypatch.setattr(
+        library_screen_module.LibraryScreen,
+        "_refresh_local_source_snapshot",
+        lambda self: None,
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+    async with host.run_test(size=(140, 42)) as pilot:
+        library = _active_destination_screen(host)
+        await _wait_for_selector(library, pilot, "#library-source-error", timeout=1.0)
+        assert not list(library.query("#library-source-loading"))
+        _assert_marker_inside_container(
+            library,
+            "#library-source-error",
+            "#library-source-detail",
+            context="Library fallback error escaped source detail pane",
         )
 
 

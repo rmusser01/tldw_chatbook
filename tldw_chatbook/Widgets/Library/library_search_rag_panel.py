@@ -96,7 +96,11 @@ class LibrarySearchRagInspectorPanel(Vertical):
         self.state = state
 
     def compose(self) -> ComposeResult:
-        yield Static("Retrieval Inspector", classes="destination-section")
+        yield Static(
+            "Retrieval Inspector",
+            id="library-rag-inspector-title",
+            classes="destination-section",
+        )
         yield Static(
             f"Status: {self.state.retrieval_status.title()}",
             id="library-rag-retrieval-status",
