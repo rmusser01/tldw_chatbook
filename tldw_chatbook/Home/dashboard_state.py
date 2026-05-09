@@ -260,16 +260,26 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
 def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
     next_action = choose_next_best_action(state)
     approval_label = "Approval required" if _pending_approval_count(state) else "Ready"
+    active_count = _active_run_count(state)
+    approval_count = _pending_approval_count(state)
+    status_summary = (
+        f"Model: {'Ready' if state.model_ready else 'Blocked'} | "
+        f"RAG: {'Ready' if state.rag_ready else 'Missing sources'} | "
+        f"MCP: {'Ready' if state.mcp_ready else 'Blocked'} | "
+        f"ACP: {'Ready' if state.acp_ready else 'Blocked'} | "
+        f"Active: {active_count} | "
+        f"Approvals: {approval_count}"
+    )
     return HomeDashboard(
         next_action=next_action,
         sections=(
-            HomeSection("status", "Status", (f"Model: {'Ready' if state.model_ready else 'Blocked'}",)),
+            HomeSection("status", "Status", (status_summary,)),
             HomeSection(
                 "attention",
                 "Attention",
                 (
                     approval_label,
-                    f"Pending approvals: {_pending_approval_count(state)}",
+                    f"Pending approvals: {approval_count}",
                     f"Unread notifications: {state.notification_count}",
                 ),
             ),
@@ -278,11 +288,25 @@ def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
                 "Active Work",
                 _active_work_lines(state),
             ),
-            HomeSection("next_best_action", "Next Best Action", (next_action.label, next_action.reason)),
+            HomeSection(
+                "next_best_action",
+                "Next Best Action",
+                _next_action_lines(state, next_action),
+            ),
             HomeSection(
                 "recent_work",
                 "Recent Work",
-                ("Recent work available" if state.has_recent_work else "No recent work yet",),
+                (
+                    (
+                        "Recent work available",
+                        "Open Console, Library, or Artifacts to resume.",
+                    )
+                    if state.has_recent_work
+                    else (
+                        "No recent work yet",
+                        "Runs, chatbooks, imports, and schedules will appear here.",
+                    )
+                ),
             ),
         ),
         controls=build_home_controls(state),
@@ -350,3 +374,18 @@ def _active_work_lines(state: HomeDashboardInput) -> tuple[str, ...]:
         f"Paused: {state.paused_run_count}",
         f"Failed: {state.failed_run_count}",
     )
+
+
+def _next_action_lines(
+    state: HomeDashboardInput,
+    next_action: HomeAction,
+) -> tuple[str, ...]:
+    lines = [next_action.label]
+    if state.has_recent_work:
+        lines.append("Review recent work")
+    for label in ("Open Console", "Configure RAG"):
+        if label == "Open Console" and "Console" in next_action.label:
+            continue
+        if label not in lines:
+            lines.append(label)
+    return tuple(lines[:3])

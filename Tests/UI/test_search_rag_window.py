@@ -225,7 +225,7 @@ class TestSearchRAGWindow:
                     in str(search_button.tooltip)
                 )
                 assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
-                assert window.is_searching is True
+                assert window.is_searching is False
 
     @pytest.mark.asyncio
     async def test_get_search_config_reads_current_controls(

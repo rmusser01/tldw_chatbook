@@ -7,6 +7,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Constants import TAB_LLM, get_tab_display_label
 from tldw_chatbook.Home.dashboard_state import (
     HomeDashboard,
     HomeDashboardInput,
@@ -16,6 +17,7 @@ from tldw_chatbook.Home.dashboard_state import (
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.shell_destinations import get_shell_destination, resolve_shell_route
 
 
 HOME_CONTROL_METHODS = {
@@ -36,6 +38,24 @@ HOME_CONTROL_METHODS_WITH_TARGET_ROUTE = {
     "home-open-chatbook-details",
     "home-open-chatbook-in-console",
 }
+
+HOME_ROUTE_LABEL_OVERRIDES = {
+    "llm": get_tab_display_label(TAB_LLM),
+    TAB_LLM: get_tab_display_label(TAB_LLM),
+    "search-rag": "Search/RAG",
+}
+
+
+def _home_route_label(route: str) -> str:
+    route = route.strip()
+    if route in HOME_ROUTE_LABEL_OVERRIDES:
+        return HOME_ROUTE_LABEL_OVERRIDES[route]
+
+    resolved = resolve_shell_route(route)
+    try:
+        return get_shell_destination(resolved.destination_id).accessible_label
+    except KeyError:
+        return route.replace("_", " ").replace("-", " ").title()
 
 
 class HomeActionButton(Button):
@@ -103,15 +123,21 @@ class HomeScreen(BaseAppScreen):
             return "\n".join(section.lines) if section is not None else ""
 
         selected_item = self._selected_home_item(dashboard_input)
+        selected_item_title = "Selected item" if selected_item is not None else "Selected action"
         selected_item_copy = (
             f"{selected_item.title}\n"
             f"Source: {selected_item.source}\n"
             f"Status: {selected_item.status}\n"
             f"Target: {selected_item.detail_route}"
             if selected_item is not None
-            else "No active work selected."
+            else (
+                f"{dashboard.next_action.label}\n"
+                f"{dashboard.next_action.reason}\n"
+                f"Destination: {_home_route_label(dashboard.next_action.target_route)}\n"
+                "Enter opens selected action."
+            )
         )
-        next_action_copy = f"{dashboard.next_action.label}\n{dashboard.next_action.reason}"
+        next_action_copy = section_text("next_best_action")
 
         with Vertical(id="home-dashboard"):
             yield Static("Home", id="home-title", classes="ds-destination-header")
@@ -128,16 +154,23 @@ class HomeScreen(BaseAppScreen):
                 id="home-status-row",
                 classes="destination-status-row",
             )
-            yield Static("Status", id="home-status", classes="ds-panel")
-            yield Static(section_text("status"), id="home-status-body")
+            yield Static(section_text("status"), id="home-status", classes="destination-status-row")
             yield Static(
                 "Scope: All modules | Filter: Needs attention / Running / Recent",
                 id="home-scope-filter-row",
                 classes="ds-panel",
             )
-            with Horizontal(id="home-dashboard-grid", classes="ds-panel"):
-                with Vertical(id="home-attention-queue", classes="home-dashboard-region"):
-                    yield Static("Attention Queue", id="home-attention", classes="ds-panel")
+            yield Static(
+                "Keys: Enter open selected | Tab switch pane | Ctrl+P command palette",
+                id="home-action-hints",
+                classes="destination-status-row",
+            )
+            with Horizontal(id="home-dashboard-grid", classes="ds-panel destination-workbench"):
+                with Vertical(
+                    id="home-attention-queue",
+                    classes="home-dashboard-region destination-workbench-pane",
+                ):
+                    yield Static("Attention Queue", id="home-attention", classes="destination-section")
                     yield HomeActionButton(
                         dashboard.next_action.label,
                         id="home-primary-action",
@@ -145,8 +178,12 @@ class HomeScreen(BaseAppScreen):
                         fallback_press=self._activate_home_primary_action,
                     )
                     yield Static(section_text("attention"), id="home-attention-body")
-                with Vertical(id="home-active-work-region", classes="home-dashboard-region"):
-                    yield Static("Active Work", id="home-active-work", classes="ds-panel")
+                yield Static("", id="home-attention-active-divider", classes="home-pane-divider")
+                with Vertical(
+                    id="home-active-work-region",
+                    classes="home-dashboard-region destination-workbench-pane",
+                ):
+                    yield Static("Active Work", id="home-active-work", classes="destination-section")
                     for control in dashboard.controls:
                         yield HomeActionButton(
                             control.label,
@@ -157,19 +194,38 @@ class HomeScreen(BaseAppScreen):
                             ),
                         )
                     yield Static(section_text("active_work"), id="home-active-work-body")
-                with Vertical(id="home-inspector", classes="home-dashboard-region"):
+                yield Static("", id="home-active-inspector-divider", classes="home-pane-divider")
+                with Vertical(
+                    id="home-inspector",
+                    classes="home-dashboard-region destination-workbench-pane ds-inspector",
+                ):
                     yield Static(
-                        "Selected item",
+                        selected_item_title,
                         id="home-selected-item-title",
                         classes="destination-section",
                     )
                     yield Static(selected_item_copy, id="home-selected-item-body")
             with Horizontal(id="home-followup-row"):
-                with Vertical(id="home-next-actions-region", classes="ds-panel home-followup-region"):
-                    yield Static("Next Best Action", id="home-next-best-action", classes="ds-panel")
+                with Vertical(
+                    id="home-next-actions-region",
+                    classes="home-followup-region destination-workbench-pane",
+                ):
+                    yield Static(
+                        "Next Best Action",
+                        id="home-next-best-action",
+                        classes="ds-panel destination-section",
+                    )
                     yield Static(next_action_copy, id="home-next-best-action-body")
-                with Vertical(id="home-recent-work-region", classes="ds-panel home-followup-region"):
-                    yield Static("Recent Work", id="home-recent-work", classes="ds-panel")
+                yield Static("", id="home-followup-divider", classes="home-pane-divider")
+                with Vertical(
+                    id="home-recent-work-region",
+                    classes="home-followup-region destination-workbench-pane",
+                ):
+                    yield Static(
+                        "Recent Work",
+                        id="home-recent-work",
+                        classes="ds-panel destination-section",
+                    )
                     yield Static(section_text("recent_work"), id="home-recent-work-body")
 
     def _selected_home_item(self, dashboard_input: HomeDashboardInput):

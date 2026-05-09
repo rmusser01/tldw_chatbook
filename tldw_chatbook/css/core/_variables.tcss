@@ -35,7 +35,7 @@ $ds-destination-compact-strip-height: 1;
 $ds-home-dashboard-grid-height: 18;
 $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
-$ds-home-followup-row-height: 1fr;
+$ds-home-followup-row-height: 6;
 $ds-console-workspace-grid-height: 1fr;
 $ds-console-control-bar-height: 1;
 $ds-console-composer-height: 5;

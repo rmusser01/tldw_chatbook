@@ -490,7 +490,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
 
     def _missing_embeddings_recovery_state(self):
         return optional_dependency_recovery_state(
-            unavailable_what="Search/RAG queries",
+            unavailable_what="Search/RAG requires optional embeddings dependencies",
             missing_dependencies=("embeddings_rag",),
             install_target='pip install -e ".[embeddings_rag]"',
             stable_selector="search-rag-dependency-missing",

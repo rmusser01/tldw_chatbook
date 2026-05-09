@@ -16,6 +16,11 @@ from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from Tests.UI.test_screen_navigation import _build_test_app
 
 
+HOME_TEST_SIZE = (160, 40)
+HOME_MOUNT_PAUSE = 0.1
+HOME_FOLLOWUP_ROW_MAX_HEIGHT = 6
+
+
 class HomeHarness(App):
     CSS_PATH = str(
         Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
@@ -79,8 +84,8 @@ async def test_home_screen_shows_dashboard_sections():
     app = _build_test_app()
     host = HomeHarness(app)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
         assert home.query_one("#home-title").has_class("ds-destination-header")
@@ -96,15 +101,205 @@ async def test_home_screen_shows_dashboard_sections():
 
 
 @pytest.mark.asyncio
+async def test_home_screen_compacts_multi_module_readiness_summary():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        rag_ready=False,
+        mcp_ready=True,
+        acp_ready=False,
+        pending_approval_count=1,
+        active_run_count=2,
+        has_library_content=True,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        status_text = str(home.query_one("#home-status").renderable)
+        assert "Model: Ready" in status_text
+        assert "RAG: Missing sources" in status_text
+        assert "MCP: Ready" in status_text
+        assert "ACP: Blocked" in status_text
+        assert "Active: 2" in status_text
+        assert "Approvals: 1" in status_text
+
+
+@pytest.mark.asyncio
+async def test_home_empty_state_inspector_explains_selected_primary_action():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        selected_title = str(home.query_one("#home-selected-item-title").renderable)
+        selected_text = str(home.query_one("#home-selected-item-body").renderable)
+        assert "Selected action" in selected_title
+        assert "Import Library sources" in selected_text
+        assert "Destination: Library" in selected_text
+        assert "Enter opens selected action" in selected_text
+
+        hint_text = str(home.query_one("#home-action-hints").renderable)
+        assert "Enter open selected" in hint_text
+        assert "Tab switch pane" in hint_text
+
+
+@pytest.mark.asyncio
+async def test_home_next_actions_offer_distinct_followup_choices():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        next_actions_text = str(home.query_one("#home-next-best-action-body").renderable)
+        assert "Import Library sources" in next_actions_text
+        assert "Open Console" in next_actions_text
+        assert "Configure RAG" in next_actions_text
+        assert next_actions_text.count("Import Library sources") == 1
+
+
+@pytest.mark.asyncio
+async def test_home_next_actions_prioritize_recent_work_without_console_duplicate():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        has_recent_work=True,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        next_actions_text = str(home.query_one("#home-next-best-action-body").renderable)
+        assert "Start in Console" in next_actions_text
+        assert "Review recent work" in next_actions_text
+        assert "Open Console" not in next_actions_text
+
+
+@pytest.mark.asyncio
+async def test_home_selected_action_uses_user_facing_route_labels():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(model_ready=False)
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        selected_text = str(home.query_one("#home-selected-item-body").renderable)
+        assert "Set up Console model" in selected_text
+        assert "Destination: Models" in selected_text
+        assert "Destination: Llm" not in selected_text
+
+
+@pytest.mark.asyncio
+async def test_home_recent_work_empty_state_sets_expectation():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+        has_recent_work=False,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        recent_text = str(home.query_one("#home-recent-work-body").renderable)
+        assert "No recent work yet" in recent_text
+        assert "Runs, chatbooks, imports, and schedules will appear here." in recent_text
+
+
+@pytest.mark.asyncio
+async def test_home_recent_work_available_state_points_to_resume_paths():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        has_recent_work=True,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        recent_text = str(home.query_one("#home-recent-work-body").renderable)
+        assert "Recent work available" in recent_text
+        assert "Open Console, Library, or Artifacts to resume." in recent_text
+
+
+@pytest.mark.asyncio
+async def test_home_dashboard_uses_bordered_terminal_panes():
+    app = _build_test_app()
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        assert home.query_one("#home-dashboard-grid").has_class("destination-workbench")
+        for selector in [
+            "#home-attention-queue",
+            "#home-active-work-region",
+            "#home-inspector",
+        ]:
+            assert home.query_one(selector).has_class("destination-workbench-pane")
+        assert home.query_one("#home-inspector").has_class("ds-inspector")
+        for selector in [
+            "#home-attention-active-divider",
+            "#home-active-inspector-divider",
+            "#home-followup-divider",
+        ]:
+            assert home.query_one(selector).has_class("home-pane-divider")
+
+
+@pytest.mark.asyncio
+async def test_home_followup_row_stays_compact_below_dashboard_grid():
+    app = _build_test_app()
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        dashboard_grid = home.query_one("#home-dashboard-grid")
+        followup_row = home.query_one("#home-followup-row")
+        next_actions = home.query_one("#home-next-actions-region")
+        recent_work = home.query_one("#home-recent-work-region")
+
+        assert followup_row.region.y <= dashboard_grid.region.y + dashboard_grid.region.height + 1
+        assert next_actions.region.height <= HOME_FOLLOWUP_ROW_MAX_HEIGHT
+        assert recent_work.region.height <= HOME_FOLLOWUP_ROW_MAX_HEIGHT
+
+
+@pytest.mark.asyncio
 async def test_home_primary_action_opens_target_route():
     app = _build_test_app()
     seen = []
     host = HomeHarness(app, seen)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-primary-action")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] in {"chat", "llm", "library", "schedules", "subscriptions"}
 
@@ -124,8 +319,8 @@ async def test_home_screen_shows_lightweight_agent_and_schedule_controls():
     )
     host = HomeHarness(app)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
         for selector in [
@@ -150,8 +345,8 @@ async def test_home_screen_renders_unread_notification_snapshot_without_controls
     )
     host = HomeHarness(app)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
         assert "Unread notifications: 2" in str(
@@ -173,10 +368,10 @@ async def test_home_notification_primary_action_opens_notifications_inbox_contex
     seen = []
     host = HomeHarness(app, seen)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-primary-action")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "subscriptions"
     assert app.pending_subscription_initial_tab == "notifications"
@@ -201,10 +396,10 @@ async def test_home_failed_watchlist_primary_action_opens_watchlist_runs_context
     seen = []
     host = HomeHarness(app, seen)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-primary-action")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "subscriptions"
     assert app.pending_subscription_initial_tab == "watchlist-runs"
@@ -230,8 +425,8 @@ async def test_home_control_clicks_call_available_runtime_hooks():
     app.retry_active_home_item = Mock()
     host = HomeHarness(app)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         for selector in [
             "#home-approve",
             "#home-reject",
@@ -240,7 +435,7 @@ async def test_home_control_clicks_call_available_runtime_hooks():
             "#home-retry",
         ]:
             await pilot.click(selector)
-            await pilot.pause(0.1)
+            await pilot.pause(HOME_MOUNT_PAUSE)
 
     app.approve_active_home_item.assert_called_once()
     app.reject_active_home_item.assert_called_once()
@@ -270,10 +465,10 @@ async def test_home_screen_uses_active_work_adapter_for_dashboard_and_controls()
     app.notify = Mock()
     host = HomeHarness(app)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-approve")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert adapter.dashboard_calls == 1
     assert adapter.control_actions == [HomeControlAction.APPROVE]
@@ -297,12 +492,12 @@ async def test_home_detail_controls_do_not_directly_navigate_without_adapter_pay
     seen = []
     host = HomeHarness(app, seen)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-open-details")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-open-in-console")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen == []
     assert app.notify.call_count == 2
@@ -323,12 +518,12 @@ async def test_home_detail_and_console_buttons_call_runtime_hooks_with_target_ro
     seen = []
     host = HomeHarness(app, seen)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-open-details")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-open-in-console")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
 
     app.open_active_home_item_details.assert_called_once_with(target_route="workflows")
     app.open_active_home_item_in_console.assert_called_once_with(target_route="chat")
@@ -357,14 +552,14 @@ async def test_home_active_work_item_controls_pass_target_id_to_runtime_hooks():
     app.open_active_home_item_in_console = Mock()
     host = HomeHarness(app, [])
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-pause")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-open-details")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-open-in-console")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
 
     app.pause_active_home_item.assert_called_once_with(target_id="run-1")
     app.open_active_home_item_details.assert_called_once_with(
@@ -398,8 +593,8 @@ async def test_home_saved_chatbook_artifact_resume_controls_pass_artifact_target
     app.open_active_home_item_in_console = Mock()
     host = HomeHarness(app, [])
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
         active_work_text = str(home.query_one("#home-active-work-body").renderable)
@@ -408,9 +603,9 @@ async def test_home_saved_chatbook_artifact_resume_controls_pass_artifact_target
         assert "ready" in active_work_text
 
         await pilot.click("#home-open-details")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-open-in-console")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
 
     app.open_active_home_item_details.assert_called_once_with(
         target_id="local:chatbook:77",
@@ -451,16 +646,16 @@ async def test_home_mixed_active_work_exposes_chatbook_artifact_resume_controls(
     app.open_active_home_item_in_console = Mock()
     host = HomeHarness(app, [])
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
         assert len(home.query("#home-open-chatbook-details")) == 1
         assert len(home.query("#home-open-chatbook-in-console")) == 1
         await pilot.click("#home-open-chatbook-details")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
         await pilot.click("#home-open-chatbook-in-console")
-        await pilot.pause(0.1)
+        await pilot.pause(HOME_MOUNT_PAUSE)
 
     app.open_active_home_item_details.assert_called_once_with(
         target_id="local:chatbook:77",
@@ -639,8 +834,8 @@ async def test_pending_chat_handoff_does_not_create_live_work_controls():
     )
     host = HomeHarness(app)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
         assert len(home.query("#home-pause")) == 0
@@ -659,8 +854,8 @@ async def test_pending_console_launch_does_not_create_home_live_work_controls():
     }
     host = HomeHarness(app)
 
-    async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
         assert len(home.query("#home-pause")) == 0

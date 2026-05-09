@@ -1,10 +1,10 @@
 ---
 id: TASK-14.1
 title: 'Screen QA: Console'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 03:46'
-updated_date: '2026-05-09 04:16'
+updated_date: '2026-05-09 05:45'
 labels:
   - ux
   - screen-qa
@@ -35,7 +35,7 @@ Validate and correct the Console top-level destination screen through actual ren
 - [x] #3 Final actual screenshot captured
 - [x] #4 User approval recorded before PR
 - [x] #5 Focused tests pass
-- [ ] #6 PR merged before next screen starts unless user explicitly overrides
+- [x] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,3 +48,15 @@ Validate and correct the Console top-level destination screen through actual ren
 5. Record baseline defects in the Console notes file, implement only evidence-backed fixes, then recapture a final actual screenshot for user approval before PR creation.
 6. Run focused Console/UI verification and update TASK-14.1 only after explicit screenshot approval.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Console screenshot QA was completed in PR #287 and merged into dev at 1165be0e91141cbf2478d114ae8a9bb4c3ba47ea. The final actual rendered screenshot was approved before PR creation, focused Console verification passed, and the portable QA command was adjusted during review. Residual risk: textual-web/browser capture remains an external QA harness dependency and must be rerun per screen.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+PR #287 merged Console screenshot QA into dev at 1165be0e after actual screenshot approval and focused verification.
+<!-- SECTION:FINAL_SUMMARY:END -->
