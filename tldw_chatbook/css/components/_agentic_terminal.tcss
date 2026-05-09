@@ -289,6 +289,16 @@
     min-height: 0;
 }
 
+.console-inspector-group-heading {
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
 .console-inspector-action {
     height: 1;
     min-height: 1;
@@ -321,6 +331,34 @@
     padding: 0 1;
     border: round $ds-grid-line;
     background: $ds-surface-panel;
+}
+
+.console-start-here,
+.console-provider-blocker,
+.console-action-hints {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+}
+
+.console-start-here {
+    margin: 0 0 1 0;
+    border-left: solid $ds-action-focus;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-provider-blocker {
+    margin: 0 0 1 0;
+    border-left: solid $ds-status-warning;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.console-action-hints {
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
 }
 
 #console-native-composer {

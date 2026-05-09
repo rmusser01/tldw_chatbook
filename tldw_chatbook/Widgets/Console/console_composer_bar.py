@@ -53,7 +53,7 @@ class ConsoleComposerBar(Horizontal):
     """Expose Console-owned composer actions while reusing active chat sessions."""
 
     DEFAULT_STATUS = "No active Console session."
-    DRAFT_PLACEHOLDER = "Type message or command"
+    DRAFT_PLACEHOLDER = "Ask, command, or paste task..."
     PASTE_COLLAPSE_THRESHOLD = 50
     PASTE_COLLAPSE_ENABLED = True
     MIN_DRAFT_ROWS = 1
@@ -532,7 +532,7 @@ class ConsoleComposerBar(Horizontal):
             value="",
             id="console-command-input",
             classes="console-command-input",
-            placeholder="Type message or command",
+            placeholder=self.DRAFT_PLACEHOLDER,
             compact=True,
         )
         command_input.can_focus = False
