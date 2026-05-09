@@ -7,6 +7,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Constants import TAB_LLM, get_tab_display_label
 from tldw_chatbook.Home.dashboard_state import (
     HomeDashboard,
     HomeDashboardInput,
@@ -16,6 +17,7 @@ from tldw_chatbook.Home.dashboard_state import (
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.shell_destinations import get_shell_destination, resolve_shell_route
 
 
 HOME_CONTROL_METHODS = {
@@ -36,6 +38,24 @@ HOME_CONTROL_METHODS_WITH_TARGET_ROUTE = {
     "home-open-chatbook-details",
     "home-open-chatbook-in-console",
 }
+
+HOME_ROUTE_LABEL_OVERRIDES = {
+    "llm": get_tab_display_label(TAB_LLM),
+    TAB_LLM: get_tab_display_label(TAB_LLM),
+    "search-rag": "Search/RAG",
+}
+
+
+def _home_route_label(route: str) -> str:
+    route = route.strip()
+    if route in HOME_ROUTE_LABEL_OVERRIDES:
+        return HOME_ROUTE_LABEL_OVERRIDES[route]
+
+    resolved = resolve_shell_route(route)
+    try:
+        return get_shell_destination(resolved.destination_id).accessible_label
+    except KeyError:
+        return route.replace("_", " ").replace("-", " ").title()
 
 
 class HomeActionButton(Button):
@@ -113,7 +133,7 @@ class HomeScreen(BaseAppScreen):
             else (
                 f"{dashboard.next_action.label}\n"
                 f"{dashboard.next_action.reason}\n"
-                f"Destination: {dashboard.next_action.target_route.title()}\n"
+                f"Destination: {_home_route_label(dashboard.next_action.target_route)}\n"
                 "Enter opens selected action."
             )
         )

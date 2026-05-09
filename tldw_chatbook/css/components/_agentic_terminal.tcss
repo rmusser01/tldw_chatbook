@@ -186,7 +186,7 @@
     min-width: 1;
     height: 100%;
     min-height: 0;
-    background: #808080;
+    background: $ds-grid-line;
 }
 
 #home-attention,
@@ -202,7 +202,7 @@
 
 #home-followup-row {
     height: $ds-home-followup-row-height;
-    min-height: $ds-home-followup-row-height;
+    min-height: 0;
     margin: 1 0 0 0;
 }
 

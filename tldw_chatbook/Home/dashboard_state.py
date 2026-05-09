@@ -381,9 +381,11 @@ def _next_action_lines(
     next_action: HomeAction,
 ) -> tuple[str, ...]:
     lines = [next_action.label]
+    if state.has_recent_work:
+        lines.append("Review recent work")
     for label in ("Open Console", "Configure RAG"):
+        if label == "Open Console" and "Console" in next_action.label:
+            continue
         if label not in lines:
             lines.append(label)
-    if state.has_recent_work and "Review recent work" not in lines:
-        lines.append("Review recent work")
     return tuple(lines[:3])
