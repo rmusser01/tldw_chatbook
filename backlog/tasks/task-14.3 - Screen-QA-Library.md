@@ -1,7 +1,7 @@
 ---
 id: TASK-14.3
 title: 'Screen QA: Library'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 03:46'
 labels:
@@ -34,7 +34,7 @@ Validate and correct the Library top-level destination screen through actual ren
 - [x] #3 Final actual screenshot captured
 - [x] #4 User approval recorded before PR
 - [x] #5 Focused tests pass
-- [ ] #6 PR merged before next screen starts unless user explicitly overrides
+- [x] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,3 +53,4 @@ Validate and correct the Library top-level destination screen through actual ren
 - The right pane now shows a generic `Inspector` empty state until a source/evidence item is selected; Search/RAG mode still swaps in the `Retrieval Inspector`.
 - Verification passed for 26 focused Library visual/state, Library contract layout, and Gate 1.6 Search/RAG tests plus `git diff --check`.
 - Final screenshot is captured at `Docs/superpowers/qa/product-maturity/screen-qa/library/review-2026-05-09-playwright-library-contextual-inspector.png`; user approval was recorded on 2026-05-09 before PR creation.
+- PR #290 merged into `dev` on 2026-05-09 with merge commit `c9c4eeaafc1d094e7feafff51754f79a39c287a3`, closing the Library screen QA task.
