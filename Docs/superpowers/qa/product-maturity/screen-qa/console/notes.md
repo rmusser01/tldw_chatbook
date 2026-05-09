@@ -36,8 +36,8 @@ Fallback reason: Codex in-app Browser lost its active pane after tab refresh, so
 ## Verification
 
 - Commands:
-  - `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_console_internals_decomposition.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py::test_console_core_loop_exposes_agentic_shell_regions --tb=short`
-- Results: `105 passed, 1 warning in 44.95s`
+  - From the repository root with the repo virtualenv active: `python -m pytest -q Tests/UI/test_console_internals_decomposition.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py::test_console_core_loop_exposes_agentic_shell_regions --tb=short`
+- Results: `105 passed, 1 warning in 45.63s`
 
 ## Residual Risks
 
