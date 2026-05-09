@@ -216,8 +216,16 @@ class LibraryScreen(BaseAppScreen):
         return widget
 
     @staticmethod
-    async def _run_library_service_call(callable_obj: Any, *args: Any, **kwargs: Any) -> Any:
-        def invoke_service() -> Any:
+    async def _run_library_service_call(
+        callable_obj: Any,
+        *args: Any,
+        isolate_in_worker: bool = False,
+        **kwargs: Any,
+    ) -> Any:
+        if inspect.iscoroutinefunction(callable_obj) and not isolate_in_worker:
+            return await callable_obj(*args, **kwargs)
+
+        def invoke_service_in_worker() -> Any:
             result = callable_obj(*args, **kwargs)
             if inspect.isawaitable(result):
                 async def await_result() -> Any:
@@ -226,7 +234,13 @@ class LibraryScreen(BaseAppScreen):
                 return asyncio.run(await_result())
             return result
 
-        return await asyncio.to_thread(invoke_service)
+        if isolate_in_worker:
+            return await asyncio.to_thread(invoke_service_in_worker)
+
+        result = await asyncio.to_thread(lambda: callable_obj(*args, **kwargs))
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     @staticmethod
     def _safe_text(value: Any, fallback: str = "", *, max_length: int = 500) -> str:
@@ -311,6 +325,7 @@ class LibraryScreen(BaseAppScreen):
                         limit=LIBRARY_SOURCE_PAGE_SIZE,
                         offset=0,
                         user_id=getattr(self.app_instance, "notes_user_id", None) or "default_user",
+                        isolate_in_worker=True,
                     ),
                     self._run_library_service_call(
                         list_media,
@@ -318,12 +333,14 @@ class LibraryScreen(BaseAppScreen):
                         page=1,
                         results_per_page=LIBRARY_SOURCE_PAGE_SIZE,
                         include_keywords=False,
+                        isolate_in_worker=True,
                     ),
                     self._run_library_service_call(
                         list_conversations,
                         mode="local",
                         limit=LIBRARY_SOURCE_PAGE_SIZE,
                         offset=0,
+                        isolate_in_worker=True,
                     ),
                 ),
                 timeout=LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
@@ -848,8 +865,7 @@ class LibraryScreen(BaseAppScreen):
         if not regions:
             return
         region = regions[0]
-        for child in list(region.children):
-            await child.remove()
+        await region.remove_children()
         if panel_state is not None:
             await region.mount(
                 LibrarySearchRagInspectorPanel(

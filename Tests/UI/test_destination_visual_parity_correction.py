@@ -343,12 +343,13 @@ async def test_library_inspector_uses_empty_state_until_item_selected():
             str(widget.renderable)
             for widget in library.query("#library-source-inspector Static")
         )
+        has_source_authority = bool(list(library.query("#library-source-authority")))
 
     assert inspector_title == "Inspector"
     assert "No source selected." in inspector_text
     assert "Select a note, media item, conversation, collection, or RAG result to inspect." in inspector_text
     assert "Source Inspector" not in inspector_text
-    assert not list(library.query("#library-source-authority"))
+    assert not has_source_authority
 
 
 @pytest.mark.asyncio
@@ -471,6 +472,23 @@ async def test_library_source_snapshot_timeout_handles_blocking_async_services(m
     assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
     assert recovery_state is None
     assert elapsed < 0.05
+
+
+@pytest.mark.asyncio
+async def test_library_service_call_awaits_coroutine_functions_without_worker(monkeypatch):
+    async def async_service_call():
+        return "direct-result"
+
+    async def fail_to_thread(*_args, **_kwargs):  # pragma: no cover - failure path
+        raise AssertionError("direct coroutine service calls should not use to_thread")
+
+    monkeypatch.setattr(library_screen_module.asyncio, "to_thread", fail_to_thread)
+
+    result = await library_screen_module.LibraryScreen._run_library_service_call(
+        async_service_call
+    )
+
+    assert result == "direct-result"
 
 
 @pytest.mark.parametrize(
