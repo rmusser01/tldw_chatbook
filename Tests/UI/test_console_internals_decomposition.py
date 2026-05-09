@@ -347,6 +347,11 @@ def test_console_composer_empty_placeholder_is_task_oriented():
     assert renderable.plain == "Ask, command, or paste task..."
 
 
+def test_console_provider_blocker_reason_lowercases_without_breaking_acronyms():
+    assert ChatScreen._lower_first_char("Missing API key") == "missing API key"
+    assert ChatScreen._lower_first_char("API key missing") == "API key missing"
+
+
 @pytest.mark.asyncio
 async def test_console_paste_under_threshold_remains_literal():
     app = _build_test_app()
@@ -834,6 +839,69 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
 
 
 @pytest.mark.asyncio
+async def test_console_provider_blocker_updates_without_transcript_recompose(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-provider-blocker")
+        blocker = console.query_one("#console-provider-blocker", Static)
+
+        assert blocker.styles.display != "none"
+        assert "OpenAI missing API key" in str(blocker.renderable)
+
+        app.app_config["api_settings"]["openai"]["api_key"] = "sk-test"
+        console._sync_console_control_bar()
+        await pilot.pause()
+
+        assert blocker.styles.display == "none"
+        assert str(blocker.renderable) == ""
+
+        app.app_config["api_settings"]["openai"]["api_key"] = ""
+        console._sync_console_control_bar()
+        await pilot.pause()
+
+        assert blocker.styles.display != "none"
+        assert "OpenAI missing API key" in str(blocker.renderable)
+
+
+@pytest.mark.asyncio
+async def test_console_start_guidance_hides_after_transcript_has_messages():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-start-here")
+        await _wait_for_selector(console, pilot, "#console-action-hints")
+        start_here = console.query_one("#console-start-here", Static)
+        action_hints = console.query_one("#console-action-hints", Static)
+
+        assert start_here.styles.display != "none"
+        assert action_hints.styles.display != "none"
+
+        session = console._get_active_chat_session()
+        assert session is not None
+        session.session_data.message_count = 1
+        console._sync_console_control_bar()
+        await pilot.pause()
+
+        assert start_here.styles.display == "none"
+        assert action_hints.styles.display == "none"
+
+
+@pytest.mark.asyncio
 async def test_console_transcript_new_tab_control_is_fully_visible():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1257,6 +1325,20 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         assert console.query_one("#console-inspector-review-approval", Button).disabled is False
         assert console.query_one("#console-inspector-review-tool-call", Button).disabled is False
         assert console.query_one("#console-inspector-save-chatbook", Button).disabled is False
+        assert (
+            console.query_one("#console-inspector-tools").region.y
+            < console.query_one("#console-inspector-review-tool-call").region.y
+            < console.query_one("#console-inspector-approvals-heading").region.y
+        )
+        assert (
+            console.query_one("#console-inspector-approvals-heading").region.y
+            < console.query_one("#console-inspector-review-approval").region.y
+            < console.query_one("#console-inspector-source-readiness-heading").region.y
+        )
+        assert (
+            console.query_one("#console-inspector-artifacts").region.y
+            < console.query_one("#console-inspector-save-chatbook").region.y
+        )
         assert console.query_one("#console-live-work-primary-action", Button).disabled is False
 
 

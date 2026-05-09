@@ -73,6 +73,12 @@ CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = "Type a Library RAG query before running retrieval."
 CONSOLE_FRAME_BORDER = ("solid", "#6f7782")
+CONSOLE_START_HERE_COPY = (
+    "Start here\n"
+    "Ask a question in Composer. Attach sources from Library, runs, Artifacts, or RAG.\n"
+    "Configure provider in Settings. Run command with Ctrl+P."
+)
+CONSOLE_ACTION_HINTS_COPY = "Enter send | Ctrl+P commands | Attach stages context"
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -480,8 +486,8 @@ class ChatScreen(BaseAppScreen):
         )
 
     @staticmethod
-    def _lower_first_word(text: str) -> str:
-        if not text:
+    def _lower_first_char(text: str) -> str:
+        if not text or (len(text) > 1 and text[0].isupper() and text[1].isupper()):
             return text
         return f"{text[0].lower()}{text[1:]}"
 
@@ -499,8 +505,79 @@ class ChatScreen(BaseAppScreen):
         )
         if readiness.ready:
             return ""
-        reason = self._lower_first_word(readiness.reason)
+        reason = self._lower_first_char(readiness.reason)
         return f"Provider setup needed: {readiness.provider} {reason} -> Settings"
+
+    def _console_transcript_has_messages(self) -> bool:
+        """Return whether the active Console transcript has user/session content."""
+        active_tab = self.chat_state.get_active_tab()
+        if active_tab is not None and active_tab.messages:
+            return True
+
+        session = self._get_active_chat_session()
+        session_data = getattr(session, "session_data", None)
+        if coerce_non_negative_int(getattr(session_data, "message_count", 0)):
+            return True
+
+        chat_log = self._get_active_chat_log()
+        if chat_log is not None:
+            for selector in (
+                ".message",
+                ".console-transcript-system-event",
+                "ChatMessageEnhanced",
+            ):
+                try:
+                    if list(chat_log.query(selector)):
+                        return True
+                except Exception:
+                    continue
+        return False
+
+    @staticmethod
+    def _configure_console_copy_block(
+        widget: Static,
+        copy: str,
+        *,
+        visible: bool,
+    ) -> None:
+        """Update a compact Console status copy block without remounting it."""
+        widget.update(copy if visible else "")
+        if visible:
+            widget.styles.display = "block"
+            widget.styles.height = "auto"
+            widget.styles.min_height = 1
+            return
+        widget.styles.display = "none"
+        widget.styles.height = 0
+        widget.styles.min_height = 0
+
+    def _sync_console_transcript_guidance(self) -> None:
+        """Refresh Console onboarding and provider recovery copy in place."""
+        guidance_visible = not self._console_transcript_has_messages()
+        for selector, copy in (
+            ("#console-start-here", CONSOLE_START_HERE_COPY),
+            ("#console-action-hints", CONSOLE_ACTION_HINTS_COPY),
+        ):
+            try:
+                widget = self.query_one(selector, Static)
+            except QueryError:
+                continue
+            self._configure_console_copy_block(
+                widget,
+                copy,
+                visible=guidance_visible,
+            )
+
+        try:
+            provider_blocker = self.query_one("#console-provider-blocker", Static)
+        except QueryError:
+            return
+        blocker_copy = self._console_provider_blocker_copy()
+        self._configure_console_copy_block(
+            provider_blocker,
+            blocker_copy,
+            visible=bool(blocker_copy),
+        )
 
     @staticmethod
     def _frame_console_region(widget: Any) -> Any:
@@ -712,28 +789,41 @@ class ChatScreen(BaseAppScreen):
                         Vertical(id="console-transcript-region", classes="console-region")
                     )
                     with transcript_region:
-                        yield Static(
-                            (
-                                "Start here\n"
-                                "Ask a question in Composer. Attach sources from Library, "
-                                "runs, Artifacts, or RAG.\n"
-                                "Configure provider in Settings. Run command with Ctrl+P."
-                            ),
+                        guidance_visible = not self._console_transcript_has_messages()
+                        start_here = Static(
+                            CONSOLE_START_HERE_COPY,
                             id="console-start-here",
                             classes="console-start-here",
                         )
+                        self._configure_console_copy_block(
+                            start_here,
+                            CONSOLE_START_HERE_COPY,
+                            visible=guidance_visible,
+                        )
+                        yield start_here
                         provider_blocker = self._console_provider_blocker_copy()
-                        if provider_blocker:
-                            yield Static(
-                                provider_blocker,
-                                id="console-provider-blocker",
-                                classes="console-provider-blocker",
-                            )
-                        yield Static(
-                            "Enter send | Ctrl+P commands | Attach stages context",
+                        blocker = Static(
+                            provider_blocker,
+                            id="console-provider-blocker",
+                            classes="console-provider-blocker",
+                        )
+                        self._configure_console_copy_block(
+                            blocker,
+                            provider_blocker,
+                            visible=bool(provider_blocker),
+                        )
+                        yield blocker
+                        action_hints = Static(
+                            CONSOLE_ACTION_HINTS_COPY,
                             id="console-action-hints",
                             classes="console-action-hints",
                         )
+                        self._configure_console_copy_block(
+                            action_hints,
+                            CONSOLE_ACTION_HINTS_COPY,
+                            visible=guidance_visible,
+                        )
+                        yield action_hints
                         yield self._ensure_console_session_surface()
 
                 run_inspector = Vertical(
@@ -1125,6 +1215,7 @@ class ChatScreen(BaseAppScreen):
                     classes="console-transcript-system-event",
                 )
             )
+            self._sync_console_transcript_guidance()
         except Exception:
             self.app_instance.notify(message, severity="warning")
 
@@ -1175,6 +1266,7 @@ class ChatScreen(BaseAppScreen):
             await result
         if draft.strip() and composer is not None:
             composer.clear_draft()
+        self._sync_console_transcript_guidance()
 
     @on(Button.Pressed, "#console-stop-generation")
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
@@ -1294,6 +1386,7 @@ class ChatScreen(BaseAppScreen):
             control_bar.sync_state(
                 self._build_console_control_state(self._pending_console_launch_context)
             )
+        self._sync_console_transcript_guidance()
         try:
             inspector = self.query_one("#console-run-inspector-state", ConsoleRunInspector)
         except QueryError:
@@ -1517,6 +1610,7 @@ class ChatScreen(BaseAppScreen):
                 self._focus_console_composer_if_needed()
             except QueryError:
                 pass
+            self._sync_console_transcript_guidance()
             logger.debug("No shell bar available for live session sync")
             return
 
@@ -1540,6 +1634,7 @@ class ChatScreen(BaseAppScreen):
                     "Synced shell bar from live session {}",
                     getattr(session_data, "tab_id", None),
                 )
+            self._sync_console_transcript_guidance()
         except Exception as e:
             logger.error(f"Failed to sync shell bar from live session: {e}", exc_info=True)
 
