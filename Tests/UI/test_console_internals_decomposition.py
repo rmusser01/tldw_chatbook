@@ -76,6 +76,13 @@ async def _wait_for_console_library_rag_button_state(
     )
 
 
+def _assert_single_style_span(renderable: Text, *, style: str, expected_text: str) -> None:
+    matching_spans = [span for span in renderable.spans if span.style == style]
+    assert len(matching_spans) == 1
+    span = matching_spans[0]
+    assert renderable.plain[span.start : span.end] == expected_text
+
+
 def test_gate15_console_internals_evidence_is_tracked():
     evidence = _repo_text(GATE15_EVIDENCE)
     roadmap = _repo_text(ROADMAP)
@@ -276,7 +283,30 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
         assert pasted_text not in visible_plain
         assert len(visible_plain) < len(pasted_text)
         assert isinstance(visible_draft.renderable, Text)
-        assert visible_draft.renderable.spans
+        _assert_single_style_span(
+            visible_draft.renderable,
+            style=ConsoleComposerBar.PASTE_TOKEN_STYLE,
+            expected_text=expected_token,
+        )
+
+
+def test_console_paste_token_style_span_survives_literal_ellipsis_prefix():
+    pasted_text = "x" * 51
+    expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+    display_text = f"... {expected_token}"
+
+    renderable = ConsoleComposerBar._draft_renderable(
+        display_text,
+        width=200,
+        style_ranges=[(4, len(display_text), ConsoleComposerBar.PASTE_TOKEN_STYLE)],
+    )
+
+    assert renderable.plain == display_text
+    _assert_single_style_span(
+        renderable,
+        style=ConsoleComposerBar.PASTE_TOKEN_STYLE,
+        expected_text=expected_token,
+    )
 
 
 @pytest.mark.asyncio
@@ -394,7 +424,11 @@ async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
         assert visible_draft.renderable.plain == "Unfurl?"
         assert composer.draft_text() == pasted_text
         assert isinstance(visible_draft.renderable, Text)
-        assert visible_draft.renderable.spans
+        _assert_single_style_span(
+            visible_draft.renderable,
+            style=ConsoleComposerBar.PASTE_CONFIRM_STYLE,
+            expected_text="Unfurl?",
+        )
 
 
 @pytest.mark.asyncio

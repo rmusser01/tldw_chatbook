@@ -39,6 +39,16 @@ class _DraftSegmentDisplayRange:
     end: int
 
 
+@dataclass(frozen=True)
+class _DraftLineSlice:
+    """Wrapped display row with source offsets and synthetic prefix metadata."""
+
+    text: str
+    start: int
+    end: int
+    synthetic_prefix_columns: int = 0
+
+
 class ConsoleComposerBar(Horizontal):
     """Expose Console-owned composer actions while reusing active chat sessions."""
 
@@ -177,15 +187,15 @@ class ConsoleComposerBar(Horizontal):
         return wrapped_lines or [""]
 
     @classmethod
-    def _wrap_draft_line_slices(cls, text: str, width: int) -> list[tuple[str, int, int]]:
+    def _wrap_draft_line_slices(cls, text: str, width: int) -> list[_DraftLineSlice]:
         """Return wrapped draft lines with source offsets for style remapping."""
         width = max(8, width)
         source_lines = text.splitlines() or [text]
-        wrapped_lines: list[tuple[str, int, int]] = []
+        wrapped_lines: list[_DraftLineSlice] = []
         source_offset = 0
         for line in source_lines:
             if not line:
-                wrapped_lines.append(("", source_offset, source_offset))
+                wrapped_lines.append(_DraftLineSlice("", source_offset, source_offset))
                 source_offset += 1
                 continue
 
@@ -204,11 +214,11 @@ class ConsoleComposerBar(Horizontal):
             for wrapped_segment in wrapped_segments:
                 start = source_offset + line_offset
                 end = start + len(wrapped_segment)
-                wrapped_lines.append((wrapped_segment, start, end))
+                wrapped_lines.append(_DraftLineSlice(wrapped_segment, start, end))
                 line_offset += len(wrapped_segment)
             source_offset += len(line) + 1
 
-        return wrapped_lines or [("", 0, 0)]
+        return wrapped_lines or [_DraftLineSlice("", 0, 0)]
 
     @classmethod
     def _visible_draft_lines(cls, text: str, width: int) -> list[str]:
@@ -233,36 +243,43 @@ class ConsoleComposerBar(Horizontal):
             line_slices = cls._wrap_draft_line_slices(text, width)
             if len(line_slices) > cls.MAX_DRAFT_ROWS:
                 line_slices = line_slices[-cls.MAX_DRAFT_ROWS :]
-                first_line, first_start, first_end = line_slices[0]
-                first_line_stripped = first_line.lstrip()
+                first_slice = line_slices[0]
+                first_line_stripped = first_slice.text.lstrip()
                 if first_line_stripped:
-                    trimmed_columns = len(first_line) - len(first_line_stripped)
-                    line_slices[0] = (
+                    trimmed_columns = len(first_slice.text) - len(first_line_stripped)
+                    line_slices[0] = _DraftLineSlice(
                         f"... {first_line_stripped}",
-                        first_start + trimmed_columns,
-                        first_end,
+                        first_slice.start + trimmed_columns,
+                        first_slice.end,
+                        synthetic_prefix_columns=4,
                     )
                 else:
-                    line_slices[0] = ("...", first_end, first_end)
+                    line_slices[0] = _DraftLineSlice(
+                        "...",
+                        first_slice.end,
+                        first_slice.end,
+                        synthetic_prefix_columns=3,
+                    )
 
-            rendered = Text("\n".join(line for line, _, _ in line_slices))
+            rendered = Text("\n".join(line.text for line in line_slices))
             if not style_ranges:
                 return rendered
 
             output_offset = 0
-            for line_index, (line, line_start, line_end) in enumerate(line_slices):
-                source_prefix = 4 if line.startswith("... ") else 0
-                source_to_output_offset = output_offset + source_prefix - line_start
+            for line_index, line_slice in enumerate(line_slices):
+                source_to_output_offset = (
+                    output_offset + line_slice.synthetic_prefix_columns - line_slice.start
+                )
                 for style_start, style_end, style in style_ranges:
-                    span_start = max(style_start, line_start)
-                    span_end = min(style_end, line_end)
+                    span_start = max(style_start, line_slice.start)
+                    span_end = min(style_end, line_slice.end)
                     if span_start < span_end:
                         rendered.stylize(
                             style,
                             span_start + source_to_output_offset,
                             span_end + source_to_output_offset,
                         )
-                output_offset += len(line)
+                output_offset += len(line_slice.text)
                 if line_index < len(line_slices) - 1:
                     output_offset += 1
             return rendered
