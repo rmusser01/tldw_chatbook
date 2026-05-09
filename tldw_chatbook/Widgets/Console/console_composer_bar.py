@@ -190,13 +190,23 @@ class ConsoleComposerBar(Horizontal):
     def _wrap_draft_line_slices(cls, text: str, width: int) -> list[_DraftLineSlice]:
         """Return wrapped draft lines with source offsets for style remapping."""
         width = max(8, width)
-        source_lines = text.splitlines() or [text]
+        source_lines = text.splitlines(keepends=True) or [text]
         wrapped_lines: list[_DraftLineSlice] = []
         source_offset = 0
-        for line in source_lines:
+        for raw_line in source_lines:
+            if raw_line.endswith("\r\n"):
+                line = raw_line[:-2]
+                separator_length = 2
+            elif raw_line.endswith(("\n", "\r")):
+                line = raw_line[:-1]
+                separator_length = 1
+            else:
+                line = raw_line
+                separator_length = 0
+
             if not line:
                 wrapped_lines.append(_DraftLineSlice("", source_offset, source_offset))
-                source_offset += 1
+                source_offset += separator_length
                 continue
 
             line_offset = 0
@@ -216,7 +226,7 @@ class ConsoleComposerBar(Horizontal):
                 end = start + len(wrapped_segment)
                 wrapped_lines.append(_DraftLineSlice(wrapped_segment, start, end))
                 line_offset += len(wrapped_segment)
-            source_offset += len(line) + 1
+            source_offset += len(line) + separator_length
 
         return wrapped_lines or [_DraftLineSlice("", 0, 0)]
 

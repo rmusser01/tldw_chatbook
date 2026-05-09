@@ -309,6 +309,26 @@ def test_console_paste_token_style_span_survives_literal_ellipsis_prefix():
     )
 
 
+def test_console_paste_token_style_span_survives_crlf_before_token():
+    pasted_text = "x" * 51
+    expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+    display_text = f"before\r\n{expected_token}"
+    token_start = display_text.index(expected_token)
+
+    renderable = ConsoleComposerBar._draft_renderable(
+        display_text,
+        width=200,
+        style_ranges=[(token_start, len(display_text), ConsoleComposerBar.PASTE_TOKEN_STYLE)],
+    )
+
+    assert renderable.plain == f"before\n{expected_token}"
+    _assert_single_style_span(
+        renderable,
+        style=ConsoleComposerBar.PASTE_TOKEN_STYLE,
+        expected_text=expected_token,
+    )
+
+
 @pytest.mark.asyncio
 async def test_console_paste_under_threshold_remains_literal():
     app = _build_test_app()
