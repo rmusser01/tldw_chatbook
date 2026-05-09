@@ -193,7 +193,8 @@ async def test_library_search_rag_mode_mounts_native_panel_without_leaving_libra
         assert screen.query_one("#library-source-browser") is source_browser
         assert screen.query_one("#library-source-detail") is source_detail
         assert screen.query_one("#library-source-inspector") is source_inspector
-        assert screen.query_one("#library-rag-inspector").parent is source_inspector
+        assert screen.query_one("#library-rag-inspector")
+        assert source_inspector.query_one("#library-rag-inspector")
         assert len(screen.query("#search-rag-container")) == 0
 
         for selector in (
