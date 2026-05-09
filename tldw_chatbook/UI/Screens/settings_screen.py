@@ -3,9 +3,10 @@
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.widgets import Button, Checkbox, Static
 
 from ...Widgets.destination_workbench import DestinationModeStrip
+from ...config import coerce_bool_setting, save_setting_to_cli_config
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -15,6 +16,23 @@ class SettingsScreen(BaseAppScreen):
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
+
+    def _console_settings(self) -> dict:
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            self.app_instance.app_config = {}
+            app_config = self.app_instance.app_config
+        console_settings = app_config.setdefault("console", {})
+        if not isinstance(console_settings, dict):
+            console_settings = {}
+            app_config["console"] = console_settings
+        return console_settings
+
+    def _collapse_large_pastes_enabled(self) -> bool:
+        return coerce_bool_setting(
+            self._console_settings().get("collapse_large_pastes", True),
+            True,
+        )
 
     def compose_content(self) -> ComposeResult:
         with Vertical(id="settings-shell"):
@@ -43,6 +61,16 @@ class SettingsScreen(BaseAppScreen):
                     yield Static("Appearance controls are available in the customization surface.")
                     yield Static("Accounts/Auth and storage defaults remain global app settings.")
                     yield Static("Runtime-specific MCP and ACP controls stay with their destinations.")
+                    yield Static("Console Behavior", classes="destination-section")
+                    yield Checkbox(
+                        "Collapse large pasted text in Console",
+                        value=self._collapse_large_pastes_enabled(),
+                        id="settings-console-collapse-large-pastes-checkbox",
+                    )
+                    yield Static(
+                        "Keeps large paste chunks compact in Console. Disable to keep pasted text literal.",
+                        id="settings-console-collapse-large-pastes-help",
+                    )
                 with Vertical(id="settings-impact-pane", classes="destination-workbench-pane ds-inspector"):
                     yield Static("Impact And Boundaries", classes="destination-section")
                     yield Static(
@@ -58,3 +86,12 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
         self.post_message(NavigateToScreen("customize"))
+
+    @on(Checkbox.Changed, "#settings-console-collapse-large-pastes-checkbox")
+    def handle_console_collapse_large_pastes_changed(self, event: Checkbox.Changed) -> None:
+        event.stop()
+        self._console_settings()["collapse_large_pastes"] = event.value
+        if save_setting_to_cli_config("console", "collapse_large_pastes", event.value):
+            self.app.notify("Console paste display setting saved.", severity="information")
+        else:
+            self.app.notify("Failed to save Console paste display setting.", severity="error")

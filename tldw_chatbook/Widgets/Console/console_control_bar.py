@@ -13,7 +13,21 @@ from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
-CONSOLE_CONTROL_BAR_HEIGHT = 3
+CONSOLE_CONTROL_BAR_HEIGHT = 1
+
+
+def _summary_line(state: ConsoleControlState) -> str:
+    return " | ".join(
+        (
+            state.provider_label,
+            state.model_label,
+            state.persona_label,
+            state.rag_label,
+            state.sources_label,
+            state.tools_label,
+            state.approvals_label,
+        )
+    )
 
 
 class ConsoleControlBar(Horizontal):
@@ -49,6 +63,15 @@ class ConsoleControlBar(Horizontal):
         self.styles.height = CONSOLE_CONTROL_BAR_HEIGHT
         self.styles.min_height = CONSOLE_CONTROL_BAR_HEIGHT
 
+    @staticmethod
+    def _hide_layout_widget(widget: Any) -> Any:
+        widget.styles.display = "none"
+        widget.styles.width = 0
+        widget.styles.min_width = 0
+        widget.styles.height = 0
+        widget.styles.min_height = 0
+        return widget
+
     def sync_state(self, state: ConsoleControlState) -> None:
         """Refresh visible label widgets from a new display-state snapshot.
 
@@ -57,6 +80,7 @@ class ConsoleControlBar(Horizontal):
         """
         self.state = state
         label_values = {
+            "#console-control-status-line": _summary_line(state),
             "#console-provider-label": state.provider_label,
             "#console-model-label": state.model_label,
             "#console-persona-label": state.persona_label,
@@ -73,43 +97,48 @@ class ConsoleControlBar(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Static(
+            _summary_line(self.state),
+            id="console-control-status-line",
+            classes="console-control-summary-line",
+        )
+        yield self._hide_layout_widget(Static(
             self.state.provider_label,
             id="console-provider-label",
-            classes="console-control-label",
-        )
-        yield Static(
+            classes="console-control-label console-hidden-control",
+        ))
+        yield self._hide_layout_widget(Static(
             self.state.model_label,
             id="console-model-label",
-            classes="console-control-label",
-        )
-        yield Static(
+            classes="console-control-label console-hidden-control",
+        ))
+        yield self._hide_layout_widget(Static(
             self.state.persona_label,
             id="console-persona-label",
-            classes="console-control-label",
-        )
-        yield Static(
+            classes="console-control-label console-hidden-control",
+        ))
+        yield self._hide_layout_widget(Static(
             self.state.rag_label,
             id="console-rag-label",
-            classes="console-control-label",
-        )
-        yield Static(
+            classes="console-control-label console-hidden-control",
+        ))
+        yield self._hide_layout_widget(Static(
             self.state.sources_label,
             id="console-sources-label",
-            classes="console-control-label",
-        )
-        yield Static(
+            classes="console-control-label console-hidden-control",
+        ))
+        yield self._hide_layout_widget(Static(
             self.state.tools_label,
             id="console-tools-label",
-            classes="console-control-label",
-        )
-        yield Static(
+            classes="console-control-label console-hidden-control",
+        ))
+        yield self._hide_layout_widget(Static(
             self.state.approvals_label,
             id="console-approvals-label",
-            classes="console-control-label",
-        )
-        yield CompactModelBar(
+            classes="console-control-label console-hidden-control",
+        ))
+        yield self._hide_layout_widget(CompactModelBar(
             self.app_instance,
             on_sidebar_toggle_requested=self.on_sidebar_toggle_requested,
             id="console-compact-model-bar",
-            classes="console-compact-model-bar",
-        )
+            classes="console-compact-model-bar console-hidden-control",
+        ))

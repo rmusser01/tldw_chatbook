@@ -62,13 +62,15 @@
 
 /* New tab button */
 .new-tab-button {
-    width: 5;
+    width: 11;
+    min-width: 11;
     height: 2;
     padding: 0;
     margin: 0 1;
-    background: $panel;
-    color: $text-muted;
-    border: round $accent;
+    background: $boost;
+    color: $text;
+    text-style: bold;
+    border: none;
 }
 
 .new-tab-button:hover {

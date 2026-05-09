@@ -190,6 +190,7 @@ class ChatTabContainer(Container):
                     id=f"chat-session-{tab_id}",
                     classes="chat-session"
                 )
+                session.suppress_auto_focus = self.id == "console-chat-tabs"
             except Exception as e:
                 logger.error(f"Failed to create ChatSession widget: {e}")
                 self.app_instance.notify("Failed to create chat session", severity="error")

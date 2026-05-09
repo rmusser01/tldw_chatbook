@@ -60,7 +60,7 @@ class ChatTabBar(Horizontal):
         with HorizontalScroll(id="chat-tabs-scroll", classes="chat-tabs-scroll"):
             # New tab button
             yield Button(
-                "+",
+                "New tab",
                 id="new-chat-tab-button",
                 classes="new-tab-button",
                 tooltip="New chat tab (Ctrl+T)"
