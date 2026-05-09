@@ -10,6 +10,10 @@ Canonical spec:
 
 `Docs/superpowers/specs/2026-05-05-product-maturity-phased-roadmap-design.md`
 
+Subfolder indexes:
+
+- [Screen Screenshot QA Campaign](screen-qa/README.md): actual rendered screenshot approval tracker for the 12 top-level destination screens.
+
 Rules:
 
 - Verify running-app behavior, not only rendered widgets.
