@@ -3,7 +3,8 @@
 Date: 2026-05-09
 Branch: `codex/screen-qa-home`
 Backlog task: TASK-14.2
-Commit: pending
+Commit: 9b9537c6
+PR: https://github.com/rmusser01/tldw_chatbook/pull/288
 Screen: Home
 Viewport: 2048x1280
 Launch method: `tldw-serve --host 127.0.0.1 --port 8772`
