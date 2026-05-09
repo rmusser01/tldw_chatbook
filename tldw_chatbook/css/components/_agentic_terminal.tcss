@@ -152,12 +152,15 @@
     min-height: $ds-home-dashboard-grid-height;
     padding: 0 1;
     margin: 0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
 }
 
 #home-status-row,
 #home-status,
 #home-status-body,
-#home-scope-filter-row {
+#home-scope-filter-row,
+#home-action-hints {
     height: $ds-home-compact-row-height;
     min-height: $ds-home-compact-row-height;
     padding: 0 1;
@@ -167,6 +170,23 @@
 
 .home-dashboard-region {
     min-height: 0;
+}
+
+#home-attention-queue,
+#home-active-work-region,
+#home-inspector,
+#home-next-actions-region,
+#home-recent-work-region {
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+.home-pane-divider {
+    width: 1;
+    min-width: 1;
+    height: 100%;
+    min-height: 0;
+    background: #808080;
 }
 
 #home-attention,
@@ -182,7 +202,8 @@
 
 #home-followup-row {
     height: $ds-home-followup-row-height;
-    min-height: 0;
+    min-height: $ds-home-followup-row-height;
+    margin: 1 0 0 0;
 }
 
 .home-followup-region {

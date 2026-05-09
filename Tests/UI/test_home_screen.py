@@ -96,6 +96,161 @@ async def test_home_screen_shows_dashboard_sections():
 
 
 @pytest.mark.asyncio
+async def test_home_screen_compacts_multi_module_readiness_summary():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        rag_ready=False,
+        mcp_ready=True,
+        acp_ready=False,
+        pending_approval_count=1,
+        active_run_count=2,
+        has_library_content=True,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        home = _active_home_screen(host)
+
+        status_text = str(home.query_one("#home-status").renderable)
+        assert "Model: Ready" in status_text
+        assert "RAG: Missing sources" in status_text
+        assert "MCP: Ready" in status_text
+        assert "ACP: Blocked" in status_text
+        assert "Active: 2" in status_text
+        assert "Approvals: 1" in status_text
+
+
+@pytest.mark.asyncio
+async def test_home_empty_state_inspector_explains_selected_primary_action():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        home = _active_home_screen(host)
+
+        selected_title = str(home.query_one("#home-selected-item-title").renderable)
+        selected_text = str(home.query_one("#home-selected-item-body").renderable)
+        assert "Selected action" in selected_title
+        assert "Import Library sources" in selected_text
+        assert "Destination: Library" in selected_text
+        assert "Enter opens selected action" in selected_text
+
+        hint_text = str(home.query_one("#home-action-hints").renderable)
+        assert "Enter open selected" in hint_text
+        assert "Tab switch pane" in hint_text
+
+
+@pytest.mark.asyncio
+async def test_home_next_actions_offer_distinct_followup_choices():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        home = _active_home_screen(host)
+
+        next_actions_text = str(home.query_one("#home-next-best-action-body").renderable)
+        assert "Import Library sources" in next_actions_text
+        assert "Open Console" in next_actions_text
+        assert "Configure RAG" in next_actions_text
+        assert next_actions_text.count("Import Library sources") == 1
+
+
+@pytest.mark.asyncio
+async def test_home_recent_work_empty_state_sets_expectation():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+        has_recent_work=False,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        home = _active_home_screen(host)
+
+        recent_text = str(home.query_one("#home-recent-work-body").renderable)
+        assert "No recent work yet" in recent_text
+        assert "Runs, chatbooks, imports, and schedules will appear here." in recent_text
+
+
+@pytest.mark.asyncio
+async def test_home_recent_work_available_state_points_to_resume_paths():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        has_recent_work=True,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        home = _active_home_screen(host)
+
+        recent_text = str(home.query_one("#home-recent-work-body").renderable)
+        assert "Recent work available" in recent_text
+        assert "Open Console, Library, or Artifacts to resume." in recent_text
+
+
+@pytest.mark.asyncio
+async def test_home_dashboard_uses_bordered_terminal_panes():
+    app = _build_test_app()
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        home = _active_home_screen(host)
+
+        assert home.query_one("#home-dashboard-grid").has_class("destination-workbench")
+        for selector in [
+            "#home-attention-queue",
+            "#home-active-work-region",
+            "#home-inspector",
+        ]:
+            assert home.query_one(selector).has_class("destination-workbench-pane")
+        assert home.query_one("#home-inspector").has_class("ds-inspector")
+        for selector in [
+            "#home-attention-active-divider",
+            "#home-active-inspector-divider",
+            "#home-followup-divider",
+        ]:
+            assert home.query_one(selector).has_class("home-pane-divider")
+
+
+@pytest.mark.asyncio
+async def test_home_followup_row_stays_compact_below_dashboard_grid():
+    app = _build_test_app()
+    host = HomeHarness(app)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        home = _active_home_screen(host)
+
+        dashboard_grid = home.query_one("#home-dashboard-grid")
+        followup_row = home.query_one("#home-followup-row")
+        next_actions = home.query_one("#home-next-actions-region")
+        recent_work = home.query_one("#home-recent-work-region")
+
+        assert followup_row.region.y <= dashboard_grid.region.y + dashboard_grid.region.height + 1
+        assert next_actions.region.height >= 6
+        assert next_actions.region.height <= 6
+        assert recent_work.region.height <= 6
+
+
+@pytest.mark.asyncio
 async def test_home_primary_action_opens_target_route():
     app = _build_test_app()
     seen = []
