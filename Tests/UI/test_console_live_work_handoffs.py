@@ -512,23 +512,23 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
     assert "console-live-work-source-readiness" in state.container_classes
     rows_by_id = {row.widget_id: row for row in state.rows}
     assert rows_by_id["console-live-work-source-wc"].text == (
-        "Watchlists: Connected - Home Watchlists active work can open and route run details in Console."
+        "Watchlists: Connected - Home run details."
     )
     assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-wc"].classes
     assert rows_by_id["console-live-work-source-schedules"].text == (
-        "Schedules: Connected - Schedules active work can open Console when adapter context exists."
+        "Schedules: Connected - Open job context."
     )
     assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-schedules"].classes
     assert rows_by_id["console-live-work-source-rag"].text == (
-        "RAG: Connected - Search/RAG results can stage retrieved evidence in Console."
+        "RAG: Connected - Stage search evidence."
     )
     assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-rag"].classes
     assert rows_by_id["console-live-work-source-workflows"].text == (
-        "Workflows: Connected - Workflows active work can open Console when adapter context exists."
+        "Workflows: Connected - Stage run context."
     )
     assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-workflows"].classes
     assert rows_by_id["console-live-work-source-artifacts"].text == (
-        "Artifacts: Connected - Latest local Chatbook artifacts can launch into Console."
+        "Artifacts: Connected - Launch Chatbooks."
     )
     assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-artifacts"].classes
     for source_id in (
@@ -537,10 +537,6 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
     ):
         assert "Not wired" in rows_by_id[source_id].text
         assert "console-live-work-source-unavailable" in rows_by_id[source_id].classes
-    assert rows_by_id["console-live-work-source-artifacts"].text == (
-        "Artifacts: Connected - Latest local Chatbook artifacts can launch into Console."
-    )
-    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-artifacts"].classes
 
 
 def test_app_console_live_work_primary_action_routes_wc_run_details():
@@ -1727,7 +1723,7 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
         assert screen.query_one("#console-live-work-source-readiness")
         assert screen.query_one("#console-live-work-source-readiness-title").renderable == "Live work sources"
         assert screen.query_one("#console-live-work-source-wc").renderable == (
-            "Watchlists: Connected - Home Watchlists active work can open and route run details in Console."
+            "Watchlists: Connected - Home run details."
         )
         assert "Workflows: Connected" in str(screen.query_one("#console-live-work-source-workflows").renderable)
         assert "Schedules: Connected" in str(screen.query_one("#console-live-work-source-schedules").renderable)
