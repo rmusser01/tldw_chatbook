@@ -2,6 +2,7 @@ import time
 from pathlib import Path
 
 import pytest
+from rich.text import Text
 from textual.events import Paste
 from textual.widgets import Button, Footer, Input, Select, Static
 
@@ -274,6 +275,8 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
         assert expected_token in visible_plain
         assert pasted_text not in visible_plain
         assert len(visible_plain) < len(pasted_text)
+        assert isinstance(visible_draft.renderable, Text)
+        assert visible_draft.renderable.spans
 
 
 @pytest.mark.asyncio
@@ -390,6 +393,8 @@ async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
 
         assert visible_draft.renderable.plain == "Unfurl?"
         assert composer.draft_text() == pasted_text
+        assert isinstance(visible_draft.renderable, Text)
+        assert visible_draft.renderable.spans
 
 
 @pytest.mark.asyncio
@@ -577,6 +582,8 @@ async def test_console_normal_typing_remains_literal_over_paste_threshold():
         assert composer.draft_text() == typed_text
         assert "Pasted Text:" not in visible_plain
         assert "normaltypedcomposertext" in visible_plain
+        assert isinstance(visible_draft.renderable, Text)
+        assert not visible_draft.renderable.spans
 
 
 @pytest.mark.asyncio

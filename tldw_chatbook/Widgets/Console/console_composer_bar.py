@@ -19,6 +19,7 @@ from ...config import coerce_bool_setting
 
 
 _CollapseState = Literal["literal", "collapsed", "confirm", "expanded"]
+_DraftStyleRange = tuple[int, int, str]
 
 
 @dataclass
@@ -49,6 +50,8 @@ class ConsoleComposerBar(Horizontal):
     MAX_DRAFT_ROWS = 4
     COMPOSER_CHROME_ROWS = 4
     FALLBACK_DRAFT_WIDTH = 80
+    PASTE_TOKEN_STYLE = "bold cyan"
+    PASTE_CONFIRM_STYLE = "bold black on yellow"
 
     def __init__(self, *, collapse_large_pastes: bool = True, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -117,6 +120,32 @@ class ConsoleComposerBar(Horizontal):
             offset = next_offset
         return ranges
 
+    def _display_draft_style_ranges(self) -> list[_DraftStyleRange]:
+        """Return Rich style spans for stateful display-only paste tokens."""
+        if not self._segments_initialized:
+            return []
+
+        style_ranges: list[_DraftStyleRange] = []
+        for display_range in self._segment_display_ranges():
+            segment = display_range.segment
+            if segment.collapse_state == "collapsed":
+                style_ranges.append(
+                    (
+                        display_range.start,
+                        display_range.end,
+                        self.PASTE_TOKEN_STYLE,
+                    )
+                )
+            elif segment.collapse_state == "confirm":
+                style_ranges.append(
+                    (
+                        display_range.start,
+                        display_range.end,
+                        self.PASTE_CONFIRM_STYLE,
+                    )
+                )
+        return style_ranges
+
     def _sync_hidden_input(self) -> None:
         """Keep the hidden compatibility input aligned with canonical payload."""
         try:
@@ -148,6 +177,40 @@ class ConsoleComposerBar(Horizontal):
         return wrapped_lines or [""]
 
     @classmethod
+    def _wrap_draft_line_slices(cls, text: str, width: int) -> list[tuple[str, int, int]]:
+        """Return wrapped draft lines with source offsets for style remapping."""
+        width = max(8, width)
+        source_lines = text.splitlines() or [text]
+        wrapped_lines: list[tuple[str, int, int]] = []
+        source_offset = 0
+        for line in source_lines:
+            if not line:
+                wrapped_lines.append(("", source_offset, source_offset))
+                source_offset += 1
+                continue
+
+            line_offset = 0
+            wrapped_segments = (
+                textwrap.wrap(
+                    line,
+                    width=width,
+                    break_long_words=True,
+                    break_on_hyphens=False,
+                    drop_whitespace=False,
+                    replace_whitespace=False,
+                )
+                or [""]
+            )
+            for wrapped_segment in wrapped_segments:
+                start = source_offset + line_offset
+                end = start + len(wrapped_segment)
+                wrapped_lines.append((wrapped_segment, start, end))
+                line_offset += len(wrapped_segment)
+            source_offset += len(line) + 1
+
+        return wrapped_lines or [("", 0, 0)]
+
+    @classmethod
     def _visible_draft_lines(cls, text: str, width: int) -> list[str]:
         """Return the bounded visible draft lines, biased toward the caret end."""
         lines = cls._wrap_draft_lines(text, width)
@@ -159,10 +222,50 @@ class ConsoleComposerBar(Horizontal):
         return visible_lines
 
     @classmethod
-    def _draft_renderable(cls, text: str, *, width: int = FALLBACK_DRAFT_WIDTH) -> Text:
+    def _draft_renderable(
+        cls,
+        text: str,
+        *,
+        width: int = FALLBACK_DRAFT_WIDTH,
+        style_ranges: list[_DraftStyleRange] | None = None,
+    ) -> Text:
         if text:
-            lines = cls._visible_draft_lines(text, width)
-            return Text("\n".join(lines))
+            line_slices = cls._wrap_draft_line_slices(text, width)
+            if len(line_slices) > cls.MAX_DRAFT_ROWS:
+                line_slices = line_slices[-cls.MAX_DRAFT_ROWS :]
+                first_line, first_start, first_end = line_slices[0]
+                first_line_stripped = first_line.lstrip()
+                if first_line_stripped:
+                    trimmed_columns = len(first_line) - len(first_line_stripped)
+                    line_slices[0] = (
+                        f"... {first_line_stripped}",
+                        first_start + trimmed_columns,
+                        first_end,
+                    )
+                else:
+                    line_slices[0] = ("...", first_end, first_end)
+
+            rendered = Text("\n".join(line for line, _, _ in line_slices))
+            if not style_ranges:
+                return rendered
+
+            output_offset = 0
+            for line_index, (line, line_start, line_end) in enumerate(line_slices):
+                source_prefix = 4 if line.startswith("... ") else 0
+                source_to_output_offset = output_offset + source_prefix - line_start
+                for style_start, style_end, style in style_ranges:
+                    span_start = max(style_start, line_start)
+                    span_end = min(style_end, line_end)
+                    if span_start < span_end:
+                        rendered.stylize(
+                            style,
+                            span_start + source_to_output_offset,
+                            span_end + source_to_output_offset,
+                        )
+                output_offset += len(line)
+                if line_index < len(line_slices) - 1:
+                    output_offset += 1
+            return rendered
         return Text(cls.DRAFT_PLACEHOLDER, style="dim")
 
     @classmethod
@@ -204,7 +307,11 @@ class ConsoleComposerBar(Horizontal):
             width = self._draft_render_width()
             row_count = self._visible_draft_row_count(draft, width)
             self.query_one("#console-command-visible-text", Static).update(
-                self._draft_renderable(draft, width=width)
+                self._draft_renderable(
+                    draft,
+                    width=width,
+                    style_ranges=self._display_draft_style_ranges(),
+                )
             )
             self._apply_draft_height(row_count)
         except NoMatches:
