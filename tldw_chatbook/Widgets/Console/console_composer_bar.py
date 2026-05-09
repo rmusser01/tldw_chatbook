@@ -233,13 +233,34 @@ class ConsoleComposerBar(Horizontal):
     @classmethod
     def _visible_draft_lines(cls, text: str, width: int) -> list[str]:
         """Return the bounded visible draft lines, biased toward the caret end."""
-        lines = cls._wrap_draft_lines(text, width)
-        if len(lines) <= cls.MAX_DRAFT_ROWS:
-            return lines
-        visible_lines = lines[-cls.MAX_DRAFT_ROWS :]
-        first_line = visible_lines[0].lstrip()
-        visible_lines[0] = f"... {first_line}" if first_line else "..."
-        return visible_lines
+        return [line_slice.text for line_slice in cls._visible_draft_line_slices(text, width)]
+
+    @classmethod
+    def _visible_draft_line_slices(cls, text: str, width: int) -> list[_DraftLineSlice]:
+        """Return bounded wrapped draft rows with source-offset mapping."""
+        line_slices = cls._wrap_draft_line_slices(text, width)
+        if len(line_slices) <= cls.MAX_DRAFT_ROWS:
+            return line_slices
+
+        visible_slices = line_slices[-cls.MAX_DRAFT_ROWS :]
+        first_slice = visible_slices[0]
+        first_line_stripped = first_slice.text.lstrip()
+        if first_line_stripped:
+            trimmed_columns = len(first_slice.text) - len(first_line_stripped)
+            visible_slices[0] = _DraftLineSlice(
+                f"... {first_line_stripped}",
+                first_slice.start + trimmed_columns,
+                first_slice.end,
+                synthetic_prefix_columns=4,
+            )
+        else:
+            visible_slices[0] = _DraftLineSlice(
+                "...",
+                first_slice.end,
+                first_slice.end,
+                synthetic_prefix_columns=3,
+            )
+        return visible_slices
 
     @classmethod
     def _draft_renderable(
@@ -250,27 +271,7 @@ class ConsoleComposerBar(Horizontal):
         style_ranges: list[_DraftStyleRange] | None = None,
     ) -> Text:
         if text:
-            line_slices = cls._wrap_draft_line_slices(text, width)
-            if len(line_slices) > cls.MAX_DRAFT_ROWS:
-                line_slices = line_slices[-cls.MAX_DRAFT_ROWS :]
-                first_slice = line_slices[0]
-                first_line_stripped = first_slice.text.lstrip()
-                if first_line_stripped:
-                    trimmed_columns = len(first_slice.text) - len(first_line_stripped)
-                    line_slices[0] = _DraftLineSlice(
-                        f"... {first_line_stripped}",
-                        first_slice.start + trimmed_columns,
-                        first_slice.end,
-                        synthetic_prefix_columns=4,
-                    )
-                else:
-                    line_slices[0] = _DraftLineSlice(
-                        "...",
-                        first_slice.end,
-                        first_slice.end,
-                        synthetic_prefix_columns=3,
-                    )
-
+            line_slices = cls._visible_draft_line_slices(text, width)
             rendered = Text("\n".join(line.text for line in line_slices))
             if not style_ranges:
                 return rendered
@@ -301,7 +302,7 @@ class ConsoleComposerBar(Horizontal):
             return cls.MIN_DRAFT_ROWS
         return max(
             cls.MIN_DRAFT_ROWS,
-            min(cls.MAX_DRAFT_ROWS, len(cls._wrap_draft_lines(text, width))),
+            min(cls.MAX_DRAFT_ROWS, len(cls._wrap_draft_line_slices(text, width))),
         )
 
     def _draft_render_width(self) -> int:
@@ -327,6 +328,13 @@ class ConsoleComposerBar(Horizontal):
         self.styles.min_height = self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
         self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
         self.refresh(layout=True)
+
+    def _append_literal_segment(self, text: str) -> None:
+        """Append literal text while coalescing adjacent literal segments."""
+        if self._segments and self._segments[-1].collapse_state == "literal":
+            self._segments[-1].text += text
+        else:
+            self._segments.append(_DraftSegment(text))
 
     def _refresh_visible_draft(self) -> None:
         try:
@@ -373,7 +381,7 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
         self._reset_pending_unfurl_state()
-        self._segments.append(_DraftSegment(text))
+        self._append_literal_segment(text)
         self._sync_hidden_input()
         self._refresh_visible_draft()
 
@@ -386,15 +394,14 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
         self._reset_pending_unfurl_state()
-        self._segments.append(
-            _DraftSegment(
-                text,
-                collapse_state="collapsed"
-                if self.collapse_large_pastes_enabled
-                and len(text) > self.PASTE_COLLAPSE_THRESHOLD
-                else "literal",
-            )
+        should_collapse = (
+            self.collapse_large_pastes_enabled
+            and len(text) > self.PASTE_COLLAPSE_THRESHOLD
         )
+        if should_collapse:
+            self._segments.append(_DraftSegment(text, collapse_state="collapsed"))
+        else:
+            self._append_literal_segment(text)
         self._sync_hidden_input()
         self._refresh_visible_draft()
 
@@ -443,28 +450,20 @@ class ConsoleComposerBar(Horizontal):
         click_x = max(0, event.x - padding_left)
         click_y = max(0, event.y)
         display_text = self._display_draft_text()
-        wrapped_lines = self._wrap_draft_lines(display_text, self._draft_render_width())
-        first_visible_line = max(0, len(wrapped_lines) - self.MAX_DRAFT_ROWS)
-        visible_lines = wrapped_lines[first_visible_line:]
-        if click_y >= len(visible_lines):
+        visible_slices = self._visible_draft_line_slices(
+            display_text,
+            self._draft_render_width(),
+        )
+        if click_y >= len(visible_slices):
             return None
-        clicked_line = visible_lines[click_y]
-        line_start = sum(len(line) for line in wrapped_lines[: first_visible_line + click_y])
-
-        if first_visible_line and click_y == 0:
-            ellipsis_prefix = "... "
-            stripped_line = clicked_line.lstrip()
-            if not stripped_line or click_x < len(ellipsis_prefix):
-                return None
-            trimmed_columns = len(clicked_line) - len(stripped_line)
-            underlying_x = trimmed_columns + click_x - len(ellipsis_prefix)
-            if underlying_x >= len(clicked_line):
-                return None
-            return line_start + underlying_x
-
-        if click_x >= len(clicked_line):
+        clicked_slice = visible_slices[click_y]
+        if click_x >= len(clicked_slice.text):
             return None
-        return line_start + click_x
+        if clicked_slice.synthetic_prefix_columns:
+            if click_x < clicked_slice.synthetic_prefix_columns:
+                return None
+            return clicked_slice.start + click_x - clicked_slice.synthetic_prefix_columns
+        return clicked_slice.start + click_x
 
     def _target_unfurl_segment(self, event: Click) -> _DraftSegment | None:
         """Return the collapsed paste segment targeted by the click position."""

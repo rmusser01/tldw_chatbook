@@ -329,6 +329,18 @@ def test_console_paste_token_style_span_survives_crlf_before_token():
     )
 
 
+def test_console_literal_segments_merge_during_typing_and_small_pastes():
+    composer = ConsoleComposerBar()
+
+    composer.insert_text("a")
+    composer.insert_text("b")
+    composer.insert_pasted_text("small paste")
+
+    assert composer.draft_text() == "absmall paste"
+    assert len(composer._segments) == 1
+    assert composer._segments[0].collapse_state == "literal"
+
+
 @pytest.mark.asyncio
 async def test_console_paste_under_threshold_remains_literal():
     app = _build_test_app()
@@ -474,6 +486,30 @@ async def test_console_collapsed_paste_second_click_unfurls_literal_text():
         assert "Pasted Text:" not in visible_plain
         assert "Unfurl?" not in visible_plain
         assert composer.draft_text() == pasted_text
+
+
+@pytest.mark.asyncio
+async def test_console_collapsed_paste_click_targets_token_after_literal_newline():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "newline preceded paste " * 10
+
+        composer.load_draft("prefix\n")
+        composer.insert_pasted_text(pasted_text)
+        await pilot.pause(0.1)
+
+        await pilot.click("#console-command-visible-text", offset=(0, 1))
+        await pilot.pause(0.1)
+
+        assert visible_draft.renderable.plain == "prefix\nUnfurl?"
+        assert composer.draft_text() == f"prefix\n{pasted_text}"
 
 
 @pytest.mark.asyncio
@@ -663,6 +699,46 @@ async def test_console_native_composer_captures_printable_typing_from_non_text_f
         assert composer.draft_text() == "k"
         assert "k" in visible_draft.renderable.plain
         assert "k" in _visible_text(composer)
+
+
+@pytest.mark.asyncio
+async def test_console_native_composer_does_not_capture_typing_from_select_focus(monkeypatch):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-compact-model-bar")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        compact_bar = console.query_one("#console-compact-model-bar")
+        provider_select = compact_bar.query_one("#compact-api-provider", Select)
+
+        monkeypatch.setattr(type(console.app), "focused", property(lambda _app: provider_select))
+        await pilot.press("x")
+        await pilot.pause(0.1)
+
+        assert composer.draft_text() == ""
+
+
+@pytest.mark.asyncio
+async def test_console_native_composer_does_not_capture_paste_from_select_focus(monkeypatch):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-compact-model-bar")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        compact_bar = console.query_one("#console-compact-model-bar")
+        provider_select = compact_bar.query_one("#compact-api-provider", Select)
+
+        monkeypatch.setattr(type(console.app), "focused", property(lambda _app: provider_select))
+        console.on_paste(Paste("paste should stay with focused control"))
+        await pilot.pause(0.1)
+
+        assert composer.draft_text() == ""
 
 
 @pytest.mark.asyncio

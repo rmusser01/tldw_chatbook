@@ -528,7 +528,15 @@ def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type 
 
 
 def coerce_bool_setting(value: Any, default: bool = True) -> bool:
-    """Coerce config/app setting values with the same bool rules as load_settings."""
+    """Coerce config/app setting values with the same bool rules as load_settings.
+
+    Args:
+        value: Raw setting value to coerce.
+        default: Fallback value when coercion cannot produce a boolean.
+
+    Returns:
+        Coerced boolean value.
+    """
     return _get_typed_value({"value": value}, "value", default, bool)
 
 # Global cache for load_settings to avoid redundant file I/O

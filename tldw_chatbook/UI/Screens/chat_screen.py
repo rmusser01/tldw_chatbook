@@ -1,22 +1,22 @@
 """Chat screen implementation with comprehensive state management."""
 
-import inspect
-import re
-from typing import TYPE_CHECKING, Dict, Any, Optional
 from datetime import datetime
-import uuid
-from loguru import logger
-import toml
+import inspect
 from pathlib import Path
-from rich.text import Text
+import re
+from typing import Any, Dict, Optional, TYPE_CHECKING
+import uuid
 
+import toml
+from loguru import logger
+from rich.text import Text
+from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
-from textual.events import Click, Key, Paste
-from textual import on, work
-from textual.reactive import reactive
 from textual.css.query import NoMatches, QueryError
+from textual.events import Click, Key, Paste
+from textual.reactive import reactive
+from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
@@ -1287,18 +1287,46 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
 
+    @staticmethod
+    def _is_legacy_chat_input_focus(focused: object | None) -> bool:
+        """Return True when focus is on a hidden legacy chat input."""
+        if focused is None:
+            return False
+        focused_id = getattr(focused, "id", None) or ""
+        has_class = getattr(focused, "has_class", lambda _class_name: False)
+        return (
+            focused_id == "chat-input"
+            or focused_id.startswith("chat-input-")
+            or has_class("chat-input")
+        )
+
+    @staticmethod
+    def _is_descendant_or_self(widget: object | None, ancestor: object) -> bool:
+        """Return True when widget is ancestor or contained by ancestor."""
+        current = widget
+        while current is not None:
+            if current is ancestor:
+                return True
+            current = getattr(current, "parent", None)
+        return False
+
+    def _should_capture_console_input(self, composer: ConsoleComposerBar) -> bool:
+        """Return True when key/paste input should route to the Console composer."""
+        focused = self.app.focused
+        if focused is None:
+            return True
+        return self._is_descendant_or_self(
+            focused,
+            composer,
+        ) or self._is_legacy_chat_input_focus(focused)
+
     def on_key(self, event: Key) -> None:
         """Treat the Console composer as the default printable text target."""
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return
-        focused = self.app.focused
-        if isinstance(focused, (Input, TextArea)) and not (
-            focused.id == "chat-input"
-            or (focused.id or "").startswith("chat-input-")
-            or focused.has_class("chat-input")
-        ):
+        if not self._should_capture_console_input(composer):
             return
         if event.key in {"backspace", "ctrl+h"}:
             composer.delete_left()
@@ -1329,12 +1357,7 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return
-        focused = self.app.focused
-        if isinstance(focused, (Input, TextArea)) and not (
-            focused.id == "chat-input"
-            or (focused.id or "").startswith("chat-input-")
-            or focused.has_class("chat-input")
-        ):
+        if not self._should_capture_console_input(composer):
             return
         composer.insert_pasted_text(event.text)
         event.stop()
