@@ -61,6 +61,7 @@ class ChatSession(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.session_data = session_data
+        self.suppress_auto_focus = False
         logger.debug(f"ChatSession initialized for tab: {session_data.tab_id}")
     
     def compose(self) -> ComposeResult:
@@ -191,10 +192,9 @@ class ChatSession(Container):
         app_config = getattr(self.app_instance, "app_config", {})
         readiness = get_provider_readiness(self._selected_provider_for_orientation(), app_config)
         return (
-            "Console is the agentic control surface for programming, research, and workspace tasks.\n"
-            f"Provider readiness: {readiness.user_message}\n"
-            "Context: Notes, Media, Search/RAG, Workspaces, Study flashcards/quizzes, "
-            "personas, and Chatbooks. Ctrl+P opens commands."
+            "Event stream ready. Start with a command or attach sources.\n"
+            f"Provider: {readiness.user_message}\n"
+            "Context lanes: Library, Search/RAG, Artifacts, Personas, Skills."
         )
     
     async def handle_send_stop_button(self, event):
@@ -401,12 +401,13 @@ class ChatSession(Container):
             except Exception as e:
                 logger.warning(f"Error updating button state on resume: {e}")
             
-            # Focus input area
-            try:
-                input_area = self.get_chat_input()
-                input_area.focus()
-            except Exception as e:
-                logger.debug(f"Could not focus input on resume: {e}")
+            # Focus input area unless a host shell owns a separate composer.
+            if not self.suppress_auto_focus:
+                try:
+                    input_area = self.get_chat_input()
+                    input_area.focus()
+                except Exception as e:
+                    logger.debug(f"Could not focus input on resume: {e}")
                 
         except Exception as e:
             logger.error(f"Unexpected error resuming session {self.session_data.tab_id}: {e}")
