@@ -33,6 +33,8 @@ Console remains first because it is already in flight and is the primary agentic
 
 Each screen must be handled as its own isolated PR.
 
+Only one screen branch should be active for implementation at a time. Parallel planning is acceptable, but visual correction work should stay serial so screenshot approval, PR review, and merge state remain unambiguous.
+
 A screen is not approved when:
 
 - A Textual mounted test passes.
@@ -48,6 +50,8 @@ A screen is approved only when:
 - The screenshot is shown to the user.
 - The user explicitly approves that screenshot.
 
+If the user rejects the screenshot, the screen remains in the same PR branch. Record the rejection reason in that screen's `notes.md`, fix the smallest scoped set of issues, recapture the running app, and ask for approval again. Do not open the PR until the final screenshot is approved.
+
 ## Per-Screen Workflow
 
 Each screen follows the same sequence:
@@ -58,12 +62,13 @@ Each screen follows the same sequence:
 4. Compare the screenshot against the approved ASCII/design contract and current product role.
 5. Record defects as P0, P1, P2, or P3.
 6. Fix only that screen unless a shared-shell bug blocks the screen.
-7. Run focused automated verification for the changed seams.
-8. Capture a final actual screenshot from the running app.
-9. Ask the user to approve the screenshot.
-10. Open one PR against `dev` only after screenshot approval.
-11. Address review comments for that PR.
-12. Continue to the next screen only after merge or an explicit user decision to pause.
+7. Run an interaction smoke check for the screen's primary task path.
+8. Run focused automated verification for the changed seams.
+9. Capture a final actual screenshot from the running app.
+10. Ask the user to approve the screenshot.
+11. Open one PR against `dev` only after screenshot approval.
+12. Address review comments for that PR.
+13. Continue to the next screen only after merge or an explicit user decision to pause.
 
 ## Branch And PR Naming
 
@@ -90,6 +95,19 @@ Each PR title should use:
 
 Screenshots must be actual captures of the running app. Do not use generated SVGs, synthetic HTML mockups, or code-rendered diagrams as approval evidence.
 
+Preferred capture path:
+
+1. Run the app through `textual-serve` / `textual-web` from the screen branch.
+2. Use browser automation to navigate to the target screen.
+3. Capture the browser-rendered running Textual app as a PNG.
+
+Fallback capture path:
+
+1. Run the app in a real terminal.
+2. Use a system screenshot that includes the full visible app.
+
+The approval screenshot must show the full target screen at a stable desktop-size viewport. A compact-size screenshot should also be captured for QA evidence when layout changes are made, but the default approval gate is the primary full-screen screenshot unless the user asks to approve compact and desktop separately.
+
 Store evidence under:
 
 `Docs/superpowers/qa/product-maturity/screen-qa/<screen>/`
@@ -107,9 +125,24 @@ The notes file should record:
 - Viewport size
 - Launch method
 - Screenshot paths
+- Baseline defects found
+- Screenshot rejection reasons and recapture history, if any
 - User approval status
 - Tests run
 - Residual risks
+
+## Backlog Tracking
+
+Create a parent Backlog.md task for the 12-screen screenshot QA campaign before starting implementation, then create one child task per screen. Each child task should map to exactly one screen PR.
+
+Each screen task must include acceptance criteria for:
+
+- Baseline actual screenshot captured.
+- Final actual screenshot captured.
+- User approval recorded.
+- Focused tests run.
+- PR opened only after approval.
+- PR merged before the next screen starts, unless the user explicitly pauses or overrides the sequence.
 
 ## Required Checks Per Screen
 
@@ -124,6 +157,8 @@ Every screen pass must verify:
 - The screen fits at default desktop terminal size.
 - The screen has at least one compact-size check unless the user explicitly scopes it out.
 - The Textual footer/status affordance remains visible unless intentionally replaced.
+
+Every screen pass should also exercise one realistic primary action or blocked-state recovery path. Examples include typing in Console, selecting an item in Home, switching Library modes, opening an Artifact detail, selecting a Persona, viewing Watchlist status, inspecting Schedule recovery, selecting a Workflow, opening MCP server detail, reading ACP setup state, selecting a Skill, and changing Settings category focus.
 
 ## Screen-Specific Focus
 
