@@ -7,6 +7,8 @@ Commit:
 Screen: ACP
 Viewport:
 Launch method:
+Screenshot method:
+Fallback reason:
 
 ## Baseline Screenshot
 

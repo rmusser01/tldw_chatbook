@@ -7,6 +7,8 @@ Commit:
 Screen: Home
 Viewport:
 Launch method:
+Screenshot method:
+Fallback reason:
 
 ## Baseline Screenshot
 

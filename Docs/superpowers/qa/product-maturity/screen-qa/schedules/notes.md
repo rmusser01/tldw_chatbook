@@ -7,6 +7,8 @@ Commit:
 Screen: Schedules
 Viewport:
 Launch method:
+Screenshot method:
+Fallback reason:
 
 ## Baseline Screenshot
 

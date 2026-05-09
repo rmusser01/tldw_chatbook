@@ -7,6 +7,8 @@ Commit:
 Screen: Skills
 Viewport:
 Launch method:
+Screenshot method:
+Fallback reason:
 
 ## Baseline Screenshot
 

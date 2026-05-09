@@ -16,6 +16,7 @@ documentation:
   - >-
     Docs/superpowers/specs/2026-05-08-destination-visual-parity-correction-design.md
   - Docs/superpowers/trackers/product-maturity-roadmap.md
+  - Docs/superpowers/qa/product-maturity/screen-qa/README.md
 priority: high
 ---
 
