@@ -8,9 +8,9 @@ from typing import Any, Mapping
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.validation import (
+    validate_push_response_scope,
     validate_outgoing_envelope_scope,
     validate_pulled_response_scope,
-    validate_response_dataset_identity,
 )
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
@@ -128,10 +128,16 @@ class LocalFirstSyncService:
                 self._record_sync_error(profile=profile, stage="push", exc=exc)
                 raise
             try:
-                validate_response_dataset_identity(
+                validate_push_response_scope(
                     dataset_id=str(dataset_id),
                     response_dataset_id=push_record.get("dataset_id"),
-                    response_label="push response",
+                    submitted_client_envelope_ids=[
+                        str(envelope["client_envelope_id"])
+                        for envelope in push_payloads
+                    ],
+                    accepted=push_record.get("accepted", []),
+                    rejected=push_record.get("rejected", []),
+                    conflicts=push_record.get("conflicts", []),
                 )
             except Exception as exc:
                 self._record_sync_error(profile=profile, stage="push", exc=exc)

@@ -46,7 +46,10 @@ class FakeLocalFirstServer:
             return self.push_response
         return {
             "dataset_id": dataset_id,
-            "accepted": [{"client_envelope_id": "outgoing-1"}],
+            "accepted": [
+                {"client_envelope_id": envelope["client_envelope_id"]}
+                for envelope in envelopes
+            ],
             "next_cursor": "8",
         }
 
@@ -364,6 +367,85 @@ async def test_local_first_sync_once_rejects_mismatched_push_response_dataset_be
     assert dispatched == []
     assert profile["last_error"] == (
         "push_failed: Sync v2 push response dataset_id must match requested dataset_id"
+    )
+    assert profile["dataset_cursors"]["sync_v2"] == "7"
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    ).cursor == "7"
+
+
+async def test_local_first_sync_once_rejects_unknown_push_response_envelope_ids_before_dispatch(
+    tmp_path,
+):
+    dataset_key = generate_dataset_key()
+    pending = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    ).build_note_metadata_update(note_id="note-1", status="archived")
+    repo = _repo_with_profile(tmp_path)
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=pending,
+    )
+    server = FakeLocalFirstServer(
+        push_response={
+            "dataset_id": "dataset-1",
+            "accepted": [{"client_envelope_id": "unknown-envelope"}],
+            "rejected": [],
+            "conflicts": [],
+            "next_cursor": "8",
+        }
+    )
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    with pytest.raises(ValueError, match="client_envelope_id"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes"],
+        )
+
+    pending_after = repo.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
+    dispatched = repo.list_sync_v2_outbox_entries(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        status="dispatched",
+    )
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert [call[0] for call in server.calls] == ["push"]
+    assert [entry["client_envelope_id"] for entry in pending_after] == [pending.client_envelope_id]
+    assert pending_after[0]["attempt_count"] == 0
+    assert pending_after[0]["last_error"] is None
+    assert dispatched == []
+    assert profile["last_error"] == (
+        "push_failed: Sync v2 push response referenced unknown client_envelope_id"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
     assert repo.get_remote_pull_cursor(

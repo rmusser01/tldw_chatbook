@@ -42,6 +42,29 @@ def validate_pulled_response_scope(
             raise ValueError("pulled Sync v2 envelope domain must be included in requested domains")
 
 
+def validate_push_response_scope(
+    *,
+    dataset_id: str,
+    response_dataset_id: Any,
+    submitted_client_envelope_ids: Iterable[str],
+    accepted: Iterable[dict[str, Any]],
+    rejected: Iterable[dict[str, Any]],
+    conflicts: Iterable[dict[str, Any]],
+) -> None:
+    """Reject Sync v2 push responses that do not correspond to the submitted batch."""
+
+    validate_response_dataset_identity(
+        dataset_id=dataset_id,
+        response_dataset_id=response_dataset_id,
+        response_label="push response",
+    )
+    submitted_ids = {str(client_envelope_id) for client_envelope_id in submitted_client_envelope_ids}
+    for item in [*accepted, *rejected, *conflicts]:
+        client_envelope_id = item.get("client_envelope_id")
+        if not client_envelope_id or str(client_envelope_id) not in submitted_ids:
+            raise ValueError("Sync v2 push response referenced unknown client_envelope_id")
+
+
 def validate_outgoing_envelope_scope(
     *,
     dataset_id: str,
