@@ -6,7 +6,7 @@ from typing import Any
 
 from tldw_chatbook.Sync_Interop.crypto import unwrap_recovery_bundle
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
-from tldw_chatbook.Sync_Interop.validation import validate_pulled_dataset_identity
+from tldw_chatbook.Sync_Interop.validation import validate_pulled_response_scope
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
@@ -92,10 +92,11 @@ class SyncRestoreService:
             SyncV2Envelope.model_validate(envelope)
             for envelope in pulled.get("envelopes", [])
         ]
-        validate_pulled_dataset_identity(
+        validate_pulled_response_scope(
             dataset_id=dataset_id,
             response_dataset_id=pulled.get("dataset_id"),
             envelopes=envelopes,
+            domains=domains,
         )
         results = [
             applier.apply(envelope)

@@ -184,6 +184,35 @@ async def test_restore_selection_rejects_wrong_dataset_pull_before_apply():
     assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
 
 
+async def test_restore_selection_rejects_out_of_scope_pull_domain_before_apply():
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="user",
+        content="remote chat content",
+    )
+    store = RecordingLocalStore()
+    server = FakeRestoreServer(envelopes=[envelope.model_dump(mode="json")])
+    service = SyncRestoreService(
+        server_service=server,
+        local_store=store,
+        dataset_keys={"recoverable-dataset": dataset_key},
+    )
+
+    with pytest.raises(ValueError, match="domain"):
+        await service.restore_selection(
+            dataset_id="recoverable-dataset",
+            device_id="device-1",
+            domains=["notes"],
+        )
+
+    assert store.note_content == {}
+    assert store.note_metadata == {}
+    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
+
+
 async def test_restore_selection_recovers_dataset_key_with_recovery_secret():
     dataset_key = generate_dataset_key()
     recovery_bundle = wrap_dataset_key_for_recovery(

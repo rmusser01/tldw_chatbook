@@ -7,7 +7,7 @@ import json
 from typing import Any, Mapping
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
-from tldw_chatbook.Sync_Interop.validation import validate_pulled_dataset_identity
+from tldw_chatbook.Sync_Interop.validation import validate_pulled_response_scope
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
@@ -140,10 +140,11 @@ class LocalFirstSyncService:
                 SyncV2Envelope.model_validate(envelope)
                 for envelope in pulled.get("envelopes", [])
             ]
-            validate_pulled_dataset_identity(
+            validate_pulled_response_scope(
                 dataset_id=str(dataset_id),
                 response_dataset_id=pulled.get("dataset_id"),
                 envelopes=envelopes,
+                domains=list(domains),
             )
             results = [
                 applier.apply(envelope)
