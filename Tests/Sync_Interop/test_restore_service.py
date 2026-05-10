@@ -5,6 +5,7 @@ import pytest
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key, wrap_dataset_key_for_recovery
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.restore_service import SyncRestoreService
+from tldw_chatbook.tldw_api import SyncV2Envelope
 
 pytestmark = pytest.mark.asyncio
 
@@ -267,6 +268,43 @@ async def test_restore_selection_tries_later_recovery_bundle_when_first_fails():
     )
     assert result["applied"] == 1
     assert store.note_content["note-1"] == {"body": "private restored body", "title": "Restored"}
+
+
+async def test_restore_selection_surfaces_adapter_rejections():
+    dataset_key = generate_dataset_key()
+    rejected_workspace_envelope = SyncV2Envelope(
+        client_envelope_id="remote-device:workspaces:workspace-1:missing-source",
+        dataset_id="recoverable-dataset",
+        device_id="remote-device",
+        domain="workspaces",
+        entity_id="workspace-1:missing-source",
+        operation="link",
+        adapter_version=1,
+        stable_key="workspace-1:missing-source",
+        payload_clear={"workspace_id": "workspace-1"},
+        payload_hash="sha256:missing-source",
+    )
+    store = RecordingLocalStore()
+    server = FakeRestoreServer(
+        envelopes=[rejected_workspace_envelope.model_dump(mode="json")]
+    )
+    service = SyncRestoreService(
+        server_service=server,
+        local_store=store,
+        dataset_keys={"recoverable-dataset": dataset_key},
+    )
+
+    result = await service.restore_selection(
+        dataset_id="recoverable-dataset",
+        device_id="device-1",
+        domains=["workspaces"],
+    )
+
+    assert result["applied"] == 0
+    assert result["conflicts"] == []
+    assert result["rejected"] == [
+        {"status": "rejected", "error_code": "missing_workspace_source_ref"}
+    ]
 
 
 async def test_restore_selection_recovery_failure_does_not_pull_or_apply():

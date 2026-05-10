@@ -95,6 +95,11 @@ class SyncRestoreService:
             "dataset_id": dataset_id,
             "domains": list(domains),
             "applied": sum(1 for result in results if result.get("status") == "applied"),
+            "rejected": [
+                result
+                for result in results
+                if result.get("status") == "rejected"
+            ],
             "conflicts": [
                 result["conflict"]
                 for result in results
