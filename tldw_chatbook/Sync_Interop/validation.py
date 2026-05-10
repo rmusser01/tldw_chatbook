@@ -59,10 +59,15 @@ def validate_push_response_scope(
         response_label="push response",
     )
     submitted_ids = {str(client_envelope_id) for client_envelope_id in submitted_client_envelope_ids}
+    seen_ids: set[str] = set()
     for item in [*accepted, *rejected, *conflicts]:
         client_envelope_id = item.get("client_envelope_id")
         if not client_envelope_id or str(client_envelope_id) not in submitted_ids:
             raise ValueError("Sync v2 push response referenced unknown client_envelope_id")
+        response_id = str(client_envelope_id)
+        if response_id in seen_ids:
+            raise ValueError("Sync v2 push response contained duplicate client_envelope_id")
+        seen_ids.add(response_id)
 
 
 def validate_outgoing_envelope_scope(
