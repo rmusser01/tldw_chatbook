@@ -79,14 +79,18 @@ class LocalFirstSyncService:
         push_record: dict[str, Any] = {}
         outbox_result = {"dispatched": 0, "retained": 0}
         if push_payloads:
-            push_record = self._dump(
-                await self.server_service.push_v2_envelopes(
-                    dataset_id=str(dataset_id),
-                    device_id=str(device_id),
-                    envelopes=push_payloads,
-                    last_known_cursor=cursor_record.cursor,
+            try:
+                push_record = self._dump(
+                    await self.server_service.push_v2_envelopes(
+                        dataset_id=str(dataset_id),
+                        device_id=str(device_id),
+                        envelopes=push_payloads,
+                        last_known_cursor=cursor_record.cursor,
+                    )
                 )
-            )
+            except Exception as exc:
+                self._record_sync_error(profile=profile, stage="push", exc=exc)
+                raise
             if outbox_entries:
                 outbox_result = self.state_repository.mark_sync_v2_outbox_push_results(
                     server_profile_id=server_profile_id,
@@ -98,28 +102,36 @@ class LocalFirstSyncService:
                     conflicts=push_record.get("conflicts", []),
                 )
 
-        pulled = self._dump(
-            await self.server_service.pull_v2_envelopes(
-                dataset_id=str(dataset_id),
-                device_id=str(device_id),
-                cursor=cursor_record.cursor,
-                domains=list(domains),
-                page_size=page_size,
-                include_own_changes=False,
+        try:
+            pulled = self._dump(
+                await self.server_service.pull_v2_envelopes(
+                    dataset_id=str(dataset_id),
+                    device_id=str(device_id),
+                    cursor=cursor_record.cursor,
+                    domains=list(domains),
+                    page_size=page_size,
+                    include_own_changes=False,
+                )
             )
-        )
+        except Exception as exc:
+            self._record_sync_error(profile=profile, stage="pull", exc=exc)
+            raise
         applier = SyncEnvelopeApplier(dataset_key=key, local_store=self.local_store)
-        results = [
-            applier.apply(SyncV2Envelope.model_validate(envelope))
-            for envelope in pulled.get("envelopes", [])
-        ]
+        try:
+            results = [
+                applier.apply(SyncV2Envelope.model_validate(envelope))
+                for envelope in pulled.get("envelopes", [])
+            ]
+        except Exception as exc:
+            self._record_sync_error(profile=profile, stage="apply", exc=exc)
+            raise
         next_cursor = (
             pulled.get("next_cursor")
             or push_record.get("next_cursor")
             or cursor_record.cursor
         )
+        dataset_cursors = dict(profile.get("dataset_cursors") or {})
         if next_cursor is not None:
-            dataset_cursors = dict(profile.get("dataset_cursors") or {})
             dataset_cursors["sync_v2"] = next_cursor
             self.state_repository.set_remote_pull_cursor(
                 source_authority="server",
@@ -130,19 +142,11 @@ class LocalFirstSyncService:
                 remote_collection=str(dataset_id),
                 cursor=next_cursor,
             )
-            self.state_repository.set_sync_v2_profile_state(
-                server_profile_id=server_profile_id,
-                authenticated_principal_id=authenticated_principal_id,
-                workspace_scope=workspace_scope,
-                profile_mode="local_first",
-                device_id=str(device_id),
-                dataset_id=str(dataset_id),
-                dataset_cursors=dataset_cursors,
-                capabilities=dict(profile.get("capabilities") or {}),
-                dry_run_metadata=dict(profile.get("dry_run_metadata") or {}),
-                last_error=None,
-                last_mirror_report_id=profile.get("last_mirror_report_id"),
-            )
+        self._persist_profile_state(
+            profile=profile,
+            dataset_cursors=dataset_cursors,
+            last_error=None,
+        )
 
         conflicts = [
             result["conflict"]
@@ -182,3 +186,37 @@ class LocalFirstSyncService:
         if isinstance(envelope, SyncV2Envelope):
             return envelope.model_dump(mode="json")
         return SyncV2Envelope.model_validate(envelope).model_dump(mode="json")
+
+    def _record_sync_error(
+        self,
+        *,
+        profile: Mapping[str, Any],
+        stage: str,
+        exc: Exception,
+    ) -> None:
+        self._persist_profile_state(
+            profile=profile,
+            dataset_cursors=dict(profile.get("dataset_cursors") or {}),
+            last_error=f"{stage}_failed: {exc}",
+        )
+
+    def _persist_profile_state(
+        self,
+        *,
+        profile: Mapping[str, Any],
+        dataset_cursors: Mapping[str, str | int],
+        last_error: str | None,
+    ) -> dict[str, Any]:
+        return self.state_repository.set_sync_v2_profile_state(
+            server_profile_id=str(profile["server_profile_id"]),
+            authenticated_principal_id=profile.get("authenticated_principal_id"),
+            workspace_scope=profile.get("workspace_scope"),
+            profile_mode=str(profile.get("profile_mode") or "local_first"),
+            device_id=profile.get("device_id"),
+            dataset_id=profile.get("dataset_id"),
+            dataset_cursors=dict(dataset_cursors),
+            capabilities=dict(profile.get("capabilities") or {}),
+            dry_run_metadata=dict(profile.get("dry_run_metadata") or {}),
+            last_error=last_error,
+            last_mirror_report_id=profile.get("last_mirror_report_id"),
+        )

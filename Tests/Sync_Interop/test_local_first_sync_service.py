@@ -11,10 +11,21 @@ pytestmark = pytest.mark.asyncio
 
 
 class FakeLocalFirstServer:
-    def __init__(self, *, pull_envelopes=None, push_response=None) -> None:
+    def __init__(
+        self,
+        *,
+        pull_envelopes=None,
+        push_response=None,
+        pull_response=None,
+        push_error: Exception | None = None,
+        pull_error: Exception | None = None,
+    ) -> None:
         self.calls: list[tuple] = []
         self.pull_envelopes = pull_envelopes or []
         self.push_response = push_response
+        self.pull_response = pull_response
+        self.push_error = push_error
+        self.pull_error = pull_error
 
     async def push_v2_envelopes(
         self,
@@ -28,6 +39,8 @@ class FakeLocalFirstServer:
         self.calls.append(
             ("push", dataset_id, device_id, envelopes, idempotency_key, last_known_cursor)
         )
+        if self.push_error is not None:
+            raise self.push_error
         if self.push_response is not None:
             return self.push_response
         return {
@@ -49,6 +62,10 @@ class FakeLocalFirstServer:
         self.calls.append(
             ("pull", dataset_id, device_id, cursor, domains, page_size, include_own_changes)
         )
+        if self.pull_error is not None:
+            raise self.pull_error
+        if self.pull_response is not None:
+            return self.pull_response
         return {
             "dataset_id": dataset_id,
             "envelopes": self.pull_envelopes,
@@ -78,7 +95,12 @@ class RecordingLocalStore:
         self.conflicts.append(conflict)
 
 
-def _repo_with_profile(tmp_path, *, profile_mode="local_first") -> SyncStateRepository:
+def _repo_with_profile(
+    tmp_path,
+    *,
+    profile_mode="local_first",
+    last_error: str | None = None,
+) -> SyncStateRepository:
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     repo.set_sync_v2_profile_state(
         server_profile_id="server-a",
@@ -90,6 +112,7 @@ def _repo_with_profile(tmp_path, *, profile_mode="local_first") -> SyncStateRepo
         dataset_cursors={"sync_v2": "7"},
         capabilities={"supported_domains": ["notes"]},
         dry_run_metadata={"dry_run": True},
+        last_error=last_error,
     )
     repo.set_remote_pull_cursor(
         source_authority="server",
@@ -260,6 +283,176 @@ async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_fa
     ]
     assert pending_after[0]["last_error"]["error_code"] == "stale_base"
     assert pending_after[1]["last_error"]["error_code"] == "conflict"
+
+
+async def test_local_first_sync_once_records_push_failure_without_advancing_cursor(tmp_path):
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    )
+    outgoing = builder.build_note_metadata_update(note_id="note-1", status="archived")
+    repo = _repo_with_profile(tmp_path)
+    server = FakeLocalFirstServer(push_error=RuntimeError("upstream unavailable"))
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    with pytest.raises(RuntimeError, match="upstream unavailable"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes"],
+            outgoing_envelopes=[outgoing],
+        )
+
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert profile["last_error"] == "push_failed: upstream unavailable"
+    assert profile["dataset_cursors"]["sync_v2"] == "7"
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    ).cursor == "7"
+
+
+async def test_local_first_sync_once_records_pull_failure_without_advancing_cursor(tmp_path):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    server = FakeLocalFirstServer(pull_error=RuntimeError("server offline"))
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    with pytest.raises(RuntimeError, match="server offline"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes"],
+        )
+
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert profile["last_error"] == "pull_failed: server offline"
+    assert profile["dataset_cursors"]["sync_v2"] == "7"
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    ).cursor == "7"
+
+
+async def test_local_first_sync_once_records_apply_failure_without_advancing_cursor(tmp_path):
+    dataset_key = generate_dataset_key()
+    wrong_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-2",
+        dataset_key=dataset_key,
+    )
+    incoming = builder.build_note_upsert(
+        note_id="note-1",
+        title="Remote title",
+        body="remote private body",
+        status="active",
+    )
+    repo = _repo_with_profile(tmp_path)
+    store = RecordingLocalStore()
+    server = FakeLocalFirstServer(pull_envelopes=[incoming.model_dump(mode="json")])
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=store,
+        dataset_keys={"dataset-1": wrong_key},
+    )
+
+    with pytest.raises(ValueError, match="Failed to decrypt sync payload"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes"],
+        )
+
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert profile["last_error"] == "apply_failed: Failed to decrypt sync payload"
+    assert profile["dataset_cursors"]["sync_v2"] == "7"
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    ).cursor == "7"
+    assert store.note_content == {}
+
+
+async def test_local_first_sync_once_success_clears_prior_last_error_without_new_cursor(tmp_path):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path, last_error="pull_failed: server offline")
+    server = FakeLocalFirstServer(
+        pull_response={
+            "dataset_id": "dataset-1",
+            "envelopes": [],
+            "next_cursor": None,
+            "has_more": False,
+        }
+    )
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes"],
+    )
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert result["next_cursor"] == "7"
+    assert profile["last_error"] is None
+    assert profile["device_id"] == "device-1"
+    assert profile["dataset_id"] == "dataset-1"
+    assert profile["capabilities"] == {"supported_domains": ["notes"]}
+    assert profile["dry_run_metadata"] == {"dry_run": True}
 
 
 async def test_local_first_sync_once_requires_local_first_profile(tmp_path):
