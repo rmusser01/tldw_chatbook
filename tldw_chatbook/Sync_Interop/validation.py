@@ -76,6 +76,8 @@ def validate_push_response_scope(
         if response_id in seen_ids:
             raise ValueError("Sync v2 push response contained duplicate client_envelope_id")
         seen_ids.add(response_id)
+    if seen_ids != submitted_ids:
+        raise ValueError("Sync v2 push response omitted submitted client_envelope_id")
 
 
 def validate_outgoing_envelope_scope(
