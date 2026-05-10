@@ -97,6 +97,15 @@ class LocalFirstSyncService:
                     )
                 )
             except Exception as exc:
+                if outbox_entries:
+                    self._record_outbox_push_failure(
+                        server_profile_id=server_profile_id,
+                        authenticated_principal_id=authenticated_principal_id,
+                        workspace_scope=workspace_scope,
+                        dataset_id=str(dataset_id),
+                        outbox_entries=outbox_entries,
+                        exc=exc,
+                    )
                 self._record_sync_error(profile=profile, stage="push", exc=exc)
                 raise
             if outbox_entries:
@@ -243,6 +252,34 @@ class LocalFirstSyncService:
             profile=profile,
             dataset_cursors=dict(profile.get("dataset_cursors") or {}),
             last_error=f"{stage}_failed: {exc}",
+        )
+
+    def _record_outbox_push_failure(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        outbox_entries: list[Mapping[str, Any]],
+        exc: Exception,
+    ) -> dict[str, int]:
+        return self.state_repository.mark_sync_v2_outbox_push_results(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            dataset_id=dataset_id,
+            accepted=[],
+            rejected=[
+                {
+                    "client_envelope_id": entry["client_envelope_id"],
+                    "error_code": "push_failed",
+                    "message": str(exc),
+                    "retryable": True,
+                }
+                for entry in outbox_entries
+            ],
+            conflicts=[],
         )
 
     def _persist_profile_state(

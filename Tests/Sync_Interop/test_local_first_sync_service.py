@@ -346,6 +346,54 @@ async def test_local_first_sync_once_uses_stable_push_idempotency_key_for_retry(
     assert second_key == first_key
 
 
+async def test_local_first_sync_once_records_outbox_transport_failure_attempt(tmp_path):
+    dataset_key = generate_dataset_key()
+    pending = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    ).build_note_metadata_update(note_id="note-1", status="archived")
+    repo = _repo_with_profile(tmp_path)
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=pending,
+    )
+    server = FakeLocalFirstServer(push_error=RuntimeError("temporary network split"))
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    with pytest.raises(RuntimeError, match="temporary network split"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes"],
+        )
+
+    pending_after = repo.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
+
+    assert [entry["client_envelope_id"] for entry in pending_after] == [pending.client_envelope_id]
+    assert pending_after[0]["attempt_count"] == 1
+    assert pending_after[0]["last_error"] == {
+        "client_envelope_id": pending.client_envelope_id,
+        "error_code": "push_failed",
+        "message": "temporary network split",
+        "retryable": True,
+    }
+
+
 async def test_local_first_sync_once_changes_push_idempotency_key_when_batch_changes(tmp_path):
     dataset_key = generate_dataset_key()
     first = SyncEnvelopeBuilder(
