@@ -154,7 +154,22 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
             },
             {"dataset_id": "dataset-1", "accepted": [], "rejected": [], "conflicts": [], "next_cursor": "5"},
             {"dataset_id": "dataset-1", "envelopes": [], "next_cursor": "6", "has_more": False},
-            {"datasets": [], "devices": [], "generated_at": "2026-05-10T00:00:00Z"},
+            {
+                "datasets": [
+                    {
+                        "dataset_id": "dataset-1",
+                        "scope_type": "personal",
+                        "encryption_policy": "client_private_v1",
+                        "domains": ["notes"],
+                        "approximate_counts": {"notes": 1},
+                        "byte_estimates": {"notes": 128},
+                        "attachment_availability": {"available": 1},
+                        "attachment_size_classes": {"small": 1},
+                    }
+                ],
+                "devices": [],
+                "generated_at": "2026-05-10T00:00:00Z",
+            },
         ]
     )
     monkeypatch.setattr(client, "_request", mocked)
@@ -184,6 +199,7 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
     assert isinstance(pushed, SyncV2PushResponse)
     assert isinstance(pulled, SyncV2PullResponse)
     assert isinstance(manifest, SyncV2RestoreManifestResponse)
+    assert manifest.datasets[0].attachment_availability == {"available": 1}
     assert [call.args[:2] for call in mocked.await_args_list] == [
         ("GET", "/api/v1/sync/capabilities"),
         ("POST", "/api/v1/sync/devices/register"),
