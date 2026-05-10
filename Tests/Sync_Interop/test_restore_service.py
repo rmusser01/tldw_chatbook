@@ -303,6 +303,17 @@ async def test_restore_selection_surfaces_adapter_rejections():
     assert result["applied"] == 0
     assert result["conflicts"] == []
     assert result["rejected"] == [
+        {
+            "status": "rejected",
+            "error_code": "missing_workspace_source_ref",
+            "client_envelope_id": rejected_workspace_envelope.client_envelope_id,
+            "domain": "workspaces",
+            "entity_id": "workspace-1:missing-source",
+            "stable_key": "workspace-1:missing-source",
+            "operation": "link",
+        }
+    ]
+    assert result["results"] == [
         {"status": "rejected", "error_code": "missing_workspace_source_ref"}
     ]
 

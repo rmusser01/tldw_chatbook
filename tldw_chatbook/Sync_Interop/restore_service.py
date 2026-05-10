@@ -87,19 +87,19 @@ class SyncRestoreService:
             )
         )
         applier = SyncEnvelopeApplier(dataset_key=key, local_store=self.local_store)
-        results = [
-            applier.apply(SyncV2Envelope.model_validate(envelope))
+        envelopes = [
+            SyncV2Envelope.model_validate(envelope)
             for envelope in pulled.get("envelopes", [])
+        ]
+        results = [
+            applier.apply(envelope)
+            for envelope in envelopes
         ]
         return {
             "dataset_id": dataset_id,
             "domains": list(domains),
             "applied": sum(1 for result in results if result.get("status") == "applied"),
-            "rejected": [
-                result
-                for result in results
-                if result.get("status") == "rejected"
-            ],
+            "rejected": self._rejected_results(envelopes, results),
             "conflicts": [
                 result["conflict"]
                 for result in results
@@ -180,6 +180,27 @@ class SyncRestoreService:
             "has_local_key": has_local_key,
             "restore_status": restore_status,
         }
+
+    @staticmethod
+    def _rejected_results(
+        envelopes: list[SyncV2Envelope],
+        results: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        rejected = []
+        for envelope, result in zip(envelopes, results):
+            if result.get("status") != "rejected":
+                continue
+            rejected.append(
+                {
+                    **result,
+                    "client_envelope_id": envelope.client_envelope_id,
+                    "domain": envelope.domain,
+                    "entity_id": envelope.entity_id,
+                    "stable_key": envelope.stable_key,
+                    "operation": envelope.operation,
+                }
+            )
+        return rejected
 
     @staticmethod
     def _dump(value: Any) -> Any:
