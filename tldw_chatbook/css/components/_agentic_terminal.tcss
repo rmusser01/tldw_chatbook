@@ -549,8 +549,6 @@
 #artifacts-detail-pane,
 #artifacts-inspector-pane {
     margin: 0 1 0 0;
-    border: solid gray;
-    background: $ds-surface-panel;
 }
 
 #artifacts-inspector-pane {

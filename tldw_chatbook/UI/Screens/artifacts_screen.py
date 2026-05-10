@@ -112,6 +112,10 @@ class ArtifactsScreen(BaseAppScreen):
         text = str(value or "").strip()
         return text or fallback
 
+    @staticmethod
+    def _literal_text(value: Any) -> Text:
+        return Text.from_markup(escape_markup(str(value)))
+
     @classmethod
     def _safe_text(cls, value: Any, fallback: str = "", *, max_length: int = 1000) -> str:
         text = sanitize_string(str(value or ""), max_length=max_length).strip()
@@ -321,7 +325,7 @@ class ArtifactsScreen(BaseAppScreen):
                     )
                     if launch_kwargs is not None:
                         yield Static(
-                            f"> Chatbook: {launch_kwargs['title']}",
+                            self._literal_text(f"> Chatbook: {launch_kwargs['title']}"),
                             id="artifacts-list-chatbooks",
                         )
                     else:
@@ -372,15 +376,17 @@ class ArtifactsScreen(BaseAppScreen):
                         description = str(payload.get("description") or "").strip()
                         content_preview = str(payload.get("content_preview") or "").strip()
                         yield Static(
-                            f"Title: {launch_kwargs['title']}",
+                            self._literal_text(f"Title: {launch_kwargs['title']}"),
                             id="artifacts-detail-ready",
                         )
                         yield Static(
-                            description or "Summary: Console-saved Chatbook artifact.",
+                            self._literal_text(description or "Summary: Console-saved Chatbook artifact."),
                             id="artifacts-detail-summary",
                         )
                         yield Static(
-                            f"Transcript preview: {content_preview or 'No preview text available.'}",
+                            self._literal_text(
+                                f"Transcript preview: {content_preview or 'No preview text available.'}"
+                            ),
                             id="artifacts-detail-preview",
                         )
                     else:

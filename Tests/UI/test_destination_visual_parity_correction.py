@@ -166,6 +166,14 @@ def _visible_button_labels(screen) -> set[str]:
     return {str(button.label) for button in screen.query(Button) if button.display}
 
 
+class StaticArtifactsChatbookService:
+    def __init__(self, chatbooks):
+        self.chatbooks = tuple(chatbooks)
+
+    async def list_chatbooks(self, *, q=None, limit=100, offset=0, **kwargs):
+        return list(self.chatbooks)[int(offset) : int(offset) + int(limit)]
+
+
 @pytest.mark.asyncio
 async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_default_size():
     app = _build_test_app()
@@ -739,6 +747,35 @@ async def test_artifacts_empty_state_keeps_console_library_import_recovery_visib
         assert "Open Library" in labels
         assert "Import Artifact" in labels
         assert list(screen.query("#artifacts-open-console"))
+
+
+@pytest.mark.asyncio
+async def test_artifacts_dynamic_metadata_renders_markup_as_literal_text():
+    app = _build_test_app()
+    app.local_chatbook_service = StaticArtifactsChatbookService(
+        (
+            {
+                "chatbook_id": 9,
+                "id": "9",
+                "name": "[red]Markup Title[/red]",
+                "description": "[bold]Description[/bold]",
+                "updated_at": "2026-05-09T20:00:00Z",
+                "metadata": {
+                    "artifact_source": "console",
+                    "artifact_kind": "assistant-response",
+                    "content": "[green]Preview[/green]",
+                },
+            },
+        )
+    )
+    host = DestinationHarness(app, "artifacts")
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-console-available")
+        visible_text = _visible_static_text(screen)
+        assert "Title: [red]Markup Title[/red]" in visible_text
+        assert "[bold]Description[/bold]" in visible_text
+        assert "Transcript preview: [green]Preview[/green]" in visible_text
 
 
 SOURCE_PREP_LOADING_CONTRACTS = [
