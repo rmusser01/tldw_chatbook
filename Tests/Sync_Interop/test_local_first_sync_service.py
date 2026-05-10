@@ -11,9 +11,10 @@ pytestmark = pytest.mark.asyncio
 
 
 class FakeLocalFirstServer:
-    def __init__(self, *, pull_envelopes=None) -> None:
+    def __init__(self, *, pull_envelopes=None, push_response=None) -> None:
         self.calls: list[tuple] = []
         self.pull_envelopes = pull_envelopes or []
+        self.push_response = push_response
 
     async def push_v2_envelopes(
         self,
@@ -27,6 +28,8 @@ class FakeLocalFirstServer:
         self.calls.append(
             ("push", dataset_id, device_id, envelopes, idempotency_key, last_known_cursor)
         )
+        if self.push_response is not None:
+            return self.push_response
         return {
             "dataset_id": dataset_id,
             "accepted": [{"client_envelope_id": "outgoing-1"}],
@@ -157,6 +160,106 @@ async def test_local_first_sync_once_pushes_pulls_applies_and_persists_cursor(tm
         authenticated_principal_id="user-a",
         workspace_scope="workspace-1",
     )["dataset_cursors"]["sync_v2"] == "9"
+
+
+async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_failures(tmp_path):
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    )
+    accepted = builder.build_note_metadata_update(note_id="note-1", status="archived")
+    rejected = builder.build_note_metadata_update(note_id="note-2", status="active")
+    conflicted = builder.build_note_metadata_update(note_id="note-3", status="draft")
+    repo = _repo_with_profile(tmp_path)
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=accepted,
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=rejected,
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=conflicted,
+    )
+    server = FakeLocalFirstServer(
+        push_response={
+            "dataset_id": "dataset-1",
+            "accepted": [{"client_envelope_id": accepted.client_envelope_id}],
+            "rejected": [
+                {
+                    "client_envelope_id": rejected.client_envelope_id,
+                    "error_code": "stale_base",
+                    "message": "Local base is stale.",
+                }
+            ],
+            "conflicts": [
+                {
+                    "client_envelope_id": conflicted.client_envelope_id,
+                    "conflict_id": "conflict-1",
+                    "message": "Needs manual review.",
+                }
+            ],
+            "next_cursor": "8",
+        }
+    )
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes"],
+    )
+
+    pending_after = repo.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
+    dispatched = repo.list_sync_v2_outbox_entries(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        status="dispatched",
+    )
+
+    assert [envelope["client_envelope_id"] for envelope in server.calls[0][3]] == [
+        accepted.client_envelope_id,
+        rejected.client_envelope_id,
+        conflicted.client_envelope_id,
+    ]
+    assert result["outbox_drained"] == 3
+    assert result["outbox_dispatched"] == 1
+    assert result["outbox_retained"] == 2
+    assert result["rejected_envelopes"][0]["error_code"] == "stale_base"
+    assert result["push_conflicts"][0]["conflict_id"] == "conflict-1"
+    assert [entry["client_envelope_id"] for entry in dispatched] == [accepted.client_envelope_id]
+    assert [entry["client_envelope_id"] for entry in pending_after] == [
+        rejected.client_envelope_id,
+        conflicted.client_envelope_id,
+    ]
+    assert pending_after[0]["last_error"]["error_code"] == "stale_base"
+    assert pending_after[1]["last_error"]["error_code"] == "conflict"
 
 
 async def test_local_first_sync_once_requires_local_first_profile(tmp_path):

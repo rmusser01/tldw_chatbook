@@ -63,20 +63,40 @@ class LocalFirstSyncService:
             remote_collection=str(dataset_id),
         )
 
+        outbox_entries = self.state_repository.list_pending_sync_v2_outbox_envelopes(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            dataset_id=str(dataset_id),
+            domains=list(domains),
+        )
+        outbox_payloads = [dict(entry["envelope"]) for entry in outbox_entries]
         outgoing_payloads = [
             self._dump_envelope(envelope)
             for envelope in (outgoing_envelopes or [])
         ]
+        push_payloads = outbox_payloads + outgoing_payloads
         push_record: dict[str, Any] = {}
-        if outgoing_payloads:
+        outbox_result = {"dispatched": 0, "retained": 0}
+        if push_payloads:
             push_record = self._dump(
                 await self.server_service.push_v2_envelopes(
                     dataset_id=str(dataset_id),
                     device_id=str(device_id),
-                    envelopes=outgoing_payloads,
+                    envelopes=push_payloads,
                     last_known_cursor=cursor_record.cursor,
                 )
             )
+            if outbox_entries:
+                outbox_result = self.state_repository.mark_sync_v2_outbox_push_results(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    dataset_id=str(dataset_id),
+                    accepted=push_record.get("accepted", []),
+                    rejected=push_record.get("rejected", []),
+                    conflicts=push_record.get("conflicts", []),
+                )
 
         pulled = self._dump(
             await self.server_service.pull_v2_envelopes(
@@ -134,6 +154,11 @@ class LocalFirstSyncService:
             "device_id": str(device_id),
             "domains": list(domains),
             "pushed_envelopes": len(push_record.get("accepted", [])),
+            "rejected_envelopes": push_record.get("rejected", []),
+            "push_conflicts": push_record.get("conflicts", []),
+            "outbox_drained": len(outbox_entries),
+            "outbox_dispatched": outbox_result["dispatched"],
+            "outbox_retained": outbox_result["retained"],
             "pulled_envelopes": len(pulled.get("envelopes", [])),
             "applied_envelopes": sum(1 for result in results if result.get("status") == "applied"),
             "conflicts": conflicts,

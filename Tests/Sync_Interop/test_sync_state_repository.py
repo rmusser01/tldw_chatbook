@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
+from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 
 
@@ -229,6 +231,107 @@ def test_sync_v2_profile_state_persists_device_dataset_cursors_and_metadata(tmp_
     assert stored["dataset_cursors"] == {"notes": "cursor-1"}
     assert stored["capabilities"] == {"max_batch_size": 100}
     assert stored["dry_run_metadata"] == {"pulled_envelopes": 0}
+
+
+def test_sync_v2_outbox_persists_pending_entries_and_push_results(tmp_path):
+    db_path = tmp_path / "sync_state.db"
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    )
+    accepted = builder.build_note_metadata_update(note_id="note-1", status="archived")
+    rejected = builder.build_note_metadata_update(note_id="note-2", status="active")
+    conflicted = builder.build_note_metadata_update(note_id="note-3", status="draft")
+    repo = SyncStateRepository(db_path)
+    accepted_entry = repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=accepted,
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=rejected,
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=conflicted,
+    )
+    repo.close()
+
+    reopened = SyncStateRepository(db_path)
+    pending = reopened.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
+
+    assert accepted_entry["status"] == "pending"
+    assert accepted_entry["attempt_count"] == 0
+    assert pending[0]["client_envelope_id"] == accepted.client_envelope_id
+    assert pending[0]["envelope"]["payload_clear"] == {"status": "archived"}
+    assert [entry["client_envelope_id"] for entry in pending] == [
+        accepted.client_envelope_id,
+        rejected.client_envelope_id,
+        conflicted.client_envelope_id,
+    ]
+
+    result = reopened.mark_sync_v2_outbox_push_results(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        accepted=[{"client_envelope_id": accepted.client_envelope_id}],
+        rejected=[
+            {
+                "client_envelope_id": rejected.client_envelope_id,
+                "error_code": "stale_base",
+                "message": "Local base is stale.",
+            }
+        ],
+        conflicts=[
+            {
+                "client_envelope_id": conflicted.client_envelope_id,
+                "conflict_id": "conflict-1",
+                "message": "Needs manual review.",
+            }
+        ],
+    )
+
+    pending_after = reopened.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
+    dispatched = reopened.list_sync_v2_outbox_entries(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        status="dispatched",
+    )
+
+    assert result == {"dispatched": 1, "retained": 2}
+    assert [entry["client_envelope_id"] for entry in dispatched] == [accepted.client_envelope_id]
+    assert dispatched[0]["attempt_count"] == 1
+    assert [entry["client_envelope_id"] for entry in pending_after] == [
+        rejected.client_envelope_id,
+        conflicted.client_envelope_id,
+    ]
+    assert [entry["attempt_count"] for entry in pending_after] == [1, 1]
+    assert pending_after[0]["last_error"]["error_code"] == "stale_base"
+    assert pending_after[1]["last_error"]["error_code"] == "conflict"
 
 
 def test_domain_eligibility_defaults_to_not_eligible_and_persists_override(tmp_path):

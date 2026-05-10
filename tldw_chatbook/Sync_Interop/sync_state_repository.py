@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.runtime_policy.server_parity_models import SourceAuthority
+from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
 _MAPPING_STATUSES = {
@@ -26,6 +27,7 @@ _BOTH_SIDE_STATUSES = {"confirmed", "stale", "conflict"}
 _LOCAL_NULL_ALLOWED = {"candidate", "orphaned_remote", "unsupported"}
 _REMOTE_NULL_ALLOWED = {"candidate", "orphaned_local", "unsupported"}
 _SYNC_V2_PROFILE_MODES = {"local_only", "local_first", "server_frontend"}
+_SYNC_V2_OUTBOX_STATUSES = {"pending", "dispatched"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +61,7 @@ class RemotePullCursorRecord:
 
 
 class SyncStateRepository(BaseDB):
-    """SQLite-backed sync/mirror repository with no mutation outbox."""
+    """SQLite-backed sync/mirror repository and local-first outbox."""
 
     def __init__(self, db_path: str | Path, client_id: str = "default") -> None:
         self._memory_conn: sqlite3.Connection | None = None
@@ -188,6 +190,28 @@ class SyncStateRepository(BaseDB):
                     details TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS sync_v2_local_outbox (
+                    outbox_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_scope_key TEXT NOT NULL,
+                    server_profile_id TEXT NOT NULL,
+                    authenticated_principal_id TEXT NOT NULL,
+                    workspace_scope TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL,
+                    domain TEXT NOT NULL,
+                    client_envelope_id TEXT NOT NULL,
+                    envelope TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    dispatched_at TEXT,
+                    UNIQUE(source_scope_key, dataset_id, client_envelope_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_sync_v2_outbox_scope_status
+                    ON sync_v2_local_outbox(source_scope_key, dataset_id, status, outbox_id);
                 """
             )
             self._ensure_sync_v2_profile_columns(conn)
@@ -331,41 +355,46 @@ class SyncStateRepository(BaseDB):
         domain: str | None = None,
         entity_type: str | None = None,
     ) -> list[SyncIdentityMappingRecord]:
-        where, params = _optional_filters(
-            source_authority=source_authority,
-            server_profile_id=server_profile_id,
-            authenticated_principal_id=authenticated_principal_id,
-            workspace_scope=workspace_scope,
-            domain=domain,
-            entity_type=entity_type,
-        )
         with self._get_connection() as conn:
             rows = conn.execute(
-                f"""
+                """
                 SELECT *
                 FROM sync_identity_mappings
-                {where}
+                WHERE (? IS NULL OR source_authority = ?)
+                  AND (? IS NULL OR server_profile_id = ?)
+                  AND (? IS NULL OR authenticated_principal_id = ?)
+                  AND (? IS NULL OR workspace_scope = ?)
+                  AND (? IS NULL OR domain = ?)
+                  AND (? IS NULL OR entity_type = ?)
                 ORDER BY mapping_id ASC
                 """,
-                params,
+                (
+                    source_authority,
+                    source_authority,
+                    server_profile_id,
+                    server_profile_id,
+                    authenticated_principal_id,
+                    authenticated_principal_id,
+                    workspace_scope,
+                    workspace_scope,
+                    domain,
+                    domain,
+                    entity_type,
+                    entity_type,
+                ),
             ).fetchall()
         return [self._mapping_from_row(row) for row in rows]
 
     def list_conflict_reports(self, *, domain: str | None = None) -> list[dict[str, Any]]:
-        where = ""
-        params: tuple[str, ...] = ()
-        if domain is not None:
-            where = "WHERE domain = ?"
-            params = (domain,)
         with self._get_connection() as conn:
             rows = conn.execute(
-                f"""
+                """
                 SELECT *
                 FROM sync_conflict_reports
-                {where}
+                WHERE (? IS NULL OR domain = ?)
                 ORDER BY conflict_id ASC
                 """,
-                params,
+                (domain, domain),
             ).fetchall()
         reports = [dict(row) for row in rows]
         for report in reports:
@@ -536,20 +565,15 @@ class SyncStateRepository(BaseDB):
         }
 
     def list_mirror_reports(self, *, domain: str | None = None) -> list[dict[str, Any]]:
-        where = ""
-        params: tuple[str, ...] = ()
-        if domain is not None:
-            where = "WHERE domain = ?"
-            params = (domain,)
         with self._get_connection() as conn:
             rows = conn.execute(
-                f"""
+                """
                 SELECT *
                 FROM mirror_reports
-                {where}
+                WHERE (? IS NULL OR domain = ?)
                 ORDER BY report_id ASC
                 """,
-                params,
+                (domain, domain),
             ).fetchall()
         reports = [dict(row) for row in rows]
         for report in reports:
@@ -566,46 +590,304 @@ class SyncStateRepository(BaseDB):
     ) -> None:
         if not server_profile_id:
             raise ValueError("server_profile_id is required")
-        params: list[str] = [server_profile_id]
-        principal_clause = ""
-        if authenticated_principal_id is not None:
-            principal_clause = " AND authenticated_principal_id = ?"
-            params.append(authenticated_principal_id)
+        scoped_params = (
+            server_profile_id,
+            authenticated_principal_id,
+            authenticated_principal_id,
+        )
 
         with self._get_connection() as conn:
             conn.execute(
-                f"""
+                """
                 DELETE FROM sync_conflict_reports
                 WHERE source_scope_key IN (
                     SELECT source_scope_key
                     FROM sync_identity_mappings
-                    WHERE server_profile_id = ?{principal_clause}
+                    WHERE server_profile_id = ?
+                      AND (? IS NULL OR authenticated_principal_id = ?)
                     UNION
                     SELECT source_scope_key
                     FROM remote_pull_cursors
-                    WHERE server_profile_id = ?{principal_clause}
+                    WHERE server_profile_id = ?
+                      AND (? IS NULL OR authenticated_principal_id = ?)
                     UNION
                     SELECT source_scope_key
                     FROM mirror_reports
-                    WHERE server_profile_id = ?{principal_clause}
+                    WHERE server_profile_id = ?
+                      AND (? IS NULL OR authenticated_principal_id = ?)
                 )
                 """,
-                tuple(params * 3),
+                scoped_params * 3,
             )
-            for table_name in (
-                "sync_identity_mappings",
-                "remote_pull_cursors",
-                "mirror_reports",
-                "sync_profile_state",
-            ):
-                conn.execute(
-                    f"""
-                    DELETE FROM {table_name}
-                    WHERE server_profile_id = ?{principal_clause}
-                    """,
-                    tuple(params),
-                )
+            conn.execute(
+                """
+                DELETE FROM sync_identity_mappings
+                WHERE server_profile_id = ?
+                  AND (? IS NULL OR authenticated_principal_id = ?)
+                """,
+                scoped_params,
+            )
+            conn.execute(
+                """
+                DELETE FROM remote_pull_cursors
+                WHERE server_profile_id = ?
+                  AND (? IS NULL OR authenticated_principal_id = ?)
+                """,
+                scoped_params,
+            )
+            conn.execute(
+                """
+                DELETE FROM mirror_reports
+                WHERE server_profile_id = ?
+                  AND (? IS NULL OR authenticated_principal_id = ?)
+                """,
+                scoped_params,
+            )
+            conn.execute(
+                """
+                DELETE FROM sync_profile_state
+                WHERE server_profile_id = ?
+                  AND (? IS NULL OR authenticated_principal_id = ?)
+                """,
+                (
+                    _scope_value(server_profile_id),
+                    authenticated_principal_id,
+                    _scope_value(authenticated_principal_id),
+                ),
+            )
+            conn.execute(
+                """
+                DELETE FROM sync_v2_local_outbox
+                WHERE server_profile_id = ?
+                  AND (? IS NULL OR authenticated_principal_id = ?)
+                """,
+                (
+                    _scope_value(server_profile_id),
+                    authenticated_principal_id,
+                    _scope_value(authenticated_principal_id),
+                ),
+            )
             conn.commit()
+
+    def enqueue_sync_v2_outbox_envelope(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        envelope: SyncV2Envelope | Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Persist a client envelope until a local-first sync push accepts it."""
+
+        parsed = (
+            envelope
+            if isinstance(envelope, SyncV2Envelope)
+            else SyncV2Envelope.model_validate(envelope)
+        )
+        if parsed.dataset_id != dataset_id:
+            raise ValueError("outbox envelope dataset_id must match dataset_id")
+        source_scope_key = _sync_v2_outbox_scope_key(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        now = _utc_now()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO sync_v2_local_outbox (
+                    source_scope_key,
+                    server_profile_id,
+                    authenticated_principal_id,
+                    workspace_scope,
+                    dataset_id,
+                    domain,
+                    client_envelope_id,
+                    envelope,
+                    status,
+                    attempt_count,
+                    last_error,
+                    created_at,
+                    updated_at,
+                    dispatched_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?, NULL)
+                ON CONFLICT(source_scope_key, dataset_id, client_envelope_id)
+                DO UPDATE SET
+                    envelope = excluded.envelope,
+                    domain = excluded.domain,
+                    status = 'pending',
+                    last_error = NULL,
+                    updated_at = excluded.updated_at,
+                    dispatched_at = NULL
+                """,
+                (
+                    source_scope_key,
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                    dataset_id,
+                    parsed.domain,
+                    parsed.client_envelope_id,
+                    parsed.model_dump_json(),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        entries = self.list_sync_v2_outbox_entries(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            dataset_id=dataset_id,
+            client_envelope_ids=[parsed.client_envelope_id],
+        )
+        if not entries:
+            raise RuntimeError("failed to persist Sync v2 outbox envelope")
+        return entries[0]
+
+    def list_pending_sync_v2_outbox_envelopes(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        domains: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.list_sync_v2_outbox_entries(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            dataset_id=dataset_id,
+            status="pending",
+            domains=domains,
+        )
+
+    def list_sync_v2_outbox_entries(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        status: str | None = None,
+        domains: list[str] | None = None,
+        client_envelope_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        if status is not None and status not in _SYNC_V2_OUTBOX_STATUSES:
+            allowed = ", ".join(sorted(_SYNC_V2_OUTBOX_STATUSES))
+            raise ValueError(f"status must be one of: {allowed}")
+        source_scope_key = _sync_v2_outbox_scope_key(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM sync_v2_local_outbox
+                WHERE source_scope_key = ?
+                  AND dataset_id = ?
+                  AND (? IS NULL OR status = ?)
+                ORDER BY outbox_id ASC
+                """,
+                (source_scope_key, dataset_id, status, status),
+            ).fetchall()
+        entries = [self._outbox_from_row(row) for row in rows]
+        if domains:
+            domain_set = set(domains)
+            entries = [entry for entry in entries if entry["domain"] in domain_set]
+        if client_envelope_ids:
+            envelope_id_set = set(client_envelope_ids)
+            entries = [
+                entry
+                for entry in entries
+                if entry["client_envelope_id"] in envelope_id_set
+            ]
+        return entries
+
+    def mark_sync_v2_outbox_push_results(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        accepted: list[Mapping[str, Any]],
+        rejected: list[Mapping[str, Any]],
+        conflicts: list[Mapping[str, Any]],
+    ) -> dict[str, int]:
+        """Update pending outbox entries from a Sync v2 push response."""
+
+        source_scope_key = _sync_v2_outbox_scope_key(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        accepted_ids = {
+            str(item["client_envelope_id"])
+            for item in accepted
+            if item.get("client_envelope_id")
+        }
+        failure_by_id: dict[str, dict[str, Any]] = {}
+        for item in rejected:
+            client_envelope_id = item.get("client_envelope_id")
+            if client_envelope_id:
+                failure_by_id[str(client_envelope_id)] = dict(item)
+        for item in conflicts:
+            client_envelope_id = item.get("client_envelope_id")
+            if client_envelope_id:
+                failure = {"error_code": "conflict", **dict(item)}
+                failure_by_id[str(client_envelope_id)] = failure
+
+        now = _utc_now()
+        dispatched = 0
+        retained = 0
+        with self._get_connection() as conn:
+            for client_envelope_id in sorted(accepted_ids):
+                cursor = conn.execute(
+                    """
+                    UPDATE sync_v2_local_outbox
+                    SET status = 'dispatched',
+                        attempt_count = attempt_count + 1,
+                        last_error = NULL,
+                        updated_at = ?,
+                        dispatched_at = ?
+                    WHERE source_scope_key = ?
+                      AND dataset_id = ?
+                      AND client_envelope_id = ?
+                      AND status = 'pending'
+                    """,
+                    (now, now, source_scope_key, dataset_id, client_envelope_id),
+                )
+                dispatched += cursor.rowcount
+            for client_envelope_id, failure in sorted(failure_by_id.items()):
+                cursor = conn.execute(
+                    """
+                    UPDATE sync_v2_local_outbox
+                    SET status = 'pending',
+                        attempt_count = attempt_count + 1,
+                        last_error = ?,
+                        updated_at = ?
+                    WHERE source_scope_key = ?
+                      AND dataset_id = ?
+                      AND client_envelope_id = ?
+                      AND status = 'pending'
+                    """,
+                    (
+                        _json_dumps(failure),
+                        now,
+                        source_scope_key,
+                        dataset_id,
+                        client_envelope_id,
+                    ),
+                )
+                retained += cursor.rowcount
+            conn.commit()
+        return {"dispatched": dispatched, "retained": retained}
 
     def set_sync_profile_state(
         self,
@@ -914,6 +1196,27 @@ class SyncStateRepository(BaseDB):
         )
 
     @staticmethod
+    def _outbox_from_row(row: sqlite3.Row) -> dict[str, Any]:
+        last_error = row["last_error"]
+        return {
+            "outbox_id": int(row["outbox_id"]),
+            "source_scope_key": row["source_scope_key"],
+            "server_profile_id": _restore_scope_value(row["server_profile_id"]),
+            "authenticated_principal_id": _restore_scope_value(row["authenticated_principal_id"]),
+            "workspace_scope": _restore_scope_value(row["workspace_scope"]),
+            "dataset_id": row["dataset_id"],
+            "domain": row["domain"],
+            "client_envelope_id": row["client_envelope_id"],
+            "envelope": json.loads(row["envelope"]),
+            "status": row["status"],
+            "attempt_count": int(row["attempt_count"]),
+            "last_error": json.loads(last_error) if last_error else None,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "dispatched_at": row["dispatched_at"],
+        }
+
+    @staticmethod
     def _ensure_sync_v2_profile_columns(conn: sqlite3.Connection) -> None:
         existing_columns = {
             row["name"]
@@ -1024,6 +1327,22 @@ def _side_key(source_scope_key: str, side: str, entity_id: str | None) -> str | 
     if entity_id is None:
         return None
     return f"{source_scope_key}:{side}:{entity_id}"
+
+
+def _sync_v2_outbox_scope_key(
+    *,
+    server_profile_id: str,
+    authenticated_principal_id: str | None,
+    workspace_scope: str | None,
+) -> str:
+    return _source_scope_key(
+        source_authority="server",
+        server_profile_id=server_profile_id,
+        authenticated_principal_id=authenticated_principal_id,
+        workspace_scope=workspace_scope,
+        domain="sync_v2",
+        entity_type="outbox",
+    )
 
 
 def _scope_value(value: str | None) -> str:
