@@ -36,6 +36,7 @@ def validate_pulled_response_scope(
         response_label="pull response",
     )
     domain_set = {str(domain) for domain in domains or []}
+    seen_ids: set[str] = set()
     for envelope in envelopes:
         if envelope.dataset_id != dataset_id:
             raise ValueError("pulled Sync v2 envelope dataset_id must match requested dataset_id")
@@ -43,6 +44,10 @@ def validate_pulled_response_scope(
             raise ValueError("pulled Sync v2 envelope from own device is not allowed in incremental sync")
         if domain_set and str(envelope.domain) not in domain_set:
             raise ValueError("pulled Sync v2 envelope domain must be included in requested domains")
+        response_id = str(envelope.client_envelope_id)
+        if response_id in seen_ids:
+            raise ValueError("pulled Sync v2 response contained duplicate client_envelope_id")
+        seen_ids.add(response_id)
 
 
 def validate_push_response_scope(
