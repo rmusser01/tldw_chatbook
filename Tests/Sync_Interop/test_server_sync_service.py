@@ -7,7 +7,13 @@ from tldw_chatbook.Sync_Interop import ServerSyncService
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError, RuntimeSourceState
-from tldw_chatbook.tldw_api import ClientChangesPayload, SyncOperation, SyncSendEntity, SyncSendLogEntry
+from tldw_chatbook.tldw_api import (
+    ClientChangesPayload,
+    SyncOperation,
+    SyncSendEntity,
+    SyncSendLogEntry,
+    SyncV2Envelope,
+)
 
 
 def _payload() -> ClientChangesPayload:
@@ -42,6 +48,25 @@ def _server_runtime_state() -> RuntimeSourceState:
 
 def _local_runtime_state() -> RuntimeSourceState:
     return RuntimeSourceState(active_source="local")
+
+
+def _sync_v2_envelope(
+    *,
+    dataset_id: str = "dataset-1",
+    device_id: str | None = "device-1",
+    entity_id: str = "note-1",
+) -> SyncV2Envelope:
+    return SyncV2Envelope(
+        client_envelope_id=f"{device_id or 'unknown'}:notes:{entity_id}:1",
+        dataset_id=dataset_id,
+        device_id=device_id,
+        domain="notes",
+        entity_id=entity_id,
+        operation="upsert",
+        adapter_version=1,
+        stable_key=entity_id,
+        payload_hash=f"sha256:{entity_id}",
+    )
 
 
 class FakeSyncClient:
@@ -410,6 +435,36 @@ async def test_server_sync_service_runs_sync_v2_no_content_dry_run_and_persists_
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "sync.v2.dry_run.server"
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_rejects_mismatched_v2_push_dataset_before_dispatch():
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="dataset_id"):
+        await service.push_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            envelopes=[_sync_v2_envelope(dataset_id="other-dataset")],
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_rejects_mismatched_v2_push_device_before_dispatch():
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="device_id"):
+        await service.push_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            envelopes=[_sync_v2_envelope(device_id="other-device")],
+        )
+
+    assert client.calls == []
 
 
 @pytest.mark.asyncio

@@ -326,15 +326,21 @@ class ServerSyncService:
         """Push local-first Sync v2 envelopes through the policy-gated transport."""
 
         self._enforce("sync.v2.push.server")
+        coerced_envelopes = [
+            envelope
+            if isinstance(envelope, SyncV2Envelope)
+            else SyncV2Envelope.model_validate(envelope)
+            for envelope in envelopes
+        ]
+        for envelope in coerced_envelopes:
+            if envelope.dataset_id != dataset_id:
+                raise ValueError("Sync v2 push envelope dataset_id must match request dataset_id.")
+            if envelope.device_id != device_id:
+                raise ValueError("Sync v2 push envelope device_id must match request device_id.")
         request = SyncV2PushRequest(
             dataset_id=dataset_id,
             device_id=device_id,
-            envelopes=[
-                envelope
-                if isinstance(envelope, SyncV2Envelope)
-                else SyncV2Envelope.model_validate(envelope)
-                for envelope in envelopes
-            ],
+            envelopes=coerced_envelopes,
             idempotency_key=idempotency_key,
             last_known_cursor=last_known_cursor,
         )
