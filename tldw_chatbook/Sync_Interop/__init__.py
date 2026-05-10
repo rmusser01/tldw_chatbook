@@ -1,5 +1,6 @@
 """Server sync transport interoperability services."""
 
+from .key_recovery_service import SyncKeyRecoveryService
 from .local_first_sync_service import LocalFirstSyncService
 from .restore_service import SyncRestoreService
 from .server_sync_service import ServerSyncService
@@ -10,6 +11,7 @@ __all__ = [
     "LocalFirstSyncService",
     "ServerSyncService",
     "SyncBackend",
+    "SyncKeyRecoveryService",
     "SyncRestoreService",
     "SyncScopeService",
     "SyncStateRepository",
