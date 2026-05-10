@@ -88,6 +88,7 @@ def validate_outgoing_envelope_scope(
     """Reject outgoing Sync v2 envelopes outside the active profile scope."""
 
     domain_set = {str(domain) for domain in domains}
+    seen_ids: set[str] = set()
     for envelope in envelopes:
         if envelope.dataset_id != dataset_id:
             raise ValueError("outgoing Sync v2 envelope dataset_id must match profile dataset_id")
@@ -95,3 +96,7 @@ def validate_outgoing_envelope_scope(
             raise ValueError("outgoing Sync v2 envelope device_id must match profile device_id")
         if domain_set and str(envelope.domain) not in domain_set:
             raise ValueError("outgoing Sync v2 envelope domain must be included in requested domains")
+        outgoing_id = str(envelope.client_envelope_id)
+        if outgoing_id in seen_ids:
+            raise ValueError("outgoing Sync v2 batch contained duplicate client_envelope_id")
+        seen_ids.add(outgoing_id)

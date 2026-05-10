@@ -300,6 +300,67 @@ async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_fa
     )["last_error"] == "push_partial_failure: stale_base,conflict"
 
 
+async def test_local_first_sync_once_rejects_duplicate_outgoing_ids_before_push(tmp_path):
+    dataset_key = generate_dataset_key()
+    outgoing = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    ).build_note_metadata_update(note_id="note-1", status="archived")
+    repo = _repo_with_profile(tmp_path)
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=outgoing,
+    )
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    with pytest.raises(ValueError, match="duplicate client_envelope_id"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes"],
+            outgoing_envelopes=[outgoing],
+        )
+
+    pending_after = repo.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert server.calls == []
+    assert pending_after[0]["attempt_count"] == 0
+    assert pending_after[0]["last_error"] is None
+    assert profile["last_error"] == (
+        "push_failed: outgoing Sync v2 batch contained duplicate client_envelope_id"
+    )
+    assert profile["dataset_cursors"]["sync_v2"] == "7"
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    ).cursor == "7"
+
+
 async def test_local_first_sync_once_rejects_mismatched_push_response_dataset_before_dispatch(
     tmp_path,
 ):

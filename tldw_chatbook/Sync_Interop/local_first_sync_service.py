@@ -77,21 +77,28 @@ class LocalFirstSyncService:
             dataset_id=str(dataset_id),
             domains=list(domains),
         )
-        outbox_payloads = [dict(entry["envelope"]) for entry in outbox_entries]
-        outgoing_parsed = [
-            self._coerce_envelope(envelope)
-            for envelope in (outgoing_envelopes or [])
-        ]
         try:
+            outbox_parsed = [
+                self._coerce_envelope(entry["envelope"])
+                for entry in outbox_entries
+            ]
+            outgoing_parsed = [
+                self._coerce_envelope(envelope)
+                for envelope in (outgoing_envelopes or [])
+            ]
             validate_outgoing_envelope_scope(
                 dataset_id=str(dataset_id),
                 device_id=str(device_id),
-                envelopes=outgoing_parsed,
+                envelopes=[*outbox_parsed, *outgoing_parsed],
                 domains=list(domains),
             )
         except Exception as exc:
             self._record_sync_error(profile=profile, stage="push", exc=exc)
             raise
+        outbox_payloads = [
+            envelope.model_dump(mode="json")
+            for envelope in outbox_parsed
+        ]
         outgoing_payloads = [
             envelope.model_dump(mode="json")
             for envelope in outgoing_parsed
