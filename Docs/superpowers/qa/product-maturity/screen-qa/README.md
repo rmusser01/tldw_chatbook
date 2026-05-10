@@ -20,10 +20,10 @@ This folder tracks actual rendered screenshot approval for the 12 top-level dest
 | 2 | Home | TASK-14.2 | `codex/screen-qa-home` | `home/baseline-2026-05-08-playwright-home.png` | `home/final-2026-05-09-playwright-home-polish2.png` | approved | #288 | pending |
 | 3 | Library | TASK-14.3 | `codex/screen-qa-library` | `library/baseline-2026-05-09-playwright-library.png` | `library/review-2026-05-09-playwright-library-contextual-inspector.png` | approved | pending | pending |
 | 4 | Artifacts | TASK-14.4 | `codex/screen-qa-artifacts` | `artifacts/baseline-2026-05-09-artifacts.png` | `artifacts/final-2026-05-09-artifacts-columns.png` | approved | #292 | merged |
-| 5 | Personas | TASK-14.5 | `codex/screen-qa-personas` | pending | pending | pending | pending | pending |
+| 5 | Personas | TASK-14.5 | `codex/screen-qa-personas` | pending | pending | approved | #294/#295 | merged |
 | 6 | Watchlists | TASK-14.6 | `codex/screen-qa-watchlists` | `watchlists/baseline-2026-05-09-watchlists.png` | `watchlists/final-2026-05-09-watchlists.png` | approved | #296 | merged |
-| 7 | Schedules | TASK-14.7 | `codex/screen-qa-schedules` | `schedules/baseline-2026-05-09-schedules.png` | `schedules/final-2026-05-10-schedules.png` | approved | pending | pending |
-| 8 | Workflows | TASK-14.8 | `codex/screen-qa-workflows` | pending | pending | pending | pending | pending |
+| 7 | Schedules | TASK-14.7 | `codex/screen-qa-schedules` | `schedules/baseline-2026-05-09-schedules.png` | `schedules/final-2026-05-10-schedules.png` | approved | #297/#298 | merged |
+| 8 | Workflows | TASK-14.8 | `codex/screen-qa-workflows` | `workflows/baseline-2026-05-10-workflows.png` | `workflows/final-2026-05-10-workflows.png` | approved | pending | pending |
 | 9 | MCP | TASK-14.9 | `codex/screen-qa-mcp` | pending | pending | pending | pending | pending |
 | 10 | ACP | TASK-14.10 | `codex/screen-qa-acp` | pending | pending | pending | pending | pending |
 | 11 | Skills | TASK-14.11 | `codex/screen-qa-skills` | pending | pending | pending | pending | pending |

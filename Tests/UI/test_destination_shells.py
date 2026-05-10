@@ -820,7 +820,7 @@ async def test_personas_destination_does_not_enqueue_retry_while_blocking_snapsh
     service = BlockingPersonasScopeService(
         characters=[{"name": "Blocking Mentor", "id": 1}],
         profiles=[],
-        sleep_seconds=0.5,
+        sleep_seconds=2.0,
     )
     app.character_persona_scope_service = service
     host = DestinationHarness(app, "personas")
@@ -1231,7 +1231,6 @@ def test_wc_service_adoption_tracking_evidence_exists():
         ("library", "#library-open-media", "media"),
         ("library", "#library-open-conversations", "conversation"),
         ("library", "#library-open-import-export", "ingest"),
-        ("library", "#library-open-search", "search"),
         ("artifacts", "#artifacts-open-chatbooks", "chatbooks"),
         ("personas", "#personas-open-profiles", "ccp"),
         ("watchlists_collections", "#wc-open-watchlists", "subscriptions"),
@@ -1249,6 +1248,24 @@ async def test_destination_action_buttons_emit_compatibility_routes(route, selec
         await pilot.pause(0.1)
 
     assert seen_routes[-1] == target_route
+
+
+@pytest.mark.asyncio
+async def test_library_search_action_switches_to_search_mode_without_route_handoff():
+    app = _build_test_app()
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+        await pilot.click("#library-open-search")
+        await pilot.pause(0.1)
+
+        assert getattr(screen, "_active_mode") == "search"
+        assert "Search/RAG mode" in _visible_text(screen)
+
+    assert seen_routes == []
 
 
 @pytest.mark.parametrize("route", SCREEN_BY_ROUTE)
