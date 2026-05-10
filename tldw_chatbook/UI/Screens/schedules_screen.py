@@ -165,10 +165,7 @@ class SchedulesScreen(BaseAppScreen):
         if latest_console_item is not None:
             return f"State: {self._status_text(getattr(latest_console_item, 'status', None))}"
         if self._latest_console_launch_kwargs is not None:
-            return (
-                "State: "
-                f"{self._status_text(self._latest_console_launch_kwargs.get('status'), fallback='ready')}"
-            )
+            return "State: digest output available"
         return "State: blocked"
 
     def _retry_backoff_summary(self, latest_console_item) -> str:

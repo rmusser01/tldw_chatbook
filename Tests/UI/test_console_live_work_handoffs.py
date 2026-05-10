@@ -1369,6 +1369,8 @@ async def test_schedules_destination_routes_latest_digest_output_to_console():
         assert "Console launch available" in text
         assert "Console recovery unavailable" not in text
         assert "Console can launch latest reading digest output: Morning Digest Output." in text
+        assert "State: digest output available" in text
+        assert "State: ready" not in text
 
         await pilot.click("#schedules-follow-in-console")
         await pilot.pause(0.1)
