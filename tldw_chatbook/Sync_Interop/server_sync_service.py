@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
-from tldw_chatbook.Sync_Interop.validation import validate_outgoing_envelope_scope
+from tldw_chatbook.Sync_Interop.validation import (
+    validate_outgoing_envelope_scope,
+    validate_push_response_scope,
+)
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
@@ -347,7 +350,19 @@ class ServerSyncService:
             idempotency_key=idempotency_key,
             last_known_cursor=last_known_cursor,
         )
-        return self._dump(await self._require_client().push_sync_v2_envelopes(request))
+        response = self._dump(await self._require_client().push_sync_v2_envelopes(request))
+        validate_push_response_scope(
+            dataset_id=dataset_id,
+            response_dataset_id=response.get("dataset_id"),
+            submitted_client_envelope_ids=[
+                envelope.client_envelope_id
+                for envelope in coerced_envelopes
+            ],
+            accepted=response.get("accepted", []),
+            rejected=response.get("rejected", []),
+            conflicts=response.get("conflicts", []),
+        )
+        return response
 
     async def pull_v2_envelopes(
         self,

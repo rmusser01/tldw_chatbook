@@ -70,8 +70,9 @@ def _sync_v2_envelope(
 
 
 class FakeSyncClient:
-    def __init__(self):
+    def __init__(self, *, push_response=None):
         self.calls = []
+        self.push_response = push_response
 
     async def send_sync_changes(self, request_data):
         self.calls.append(("send_sync_changes", request_data.model_dump(mode="json")))
@@ -130,6 +131,8 @@ class FakeSyncClient:
 
     async def push_sync_v2_envelopes(self, request_data):
         self.calls.append(("push_sync_v2_envelopes", request_data.model_dump(mode="json")))
+        if self.push_response is not None:
+            return self.push_response
         return {"dataset_id": request_data.dataset_id, "accepted": [], "rejected": [], "conflicts": [], "next_cursor": "5"}
 
     async def pull_sync_v2_envelopes(
@@ -481,6 +484,54 @@ async def test_server_sync_service_rejects_duplicate_v2_push_envelope_ids_before
         )
 
     assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_rejects_mismatched_v2_push_response_dataset_after_dispatch():
+    envelope = _sync_v2_envelope()
+    client = FakeSyncClient(
+        push_response={
+            "dataset_id": "other-dataset",
+            "accepted": [{"client_envelope_id": envelope.client_envelope_id}],
+            "rejected": [],
+            "conflicts": [],
+            "next_cursor": "5",
+        }
+    )
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="push response dataset_id"):
+        await service.push_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            envelopes=[envelope],
+        )
+
+    assert [call[0] for call in client.calls] == ["push_sync_v2_envelopes"]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_rejects_unknown_v2_push_response_id_after_dispatch():
+    envelope = _sync_v2_envelope()
+    client = FakeSyncClient(
+        push_response={
+            "dataset_id": "dataset-1",
+            "accepted": [{"client_envelope_id": "unknown-envelope"}],
+            "rejected": [],
+            "conflicts": [],
+            "next_cursor": "5",
+        }
+    )
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="unknown client_envelope_id"):
+        await service.push_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            envelopes=[envelope],
+        )
+
+    assert [call[0] for call in client.calls] == ["push_sync_v2_envelopes"]
 
 
 @pytest.mark.asyncio
