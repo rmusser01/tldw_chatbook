@@ -1164,6 +1164,16 @@ from .sync_schemas import (
     SyncSendEntity,
     SyncSendLogEntry,
     SyncTransportResponse,
+    SyncV2CapabilitiesResponse,
+    SyncV2DatasetEnrollRequest,
+    SyncV2DatasetEnrollResponse,
+    SyncV2DeviceRegisterRequest,
+    SyncV2DeviceRegisterResponse,
+    SyncV2Envelope,
+    SyncV2PullResponse,
+    SyncV2PushRequest,
+    SyncV2PushResponse,
+    SyncV2RestoreManifestResponse,
 )
 from .data_tables_schemas import (
     ColumnType,
@@ -1641,4 +1651,8 @@ __all__ = [
     "Text2SQLGuardrail", "Text2SQLRequest", "Text2SQLResponse",
     "ClientChangesPayload", "ServerChangesResponse", "SyncEntity", "SyncLogEntry",
     "SyncOperation", "SyncSendEntity", "SyncSendLogEntry", "SyncTransportResponse",
+    "SyncV2CapabilitiesResponse", "SyncV2DatasetEnrollRequest", "SyncV2DatasetEnrollResponse",
+    "SyncV2DeviceRegisterRequest", "SyncV2DeviceRegisterResponse", "SyncV2Envelope",
+    "SyncV2PullResponse", "SyncV2PushRequest", "SyncV2PushResponse",
+    "SyncV2RestoreManifestResponse",
 ]

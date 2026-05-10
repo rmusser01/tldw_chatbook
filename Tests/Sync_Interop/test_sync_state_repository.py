@@ -199,6 +199,38 @@ def test_sync_profile_state_persists_last_report_and_error_by_principal(tmp_path
     ) is None
 
 
+def test_sync_v2_profile_state_persists_device_dataset_cursors_and_metadata(tmp_path):
+    db_path = tmp_path / "sync_state.db"
+    repo = SyncStateRepository(db_path)
+
+    profile = repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="local_first",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"notes": "cursor-1"},
+        capabilities={"max_batch_size": 100},
+        dry_run_metadata={"pulled_envelopes": 0},
+    )
+    repo.close()
+
+    reopened = SyncStateRepository(db_path)
+    stored = reopened.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert profile["profile_mode"] == "local_first"
+    assert stored["device_id"] == "device-1"
+    assert stored["dataset_id"] == "dataset-1"
+    assert stored["dataset_cursors"] == {"notes": "cursor-1"}
+    assert stored["capabilities"] == {"max_batch_size": 100}
+    assert stored["dry_run_metadata"] == {"pulled_envelopes": 0}
+
+
 def test_domain_eligibility_defaults_to_not_eligible_and_persists_override(tmp_path):
     db_path = tmp_path / "sync_state.db"
     repo = SyncStateRepository(db_path)

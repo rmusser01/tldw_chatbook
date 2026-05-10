@@ -24,6 +24,14 @@ class ConflictStrategy(str, Enum):
     MANUAL_REVIEW = "manual_review"
 
 
+class SyncV2ProfileMode(str, Enum):
+    """Top-level operating mode for Sync v2 profiles."""
+
+    LOCAL_ONLY = "local_only"
+    LOCAL_FIRST = "local_first"
+    SERVER_FRONTEND = "server_frontend"
+
+
 @dataclass(frozen=True, slots=True)
 class ConflictPolicy:
     """Default policy is conservative for the dry-run substrate."""
@@ -41,13 +49,19 @@ class SyncProfileState:
     """Per-server profile state for dry-run sync discovery."""
 
     server_profile_id: str
+    profile_mode: SyncV2ProfileMode = SyncV2ProfileMode.LOCAL_ONLY
     workspace_id: str | None = None
+    device_id: str | None = None
+    dataset_id: str | None = None
+    dataset_cursors: dict[str, str | int] = field(default_factory=dict)
     enabled_domains: set[str] = field(default_factory=set)
     conflict_policy: ConflictPolicy = field(default_factory=ConflictPolicy.default)
 
     def __post_init__(self) -> None:
         if not self.server_profile_id:
             raise ValueError("server_profile_id is required")
+        if not isinstance(self.profile_mode, SyncV2ProfileMode):
+            self.profile_mode = SyncV2ProfileMode(str(self.profile_mode))
 
 
 class SyncProfileStateStore:

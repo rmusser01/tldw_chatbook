@@ -400,7 +400,19 @@ from .mcp_governance_schemas import (
     MCPSecretSetRequest,
 )
 from .text2sql_schemas import Text2SQLRequest, Text2SQLResponse
-from .sync_schemas import ClientChangesPayload, ServerChangesResponse
+from .sync_schemas import (
+    ClientChangesPayload,
+    ServerChangesResponse,
+    SyncV2CapabilitiesResponse,
+    SyncV2DatasetEnrollRequest,
+    SyncV2DatasetEnrollResponse,
+    SyncV2DeviceRegisterRequest,
+    SyncV2DeviceRegisterResponse,
+    SyncV2PullResponse,
+    SyncV2PushRequest,
+    SyncV2PushResponse,
+    SyncV2RestoreManifestResponse,
+)
 from .prompt_studio_schemas import (
     PromptStudioCompareStrategiesRequest,
     PromptStudioDeleteMessage,
@@ -14753,6 +14765,77 @@ class TLDWAPIClient:
             params={"client_id": client_id, "since_change_id": since_change_id},
         )
         return ServerChangesResponse.model_validate(response)
+
+    async def get_sync_v2_capabilities(self) -> SyncV2CapabilitiesResponse:
+        response = await self._request("GET", "/api/v1/sync/capabilities")
+        return SyncV2CapabilitiesResponse.model_validate(response)
+
+    async def register_sync_v2_device(
+        self,
+        request_data: SyncV2DeviceRegisterRequest,
+    ) -> SyncV2DeviceRegisterResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/sync/devices/register",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2DeviceRegisterResponse.model_validate(response)
+
+    async def enroll_sync_v2_dataset(
+        self,
+        request_data: SyncV2DatasetEnrollRequest,
+    ) -> SyncV2DatasetEnrollResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/sync/datasets/enroll",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2DatasetEnrollResponse.model_validate(response)
+
+    async def push_sync_v2_envelopes(self, request_data: SyncV2PushRequest) -> SyncV2PushResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/sync/push",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2PushResponse.model_validate(response)
+
+    async def pull_sync_v2_envelopes(
+        self,
+        *,
+        dataset_id: str,
+        device_id: str,
+        cursor: str | None = None,
+        domains: list[str] | None = None,
+        page_size: int | None = None,
+        include_own_changes: bool = False,
+    ) -> SyncV2PullResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/sync/pull",
+            params={
+                "dataset_id": dataset_id,
+                "device_id": device_id,
+                "cursor": cursor,
+                "domain": domains,
+                "page_size": page_size,
+                "include_own_changes": include_own_changes,
+            },
+        )
+        return SyncV2PullResponse.model_validate(response)
+
+    async def get_sync_v2_restore_manifest(
+        self,
+        *,
+        dataset_ids: list[str] | None = None,
+        domains: list[str] | None = None,
+    ) -> SyncV2RestoreManifestResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/sync/restore-manifest",
+            params={"dataset_id": dataset_ids, "domain": domains},
+        )
+        return SyncV2RestoreManifestResponse.model_validate(response)
 
 #
 # End of client.py

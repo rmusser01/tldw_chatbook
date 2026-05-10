@@ -25,6 +25,7 @@ _MAPPING_STATUSES = {
 _BOTH_SIDE_STATUSES = {"confirmed", "stale", "conflict"}
 _LOCAL_NULL_ALLOWED = {"candidate", "orphaned_remote", "unsupported"}
 _REMOTE_NULL_ALLOWED = {"candidate", "orphaned_local", "unsupported"}
+_SYNC_V2_PROFILE_MODES = {"local_only", "local_first", "server_frontend"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +136,12 @@ class SyncStateRepository(BaseDB):
                     server_profile_id TEXT NOT NULL,
                     authenticated_principal_id TEXT NOT NULL,
                     workspace_scope TEXT NOT NULL,
+                    profile_mode TEXT NOT NULL DEFAULT 'local_only',
+                    device_id TEXT,
+                    dataset_id TEXT,
+                    dataset_cursors TEXT NOT NULL DEFAULT '{}',
+                    capabilities TEXT NOT NULL DEFAULT '{}',
+                    dry_run_metadata TEXT NOT NULL DEFAULT '{}',
                     last_error TEXT,
                     last_mirror_report_id INTEGER,
                     updated_at TEXT NOT NULL,
@@ -183,6 +190,7 @@ class SyncStateRepository(BaseDB):
                 );
                 """
             )
+            self._ensure_sync_v2_profile_columns(conn)
 
     def record_identity_mapping(
         self,
@@ -692,6 +700,132 @@ class SyncStateRepository(BaseDB):
             "updated_at": row["updated_at"],
         }
 
+    def set_sync_v2_profile_state(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        profile_mode: str,
+        device_id: str | None,
+        dataset_id: str | None,
+        dataset_cursors: Mapping[str, str | int] | None = None,
+        capabilities: Mapping[str, Any] | None = None,
+        dry_run_metadata: Mapping[str, Any] | None = None,
+        last_error: str | None = None,
+        last_mirror_report_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Persist Sync v2 profile metadata without enabling content mutation."""
+
+        if not server_profile_id:
+            raise ValueError("server_profile_id is required")
+        if profile_mode not in _SYNC_V2_PROFILE_MODES:
+            allowed = ", ".join(sorted(_SYNC_V2_PROFILE_MODES))
+            raise ValueError(f"profile_mode must be one of: {allowed}")
+        now = _utc_now()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO sync_profile_state (
+                    source_authority,
+                    server_profile_id,
+                    authenticated_principal_id,
+                    workspace_scope,
+                    profile_mode,
+                    device_id,
+                    dataset_id,
+                    dataset_cursors,
+                    capabilities,
+                    dry_run_metadata,
+                    last_error,
+                    last_mirror_report_id,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(
+                    source_authority,
+                    server_profile_id,
+                    authenticated_principal_id,
+                    workspace_scope
+                )
+                DO UPDATE SET
+                    profile_mode = excluded.profile_mode,
+                    device_id = excluded.device_id,
+                    dataset_id = excluded.dataset_id,
+                    dataset_cursors = excluded.dataset_cursors,
+                    capabilities = excluded.capabilities,
+                    dry_run_metadata = excluded.dry_run_metadata,
+                    last_error = excluded.last_error,
+                    last_mirror_report_id = excluded.last_mirror_report_id,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    "server",
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                    profile_mode,
+                    device_id,
+                    dataset_id,
+                    _json_dumps(dict(dataset_cursors or {})),
+                    _json_dumps(dict(capabilities or {})),
+                    _json_dumps(dict(dry_run_metadata or {})),
+                    last_error,
+                    last_mirror_report_id,
+                    now,
+                ),
+            )
+            conn.commit()
+        state = self.get_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        if state is None:
+            raise RuntimeError("failed to persist Sync v2 profile state")
+        return state
+
+    def get_sync_v2_profile_state(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+    ) -> dict[str, Any] | None:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM sync_profile_state
+                WHERE source_authority = 'server'
+                  AND server_profile_id = ?
+                  AND authenticated_principal_id = ?
+                  AND workspace_scope = ?
+                """,
+                (
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                ),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "source_authority": row["source_authority"],
+            "server_profile_id": _restore_scope_value(row["server_profile_id"]),
+            "authenticated_principal_id": _restore_scope_value(row["authenticated_principal_id"]),
+            "workspace_scope": _restore_scope_value(row["workspace_scope"]),
+            "profile_mode": row["profile_mode"],
+            "device_id": row["device_id"],
+            "dataset_id": row["dataset_id"],
+            "dataset_cursors": json.loads(row["dataset_cursors"]),
+            "capabilities": json.loads(row["capabilities"]),
+            "dry_run_metadata": json.loads(row["dry_run_metadata"]),
+            "last_error": row["last_error"],
+            "last_mirror_report_id": row["last_mirror_report_id"],
+            "updated_at": row["updated_at"],
+        }
+
     def set_domain_eligibility(
         self,
         *,
@@ -778,6 +912,26 @@ class SyncStateRepository(BaseDB):
             remote_side_key=row["remote_side_key"],
             details=json.loads(row["details"]),
         )
+
+    @staticmethod
+    def _ensure_sync_v2_profile_columns(conn: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(sync_profile_state)").fetchall()
+        }
+        column_defs = {
+            "profile_mode": "TEXT NOT NULL DEFAULT 'local_only'",
+            "device_id": "TEXT",
+            "dataset_id": "TEXT",
+            "dataset_cursors": "TEXT NOT NULL DEFAULT '{}'",
+            "capabilities": "TEXT NOT NULL DEFAULT '{}'",
+            "dry_run_metadata": "TEXT NOT NULL DEFAULT '{}'",
+        }
+        for column_name, definition in column_defs.items():
+            if column_name not in existing_columns:
+                conn.execute(
+                    f"ALTER TABLE sync_profile_state ADD COLUMN {column_name} {definition}"
+                )
 
     @staticmethod
     def _detect_identity_conflicts(

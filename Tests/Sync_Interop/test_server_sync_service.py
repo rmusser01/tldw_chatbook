@@ -3,6 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 from tldw_chatbook.Sync_Interop import ServerSyncService
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api import ClientChangesPayload, SyncOperation, SyncSendEntity, SyncSendLogEntry
 
@@ -51,6 +52,66 @@ class FakeSyncClient:
             ],
             "latest_change_id": 33,
         }
+
+    async def get_sync_v2_capabilities(self):
+        self.calls.append(("get_sync_v2_capabilities",))
+        return {
+            "protocol_version": 2,
+            "min_supported_protocol_version": 2,
+            "supported_domains": ["notes", "chat", "workspaces", "source_cache", "media"],
+            "supported_operations": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
+            "encryption_policies": ["client_private_v1"],
+            "max_batch_size": 100,
+            "max_envelope_payload_bytes": 262144,
+            "max_attachment_bytes": 1048576,
+        }
+
+    async def register_sync_v2_device(self, request_data):
+        self.calls.append(("register_sync_v2_device", request_data.model_dump(mode="json")))
+        return {
+            "device_id": request_data.device_id or "device-1",
+            "server_capabilities": await self.get_sync_v2_capabilities(),
+            "required_actions": [],
+        }
+
+    async def enroll_sync_v2_dataset(self, request_data):
+        self.calls.append(("enroll_sync_v2_dataset", request_data.model_dump(mode="json")))
+        return {
+            "dataset_id": request_data.dataset_id or "dataset-1",
+            "scope_type": request_data.scope_type,
+            "encryption_policy": request_data.encryption_policy,
+            "domains": request_data.domains,
+            "workspace_id": request_data.workspace_id,
+            "cursors": {"notes": "4"},
+            "key_setup_required": False,
+        }
+
+    async def push_sync_v2_envelopes(self, request_data):
+        self.calls.append(("push_sync_v2_envelopes", request_data.model_dump(mode="json")))
+        return {"dataset_id": request_data.dataset_id, "accepted": [], "rejected": [], "conflicts": [], "next_cursor": "5"}
+
+    async def pull_sync_v2_envelopes(
+        self,
+        *,
+        dataset_id,
+        device_id,
+        cursor=None,
+        domains=None,
+        page_size=None,
+        include_own_changes=False,
+    ):
+        self.calls.append(
+            (
+                "pull_sync_v2_envelopes",
+                dataset_id,
+                device_id,
+                cursor,
+                domains,
+                page_size,
+                include_own_changes,
+            )
+        )
+        return {"dataset_id": dataset_id, "envelopes": [], "next_cursor": "6", "has_more": False}
 
 
 @pytest.mark.asyncio
@@ -198,3 +259,56 @@ def test_server_sync_service_from_config_returns_provider_backed_service():
     assert service.client is None
     assert client.base_url == "https://example.com"
     assert service.client_provider.build_client() is client
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_runs_sync_v2_no_content_dry_run_and_persists_state(tmp_path):
+    client = FakeSyncClient()
+    policy = Mock()
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, policy_enforcer=policy, state_repository=repo)
+
+    result = await service.run_v2_dry_run(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        display_name="Laptop",
+        domains=["notes"],
+    )
+
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+    cursor = repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    )
+
+    assert result["dry_run"] is True
+    assert result["device_id"] == "device-1"
+    assert result["dataset_id"] == "dataset-1"
+    assert result["pushed_envelopes"] == 0
+    assert result["pulled_envelopes"] == 0
+    assert result["next_cursor"] == "6"
+    assert profile["profile_mode"] == "local_first"
+    assert profile["dataset_cursors"] == {"notes": "4", "sync_v2": "6"}
+    assert cursor.cursor == "6"
+    assert client.calls[0] == ("get_sync_v2_capabilities",)
+    assert client.calls[-1] == (
+        "pull_sync_v2_envelopes",
+        "dataset-1",
+        "device-1",
+        None,
+        ["notes"],
+        1,
+        False,
+    )
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "sync.v2.dry_run.server"
+    ]

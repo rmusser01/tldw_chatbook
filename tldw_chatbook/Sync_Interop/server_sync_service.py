@@ -6,7 +6,13 @@ from typing import Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import ClientChangesPayload, TLDWAPIClient
+from ..tldw_api import (
+    ClientChangesPayload,
+    SyncV2DatasetEnrollRequest,
+    SyncV2DeviceRegisterRequest,
+    SyncV2PushRequest,
+    TLDWAPIClient,
+)
 
 
 class ServerSyncService:
@@ -18,10 +24,12 @@ class ServerSyncService:
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
+        state_repository: Any | None = None,
     ) -> None:
         self.client = client
         self.client_provider = client_provider
         self.policy_enforcer = policy_enforcer
+        self.state_repository = state_repository
 
     @classmethod
     def from_config(
@@ -112,3 +120,134 @@ class ServerSyncService:
                 since_change_id=since_change_id,
             )
         )
+
+    async def run_v2_dry_run(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None = None,
+        workspace_scope: str | None = None,
+        display_name: str,
+        domains: list[str] | None = None,
+        client_version: str | None = None,
+        scope_type: str = "personal",
+        encryption_policy: str = "client_private_v1",
+    ) -> dict[str, Any]:
+        """Negotiate Sync v2 state without sending or applying content envelopes."""
+
+        if self.state_repository is None:
+            raise ValueError("Sync state repository is required for Sync v2 dry-run.")
+        if not server_profile_id:
+            raise ValueError("server_profile_id is required")
+        if not display_name:
+            raise ValueError("display_name is required")
+
+        self._enforce("sync.v2.dry_run.server")
+        client = self._require_client()
+        profile = self.state_repository.get_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        existing_device_id = profile["device_id"] if profile else None
+        existing_dataset_id = profile["dataset_id"] if profile else None
+
+        requested_domains = domains or ["notes", "chat", "workspaces", "source_cache", "media"]
+        capabilities = await client.get_sync_v2_capabilities()
+        capabilities_record = self._dump(capabilities)
+        supported_domains = set(capabilities_record.get("supported_domains", []))
+        sync_domains = [domain for domain in requested_domains if domain in supported_domains]
+        if not sync_domains:
+            raise ValueError("Server does not advertise any requested Sync v2 domains.")
+
+        device = await client.register_sync_v2_device(
+            SyncV2DeviceRegisterRequest(
+                device_id=existing_device_id,
+                display_name=display_name,
+                client_type="chatbook",
+                client_version=client_version,
+                supported_domains=sync_domains,
+                capabilities={
+                    "dry_run": True,
+                    "protocol_version": 2,
+                },
+            )
+        )
+        device_record = self._dump(device)
+        device_id = str(device_record["device_id"])
+
+        dataset = await client.enroll_sync_v2_dataset(
+            SyncV2DatasetEnrollRequest(
+                dataset_id=existing_dataset_id,
+                device_id=device_id,
+                scope_type=scope_type,
+                workspace_id=workspace_scope,
+                domains=sync_domains,
+                encryption_policy=encryption_policy,
+                metadata={"dry_run": True},
+            )
+        )
+        dataset_record = self._dump(dataset)
+        dataset_id = str(dataset_record["dataset_id"])
+
+        pushed = await client.push_sync_v2_envelopes(
+            SyncV2PushRequest(dataset_id=dataset_id, device_id=device_id, envelopes=[])
+        )
+        push_record = self._dump(pushed)
+        cursor_record = self.state_repository.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            domain="sync_v2",
+            remote_collection=dataset_id,
+        )
+        pulled = await client.pull_sync_v2_envelopes(
+            dataset_id=dataset_id,
+            device_id=device_id,
+            cursor=cursor_record.cursor,
+            domains=sync_domains,
+            page_size=1,
+            include_own_changes=False,
+        )
+        pull_record = self._dump(pulled)
+
+        next_cursor = pull_record.get("next_cursor") or push_record.get("next_cursor") or cursor_record.cursor
+        dataset_cursors = dict(dataset_record.get("cursors") or {})
+        if next_cursor is not None:
+            dataset_cursors["sync_v2"] = next_cursor
+            self.state_repository.set_remote_pull_cursor(
+                source_authority="server",
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                domain="sync_v2",
+                remote_collection=dataset_id,
+                cursor=next_cursor,
+            )
+
+        result = {
+            "dry_run": True,
+            "server_profile_id": server_profile_id,
+            "workspace_scope": workspace_scope,
+            "device_id": device_id,
+            "dataset_id": dataset_id,
+            "domains": sync_domains,
+            "pushed_envelopes": len(push_record.get("accepted", [])),
+            "pulled_envelopes": len(pull_record.get("envelopes", [])),
+            "next_cursor": next_cursor,
+            "key_setup_required": bool(dataset_record.get("key_setup_required", False)),
+        }
+        self.state_repository.set_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            profile_mode="local_first",
+            device_id=device_id,
+            dataset_id=dataset_id,
+            dataset_cursors=dataset_cursors,
+            capabilities=capabilities_record,
+            dry_run_metadata=result,
+            last_error=None,
+        )
+        return result
