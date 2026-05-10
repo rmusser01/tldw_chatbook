@@ -23,8 +23,8 @@ This folder tracks actual rendered screenshot approval for the 12 top-level dest
 | 5 | Personas | TASK-14.5 | `codex/screen-qa-personas` | pending | pending | approved | #294/#295 | merged |
 | 6 | Watchlists | TASK-14.6 | `codex/screen-qa-watchlists` | `watchlists/baseline-2026-05-09-watchlists.png` | `watchlists/final-2026-05-09-watchlists.png` | approved | #296 | merged |
 | 7 | Schedules | TASK-14.7 | `codex/screen-qa-schedules` | `schedules/baseline-2026-05-09-schedules.png` | `schedules/final-2026-05-10-schedules.png` | approved | #297/#298 | merged |
-| 8 | Workflows | TASK-14.8 | `codex/screen-qa-workflows` | `workflows/baseline-2026-05-10-workflows.png` | `workflows/final-2026-05-10-workflows.png` | approved | pending | pending |
-| 9 | MCP | TASK-14.9 | `codex/screen-qa-mcp` | `mcp/baseline-2026-05-10-mcp.png` | `mcp/final-2026-05-10-mcp.png` | approved | pending | pending |
+| 8 | Workflows | TASK-14.8 | `codex/screen-qa-workflows` | `workflows/baseline-2026-05-10-workflows.png` | `workflows/final-2026-05-10-workflows.png` | approved | #299 | merged |
+| 9 | MCP | TASK-14.9 | `codex/screen-qa-mcp` | pending | pending | pending | pending | pending |
 | 10 | ACP | TASK-14.10 | `codex/screen-qa-acp` | pending | pending | pending | pending | pending |
 | 11 | Skills | TASK-14.11 | `codex/screen-qa-skills` | pending | pending | pending | pending | pending |
 | 12 | Settings | TASK-14.12 | `codex/screen-qa-settings` | pending | pending | pending | pending | pending |

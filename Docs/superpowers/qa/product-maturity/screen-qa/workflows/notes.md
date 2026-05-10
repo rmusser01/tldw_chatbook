@@ -3,7 +3,7 @@
 Date: 2026-05-10
 Branch: `codex/screen-qa-workflows`
 Backlog task: TASK-14.8
-Commit: pending
+Commit: 5e8f92a15b05b512aa42e1ec2818c67fde1b3d3a
 Screen: Workflows
 Viewport: 2050x1240
 Launch method: `tldw-serve --host 127.0.0.1 --port 8831` with isolated HOME/XDG profile and `[general] default_tab = "workflows"`
