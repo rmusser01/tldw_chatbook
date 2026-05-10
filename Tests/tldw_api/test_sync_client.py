@@ -10,6 +10,8 @@ from tldw_chatbook.tldw_api import (
     SyncSendEntity,
     SyncSendLogEntry,
     SyncV2CapabilitiesResponse,
+    SyncV2ConflictRecord,
+    SyncV2ConflictResolveRequest,
     SyncV2DatasetEnrollRequest,
     SyncV2DeviceRegisterRequest,
     SyncV2Envelope,
@@ -240,4 +242,48 @@ async def test_sync_v2_client_stores_recovery_bundle_metadata(monkeypatch):
         "kdf_metadata": {"algorithm": "scrypt"},
         "recovery_hint": "personal laptop",
         "rotation_of_key_record_id": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_v2_client_lists_and_resolves_conflicts(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    conflict_payload = {
+        "conflict_id": "conflict-1",
+        "dataset_id": "dataset-1",
+        "domain": "notes",
+        "entity_id": "note-1",
+        "conflict_type": "encrypted_content_edit",
+        "status": "unresolved",
+        "server_sequence": 12,
+    }
+    resolved_payload = {**conflict_payload, "status": "resolved"}
+    mocked = AsyncMock(side_effect=[[conflict_payload], resolved_payload])
+    monkeypatch.setattr(client, "_request", mocked)
+
+    conflicts = await client.list_sync_v2_conflicts(dataset_id="dataset-1", status="unresolved")
+    resolved = await client.resolve_sync_v2_conflict(
+        "conflict-1",
+        SyncV2ConflictResolveRequest(
+            conflict_id="conflict-1",
+            action="accept_remote",
+            resolved_by_device_id="device-1",
+        ),
+    )
+
+    assert isinstance(conflicts[0], SyncV2ConflictRecord)
+    assert conflicts[0].conflict_id == "conflict-1"
+    assert resolved.status == "resolved"
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/sync/conflicts")
+    assert mocked.await_args_list[0].kwargs["params"] == {
+        "dataset_id": "dataset-1",
+        "status": "unresolved",
+    }
+    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/sync/conflicts/conflict-1/resolve")
+    assert mocked.await_args_list[1].kwargs["json_data"] == {
+        "conflict_id": "conflict-1",
+        "action": "accept_remote",
+        "resolution_envelope": None,
+        "resolved_by_device_id": "device-1",
+        "notes": None,
     }

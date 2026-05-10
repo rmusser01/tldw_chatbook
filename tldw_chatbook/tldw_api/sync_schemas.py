@@ -366,6 +366,35 @@ class SyncV2RestoreManifestResponse(BaseModel):
     filters_applied: dict[str, Any] = Field(default_factory=dict)
 
 
+class SyncV2ConflictRecord(BaseModel):
+    """Durable Sync v2 conflict metadata visible to clients."""
+
+    conflict_id: str
+    dataset_id: str
+    domain: SyncV2Domain
+    entity_id: str
+    conflict_type: str
+    status: SyncV2ConflictStatus = "unresolved"
+    base_envelope_id: str | None = None
+    local_envelope_id: str | None = None
+    remote_envelope_id: str | None = None
+    server_sequence: int | None = Field(None, ge=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    resolved_by_envelope_id: str | None = None
+    created_at: str | None = None
+    resolved_at: str | None = None
+
+
+class SyncV2ConflictResolveRequest(BaseModel):
+    """Request to resolve a Sync v2 conflict on the server."""
+
+    conflict_id: str | None = None
+    action: SyncV2ConflictResolutionAction
+    resolution_envelope: SyncV2Envelope | None = None
+    resolved_by_device_id: str | None = None
+    notes: str | None = None
+
+
 class SyncV2KeyRecoveryBundleRequest(BaseModel):
     """Client-generated encrypted key recovery material for a dataset."""
 

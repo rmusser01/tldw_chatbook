@@ -8,6 +8,7 @@ from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_co
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
     ClientChangesPayload,
+    SyncV2ConflictResolveRequest,
     SyncV2DatasetEnrollRequest,
     SyncV2DeviceRegisterRequest,
     SyncV2KeyRecoveryBundleRequest,
@@ -277,3 +278,80 @@ class ServerSyncService:
             rotation_of_key_record_id=rotation_of_key_record_id,
         )
         return self._dump(await self._require_client().store_sync_v2_key_recovery_bundle(request))
+
+    async def get_v2_restore_manifest(
+        self,
+        *,
+        dataset_ids: list[str] | None = None,
+        domains: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Fetch metadata-only Sync v2 restore manifest records from the server."""
+
+        self._enforce("sync.v2.restore_manifest.observe.server")
+        return self._dump(
+            await self._require_client().get_sync_v2_restore_manifest(
+                dataset_ids=dataset_ids,
+                domains=domains,
+            )
+        )
+
+    async def pull_v2_envelopes(
+        self,
+        *,
+        dataset_id: str,
+        device_id: str,
+        cursor: str | None = None,
+        domains: list[str] | None = None,
+        page_size: int | None = None,
+        include_own_changes: bool = False,
+    ) -> dict[str, Any]:
+        """Pull selected Sync v2 envelopes for restore or incremental sync."""
+
+        self._enforce("sync.v2.restore.pull.server")
+        return self._dump(
+            await self._require_client().pull_sync_v2_envelopes(
+                dataset_id=dataset_id,
+                device_id=device_id,
+                cursor=cursor,
+                domains=domains,
+                page_size=page_size,
+                include_own_changes=include_own_changes,
+            )
+        )
+
+    async def list_v2_conflicts(
+        self,
+        *,
+        dataset_id: str,
+        status: str = "unresolved",
+    ) -> list[dict[str, Any]]:
+        """List Sync v2 conflicts that remain visible until explicitly resolved."""
+
+        self._enforce("sync.v2.conflicts.observe.server")
+        return self._dump(
+            await self._require_client().list_sync_v2_conflicts(
+                dataset_id=dataset_id,
+                status=status,
+            )
+        )
+
+    async def resolve_v2_conflict(
+        self,
+        *,
+        conflict_id: str,
+        action: str,
+        resolution_envelope: Mapping[str, Any] | None = None,
+        resolved_by_device_id: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        """Resolve a Sync v2 conflict via the server conflict API."""
+
+        self._enforce("sync.v2.conflicts.resolve.server")
+        request = SyncV2ConflictResolveRequest(
+            conflict_id=conflict_id,
+            action=action,
+            resolution_envelope=resolution_envelope,
+            resolved_by_device_id=resolved_by_device_id,
+            notes=notes,
+        )
+        return self._dump(await self._require_client().resolve_sync_v2_conflict(conflict_id, request))

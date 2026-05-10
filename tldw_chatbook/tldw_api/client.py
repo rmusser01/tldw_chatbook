@@ -404,6 +404,8 @@ from .sync_schemas import (
     ClientChangesPayload,
     ServerChangesResponse,
     SyncV2CapabilitiesResponse,
+    SyncV2ConflictRecord,
+    SyncV2ConflictResolveRequest,
     SyncV2DatasetEnrollRequest,
     SyncV2DatasetEnrollResponse,
     SyncV2DeviceRegisterRequest,
@@ -14838,6 +14840,31 @@ class TLDWAPIClient:
             params={"dataset_id": dataset_ids, "domain": domains},
         )
         return SyncV2RestoreManifestResponse.model_validate(response)
+
+    async def list_sync_v2_conflicts(
+        self,
+        *,
+        dataset_id: str,
+        status: str | None = None,
+    ) -> list[SyncV2ConflictRecord]:
+        response = await self._request(
+            "GET",
+            "/api/v1/sync/conflicts",
+            params={"dataset_id": dataset_id, "status": status},
+        )
+        return [SyncV2ConflictRecord.model_validate(item) for item in response]
+
+    async def resolve_sync_v2_conflict(
+        self,
+        conflict_id: str,
+        request_data: SyncV2ConflictResolveRequest,
+    ) -> SyncV2ConflictRecord:
+        response = await self._request(
+            "POST",
+            f"/api/v1/sync/conflicts/{conflict_id}/resolve",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2ConflictRecord.model_validate(response)
 
     async def store_sync_v2_key_recovery_bundle(
         self,
