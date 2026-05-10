@@ -178,6 +178,7 @@ class LocalFirstSyncService:
                 response_dataset_id=pulled.get("dataset_id"),
                 envelopes=envelopes,
                 domains=list(domains),
+                excluded_device_id=str(device_id),
             )
             results = [
                 applier.apply(envelope)

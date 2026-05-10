@@ -26,6 +26,7 @@ def validate_pulled_response_scope(
     response_dataset_id: Any,
     envelopes: Iterable[SyncV2Envelope],
     domains: Iterable[str] | None = None,
+    excluded_device_id: str | None = None,
 ) -> None:
     """Reject pulled Sync v2 data outside the requested dataset or domains."""
 
@@ -38,6 +39,8 @@ def validate_pulled_response_scope(
     for envelope in envelopes:
         if envelope.dataset_id != dataset_id:
             raise ValueError("pulled Sync v2 envelope dataset_id must match requested dataset_id")
+        if excluded_device_id is not None and envelope.device_id == excluded_device_id:
+            raise ValueError("pulled Sync v2 envelope from own device is not allowed in incremental sync")
         if domain_set and str(envelope.domain) not in domain_set:
             raise ValueError("pulled Sync v2 envelope domain must be included in requested domains")
 
