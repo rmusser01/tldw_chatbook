@@ -1,7 +1,7 @@
 ---
 id: TASK-14.5
 title: 'Screen QA: Personas'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 03:46'
 labels:
@@ -34,7 +34,7 @@ Validate and correct the Personas top-level destination screen through actual re
 - [x] #3 Final actual screenshot captured
 - [x] #4 User approval recorded before PR
 - [x] #5 Focused tests pass
-- [ ] #6 PR merged before next screen starts unless user explicitly overrides
+- [x] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,4 +47,4 @@ Validate and correct the Personas top-level destination screen through actual re
 
 ## Implementation Notes
 
-Updated the Personas destination into an approved three-column workbench with explicit mode structure, full-height pane boundaries, and divider rails that can become future resize handles. Preserved existing local character/persona service data and Console handoff behavior while adding timeout coverage for stalled snapshot loads. Captured baseline and final actual textual-web screenshots under the Personas QA evidence folder; the final screenshot was approved in-session on 2026-05-09. Focused Personas UI regressions and `git diff --check` pass. PR merge remains pending.
+Updated the Personas destination into an approved three-column workbench with explicit mode structure, full-height pane boundaries, and divider rails that can become future resize handles. Preserved existing local character/persona service data and Console handoff behavior while adding bounded-executor timeout coverage for stalled snapshot loads. Captured baseline and final actual textual-web screenshots under the Personas QA evidence folder; the final screenshot was approved in-session on 2026-05-09. Focused Personas UI regressions and `git diff --check` passed. PR #294 merged into `dev` as merge commit `842d21fb5438a66578b027f4b57e49f92ae077bc`.
