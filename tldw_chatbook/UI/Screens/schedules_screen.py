@@ -154,6 +154,40 @@ class SchedulesScreen(BaseAppScreen):
         divider.add_class("destination-pane-divider")
         return divider
 
+    @staticmethod
+    def _status_text(value: Any, *, fallback: str = "unknown") -> str:
+        status = str(value or "").strip()
+        return status or fallback
+
+    def _inspector_state_summary(self, latest_console_item) -> str:
+        if not self._latest_console_context_loaded:
+            return "State: loading"
+        if latest_console_item is not None:
+            return f"State: {self._status_text(getattr(latest_console_item, 'status', None))}"
+        if self._latest_console_launch_kwargs is not None:
+            return (
+                "State: "
+                f"{self._status_text(self._latest_console_launch_kwargs.get('status'), fallback='ready')}"
+            )
+        return "State: blocked"
+
+    def _retry_backoff_summary(self, latest_console_item) -> str:
+        if not self._latest_console_context_loaded:
+            return "Retry/backoff: loading"
+        if latest_console_item is None:
+            if self._latest_console_launch_kwargs is not None:
+                return "Retry/backoff: not applicable to digest output"
+            return "Retry/backoff: no active run selected"
+
+        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
+        if status in {"failed", "error", "errored", "cancelled", "canceled"}:
+            return "Retry/backoff: retry available from Schedules"
+        if status in {"queued", "pending", "scheduled", "running", "active"}:
+            return "Retry/backoff: not retrying"
+        if status == "paused":
+            return "Retry/backoff: paused"
+        return "Retry/backoff: status unknown"
+
     def compose_content(self) -> ComposeResult:
         latest_console_item = self._current_console_follow_item
         self._latest_console_follow_item_id = (
@@ -221,11 +255,11 @@ class SchedulesScreen(BaseAppScreen):
                 with Vertical(id="schedules-inspector-pane", classes="destination-workbench-pane ds-inspector"):
                     yield Static("Column 3: Status Inspector", classes="destination-section schedules-column-title")
                     yield Static(
-                        "State: ready" if self._latest_console_context_loaded else "State: loading",
+                        self._inspector_state_summary(latest_console_item),
                         id="schedules-state-summary",
                     )
                     yield Static(
-                        "Retry/backoff: no retry pending",
+                        self._retry_backoff_summary(latest_console_item),
                         id="schedules-retry-summary",
                     )
                     if latest_console_item is not None or self._latest_console_launch_kwargs is not None:
