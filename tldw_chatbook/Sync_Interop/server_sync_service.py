@@ -11,6 +11,7 @@ from ..tldw_api import (
     SyncV2ConflictResolveRequest,
     SyncV2DatasetEnrollRequest,
     SyncV2DeviceRegisterRequest,
+    SyncV2Envelope,
     SyncV2KeyRecoveryBundleRequest,
     SyncV2PushRequest,
     TLDWAPIClient,
@@ -294,6 +295,32 @@ class ServerSyncService:
                 domains=domains,
             )
         )
+
+    async def push_v2_envelopes(
+        self,
+        *,
+        dataset_id: str,
+        device_id: str,
+        envelopes: list[SyncV2Envelope | Mapping[str, Any]],
+        idempotency_key: str | None = None,
+        last_known_cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """Push local-first Sync v2 envelopes through the policy-gated transport."""
+
+        self._enforce("sync.v2.push.server")
+        request = SyncV2PushRequest(
+            dataset_id=dataset_id,
+            device_id=device_id,
+            envelopes=[
+                envelope
+                if isinstance(envelope, SyncV2Envelope)
+                else SyncV2Envelope.model_validate(envelope)
+                for envelope in envelopes
+            ],
+            idempotency_key=idempotency_key,
+            last_known_cursor=last_known_cursor,
+        )
+        return self._dump(await self._require_client().push_sync_v2_envelopes(request))
 
     async def pull_v2_envelopes(
         self,

@@ -406,6 +406,13 @@ async def test_server_sync_service_routes_restore_manifest_pull_and_conflicts_wi
     service = ServerSyncService(client=client, policy_enforcer=policy)
 
     manifest = await service.get_v2_restore_manifest(dataset_ids=["dataset-1"], domains=["notes"])
+    pushed = await service.push_v2_envelopes(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        envelopes=[],
+        idempotency_key="idem-1",
+        last_known_cursor="cursor-0",
+    )
     pulled = await service.pull_v2_envelopes(
         dataset_id="dataset-1",
         device_id="device-1",
@@ -422,11 +429,22 @@ async def test_server_sync_service_routes_restore_manifest_pull_and_conflicts_wi
     )
 
     assert manifest["datasets"][0]["key_recovery_available"] is True
+    assert pushed["next_cursor"] == "5"
     assert pulled["next_cursor"] == "6"
     assert conflicts[0]["status"] == "unresolved"
     assert resolved["status"] == "resolved"
-    assert client.calls[-4:] == [
+    assert client.calls[-5:] == [
         ("get_sync_v2_restore_manifest", ["dataset-1"], ["notes"]),
+        (
+            "push_sync_v2_envelopes",
+            {
+                "dataset_id": "dataset-1",
+                "device_id": "device-1",
+                "envelopes": [],
+                "idempotency_key": "idem-1",
+                "last_known_cursor": "cursor-0",
+            },
+        ),
         ("pull_sync_v2_envelopes", "dataset-1", "device-1", "cursor-1", ["notes"], 25, False),
         ("list_sync_v2_conflicts", "dataset-1", "unresolved"),
         (
@@ -443,6 +461,7 @@ async def test_server_sync_service_routes_restore_manifest_pull_and_conflicts_wi
     ]
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "sync.v2.restore_manifest.observe.server",
+        "sync.v2.push.server",
         "sync.v2.restore.pull.server",
         "sync.v2.conflicts.observe.server",
         "sync.v2.conflicts.resolve.server",
