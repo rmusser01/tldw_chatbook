@@ -180,10 +180,7 @@ class LocalFirstSyncService:
         self._persist_profile_state(
             profile=profile,
             dataset_cursors=dataset_cursors,
-            last_error=(
-                self._push_partial_failure_message(push_record)
-                or self._apply_conflict_message(conflicts)
-            ),
+            last_error=self._attention_status_message(push_record, conflicts),
         )
 
         return {
@@ -343,3 +340,21 @@ class LocalFirstSyncService:
         if not conflict_types:
             return None
         return f"apply_conflict: {','.join(conflict_types)}"
+
+    @classmethod
+    def _attention_status_message(
+        cls,
+        push_record: Mapping[str, Any],
+        conflicts: list[Mapping[str, Any]],
+    ) -> str | None:
+        messages = [
+            message
+            for message in (
+                cls._push_partial_failure_message(push_record),
+                cls._apply_conflict_message(conflicts),
+            )
+            if message
+        ]
+        if not messages:
+            return None
+        return "; ".join(messages)

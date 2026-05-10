@@ -292,6 +292,78 @@ async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_fa
     )["last_error"] == "push_partial_failure: stale_base,conflict"
 
 
+async def test_local_first_sync_once_preserves_push_and_apply_attention_statuses(tmp_path):
+    dataset_key = generate_dataset_key()
+    local_builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    )
+    remote_builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="remote-device",
+        dataset_key=dataset_key,
+    )
+    pending = local_builder.build_note_metadata_update(note_id="note-1", status="archived")
+    incoming = remote_builder.build_note_upsert(
+        note_id="note-2",
+        title="Remote title",
+        body="remote private body",
+        status="active",
+        base_version="sha256:remote-base",
+    )
+    repo = _repo_with_profile(tmp_path)
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=pending,
+    )
+    store = RecordingLocalStore()
+    store.note_hashes["note-2"] = "sha256:local-dirty"
+    server = FakeLocalFirstServer(
+        pull_envelopes=[incoming.model_dump(mode="json")],
+        push_response={
+            "dataset_id": "dataset-1",
+            "accepted": [],
+            "rejected": [
+                {
+                    "client_envelope_id": pending.client_envelope_id,
+                    "error_code": "stale_base",
+                    "message": "Local base is stale.",
+                }
+            ],
+            "conflicts": [],
+            "next_cursor": "8",
+        },
+    )
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=store,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes"],
+    )
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert result["outbox_retained"] == 1
+    assert result["conflicts"][0]["conflict_type"] == "encrypted_content_edit"
+    assert profile["last_error"] == (
+        "push_partial_failure: stale_base; apply_conflict: encrypted_content_edit"
+    )
+
+
 async def test_local_first_sync_once_uses_stable_push_idempotency_key_for_retry(tmp_path):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
