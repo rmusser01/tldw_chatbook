@@ -16,7 +16,9 @@ def validate_response_dataset_identity(
 ) -> None:
     """Reject server responses whose dataset identity does not match the request."""
 
-    if response_dataset_id is not None and str(response_dataset_id) != dataset_id:
+    if response_dataset_id is None:
+        raise ValueError(f"Sync v2 {response_label} dataset_id is required")
+    if str(response_dataset_id) != dataset_id:
         raise ValueError(f"Sync v2 {response_label} dataset_id must match requested dataset_id")
 
 

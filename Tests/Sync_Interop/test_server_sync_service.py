@@ -611,6 +611,29 @@ async def test_server_sync_service_rejects_mismatched_v2_push_response_dataset_a
 
 
 @pytest.mark.asyncio
+async def test_server_sync_service_rejects_missing_v2_push_response_dataset_after_dispatch():
+    envelope = _sync_v2_envelope()
+    client = FakeSyncClient(
+        push_response={
+            "accepted": [{"client_envelope_id": envelope.client_envelope_id}],
+            "rejected": [],
+            "conflicts": [],
+            "next_cursor": "5",
+        }
+    )
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="push response dataset_id"):
+        await service.push_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            envelopes=[envelope],
+        )
+
+    assert [call[0] for call in client.calls] == ["push_sync_v2_envelopes"]
+
+
+@pytest.mark.asyncio
 async def test_server_sync_service_rejects_unknown_v2_push_response_id_after_dispatch():
     envelope = _sync_v2_envelope()
     client = FakeSyncClient(
@@ -639,6 +662,27 @@ async def test_server_sync_service_rejects_mismatched_v2_pull_response_dataset_a
     client = FakeSyncClient(
         pull_response={
             "dataset_id": "other-dataset",
+            "envelopes": [],
+            "next_cursor": "cursor-2",
+            "has_more": False,
+        }
+    )
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="pull response dataset_id"):
+        await service.pull_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            domains=["notes"],
+        )
+
+    assert [call[0] for call in client.calls] == ["pull_sync_v2_envelopes"]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_rejects_missing_v2_pull_response_dataset_after_dispatch():
+    client = FakeSyncClient(
+        pull_response={
             "envelopes": [],
             "next_cursor": "cursor-2",
             "has_more": False,
