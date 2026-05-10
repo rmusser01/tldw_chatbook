@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Mapping, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
+from functools import partial
 from typing import Any
 
 from loguru import logger
@@ -48,10 +50,17 @@ class PersonasScreen(BaseAppScreen):
         self._personas_lookup_error: str | None = None
         self._personas_lookup_recovery_state: DestinationRecoveryState | None = None
         self._personas_loaded = False
+        self._personas_snapshot_executor: ThreadPoolExecutor | None = None
+        self._personas_snapshot_futures: set[Future[Any]] = set()
 
     def on_mount(self) -> None:
         super().on_mount()
+        self._ensure_snapshot_executor()
         self._refresh_local_behavior_snapshot()
+
+    def on_unmount(self) -> None:
+        self._shutdown_snapshot_executor()
+        super().on_unmount()
 
     @work(exclusive=True)
     async def _refresh_local_behavior_snapshot(self) -> None:
@@ -79,9 +88,42 @@ class PersonasScreen(BaseAppScreen):
             return await value
         return value
 
+    def _ensure_snapshot_executor(self) -> ThreadPoolExecutor:
+        if self._personas_snapshot_executor is None:
+            self._personas_snapshot_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="personas-snapshot",
+            )
+        return self._personas_snapshot_executor
+
+    def _shutdown_snapshot_executor(self) -> None:
+        self._cancel_queued_snapshot_work()
+        if self._personas_snapshot_executor is not None:
+            self._personas_snapshot_executor.shutdown(wait=False, cancel_futures=True)
+            self._personas_snapshot_executor = None
+
+    def _has_pending_snapshot_work(self) -> bool:
+        self._personas_snapshot_futures = {
+            future for future in self._personas_snapshot_futures if not future.done()
+        }
+        return bool(self._personas_snapshot_futures)
+
+    def _cancel_queued_snapshot_work(self) -> None:
+        for future in self._personas_snapshot_futures:
+            if not future.running() and not future.done():
+                future.cancel()
+
     async def _call_service_method(self, method: Any, **kwargs: Any) -> Any:
-        value = await asyncio.to_thread(method, **kwargs)
-        return await self._resolve_maybe_awaitable(value)
+        executor = self._ensure_snapshot_executor()
+        call = partial(method, **kwargs)
+        future = executor.submit(call)
+        self._personas_snapshot_futures.add(future)
+        try:
+            value = await asyncio.wrap_future(future)
+            return await self._resolve_maybe_awaitable(value)
+        finally:
+            if future.done():
+                self._personas_snapshot_futures.discard(future)
 
     @staticmethod
     def _safe_text(value: Any, fallback: str = "", *, max_length: int = 500) -> str:
@@ -155,6 +197,9 @@ class PersonasScreen(BaseAppScreen):
         empty_counts = {"characters": 0, "profiles": 0}
         if not callable(list_characters) or not callable(list_profiles):
             return empty_records, empty_counts, PERSONAS_SERVICE_UNAVAILABLE_COPY, None
+        if self._has_pending_snapshot_work():
+            logger.warning("Skipping Personas snapshot refresh; previous sync work is still running.")
+            return empty_records, empty_counts, PERSONAS_SERVICE_ERROR_COPY, None
 
         try:
             characters_result, profiles_result = await asyncio.wait_for(
@@ -177,6 +222,7 @@ class PersonasScreen(BaseAppScreen):
                 timeout=PERSONAS_SNAPSHOT_TIMEOUT_SECONDS,
             )
         except TimeoutError:
+            self._cancel_queued_snapshot_work()
             logger.warning("Timed out loading local Personas behavior snapshot.")
             return empty_records, empty_counts, PERSONAS_SERVICE_ERROR_COPY, None
         except PolicyDeniedError as exc:
