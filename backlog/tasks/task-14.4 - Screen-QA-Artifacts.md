@@ -1,7 +1,7 @@
 ---
 id: TASK-14.4
 title: 'Screen QA: Artifacts'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 03:46'
 labels:
@@ -34,7 +34,7 @@ Validate and correct the Artifacts top-level destination screen through actual r
 - [x] #3 Final actual screenshot captured
 - [x] #4 User approval recorded before PR
 - [x] #5 Focused tests pass
-- [ ] #6 PR merged before next screen starts unless user explicitly overrides
+- [x] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,3 +52,4 @@ Validate and correct the Artifacts top-level destination screen through actual r
 - Added mounted regression coverage for the Artifacts IA and explicit column labels.
 - Captured the approved final screenshot at `Docs/superpowers/qa/product-maturity/screen-qa/artifacts/final-2026-05-09-artifacts-columns.png`.
 - Focused verification passed with `Tests/UI/test_destination_visual_parity_correction.py -k "artifacts"`.
+- PR #292 merged into `dev` as merge commit `01844015332ca5fd33dbfd653349ef500a21d25f`.
