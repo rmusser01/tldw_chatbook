@@ -27,16 +27,20 @@ def validate_pulled_response_scope(
             raise ValueError("pulled Sync v2 envelope domain must be included in requested domains")
 
 
-def validate_outgoing_envelope_domains(
+def validate_outgoing_envelope_scope(
     *,
+    dataset_id: str,
+    device_id: str,
     envelopes: Iterable[SyncV2Envelope],
     domains: Iterable[str],
 ) -> None:
-    """Reject outgoing Sync v2 envelopes outside the requested domain scope."""
+    """Reject outgoing Sync v2 envelopes outside the active profile scope."""
 
     domain_set = {str(domain) for domain in domains}
-    if not domain_set:
-        return
     for envelope in envelopes:
-        if str(envelope.domain) not in domain_set:
+        if envelope.dataset_id != dataset_id:
+            raise ValueError("outgoing Sync v2 envelope dataset_id must match profile dataset_id")
+        if envelope.device_id != device_id:
+            raise ValueError("outgoing Sync v2 envelope device_id must match profile device_id")
+        if domain_set and str(envelope.domain) not in domain_set:
             raise ValueError("outgoing Sync v2 envelope domain must be included in requested domains")

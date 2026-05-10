@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.validation import (
-    validate_outgoing_envelope_domains,
+    validate_outgoing_envelope_scope,
     validate_pulled_response_scope,
 )
 from tldw_chatbook.tldw_api import SyncV2Envelope
@@ -82,7 +82,9 @@ class LocalFirstSyncService:
             for envelope in (outgoing_envelopes or [])
         ]
         try:
-            validate_outgoing_envelope_domains(
+            validate_outgoing_envelope_scope(
+                dataset_id=str(dataset_id),
+                device_id=str(device_id),
                 envelopes=outgoing_parsed,
                 domains=list(domains),
             )
