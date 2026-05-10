@@ -913,6 +913,34 @@ async def test_schedules_destination_routes_latest_active_run_to_console():
     )
 
 
+@pytest.mark.asyncio
+async def test_schedules_inspector_state_matches_active_run_status():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="schedule:run:7",
+                title="Daily digest schedule",
+                source="Schedules",
+                status="failed",
+                detail_route="schedules",
+                console_available=True,
+            ),
+        )
+    )
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        screen_text = _screen_static_text(screen)
+
+        assert "Console can follow active schedule run: Daily digest schedule (failed)." in screen_text
+        assert "State: failed" in screen_text
+        assert "State: ready" not in screen_text
+        assert "Retry/backoff: retry available from Schedules" in screen_text
+
+
 def test_workflows_console_launch_uses_home_dashboard_app_inputs():
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4.1"]}

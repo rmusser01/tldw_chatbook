@@ -733,6 +733,38 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
 
 
 @pytest.mark.asyncio
+async def test_schedules_screen_matches_approved_control_plane_columns():
+    app = _build_test_app()
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#schedules-empty-state")
+
+        visible_text = _visible_static_text(screen)
+        for expected in (
+            "Schedules | Jobs, digests, timers, retries | Local | Console handoff",
+            "Filters: Next run Paused Failed Retry History",
+            "Column 1: Schedule Queue",
+            "Column 2: Run Detail / Output",
+            "Column 3: Status Inspector",
+            "State:",
+            "Retry/backoff:",
+            "Next action:",
+            "Console: blocked",
+        ):
+            assert expected in visible_text
+
+        for selector in (
+            "#schedules-list-detail-divider",
+            "#schedules-detail-inspector-divider",
+        ):
+            divider = screen.query_one(selector)
+            assert divider.has_class("destination-pane-divider")
+            assert divider.region.width == 1
+
+
+@pytest.mark.asyncio
 async def test_artifacts_empty_state_exposes_full_artifact_workbench_taxonomy():
     app = _build_test_app()
     host = DestinationHarness(app, "artifacts")

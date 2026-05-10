@@ -21,8 +21,8 @@ This folder tracks actual rendered screenshot approval for the 12 top-level dest
 | 3 | Library | TASK-14.3 | `codex/screen-qa-library` | `library/baseline-2026-05-09-playwright-library.png` | `library/review-2026-05-09-playwright-library-contextual-inspector.png` | approved | pending | pending |
 | 4 | Artifacts | TASK-14.4 | `codex/screen-qa-artifacts` | `artifacts/baseline-2026-05-09-artifacts.png` | `artifacts/final-2026-05-09-artifacts-columns.png` | approved | #292 | merged |
 | 5 | Personas | TASK-14.5 | `codex/screen-qa-personas` | pending | pending | pending | pending | pending |
-| 6 | Watchlists | TASK-14.6 | `codex/screen-qa-watchlists` | pending | pending | pending | pending | pending |
-| 7 | Schedules | TASK-14.7 | `codex/screen-qa-schedules` | pending | pending | pending | pending | pending |
+| 6 | Watchlists | TASK-14.6 | `codex/screen-qa-watchlists` | `watchlists/baseline-2026-05-09-watchlists.png` | `watchlists/final-2026-05-09-watchlists.png` | approved | #296 | merged |
+| 7 | Schedules | TASK-14.7 | `codex/screen-qa-schedules` | `schedules/baseline-2026-05-09-schedules.png` | `schedules/final-2026-05-10-schedules.png` | approved | pending | pending |
 | 8 | Workflows | TASK-14.8 | `codex/screen-qa-workflows` | pending | pending | pending | pending | pending |
 | 9 | MCP | TASK-14.9 | `codex/screen-qa-mcp` | pending | pending | pending | pending | pending |
 | 10 | ACP | TASK-14.10 | `codex/screen-qa-acp` | pending | pending | pending | pending | pending |

@@ -1,7 +1,7 @@
 ---
 id: TASK-14.6
 title: 'Screen QA: Watchlists'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 03:46'
 labels:
@@ -34,7 +34,7 @@ Validate and correct the Watchlists top-level destination screen through actual 
 - [x] #3 Final actual screenshot captured
 - [x] #4 User approval recorded before PR
 - [x] #5 Focused tests pass
-- [ ] #6 PR merged before next screen starts unless user explicitly overrides
+- [x] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
 
 ## Implementation Plan

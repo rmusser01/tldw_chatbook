@@ -9,7 +9,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.widgets import Button, Rule, Static
 
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -148,6 +148,46 @@ class SchedulesScreen(BaseAppScreen):
             "action_label": "Open schedule output",
         }
 
+    @staticmethod
+    def _column_divider(identifier: str) -> Rule:
+        divider = Rule(orientation="vertical", id=identifier)
+        divider.add_class("destination-pane-divider")
+        return divider
+
+    @staticmethod
+    def _status_text(value: Any, *, fallback: str = "unknown") -> str:
+        status = str(value or "").strip()
+        return status or fallback
+
+    def _inspector_state_summary(self, latest_console_item) -> str:
+        if not self._latest_console_context_loaded:
+            return "State: loading"
+        if latest_console_item is not None:
+            return f"State: {self._status_text(getattr(latest_console_item, 'status', None))}"
+        if self._latest_console_launch_kwargs is not None:
+            return (
+                "State: "
+                f"{self._status_text(self._latest_console_launch_kwargs.get('status'), fallback='ready')}"
+            )
+        return "State: blocked"
+
+    def _retry_backoff_summary(self, latest_console_item) -> str:
+        if not self._latest_console_context_loaded:
+            return "Retry/backoff: loading"
+        if latest_console_item is None:
+            if self._latest_console_launch_kwargs is not None:
+                return "Retry/backoff: not applicable to digest output"
+            return "Retry/backoff: no active run selected"
+
+        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
+        if status in {"failed", "error", "errored", "cancelled", "canceled"}:
+            return "Retry/backoff: retry available from Schedules"
+        if status in {"queued", "pending", "scheduled", "running", "active"}:
+            return "Retry/backoff: not retrying"
+        if status == "paused":
+            return "Retry/backoff: paused"
+        return "Retry/backoff: status unknown"
+
     def compose_content(self) -> ComposeResult:
         latest_console_item = self._current_console_follow_item
         self._latest_console_follow_item_id = (
@@ -156,27 +196,28 @@ class SchedulesScreen(BaseAppScreen):
             else None
         )
         with Vertical(id="schedules-shell"):
-            yield Static("Schedules", id="schedules-title", classes="ds-destination-header")
             yield Static(
-                "Schedules own when things run.",
-                id="schedules-purpose",
-                classes="destination-purpose",
+                "Schedules | Jobs, digests, timers, retries | Local | Console handoff",
+                id="schedules-title",
+                classes="ds-destination-header",
             )
             with DestinationModeStrip(id="schedules-filter-strip", classes="destination-filter-strip"):
                 yield Static(
-                    "Filter: Next run | Paused | Failed | Retry",
+                    "Filters: Next run Paused Failed Retry History",
                     id="schedules-filter-label",
                     classes="destination-section",
                 )
             with Horizontal(id="schedules-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="schedules-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Run Timing", classes="destination-section")
+                    yield Static("Column 1: Schedule Queue", classes="destination-section schedules-column-title")
                     yield Static("Next Run", classes="destination-section")
                     yield Static("Paused", classes="destination-section")
                     yield Static("Failed", classes="destination-section")
                     yield Static("Retry", classes="destination-section")
                     yield Static("History", id="schedules-history-row", classes="destination-section")
+                yield self._column_divider("schedules-list-detail-divider")
                 with Vertical(id="schedules-detail-pane", classes="destination-workbench-pane"):
+                    yield Static("Column 2: Run Detail / Output", classes="destination-section schedules-column-title")
                     if not self._latest_console_context_loaded:
                         yield Static(
                             "Loading schedule and Console follow context...",
@@ -210,7 +251,26 @@ class SchedulesScreen(BaseAppScreen):
                             SCHEDULES_EMPTY_CONSOLE_RECOVERY.visible_copy,
                             id=SCHEDULES_EMPTY_CONSOLE_RECOVERY.stable_selector,
                         )
+                yield self._column_divider("schedules-detail-inspector-divider")
                 with Vertical(id="schedules-inspector-pane", classes="destination-workbench-pane ds-inspector"):
+                    yield Static("Column 3: Status Inspector", classes="destination-section schedules-column-title")
+                    yield Static(
+                        self._inspector_state_summary(latest_console_item),
+                        id="schedules-state-summary",
+                    )
+                    yield Static(
+                        self._retry_backoff_summary(latest_console_item),
+                        id="schedules-retry-summary",
+                    )
+                    if latest_console_item is not None or self._latest_console_launch_kwargs is not None:
+                        yield Static("Console: ready", id="schedules-console-state")
+                        yield Static("Next action: open in Console", id="schedules-next-action")
+                    else:
+                        yield Static("Console: blocked", id="schedules-console-state")
+                        yield Static(
+                            "Next action: start or select a schedule run",
+                            id="schedules-next-action",
+                        )
                     yield Static("Schedule Actions", classes="destination-section")
                     if not self._latest_console_context_loaded:
                         yield Button(
