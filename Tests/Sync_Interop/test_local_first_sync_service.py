@@ -6,6 +6,7 @@ from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.local_first_sync_service import LocalFirstSyncService
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.tldw_api import SyncV2Envelope
 
 pytestmark = pytest.mark.asyncio
 
@@ -79,6 +80,7 @@ class RecordingLocalStore:
         self.note_hashes: dict[str, str] = {}
         self.note_content: dict[str, dict] = {}
         self.note_metadata: dict[str, dict] = {}
+        self.workspace_links: set[tuple[str, str]] = set()
         self.conflicts: list[dict] = []
 
     def get_note_content_hash(self, note_id: str) -> str | None:
@@ -415,6 +417,59 @@ async def test_local_first_sync_once_records_apply_failure_without_advancing_cur
         remote_collection="dataset-1",
     ).cursor == "7"
     assert store.note_content == {}
+
+
+async def test_local_first_sync_once_treats_adapter_rejection_as_failed_apply(tmp_path):
+    dataset_key = generate_dataset_key()
+    rejected_workspace_envelope = SyncV2Envelope(
+        client_envelope_id="remote-device:workspaces:workspace-1:missing-source",
+        dataset_id="dataset-1",
+        device_id="remote-device",
+        domain="workspaces",
+        entity_id="workspace-1:missing-source",
+        operation="link",
+        adapter_version=1,
+        stable_key="workspace-1:missing-source",
+        payload_clear={"workspace_id": "workspace-1"},
+        payload_hash="sha256:missing-source",
+    )
+    repo = _repo_with_profile(tmp_path)
+    store = RecordingLocalStore()
+    server = FakeLocalFirstServer(
+        pull_envelopes=[rejected_workspace_envelope.model_dump(mode="json")]
+    )
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=store,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    with pytest.raises(ValueError, match="apply rejected"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["workspaces"],
+        )
+
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert profile["last_error"] == "apply_rejected: missing_workspace_source_ref"
+    assert profile["dataset_cursors"]["sync_v2"] == "7"
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    ).cursor == "7"
+    assert store.workspace_links == set()
 
 
 async def test_local_first_sync_once_success_clears_prior_last_error_without_new_cursor(tmp_path):

@@ -125,6 +125,19 @@ class LocalFirstSyncService:
         except Exception as exc:
             self._record_sync_error(profile=profile, stage="apply", exc=exc)
             raise
+        rejected_results = [
+            result
+            for result in results
+            if result.get("status") == "rejected"
+        ]
+        if rejected_results:
+            rejection_message = self._rejection_message(rejected_results)
+            self._persist_profile_state(
+                profile=profile,
+                dataset_cursors=dict(profile.get("dataset_cursors") or {}),
+                last_error=f"apply_rejected: {rejection_message}",
+            )
+            raise ValueError(f"apply rejected: {rejection_message}")
         next_cursor = (
             pulled.get("next_cursor")
             or push_record.get("next_cursor")
@@ -220,3 +233,14 @@ class LocalFirstSyncService:
             last_error=last_error,
             last_mirror_report_id=profile.get("last_mirror_report_id"),
         )
+
+    @staticmethod
+    def _rejection_message(results: list[Mapping[str, Any]]) -> str:
+        error_codes = [
+            str(result.get("error_code"))
+            for result in results
+            if result.get("error_code")
+        ]
+        if error_codes:
+            return ",".join(error_codes)
+        return f"{len(results)} envelope apply rejection(s)"
