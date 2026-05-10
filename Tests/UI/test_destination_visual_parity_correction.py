@@ -1163,6 +1163,8 @@ async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow(
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#mcp-workbench")
+        _assert_strip_compact(screen, "#mcp-title", max_height=1)
+        _assert_strip_compact(screen, "#mcp-purpose", max_height=1)
         _assert_ascii_workbench_contract(
             screen,
             workbench="#mcp-workbench",
@@ -1170,6 +1172,7 @@ async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow(
             panes=("#mcp-server-tree-pane", "#mcp-detail-pane", "#mcp-readiness-pane"),
             actions=("#unified-mcp-action-run",),
             height=42,
+            min_pane_rows=30,
         )
 
 
