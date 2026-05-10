@@ -3,7 +3,7 @@
 Date: 2026-05-09
 Branch: `codex/screen-qa-artifacts`
 Backlog task: TASK-14.4
-Commit:
+Commit: `186aa38a`
 Screen: Artifacts
 Viewport: 2050x1240
 Launch method: `tldw-serve --host 127.0.0.1 --port 8824`
