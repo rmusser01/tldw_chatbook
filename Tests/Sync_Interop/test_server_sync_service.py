@@ -468,6 +468,22 @@ async def test_server_sync_service_rejects_mismatched_v2_push_device_before_disp
 
 
 @pytest.mark.asyncio
+async def test_server_sync_service_rejects_duplicate_v2_push_envelope_ids_before_dispatch():
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+    envelope = _sync_v2_envelope()
+
+    with pytest.raises(ValueError, match="duplicate client_envelope_id"):
+        await service.push_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            envelopes=[envelope, envelope],
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_server_sync_service_stores_v2_recovery_bundle_with_policy_gate():
     client = FakeSyncClient()
     policy = Mock()

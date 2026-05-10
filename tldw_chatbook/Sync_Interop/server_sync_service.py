@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
+from tldw_chatbook.Sync_Interop.validation import validate_outgoing_envelope_scope
+
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 from ..tldw_api import (
@@ -332,11 +334,12 @@ class ServerSyncService:
             else SyncV2Envelope.model_validate(envelope)
             for envelope in envelopes
         ]
-        for envelope in coerced_envelopes:
-            if envelope.dataset_id != dataset_id:
-                raise ValueError("Sync v2 push envelope dataset_id must match request dataset_id.")
-            if envelope.device_id != device_id:
-                raise ValueError("Sync v2 push envelope device_id must match request device_id.")
+        validate_outgoing_envelope_scope(
+            dataset_id=dataset_id,
+            device_id=device_id,
+            envelopes=coerced_envelopes,
+            domains=[],
+        )
         request = SyncV2PushRequest(
             dataset_id=dataset_id,
             device_id=device_id,
