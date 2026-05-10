@@ -16,6 +16,8 @@ from tldw_chatbook.tldw_api import (
     SyncV2DeviceRegisterRequest,
     SyncV2Envelope,
     SyncV2KeyRecoveryBundleRequest,
+    SyncV2KeyRecoveryBundleListResponse,
+    SyncV2KeyRecoveryBundleRecord,
     SyncV2KeyRecoveryBundleResponse,
     SyncV2PullResponse,
     SyncV2PushRequest,
@@ -258,6 +260,48 @@ async def test_sync_v2_client_stores_recovery_bundle_metadata(monkeypatch):
         "kdf_metadata": {"algorithm": "scrypt"},
         "recovery_hint": "personal laptop",
         "rotation_of_key_record_id": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_v2_client_lists_recovery_bundle_records(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "dataset_id": "dataset-1",
+            "key_records": [
+                {
+                    "key_record_id": "key-record-1",
+                    "dataset_id": "dataset-1",
+                    "device_id": "device-1",
+                    "key_purpose": "dataset_recovery",
+                    "wrapped_key_blob": "wrapped:opaque-key",
+                    "kdf_metadata": {"algorithm": "scrypt", "salt": "opaque-salt"},
+                    "recovery_hint": "laptop",
+                    "rotation_of_key_record_id": None,
+                    "created_at": "2026-05-10T00:00:00Z",
+                    "revoked_at": None,
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    response = await client.list_sync_v2_key_recovery_bundles(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        key_purpose="dataset_recovery",
+    )
+
+    assert isinstance(response, SyncV2KeyRecoveryBundleListResponse)
+    assert isinstance(response.key_records[0], SyncV2KeyRecoveryBundleRecord)
+    assert response.key_records[0].wrapped_key_blob == "wrapped:opaque-key"
+    assert response.key_records[0].kdf_metadata == {"algorithm": "scrypt", "salt": "opaque-salt"}
+    assert mocked.await_args.args[:2] == ("GET", "/api/v1/sync/keys/recovery-bundle")
+    assert mocked.await_args.kwargs["params"] == {
+        "dataset_id": "dataset-1",
+        "device_id": "device-1",
+        "key_purpose": "dataset_recovery",
     }
 
 

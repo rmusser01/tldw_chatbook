@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
+from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key, wrap_dataset_key_for_recovery
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.restore_service import SyncRestoreService
 
@@ -10,10 +10,11 @@ pytestmark = pytest.mark.asyncio
 
 
 class FakeRestoreServer:
-    def __init__(self, *, envelopes=None, conflicts=None) -> None:
+    def __init__(self, *, envelopes=None, conflicts=None, recovery_records=None) -> None:
         self.calls: list[tuple] = []
         self.envelopes = envelopes or []
         self.conflicts = conflicts or []
+        self.recovery_records = recovery_records or []
 
     async def get_v2_restore_manifest(self, *, dataset_ids=None, domains=None):
         self.calls.append(("manifest", dataset_ids, domains))
@@ -62,6 +63,16 @@ class FakeRestoreServer:
     async def list_v2_conflicts(self, *, dataset_id, status="unresolved"):
         self.calls.append(("conflicts", dataset_id, status))
         return self.conflicts
+
+    async def list_v2_recovery_bundles(
+        self,
+        *,
+        dataset_id,
+        device_id=None,
+        key_purpose="dataset_recovery",
+    ):
+        self.calls.append(("recovery_bundles", dataset_id, device_id, key_purpose))
+        return {"dataset_id": dataset_id, "key_records": self.recovery_records}
 
 
 class RecordingLocalStore:
@@ -131,6 +142,93 @@ async def test_restore_selection_filters_pull_and_decrypts_before_local_apply():
     assert result["applied"] == 1
     assert store.note_content["note-1"] == {"body": "private restored body", "title": "Restored"}
     assert store.note_metadata["note-1"] == {"status": "active"}
+
+
+async def test_restore_selection_recovers_dataset_key_with_recovery_secret():
+    dataset_key = generate_dataset_key()
+    recovery_bundle = wrap_dataset_key_for_recovery(
+        dataset_key,
+        recovery_secret="correct horse battery staple",
+        recovery_hint="laptop",
+    )
+    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    envelope = builder.build_note_upsert(
+        note_id="note-1",
+        title="Restored",
+        body="private restored body",
+        status="active",
+    )
+    store = RecordingLocalStore()
+    server = FakeRestoreServer(
+        envelopes=[envelope.model_dump(mode="json")],
+        recovery_records=[
+            {
+                **recovery_bundle.model_dump(mode="json"),
+                "key_record_id": "key-record-1",
+                "dataset_id": "recoverable-dataset",
+                "device_id": "device-1",
+                "created_at": "2026-05-10T00:00:00Z",
+                "revoked_at": None,
+            }
+        ],
+    )
+    service = SyncRestoreService(server_service=server, local_store=store)
+
+    result = await service.restore_selection(
+        dataset_id="recoverable-dataset",
+        device_id="device-1",
+        domains=["notes"],
+        recovery_secret="correct horse battery staple",
+    )
+
+    assert server.calls[0] == (
+        "recovery_bundles",
+        "recoverable-dataset",
+        None,
+        "dataset_recovery",
+    )
+    assert server.calls[1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, False)
+    assert result["applied"] == 1
+    assert store.note_content["note-1"] == {"body": "private restored body", "title": "Restored"}
+    assert "correct horse battery staple" not in str(result)
+    assert "wrapped_key_blob" not in str(result)
+    assert "kdf_metadata" not in str(result)
+    assert "dataset_key" not in str(result)
+
+
+async def test_restore_selection_recovery_failure_does_not_pull_or_apply():
+    dataset_key = generate_dataset_key()
+    recovery_bundle = wrap_dataset_key_for_recovery(
+        dataset_key,
+        recovery_secret="correct horse battery staple",
+    )
+    store = RecordingLocalStore()
+    server = FakeRestoreServer(
+        envelopes=[{"client_envelope_id": "should-not-pull"}],
+        recovery_records=[
+            {
+                **recovery_bundle.model_dump(mode="json"),
+                "key_record_id": "key-record-1",
+                "dataset_id": "recoverable-dataset",
+                "device_id": "device-1",
+                "created_at": "2026-05-10T00:00:00Z",
+                "revoked_at": None,
+            }
+        ],
+    )
+    service = SyncRestoreService(server_service=server, local_store=store)
+
+    with pytest.raises(ValueError, match="Failed to recover dataset key"):
+        await service.restore_selection(
+            dataset_id="recoverable-dataset",
+            device_id="device-1",
+            domains=["notes"],
+            recovery_secret="wrong secret",
+        )
+
+    assert server.calls == [("recovery_bundles", "recoverable-dataset", None, "dataset_recovery")]
+    assert store.note_content == {}
+    assert store.note_metadata == {}
 
 
 async def test_restore_service_keeps_unresolved_conflicts_visible():

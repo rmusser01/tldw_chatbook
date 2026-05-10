@@ -408,6 +408,28 @@ class SyncV2KeyRecoveryBundleRequest(BaseModel):
     rotation_of_key_record_id: str | None = None
 
 
+class SyncV2KeyRecoveryBundleRecord(BaseModel):
+    """Stored encrypted recovery material returned by the server."""
+
+    key_record_id: str
+    dataset_id: str
+    device_id: str | None = None
+    key_purpose: str
+    wrapped_key_blob: str
+    kdf_metadata: dict[str, Any] = Field(default_factory=dict)
+    recovery_hint: str | None = None
+    rotation_of_key_record_id: str | None = None
+    created_at: str | None = None
+    revoked_at: str | None = None
+
+
+class SyncV2KeyRecoveryBundleListResponse(BaseModel):
+    """Recovery bundle records available for a dataset."""
+
+    dataset_id: str
+    key_records: list[SyncV2KeyRecoveryBundleRecord] = Field(default_factory=list)
+
+
 class SyncV2KeyRecoveryBundleResponse(BaseModel):
     """Server metadata for a stored Sync v2 key recovery bundle."""
 

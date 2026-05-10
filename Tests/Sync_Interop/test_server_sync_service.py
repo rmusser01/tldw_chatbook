@@ -168,6 +168,32 @@ class FakeSyncClient:
             "created_at": "2026-05-10T00:00:00Z",
         }
 
+    async def list_sync_v2_key_recovery_bundles(
+        self,
+        *,
+        dataset_id,
+        device_id=None,
+        key_purpose="dataset_recovery",
+    ):
+        self.calls.append(("list_sync_v2_key_recovery_bundles", dataset_id, device_id, key_purpose))
+        return {
+            "dataset_id": dataset_id,
+            "key_records": [
+                {
+                    "key_record_id": "key-record-1",
+                    "dataset_id": dataset_id,
+                    "device_id": device_id,
+                    "key_purpose": key_purpose,
+                    "wrapped_key_blob": "wrapped:opaque-key",
+                    "kdf_metadata": {"algorithm": "scrypt"},
+                    "recovery_hint": "personal laptop",
+                    "rotation_of_key_record_id": None,
+                    "created_at": "2026-05-10T00:00:00Z",
+                    "revoked_at": None,
+                }
+            ],
+        }
+
 
 @pytest.mark.asyncio
 async def test_server_sync_service_routes_transport_with_policy_actions():
@@ -397,6 +423,28 @@ async def test_server_sync_service_stores_v2_recovery_bundle_with_policy_gate():
         },
     )
     assert policy.require_allowed.call_args.kwargs["action_id"] == "sync.v2.keys.store.server"
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_lists_v2_recovery_bundles_with_policy_gate():
+    client = FakeSyncClient()
+    policy = Mock()
+    service = ServerSyncService(client=client, policy_enforcer=policy)
+
+    response = await service.list_v2_recovery_bundles(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        key_purpose="dataset_recovery",
+    )
+
+    assert response["key_records"][0]["wrapped_key_blob"] == "wrapped:opaque-key"
+    assert client.calls[-1] == (
+        "list_sync_v2_key_recovery_bundles",
+        "dataset-1",
+        "device-1",
+        "dataset_recovery",
+    )
+    assert policy.require_allowed.call_args.kwargs["action_id"] == "sync.v2.keys.retrieve.server"
 
 
 @pytest.mark.asyncio

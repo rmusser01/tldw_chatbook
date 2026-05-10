@@ -280,6 +280,24 @@ class ServerSyncService:
         )
         return self._dump(await self._require_client().store_sync_v2_key_recovery_bundle(request))
 
+    async def list_v2_recovery_bundles(
+        self,
+        *,
+        dataset_id: str,
+        device_id: str | None = None,
+        key_purpose: str | None = "dataset_recovery",
+    ) -> dict[str, Any]:
+        """Fetch opaque Sync v2 key recovery material from the server."""
+
+        self._enforce("sync.v2.keys.retrieve.server")
+        return self._dump(
+            await self._require_client().list_sync_v2_key_recovery_bundles(
+                dataset_id=dataset_id,
+                device_id=device_id,
+                key_purpose=key_purpose,
+            )
+        )
+
     async def get_v2_restore_manifest(
         self,
         *,

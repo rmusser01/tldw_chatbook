@@ -410,6 +410,7 @@ from .sync_schemas import (
     SyncV2DatasetEnrollResponse,
     SyncV2DeviceRegisterRequest,
     SyncV2DeviceRegisterResponse,
+    SyncV2KeyRecoveryBundleListResponse,
     SyncV2KeyRecoveryBundleRequest,
     SyncV2KeyRecoveryBundleResponse,
     SyncV2PullResponse,
@@ -1214,8 +1215,8 @@ class TLDWAPIClient:
                         error_detail = f"Validation Error: {response_data['detail'][0].get('msg', '')} for field '{'.'.join(map(str, response_data['detail'][0].get('loc', [])))}'"
                     elif isinstance(response_data["detail"], str):
                         error_detail = response_data["detail"]
-            except Exception:
-                pass # Ignore if response is not JSON or detail not found
+            except ValueError:
+                pass  # Ignore if response is not JSON or detail not found
 
             if e.response.status_code == 401:
                 raise AuthenticationError(
@@ -1453,7 +1454,7 @@ class TLDWAPIClient:
                 response_data = e.response.json()
                 if isinstance(response_data, dict) and isinstance(response_data.get("detail"), str):
                     error_detail = response_data["detail"]
-            except Exception:
+            except ValueError:
                 pass
             if e.response.status_code == 401:
                 raise AuthenticationError(
@@ -14876,6 +14877,24 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(mode="json"),
         )
         return SyncV2KeyRecoveryBundleResponse.model_validate(response)
+
+    async def list_sync_v2_key_recovery_bundles(
+        self,
+        *,
+        dataset_id: str,
+        device_id: str | None = None,
+        key_purpose: str | None = "dataset_recovery",
+    ) -> SyncV2KeyRecoveryBundleListResponse:
+        response = await self._request(
+            "GET",
+            "/api/v1/sync/keys/recovery-bundle",
+            params={
+                "dataset_id": dataset_id,
+                "device_id": device_id,
+                "key_purpose": key_purpose,
+            },
+        )
+        return SyncV2KeyRecoveryBundleListResponse.model_validate(response)
 
 #
 # End of client.py

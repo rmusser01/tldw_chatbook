@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from tldw_chatbook.Sync_Interop.crypto import unwrap_recovery_bundle
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
@@ -62,10 +63,19 @@ class SyncRestoreService:
         cursor: str | None = None,
         page_size: int | None = None,
         dataset_key: bytes | None = None,
+        recovery_secret: str | bytes | None = None,
+        recovery_key_purpose: str | None = "dataset_recovery",
+        recovery_device_id: str | None = None,
+        key_record_id: str | None = None,
     ) -> dict[str, Any]:
-        key = dataset_key or self.dataset_keys.get(dataset_id)
-        if key is None:
-            raise ValueError("dataset key is required to restore encrypted Sync v2 envelopes")
+        key = await self._resolve_dataset_key(
+            dataset_id=dataset_id,
+            dataset_key=dataset_key,
+            recovery_secret=recovery_secret,
+            recovery_key_purpose=recovery_key_purpose,
+            recovery_device_id=recovery_device_id,
+            key_record_id=key_record_id,
+        )
         pulled = self._dump(
             await self.server_service.pull_v2_envelopes(
                 dataset_id=dataset_id,
@@ -94,6 +104,43 @@ class SyncRestoreService:
             "has_more": bool(pulled.get("has_more", False)),
             "results": results,
         }
+
+    async def _resolve_dataset_key(
+        self,
+        *,
+        dataset_id: str,
+        dataset_key: bytes | None,
+        recovery_secret: str | bytes | None,
+        recovery_key_purpose: str | None,
+        recovery_device_id: str | None,
+        key_record_id: str | None,
+    ) -> bytes:
+        key = dataset_key or self.dataset_keys.get(dataset_id)
+        if key is not None:
+            return key
+        if recovery_secret is None:
+            raise ValueError("dataset key is required to restore encrypted Sync v2 envelopes")
+
+        response = self._dump(
+            await self.server_service.list_v2_recovery_bundles(
+                dataset_id=dataset_id,
+                device_id=recovery_device_id,
+                key_purpose=recovery_key_purpose,
+            )
+        )
+        records = list(response.get("key_records", []))
+        if key_record_id is not None:
+            records = [
+                record
+                for record in records
+                if record.get("key_record_id") == key_record_id
+            ]
+        if not records:
+            raise ValueError("key recovery bundle is required to restore encrypted Sync v2 envelopes")
+        try:
+            return unwrap_recovery_bundle(records[0], recovery_secret=recovery_secret)
+        except ValueError as exc:
+            raise ValueError("Failed to recover dataset key") from exc
 
     async def list_conflicts(
         self,
