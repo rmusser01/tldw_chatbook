@@ -628,6 +628,56 @@ async def test_local_first_sync_once_treats_adapter_rejection_as_failed_apply(tm
     assert store.workspace_links == set()
 
 
+async def test_local_first_sync_once_persists_apply_conflict_status_and_advances_cursor(tmp_path):
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="remote-device",
+        dataset_key=dataset_key,
+    )
+    incoming = builder.build_note_upsert(
+        note_id="note-1",
+        title="Remote title",
+        body="remote private body",
+        status="active",
+        base_version="sha256:remote-base",
+    )
+    repo = _repo_with_profile(tmp_path)
+    store = RecordingLocalStore()
+    store.note_hashes["note-1"] = "sha256:local-dirty"
+    server = FakeLocalFirstServer(pull_envelopes=[incoming.model_dump(mode="json")])
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=store,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes"],
+    )
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert result["conflicts"][0]["conflict_type"] == "encrypted_content_edit"
+    assert profile["last_error"] == "apply_conflict: encrypted_content_edit"
+    assert profile["dataset_cursors"]["sync_v2"] == "9"
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    ).cursor == "9"
+
+
 async def test_local_first_sync_once_success_clears_prior_last_error_without_new_cursor(tmp_path):
     dataset_key = generate_dataset_key()
     repo = _repo_with_profile(tmp_path, last_error="pull_failed: server offline")

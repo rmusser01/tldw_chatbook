@@ -172,17 +172,20 @@ class LocalFirstSyncService:
                 remote_collection=str(dataset_id),
                 cursor=next_cursor,
             )
-        self._persist_profile_state(
-            profile=profile,
-            dataset_cursors=dataset_cursors,
-            last_error=self._push_partial_failure_message(push_record),
-        )
-
         conflicts = [
             result["conflict"]
             for result in results
             if result.get("status") == "conflict" and "conflict" in result
         ]
+        self._persist_profile_state(
+            profile=profile,
+            dataset_cursors=dataset_cursors,
+            last_error=(
+                self._push_partial_failure_message(push_record)
+                or self._apply_conflict_message(conflicts)
+            ),
+        )
+
         return {
             "dataset_id": str(dataset_id),
             "device_id": str(device_id),
@@ -329,3 +332,14 @@ class LocalFirstSyncService:
         if not codes:
             codes.append("unknown")
         return f"push_partial_failure: {','.join(codes)}"
+
+    @staticmethod
+    def _apply_conflict_message(conflicts: list[Mapping[str, Any]]) -> str | None:
+        conflict_types = [
+            str(conflict.get("conflict_type"))
+            for conflict in conflicts
+            if conflict.get("conflict_type")
+        ]
+        if not conflict_types:
+            return None
+        return f"apply_conflict: {','.join(conflict_types)}"
