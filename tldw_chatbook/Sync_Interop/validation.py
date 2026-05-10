@@ -8,6 +8,18 @@ from typing import Any
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
+def validate_response_dataset_identity(
+    *,
+    dataset_id: str,
+    response_dataset_id: Any,
+    response_label: str,
+) -> None:
+    """Reject server responses whose dataset identity does not match the request."""
+
+    if response_dataset_id is not None and str(response_dataset_id) != dataset_id:
+        raise ValueError(f"Sync v2 {response_label} dataset_id must match requested dataset_id")
+
+
 def validate_pulled_response_scope(
     *,
     dataset_id: str,
@@ -17,8 +29,11 @@ def validate_pulled_response_scope(
 ) -> None:
     """Reject pulled Sync v2 data outside the requested dataset or domains."""
 
-    if response_dataset_id is not None and str(response_dataset_id) != dataset_id:
-        raise ValueError("pulled Sync v2 batch dataset_id must match requested dataset_id")
+    validate_response_dataset_identity(
+        dataset_id=dataset_id,
+        response_dataset_id=response_dataset_id,
+        response_label="pull response",
+    )
     domain_set = {str(domain) for domain in domains or []}
     for envelope in envelopes:
         if envelope.dataset_id != dataset_id:

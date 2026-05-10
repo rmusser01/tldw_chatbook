@@ -10,6 +10,7 @@ from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.validation import (
     validate_outgoing_envelope_scope,
     validate_pulled_response_scope,
+    validate_response_dataset_identity,
 )
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
@@ -123,7 +124,16 @@ class LocalFirstSyncService:
                         dataset_id=str(dataset_id),
                         outbox_entries=outbox_entries,
                         exc=exc,
-                    )
+                )
+                self._record_sync_error(profile=profile, stage="push", exc=exc)
+                raise
+            try:
+                validate_response_dataset_identity(
+                    dataset_id=str(dataset_id),
+                    response_dataset_id=push_record.get("dataset_id"),
+                    response_label="push response",
+                )
+            except Exception as exc:
                 self._record_sync_error(profile=profile, stage="push", exc=exc)
                 raise
             if outbox_entries:
