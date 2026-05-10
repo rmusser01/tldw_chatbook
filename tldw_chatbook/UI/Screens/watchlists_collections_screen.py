@@ -321,11 +321,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     yield Static("Column 2: Detail / Items / Runs", classes="destination-section watchlists-column-title")
                     if not self._wc_loaded:
                         yield Static(
-                            WC_SERVICE_ERROR_COPY,
-                            id="wc-service-error",
+                            "Loading local Watchlists snapshot...",
+                            id="wc-loading-state",
                         )
                         attach_disabled = True
-                        attach_tooltip = "Watchlists services are unavailable; retry Watchlists before staging Console context."
+                        attach_tooltip = "Stage local Watchlists context after the local snapshot loads."
                     elif self._wc_lookup_error:
                         recovery_state = self._wc_lookup_recovery_state
                         yield Static(

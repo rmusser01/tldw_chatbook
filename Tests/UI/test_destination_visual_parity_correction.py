@@ -891,7 +891,7 @@ SOURCE_PREP_LOADING_CONTRACTS = [
         "watchlists_collections",
         wc_screen_module.WatchlistsCollectionsScreen,
         "_refresh_local_wc_snapshot",
-        "#wc-service-error",
+        "#wc-loading-state",
         SOURCE_PREP_WORKBENCHES["watchlists_collections"],
         "#watchlists-detail-pane",
     ),
