@@ -158,7 +158,7 @@ class LocalFirstSyncService:
         self._persist_profile_state(
             profile=profile,
             dataset_cursors=dataset_cursors,
-            last_error=None,
+            last_error=self._push_partial_failure_message(push_record),
         )
 
         conflicts = [
@@ -244,3 +244,19 @@ class LocalFirstSyncService:
         if error_codes:
             return ",".join(error_codes)
         return f"{len(results)} envelope apply rejection(s)"
+
+    @staticmethod
+    def _push_partial_failure_message(push_record: Mapping[str, Any]) -> str | None:
+        rejected = list(push_record.get("rejected", []))
+        conflicts = list(push_record.get("conflicts", []))
+        if not rejected and not conflicts:
+            return None
+        codes = [
+            str(item.get("error_code"))
+            for item in rejected
+            if item.get("error_code")
+        ]
+        codes.extend("conflict" for item in conflicts if item.get("client_envelope_id"))
+        if not codes:
+            codes.append("unknown")
+        return f"push_partial_failure: {','.join(codes)}"

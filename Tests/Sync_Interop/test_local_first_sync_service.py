@@ -285,6 +285,11 @@ async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_fa
     ]
     assert pending_after[0]["last_error"]["error_code"] == "stale_base"
     assert pending_after[1]["last_error"]["error_code"] == "conflict"
+    assert repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )["last_error"] == "push_partial_failure: stale_base,conflict"
 
 
 async def test_local_first_sync_once_records_push_failure_without_advancing_cursor(tmp_path):
