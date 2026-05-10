@@ -113,6 +113,17 @@ class FakeSyncClient:
         )
         return {"dataset_id": dataset_id, "envelopes": [], "next_cursor": "6", "has_more": False}
 
+    async def store_sync_v2_key_recovery_bundle(self, request_data):
+        self.calls.append(("store_sync_v2_key_recovery_bundle", request_data.model_dump(mode="json")))
+        return {
+            "key_record_id": "key-record-1",
+            "dataset_id": request_data.dataset_id,
+            "device_id": request_data.device_id,
+            "key_purpose": request_data.key_purpose,
+            "recovery_hint": request_data.recovery_hint,
+            "created_at": "2026-05-10T00:00:00Z",
+        }
+
 
 @pytest.mark.asyncio
 async def test_server_sync_service_routes_transport_with_policy_actions():
@@ -312,3 +323,33 @@ async def test_server_sync_service_runs_sync_v2_no_content_dry_run_and_persists_
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "sync.v2.dry_run.server"
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_stores_v2_recovery_bundle_with_policy_gate():
+    client = FakeSyncClient()
+    policy = Mock()
+    service = ServerSyncService(client=client, policy_enforcer=policy)
+
+    response = await service.store_v2_recovery_bundle(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        wrapped_key_blob="wrapped",
+        kdf_metadata={"algorithm": "scrypt"},
+        recovery_hint="personal laptop",
+    )
+
+    assert response["key_record_id"] == "key-record-1"
+    assert client.calls[-1] == (
+        "store_sync_v2_key_recovery_bundle",
+        {
+            "dataset_id": "dataset-1",
+            "device_id": "device-1",
+            "key_purpose": "dataset_recovery",
+            "wrapped_key_blob": "wrapped",
+            "kdf_metadata": {"algorithm": "scrypt"},
+            "recovery_hint": "personal laptop",
+            "rotation_of_key_record_id": None,
+        },
+    )
+    assert policy.require_allowed.call_args.kwargs["action_id"] == "sync.v2.keys.store.server"

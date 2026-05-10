@@ -408,6 +408,8 @@ from .sync_schemas import (
     SyncV2DatasetEnrollResponse,
     SyncV2DeviceRegisterRequest,
     SyncV2DeviceRegisterResponse,
+    SyncV2KeyRecoveryBundleRequest,
+    SyncV2KeyRecoveryBundleResponse,
     SyncV2PullResponse,
     SyncV2PushRequest,
     SyncV2PushResponse,
@@ -14836,6 +14838,17 @@ class TLDWAPIClient:
             params={"dataset_id": dataset_ids, "domain": domains},
         )
         return SyncV2RestoreManifestResponse.model_validate(response)
+
+    async def store_sync_v2_key_recovery_bundle(
+        self,
+        request_data: SyncV2KeyRecoveryBundleRequest,
+    ) -> SyncV2KeyRecoveryBundleResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/sync/keys/recovery-bundle",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2KeyRecoveryBundleResponse.model_validate(response)
 
 #
 # End of client.py

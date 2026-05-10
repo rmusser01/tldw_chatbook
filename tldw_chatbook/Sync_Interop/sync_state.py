@@ -54,6 +54,8 @@ class SyncProfileState:
     device_id: str | None = None
     dataset_id: str | None = None
     dataset_cursors: dict[str, str | int] = field(default_factory=dict)
+    dataset_key_available: bool = False
+    key_recovery_available: bool = False
     enabled_domains: set[str] = field(default_factory=set)
     conflict_policy: ConflictPolicy = field(default_factory=ConflictPolicy.default)
 

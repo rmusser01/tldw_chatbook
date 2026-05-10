@@ -1170,6 +1170,8 @@ from .sync_schemas import (
     SyncV2DeviceRegisterRequest,
     SyncV2DeviceRegisterResponse,
     SyncV2Envelope,
+    SyncV2KeyRecoveryBundleRequest,
+    SyncV2KeyRecoveryBundleResponse,
     SyncV2PullResponse,
     SyncV2PushRequest,
     SyncV2PushResponse,
@@ -1653,6 +1655,7 @@ __all__ = [
     "SyncOperation", "SyncSendEntity", "SyncSendLogEntry", "SyncTransportResponse",
     "SyncV2CapabilitiesResponse", "SyncV2DatasetEnrollRequest", "SyncV2DatasetEnrollResponse",
     "SyncV2DeviceRegisterRequest", "SyncV2DeviceRegisterResponse", "SyncV2Envelope",
+    "SyncV2KeyRecoveryBundleRequest", "SyncV2KeyRecoveryBundleResponse",
     "SyncV2PullResponse", "SyncV2PushRequest", "SyncV2PushResponse",
     "SyncV2RestoreManifestResponse",
 ]

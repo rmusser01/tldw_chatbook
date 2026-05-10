@@ -13,6 +13,8 @@ from tldw_chatbook.tldw_api import (
     SyncV2DatasetEnrollRequest,
     SyncV2DeviceRegisterRequest,
     SyncV2Envelope,
+    SyncV2KeyRecoveryBundleRequest,
+    SyncV2KeyRecoveryBundleResponse,
     SyncV2PullResponse,
     SyncV2PushRequest,
     SyncV2PushResponse,
@@ -199,4 +201,43 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
     assert mocked.await_args_list[5].kwargs["params"] == {
         "dataset_id": ["dataset-1"],
         "domain": ["notes"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_v2_client_stores_recovery_bundle_metadata(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "key_record_id": "key-record-1",
+            "dataset_id": "dataset-1",
+            "device_id": "device-1",
+            "key_purpose": "dataset_recovery",
+            "recovery_hint": "personal laptop",
+            "created_at": "2026-05-10T00:00:00Z",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    response = await client.store_sync_v2_key_recovery_bundle(
+        SyncV2KeyRecoveryBundleRequest(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            wrapped_key_blob="wrapped",
+            kdf_metadata={"algorithm": "scrypt"},
+            recovery_hint="personal laptop",
+        )
+    )
+
+    assert isinstance(response, SyncV2KeyRecoveryBundleResponse)
+    assert response.key_record_id == "key-record-1"
+    assert mocked.await_args.args[:2] == ("POST", "/api/v1/sync/keys/recovery-bundle")
+    assert mocked.await_args.kwargs["json_data"] == {
+        "dataset_id": "dataset-1",
+        "device_id": "device-1",
+        "key_purpose": "dataset_recovery",
+        "wrapped_key_blob": "wrapped",
+        "kdf_metadata": {"algorithm": "scrypt"},
+        "recovery_hint": "personal laptop",
+        "rotation_of_key_record_id": None,
     }

@@ -10,6 +10,7 @@ from ..tldw_api import (
     ClientChangesPayload,
     SyncV2DatasetEnrollRequest,
     SyncV2DeviceRegisterRequest,
+    SyncV2KeyRecoveryBundleRequest,
     SyncV2PushRequest,
     TLDWAPIClient,
 )
@@ -251,3 +252,28 @@ class ServerSyncService:
             last_error=None,
         )
         return result
+
+    async def store_v2_recovery_bundle(
+        self,
+        *,
+        dataset_id: str,
+        device_id: str | None = None,
+        wrapped_key_blob: str,
+        kdf_metadata: Mapping[str, Any],
+        recovery_hint: str | None = None,
+        key_purpose: str = "dataset_recovery",
+        rotation_of_key_record_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Store opaque Sync v2 key recovery material on the server."""
+
+        self._enforce("sync.v2.keys.store.server")
+        request = SyncV2KeyRecoveryBundleRequest(
+            dataset_id=dataset_id,
+            device_id=device_id,
+            key_purpose=key_purpose,
+            wrapped_key_blob=wrapped_key_blob,
+            kdf_metadata=dict(kdf_metadata),
+            recovery_hint=recovery_hint,
+            rotation_of_key_record_id=rotation_of_key_record_id,
+        )
+        return self._dump(await self._require_client().store_sync_v2_key_recovery_bundle(request))

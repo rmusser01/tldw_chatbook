@@ -42,6 +42,8 @@ def test_sync_profile_state_tracks_sync_v2_device_dataset_and_cursors() -> None:
     assert state.profile_mode == SyncV2ProfileMode.LOCAL_FIRST
     assert state.device_id == "device-1"
     assert state.dataset_id == "dataset-1"
+    assert state.dataset_key_available is False
+    assert state.key_recovery_available is False
     assert state.dataset_cursors == {"notes": "cursor-1", "chat": "cursor-2"}
 
 
