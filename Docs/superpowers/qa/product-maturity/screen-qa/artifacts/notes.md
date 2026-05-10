@@ -3,7 +3,7 @@
 Date: 2026-05-09
 Branch: `codex/screen-qa-artifacts`
 Backlog task: TASK-14.4
-Commit: `186aa38a`
+Commit: `186aa38a`; review fix `241cb892`; merge `01844015332ca5fd33dbfd653349ef500a21d25f`
 Screen: Artifacts
 Viewport: 2050x1240
 Launch method: `tldw-serve --host 127.0.0.1 --port 8824`
@@ -38,7 +38,7 @@ Fallback reason:
 ## Verification
 
 - Commands: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_destination_visual_parity_correction.py -k "artifacts" --tb=short`
-- Results: `8 passed, 63 deselected, 1 warning`
+- Results: initial approval verification `8 passed, 63 deselected, 1 warning`; post-review verification `9 passed, 63 deselected, 1 warning` plus `Tests/UI/test_console_live_work_handoffs.py -k "artifacts"` with `9 passed, 45 deselected, 1 warning`.
 
 ## Residual Risks
 
