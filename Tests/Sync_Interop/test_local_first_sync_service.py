@@ -515,6 +515,57 @@ async def test_local_first_sync_once_changes_push_idempotency_key_when_batch_cha
     assert first_server.calls[0][4] != second_server.calls[0][4]
 
 
+async def test_local_first_sync_once_rejects_outgoing_domain_outside_requested_domains_before_push(tmp_path):
+    dataset_key = generate_dataset_key()
+    outgoing = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    ).build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="user",
+        content="local chat content",
+    )
+    repo = _repo_with_profile(tmp_path)
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    with pytest.raises(ValueError, match="domain"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes"],
+            outgoing_envelopes=[outgoing],
+        )
+
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert server.calls == []
+    assert profile["last_error"] == (
+        "push_failed: outgoing Sync v2 envelope domain must be included in requested domains"
+    )
+    assert profile["dataset_cursors"]["sync_v2"] == "7"
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    ).cursor == "7"
+
+
 async def test_local_first_sync_once_records_push_failure_without_advancing_cursor(tmp_path):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(

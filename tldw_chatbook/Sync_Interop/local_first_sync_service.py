@@ -7,7 +7,10 @@ import json
 from typing import Any, Mapping
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
-from tldw_chatbook.Sync_Interop.validation import validate_pulled_response_scope
+from tldw_chatbook.Sync_Interop.validation import (
+    validate_outgoing_envelope_domains,
+    validate_pulled_response_scope,
+)
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
@@ -74,9 +77,21 @@ class LocalFirstSyncService:
             domains=list(domains),
         )
         outbox_payloads = [dict(entry["envelope"]) for entry in outbox_entries]
-        outgoing_payloads = [
-            self._dump_envelope(envelope)
+        outgoing_parsed = [
+            self._coerce_envelope(envelope)
             for envelope in (outgoing_envelopes or [])
+        ]
+        try:
+            validate_outgoing_envelope_domains(
+                envelopes=outgoing_parsed,
+                domains=list(domains),
+            )
+        except Exception as exc:
+            self._record_sync_error(profile=profile, stage="push", exc=exc)
+            raise
+        outgoing_payloads = [
+            envelope.model_dump(mode="json")
+            for envelope in outgoing_parsed
         ]
         push_payloads = outbox_payloads + outgoing_payloads
         push_record: dict[str, Any] = {}
@@ -224,9 +239,13 @@ class LocalFirstSyncService:
 
     @staticmethod
     def _dump_envelope(envelope: SyncV2Envelope | Mapping[str, Any]) -> dict[str, Any]:
+        return LocalFirstSyncService._coerce_envelope(envelope).model_dump(mode="json")
+
+    @staticmethod
+    def _coerce_envelope(envelope: SyncV2Envelope | Mapping[str, Any]) -> SyncV2Envelope:
         if isinstance(envelope, SyncV2Envelope):
-            return envelope.model_dump(mode="json")
-        return SyncV2Envelope.model_validate(envelope).model_dump(mode="json")
+            return envelope
+        return SyncV2Envelope.model_validate(envelope)
 
     @staticmethod
     def _push_idempotency_key(
