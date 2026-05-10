@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Mapping
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
@@ -85,6 +87,12 @@ class LocalFirstSyncService:
                         dataset_id=str(dataset_id),
                         device_id=str(device_id),
                         envelopes=push_payloads,
+                        idempotency_key=self._push_idempotency_key(
+                            dataset_id=str(dataset_id),
+                            device_id=str(device_id),
+                            cursor=cursor_record.cursor,
+                            envelopes=push_payloads,
+                        ),
                         last_known_cursor=cursor_record.cursor,
                     )
                 )
@@ -199,6 +207,30 @@ class LocalFirstSyncService:
         if isinstance(envelope, SyncV2Envelope):
             return envelope.model_dump(mode="json")
         return SyncV2Envelope.model_validate(envelope).model_dump(mode="json")
+
+    @staticmethod
+    def _push_idempotency_key(
+        *,
+        dataset_id: str,
+        device_id: str,
+        cursor: str | None,
+        envelopes: list[Mapping[str, Any]],
+    ) -> str:
+        batch_identity = {
+            "cursor": cursor,
+            "dataset_id": dataset_id,
+            "device_id": device_id,
+            "client_envelope_ids": [
+                str(envelope.get("client_envelope_id"))
+                for envelope in envelopes
+            ],
+        }
+        encoded = json.dumps(
+            batch_identity,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return f"sync-v2-push:{hashlib.sha256(encoded).hexdigest()}"
 
     def _record_sync_error(
         self,

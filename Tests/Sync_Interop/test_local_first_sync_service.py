@@ -292,6 +292,109 @@ async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_fa
     )["last_error"] == "push_partial_failure: stale_base,conflict"
 
 
+async def test_local_first_sync_once_uses_stable_push_idempotency_key_for_retry(tmp_path):
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    )
+    pending = builder.build_note_metadata_update(note_id="note-1", status="archived")
+    repo = _repo_with_profile(tmp_path)
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=pending,
+    )
+    server = FakeLocalFirstServer(push_error=RuntimeError("temporary network split"))
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    with pytest.raises(RuntimeError, match="temporary network split"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes"],
+        )
+    first_key = server.calls[0][4]
+    server.push_error = None
+    server.push_response = {
+        "dataset_id": "dataset-1",
+        "accepted": [{"client_envelope_id": pending.client_envelope_id}],
+        "rejected": [],
+        "conflicts": [],
+        "next_cursor": "8",
+    }
+
+    await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes"],
+    )
+    second_key = server.calls[1][4]
+
+    assert first_key
+    assert first_key.startswith("sync-v2-push:")
+    assert second_key == first_key
+
+
+async def test_local_first_sync_once_changes_push_idempotency_key_when_batch_changes(tmp_path):
+    dataset_key = generate_dataset_key()
+    first = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    ).build_note_metadata_update(note_id="note-1", status="archived")
+    second = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    ).build_note_metadata_update(note_id="note-2", status="active")
+    first_path = tmp_path / "first"
+    second_path = tmp_path / "second"
+    first_path.mkdir()
+    second_path.mkdir()
+    first_server = FakeLocalFirstServer()
+    first_service = LocalFirstSyncService(
+        server_service=first_server,
+        state_repository=_repo_with_profile(first_path),
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+    second_server = FakeLocalFirstServer()
+    second_service = LocalFirstSyncService(
+        server_service=second_server,
+        state_repository=_repo_with_profile(second_path),
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    await first_service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes"],
+        outgoing_envelopes=[first],
+    )
+    await second_service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes"],
+        outgoing_envelopes=[first, second],
+    )
+
+    assert first_server.calls[0][4] != second_server.calls[0][4]
+
+
 async def test_local_first_sync_once_records_push_failure_without_advancing_cursor(tmp_path):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
