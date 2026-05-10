@@ -137,10 +137,13 @@ class SyncRestoreService:
             ]
         if not records:
             raise ValueError("key recovery bundle is required to restore encrypted Sync v2 envelopes")
-        try:
-            return unwrap_recovery_bundle(records[0], recovery_secret=recovery_secret)
-        except ValueError as exc:
-            raise ValueError("Failed to recover dataset key") from exc
+        last_error: ValueError | None = None
+        for record in records:
+            try:
+                return unwrap_recovery_bundle(record, recovery_secret=recovery_secret)
+            except ValueError as exc:
+                last_error = exc
+        raise ValueError("Failed to recover dataset key") from last_error
 
     async def list_conflicts(
         self,

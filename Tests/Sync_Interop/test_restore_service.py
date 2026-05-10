@@ -196,6 +196,79 @@ async def test_restore_selection_recovers_dataset_key_with_recovery_secret():
     assert "dataset_key" not in str(result)
 
 
+async def test_restore_selection_tries_later_recovery_bundle_when_first_fails():
+    dataset_key = generate_dataset_key()
+    stale_bundle = wrap_dataset_key_for_recovery(
+        generate_dataset_key(),
+        recovery_secret="old recovery secret",
+        recovery_hint="old laptop",
+    )
+    valid_bundle = wrap_dataset_key_for_recovery(
+        dataset_key,
+        recovery_secret="correct horse battery staple",
+        recovery_hint="current laptop",
+    )
+    builder = SyncEnvelopeBuilder(
+        dataset_id="recoverable-dataset",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    )
+    envelope = builder.build_note_upsert(
+        note_id="note-1",
+        title="Restored",
+        body="private restored body",
+        status="active",
+    )
+    store = RecordingLocalStore()
+    server = FakeRestoreServer(
+        envelopes=[envelope.model_dump(mode="json")],
+        recovery_records=[
+            {
+                **stale_bundle.model_dump(mode="json"),
+                "key_record_id": "key-record-old",
+                "dataset_id": "recoverable-dataset",
+                "device_id": "old-device",
+                "created_at": "2026-05-09T00:00:00Z",
+                "revoked_at": None,
+            },
+            {
+                **valid_bundle.model_dump(mode="json"),
+                "key_record_id": "key-record-current",
+                "dataset_id": "recoverable-dataset",
+                "device_id": "device-1",
+                "created_at": "2026-05-10T00:00:00Z",
+                "revoked_at": None,
+            },
+        ],
+    )
+    service = SyncRestoreService(server_service=server, local_store=store)
+
+    result = await service.restore_selection(
+        dataset_id="recoverable-dataset",
+        device_id="device-1",
+        domains=["notes"],
+        recovery_secret="correct horse battery staple",
+    )
+
+    assert server.calls[0] == (
+        "recovery_bundles",
+        "recoverable-dataset",
+        None,
+        "dataset_recovery",
+    )
+    assert server.calls[1] == (
+        "pull",
+        "recoverable-dataset",
+        "device-1",
+        None,
+        ["notes"],
+        None,
+        False,
+    )
+    assert result["applied"] == 1
+    assert store.note_content["note-1"] == {"body": "private restored body", "title": "Restored"}
+
+
 async def test_restore_selection_recovery_failure_does_not_pull_or_apply():
     dataset_key = generate_dataset_key()
     recovery_bundle = wrap_dataset_key_for_recovery(
