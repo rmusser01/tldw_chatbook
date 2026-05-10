@@ -104,6 +104,7 @@ class SyncRestoreService:
         validate_pull_pagination_state(
             has_more=pulled.get("has_more", False),
             next_cursor=pulled.get("next_cursor"),
+            envelope_count=len(envelopes),
         )
         results = [
             applier.apply(envelope)

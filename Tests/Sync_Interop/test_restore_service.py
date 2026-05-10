@@ -272,6 +272,33 @@ async def test_restore_selection_rejects_has_more_pull_without_next_cursor_befor
     assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
 
 
+async def test_restore_selection_rejects_nonempty_pull_without_next_cursor_before_apply():
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    envelope = builder.build_note_metadata_update(note_id="note-1", status="archived")
+    store = RecordingLocalStore()
+    server = FakeRestoreServer(
+        envelopes=[envelope.model_dump(mode="json")],
+        next_cursor=None,
+        has_more=False,
+    )
+    service = SyncRestoreService(
+        server_service=server,
+        local_store=store,
+        dataset_keys={"recoverable-dataset": dataset_key},
+    )
+
+    with pytest.raises(ValueError, match="envelopes.*next_cursor"):
+        await service.restore_selection(
+            dataset_id="recoverable-dataset",
+            device_id="device-1",
+            domains=["notes"],
+        )
+
+    assert store.note_metadata == {}
+    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
+
+
 async def test_restore_selection_recovers_dataset_key_with_recovery_secret():
     dataset_key = generate_dataset_key()
     recovery_bundle = wrap_dataset_key_for_recovery(
