@@ -29,6 +29,7 @@ PERSONAS_LOCAL_PAGE_SIZE = 5
 PERSONAS_SERVICE_ERROR_COPY = "Personas service unavailable; retry Personas later."
 PERSONAS_SERVICE_UNAVAILABLE_COPY = "Personas service is unavailable in this runtime."
 PERSONAS_EMPTY_COPY = "No local characters or persona profiles are available yet."
+PERSONAS_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 
 
 class PersonasScreen(BaseAppScreen):
@@ -77,6 +78,10 @@ class PersonasScreen(BaseAppScreen):
         if inspect.isawaitable(value):
             return await value
         return value
+
+    async def _call_service_method(self, method: Any, **kwargs: Any) -> Any:
+        value = await asyncio.to_thread(method, **kwargs)
+        return await self._resolve_maybe_awaitable(value)
 
     @staticmethod
     def _safe_text(value: Any, fallback: str = "", *, max_length: int = 500) -> str:
@@ -152,22 +157,28 @@ class PersonasScreen(BaseAppScreen):
             return empty_records, empty_counts, PERSONAS_SERVICE_UNAVAILABLE_COPY, None
 
         try:
-            characters_value = list_characters(
-                mode="local",
-                limit=PERSONAS_LOCAL_PAGE_SIZE,
-                offset=0,
+            characters_result, profiles_result = await asyncio.wait_for(
+                asyncio.gather(
+                    self._call_service_method(
+                        list_characters,
+                        mode="local",
+                        limit=PERSONAS_LOCAL_PAGE_SIZE,
+                        offset=0,
+                    ),
+                    self._call_service_method(
+                        list_profiles,
+                        mode="local",
+                        active_only=True,
+                        include_deleted=False,
+                        limit=PERSONAS_LOCAL_PAGE_SIZE,
+                        offset=0,
+                    ),
+                ),
+                timeout=PERSONAS_SNAPSHOT_TIMEOUT_SECONDS,
             )
-            profiles_value = list_profiles(
-                mode="local",
-                active_only=True,
-                include_deleted=False,
-                limit=PERSONAS_LOCAL_PAGE_SIZE,
-                offset=0,
-            )
-            characters_result, profiles_result = await asyncio.gather(
-                self._resolve_maybe_awaitable(characters_value),
-                self._resolve_maybe_awaitable(profiles_value),
-            )
+        except TimeoutError:
+            logger.warning("Timed out loading local Personas behavior snapshot.")
+            return empty_records, empty_counts, PERSONAS_SERVICE_ERROR_COPY, None
         except PolicyDeniedError as exc:
             policy_message = self._safe_text(exc.user_message, PERSONAS_SERVICE_ERROR_COPY)
             recovery_state = policy_denied_recovery_state(
@@ -224,24 +235,30 @@ class PersonasScreen(BaseAppScreen):
             for record in self._local_behavior_records[record_type]
         ]
 
+    @staticmethod
+    def _column_divider(widget_id: str) -> Static:
+        divider = Static("", id=widget_id, classes="destination-pane-divider")
+        divider.styles.width = 1
+        divider.styles.min_width = 1
+        return divider
+
     def compose_content(self) -> ComposeResult:
         has_context = self._has_local_behavior_context()
         with Vertical(id="personas-shell"):
-            yield Static("Personas", id="personas-title", classes="ds-destination-header")
             yield Static(
-                "Characters, personas, prompts, dictionaries, lore, and behavior profiles.",
-                id="personas-purpose",
-                classes="destination-purpose",
+                "Personas | Behavior, characters, prompts, lore | Ready | Local/Server",
+                id="personas-title",
+                classes="ds-destination-header",
             )
             with DestinationModeStrip(id="personas-mode-strip", classes="destination-mode-strip"):
                 yield Static(
-                    "Scope: Local behavior profiles | Target: Console context",
+                    "Modes: Personas | Characters | Prompts | Dictionaries | Lore | Import/Export",
                     id="personas-mode-label",
                     classes="destination-section",
                 )
             with Horizontal(id="personas-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="personas-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Behavior Sources", classes="destination-section")
+                    yield Static("Column 1: Persona List", classes="destination-pane-title")
                     yield Static(
                         f"Characters: {self._local_behavior_counts['characters']}",
                         id="personas-list-characters-count",
@@ -251,12 +268,13 @@ class PersonasScreen(BaseAppScreen):
                         id="personas-list-profiles-count",
                     )
                     yield Static(
-                        "Characters, prompts, dictionaries, and lore stay here; Library owns saved conversation browsing.",
+                        "Local behavior rows feed Console context; Library owns saved conversation browsing.",
                         id="personas-boundary",
                         classes="destination-purpose",
                     )
+                yield self._column_divider("personas-list-detail-divider")
                 with Vertical(id="personas-detail-pane", classes="destination-workbench-pane"):
-                    yield Static("Local Personas snapshot", classes="destination-section")
+                    yield Static("Column 2: Behavior Profile Detail", classes="destination-pane-title")
                     if not self._personas_loaded:
                         yield Static(
                             "Loading local Personas behavior context...",
@@ -302,11 +320,20 @@ class PersonasScreen(BaseAppScreen):
                                         escape_markup(self._record_name(record_type, record))
                                     ),
                                     id=f"personas-{record_type}-item-{index}",
-                                )
+                            )
                         attach_disabled = False
                         attach_tooltip = "Stage local persona context in Console."
+                yield self._column_divider("personas-detail-inspector-divider")
                 with Vertical(id="personas-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Console Actions", classes="destination-section")
+                    yield Static("Column 3: Attachments", classes="destination-pane-title")
+                    yield Static(
+                        "Console: ready",
+                        id="personas-console-readiness",
+                    )
+                    yield Static(
+                        "Workflows: ready",
+                        id="personas-workflows-readiness",
+                    )
                     yield Button(
                         "Open Personas",
                         id="personas-open-profiles",
