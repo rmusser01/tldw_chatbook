@@ -1377,7 +1377,7 @@ async def test_artifacts_destination_keeps_console_launch_disabled_without_chatb
         button = screen.query_one("#artifacts-use-in-console")
 
         assert button.disabled is True
-        assert str(button.label) == "Console launch unavailable"
+        assert str(button.label) == "Open selected in Console"
         assert "Unavailable: Console launch for Chatbook artifacts." in _screen_static_text(screen)
         assert "Next: Create or import a Chatbook artifact before opening it in Console." in _screen_static_text(
             screen
@@ -1429,7 +1429,7 @@ async def test_artifacts_destination_launches_latest_local_chatbook_in_console()
         assert button.disabled is False
         assert "Research Pack" in str(button.label)
         text = _screen_static_text(screen)
-        assert "Console can launch latest Chatbook artifact: Research Pack." in text
+        assert "Open Console for latest Chatbook artifact: Research Pack." in text
         assert "A portable research bundle" in text
 
         await pilot.click("#artifacts-use-in-console")
@@ -1490,7 +1490,7 @@ async def test_artifacts_destination_reopens_console_saved_chatbook_with_provena
         await _wait_for_selector(screen, pilot, "#artifacts-console-available")
         text = _screen_static_text(screen)
 
-        assert "Console can launch latest Chatbook artifact: Grounded Answer." in text
+        assert "Open Console for latest Chatbook artifact: Grounded Answer." in text
         assert "Saved from Console assistant response." in text
         assert "OpenAI / gpt-4.1" in text
         assert "Grounded answer body from saved artifact." in text
@@ -1637,7 +1637,7 @@ async def test_artifacts_destination_consumes_pending_chatbook_target_before_lat
         await _wait_for_selector(screen, pilot, "#artifacts-console-available")
 
         text = _screen_static_text(screen)
-        assert "Console can launch requested Chatbook artifact: Requested Pack." in text
+        assert "Open Console for requested Chatbook artifact: Requested Pack." in text
         assert "Latest Pack" not in text
         assert getattr(app, "pending_artifacts_chatbook_target_id", None) is None
 

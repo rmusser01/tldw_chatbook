@@ -105,14 +105,16 @@
 
 #home-dashboard,
 #console-shell,
-#library-shell {
+#library-shell,
+#artifacts-shell {
     height: 100%;
     min-height: 0;
 }
 
 #home-title,
 #console-title,
-#library-title {
+#library-title,
+#artifacts-title {
     height: $ds-destination-header-height;
     min-height: $ds-destination-header-height;
     padding: 0 1;
@@ -123,9 +125,11 @@
 #home-purpose,
 #console-purpose,
 #library-purpose,
+#artifacts-purpose,
 #console-status-row,
 #library-status-row,
-#console-mode-bar {
+#console-mode-bar,
+#artifacts-mode-strip {
     height: $ds-destination-compact-strip-height;
     min-height: $ds-destination-compact-strip-height;
     padding: 0 1;
@@ -141,10 +145,16 @@
 
 .home-dashboard-region,
 .console-region,
-.library-region {
+.library-region,
+#artifacts-list-pane,
+#artifacts-detail-pane,
+#artifacts-inspector-pane {
     width: 1fr;
     min-width: 0;
     height: 100%;
+    padding: 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
 }
 
 #home-dashboard-grid {
@@ -524,7 +534,8 @@
     border: none;
 }
 
-#library-contract-grid {
+#library-contract-grid,
+#artifacts-workbench {
     height: 1fr;
     min-height: 20;
     padding: 1;
@@ -532,6 +543,27 @@
     overflow: hidden;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
+}
+
+#artifacts-list-pane,
+#artifacts-detail-pane,
+#artifacts-inspector-pane {
+    margin: 0 1 0 0;
+}
+
+#artifacts-inspector-pane {
+    margin: 0;
+}
+
+.artifacts-column-title {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
 }
 
 #library-source-browser,

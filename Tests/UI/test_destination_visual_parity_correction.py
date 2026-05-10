@@ -154,6 +154,26 @@ def _assert_ascii_workbench_contract(
         _assert_any_action_visible(screen, actions, height=height, context=workbench)
 
 
+def _visible_static_text(screen) -> str:
+    return " ".join(
+        getattr(widget.renderable, "plain", str(widget.renderable))
+        for widget in screen.query(Static)
+        if widget.display and hasattr(widget, "renderable")
+    )
+
+
+def _visible_button_labels(screen) -> set[str]:
+    return {str(button.label) for button in screen.query(Button) if button.display}
+
+
+class StaticArtifactsChatbookService:
+    def __init__(self, chatbooks):
+        self.chatbooks = tuple(chatbooks)
+
+    async def list_chatbooks(self, *, q=None, limit=100, offset=0, **kwargs):
+        return list(self.chatbooks)[int(offset) : int(offset) + int(limit)]
+
+
 @pytest.mark.asyncio
 async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_default_size():
     app = _build_test_app()
@@ -599,6 +619,7 @@ SOURCE_PREP_WORKBENCHES = {
         "panes": ("#artifacts-list-pane", "#artifacts-detail-pane", "#artifacts-inspector-pane"),
         "actions": (
             "#artifacts-open-chatbooks",
+            "#artifacts-open-console",
             "#artifacts-open-library",
             "#artifacts-import-artifact",
             "#artifacts-use-in-console",
@@ -673,6 +694,88 @@ async def test_source_prep_default_empty_or_unavailable_states_preserve_workbenc
             actions=contract["actions"],
             height=42,
         )
+
+
+@pytest.mark.asyncio
+async def test_artifacts_empty_state_exposes_full_artifact_workbench_taxonomy():
+    app = _build_test_app()
+    host = DestinationHarness(app, "artifacts")
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-workbench")
+        visible_text = _visible_static_text(screen)
+        for expected in (
+            "Types: All",
+            "Chatbooks",
+            "Reports",
+            "Datasets",
+            "Drafts",
+            "Exports",
+            "Sort: Recent",
+            "Artifact List",
+            "Artifact Preview",
+            "Provenance",
+        ):
+            assert expected in visible_text
+
+
+@pytest.mark.asyncio
+async def test_artifacts_empty_state_labels_three_clear_columns():
+    app = _build_test_app()
+    host = DestinationHarness(app, "artifacts")
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-workbench")
+        visible_text = _visible_static_text(screen)
+        for expected in (
+            "Column 1: Artifact List",
+            "Column 2: Artifact Preview / Detail",
+            "Column 3: Provenance",
+        ):
+            assert expected in visible_text
+
+
+@pytest.mark.asyncio
+async def test_artifacts_empty_state_keeps_console_library_import_recovery_visible():
+    app = _build_test_app()
+    host = DestinationHarness(app, "artifacts")
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-workbench")
+        labels = _visible_button_labels(screen)
+        assert "Open Console" in labels
+        assert "Open Library" in labels
+        assert "Import Artifact" in labels
+        assert list(screen.query("#artifacts-open-console"))
+
+
+@pytest.mark.asyncio
+async def test_artifacts_dynamic_metadata_renders_markup_as_literal_text():
+    app = _build_test_app()
+    app.local_chatbook_service = StaticArtifactsChatbookService(
+        (
+            {
+                "chatbook_id": 9,
+                "id": "9",
+                "name": "[red]Markup Title[/red]",
+                "description": "[bold]Description[/bold]",
+                "updated_at": "2026-05-09T20:00:00Z",
+                "metadata": {
+                    "artifact_source": "console",
+                    "artifact_kind": "assistant-response",
+                    "content": "[green]Preview[/green]",
+                },
+            },
+        )
+    )
+    host = DestinationHarness(app, "artifacts")
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-console-available")
+        visible_text = _visible_static_text(screen)
+        assert "Title: [red]Markup Title[/red]" in visible_text
+        assert "[bold]Description[/bold]" in visible_text
+        assert "Transcript preview: [green]Preview[/green]" in visible_text
 
 
 SOURCE_PREP_LOADING_CONTRACTS = [
@@ -1084,6 +1187,7 @@ COMPACT_DESTINATION_CONTRACTS = {
         "detail": "#artifacts-detail-pane",
         "actions": (
             "#artifacts-open-chatbooks",
+            "#artifacts-open-console",
             "#artifacts-open-library",
             "#artifacts-import-artifact",
             "#artifacts-use-in-console",
@@ -1193,6 +1297,7 @@ VISIBLE_FOCUS_TARGETS = {
     "library": {"library-open-notes", "library-open-media", "library-open-search", "library-use-in-console"},
     "artifacts": {
         "artifacts-open-chatbooks",
+        "artifacts-open-console",
         "artifacts-open-library",
         "artifacts-import-artifact",
         "artifacts-use-in-console",

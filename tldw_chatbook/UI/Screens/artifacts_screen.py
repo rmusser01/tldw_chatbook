@@ -112,6 +112,10 @@ class ArtifactsScreen(BaseAppScreen):
         text = str(value or "").strip()
         return text or fallback
 
+    @staticmethod
+    def _literal_text(value: Any) -> Text:
+        return Text.from_markup(escape_markup(str(value)))
+
     @classmethod
     def _safe_text(cls, value: Any, fallback: str = "", *, max_length: int = 1000) -> str:
         text = sanitize_string(str(value or ""), max_length=max_length).strip()
@@ -308,17 +312,37 @@ class ArtifactsScreen(BaseAppScreen):
             )
             with DestinationModeStrip(id="artifacts-mode-strip", classes="destination-mode-strip"):
                 yield Static(
-                    "Mode: Chatbooks | Outputs | Reports | Imports",
+                    "Types: All | Chatbooks | Reports | Datasets | Drafts | Exports | Sort: Recent",
                     id="artifacts-mode-label",
                     classes="destination-section",
                 )
             with Horizontal(id="artifacts-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="artifacts-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Artifact Sources", classes="destination-section")
+                    yield Static(
+                        "Column 1: Artifact List",
+                        id="artifacts-list-title",
+                        classes="destination-section artifacts-column-title",
+                    )
+                    if launch_kwargs is not None:
+                        yield Static(
+                            self._literal_text(f"> Chatbook: {launch_kwargs['title']}"),
+                            id="artifacts-list-chatbooks",
+                        )
+                    else:
+                        yield Static("> Chatbooks: none selected", id="artifacts-list-chatbooks")
+                    yield Static("  Reports: none available", id="artifacts-list-reports")
+                    yield Static("  Datasets: none available", id="artifacts-list-datasets")
+                    yield Static("  Drafts: none available", id="artifacts-list-drafts")
+                    yield Static("  Exports: none available", id="artifacts-list-exports")
                     yield Button(
                         "Open Chatbooks",
                         id="artifacts-open-chatbooks",
                         tooltip="Open portable Chatbook bundles.",
+                    )
+                    yield Button(
+                        "Open Console",
+                        id="artifacts-open-console",
+                        tooltip="Open Console to create, review, or save Chatbook artifacts.",
                     )
                     yield Button(
                         "Open Library",
@@ -337,18 +361,46 @@ class ArtifactsScreen(BaseAppScreen):
                         classes="destination-purpose",
                     )
                 with Vertical(id="artifacts-detail-pane", classes="destination-workbench-pane"):
-                    yield Static("Artifact Detail", classes="destination-section")
+                    yield Static(
+                        "Column 2: Artifact Preview / Detail",
+                        id="artifacts-preview-title",
+                        classes="destination-section artifacts-column-title",
+                    )
                     if not self._chatbook_context_loaded:
                         yield Static(
                             "Loading latest local Chatbook artifact...",
                             id="artifacts-loading-state",
                         )
                     elif launch_kwargs is not None:
-                        yield Static("Latest Chatbook artifact is available.", id="artifacts-detail-ready")
+                        payload = launch_kwargs.get("payload") or {}
+                        description = str(payload.get("description") or "").strip()
+                        content_preview = str(payload.get("content_preview") or "").strip()
+                        yield Static(
+                            self._literal_text(f"Title: {launch_kwargs['title']}"),
+                            id="artifacts-detail-ready",
+                        )
+                        yield Static(
+                            self._literal_text(description or "Summary: Console-saved Chatbook artifact."),
+                            id="artifacts-detail-summary",
+                        )
+                        yield Static(
+                            self._literal_text(
+                                f"Transcript preview: {content_preview or 'No preview text available.'}"
+                            ),
+                            id="artifacts-detail-preview",
+                        )
                     else:
-                        yield Static("No local Chatbook artifact is selected.", id="artifacts-detail-empty")
+                        yield Static(
+                            "No artifact selected. Create a Chatbook in Console, import an artifact, "
+                            "or use Library sources to generate outputs.",
+                            id="artifacts-detail-empty",
+                        )
                 with Vertical(id="artifacts-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Console Inspector", classes="destination-section")
+                    yield Static(
+                        "Column 3: Provenance",
+                        id="artifacts-provenance-title",
+                        classes="destination-section artifacts-column-title",
+                    )
                     if launch_kwargs is not None:
                         title = str(launch_kwargs["title"])
                         payload = launch_kwargs.get("payload") or {}
@@ -361,10 +413,10 @@ class ArtifactsScreen(BaseAppScreen):
                         description = str(payload.get("description") or "").strip()
                         provenance = self._console_saved_artifact_provenance(payload)
                         content_preview = str(payload.get("content_preview") or "").strip()
-                        yield Static("Console launch available", classes="destination-section")
+                        yield Static("Created: Console", classes="destination-section")
                         yield Static(
                             Text.from_markup(
-                                f"Console can launch {launch_scope} Chatbook artifact: "
+                                f"Open Console for {launch_scope} Chatbook artifact: "
                                 f"{escape_markup(title)}."
                             ),
                             id="artifacts-console-available",
@@ -385,19 +437,19 @@ class ArtifactsScreen(BaseAppScreen):
                                 id="artifacts-chatbook-content-preview",
                             )
                         yield Button(
-                            Text.from_markup(f"Launch {escape_markup(title)} in Console"),
+                            Text.from_markup(f"Open {escape_markup(title)} in Console"),
                             id="artifacts-use-in-console",
                             tooltip=f"Open the {launch_scope} local Chatbook artifact in Console.",
                         )
                     else:
-                        yield Static("Console launch unavailable", classes="destination-section")
+                        yield Static("Created: none", classes="destination-section")
                         recovery_state = self._blocked_chatbook_recovery_state
                         yield Static(
                             recovery_state.visible_copy,
                             id=recovery_state.stable_selector,
                         )
                         yield Button(
-                            "Console launch unavailable",
+                            "Open selected in Console",
                             id="artifacts-use-in-console",
                             disabled=True,
                             tooltip=recovery_state.disabled_tooltip,
@@ -410,6 +462,10 @@ class ArtifactsScreen(BaseAppScreen):
     @on(Button.Pressed, "#artifacts-open-library")
     def open_library(self) -> None:
         self.post_message(NavigateToScreen("library"))
+
+    @on(Button.Pressed, "#artifacts-open-console")
+    def open_console(self) -> None:
+        self.post_message(NavigateToScreen("chat"))
 
     @on(Button.Pressed, "#artifacts-use-in-console")
     def use_in_console(self, event: Button.Pressed) -> None:
