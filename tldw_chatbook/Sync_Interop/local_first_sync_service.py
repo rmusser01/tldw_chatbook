@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.validation import (
+    validate_pull_pagination_state,
     validate_push_response_scope,
     validate_outgoing_envelope_scope,
     validate_pulled_response_scope,
@@ -186,6 +187,10 @@ class LocalFirstSyncService:
                 envelopes=envelopes,
                 domains=list(domains),
                 excluded_device_id=str(device_id),
+            )
+            validate_pull_pagination_state(
+                has_more=pulled.get("has_more", False),
+                next_cursor=pulled.get("next_cursor"),
             )
             results = [
                 applier.apply(envelope)

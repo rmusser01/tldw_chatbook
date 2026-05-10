@@ -50,6 +50,17 @@ def validate_pulled_response_scope(
         seen_ids.add(response_id)
 
 
+def validate_pull_pagination_state(
+    *,
+    has_more: Any,
+    next_cursor: Any,
+) -> None:
+    """Reject pull pages that cannot be continued safely."""
+
+    if bool(has_more) and not next_cursor:
+        raise ValueError("Sync v2 pull response has_more requires next_cursor")
+
+
 def validate_push_response_scope(
     *,
     dataset_id: str,

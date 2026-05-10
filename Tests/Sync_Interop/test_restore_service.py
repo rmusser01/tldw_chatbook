@@ -18,12 +18,16 @@ class FakeRestoreServer:
         conflicts=None,
         recovery_records=None,
         response_dataset_id=None,
+        next_cursor="cursor-2",
+        has_more=False,
     ) -> None:
         self.calls: list[tuple] = []
         self.envelopes = envelopes or []
         self.conflicts = conflicts or []
         self.recovery_records = recovery_records or []
         self.response_dataset_id = response_dataset_id
+        self.next_cursor = next_cursor
+        self.has_more = has_more
 
     async def get_v2_restore_manifest(self, *, dataset_ids=None, domains=None):
         self.calls.append(("manifest", dataset_ids, domains))
@@ -70,8 +74,8 @@ class FakeRestoreServer:
         return {
             "dataset_id": self.response_dataset_id or dataset_id,
             "envelopes": self.envelopes,
-            "next_cursor": "cursor-2",
-            "has_more": False,
+            "next_cursor": self.next_cursor,
+            "has_more": self.has_more,
         }
 
     async def list_v2_conflicts(self, *, dataset_id, status="unresolved"):
@@ -231,6 +235,33 @@ async def test_restore_selection_rejects_duplicate_pull_envelope_ids_before_appl
     )
 
     with pytest.raises(ValueError, match="duplicate client_envelope_id"):
+        await service.restore_selection(
+            dataset_id="recoverable-dataset",
+            device_id="device-1",
+            domains=["notes"],
+        )
+
+    assert store.note_metadata == {}
+    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
+
+
+async def test_restore_selection_rejects_has_more_pull_without_next_cursor_before_apply():
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    envelope = builder.build_note_metadata_update(note_id="note-1", status="archived")
+    store = RecordingLocalStore()
+    server = FakeRestoreServer(
+        envelopes=[envelope.model_dump(mode="json")],
+        next_cursor=None,
+        has_more=True,
+    )
+    service = SyncRestoreService(
+        server_service=server,
+        local_store=store,
+        dataset_keys={"recoverable-dataset": dataset_key},
+    )
+
+    with pytest.raises(ValueError, match="has_more.*next_cursor"):
         await service.restore_selection(
             dataset_id="recoverable-dataset",
             device_id="device-1",
