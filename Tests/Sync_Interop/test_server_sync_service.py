@@ -445,6 +445,102 @@ async def test_server_sync_service_runs_sync_v2_no_content_dry_run_and_persists_
 
 
 @pytest.mark.asyncio
+async def test_server_sync_service_rejects_mismatched_dry_run_push_response_before_persisting(
+    tmp_path,
+):
+    client = FakeSyncClient(
+        push_response={
+            "dataset_id": "other-dataset",
+            "accepted": [],
+            "rejected": [],
+            "conflicts": [],
+            "next_cursor": "5",
+        }
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    with pytest.raises(ValueError, match="push response dataset_id"):
+        await service.run_v2_dry_run(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            display_name="Laptop",
+            domains=["notes"],
+        )
+
+    assert repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    ) is None
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    ).cursor is None
+    assert [call[0] for call in client.calls] == [
+        "get_sync_v2_capabilities",
+        "register_sync_v2_device",
+        "get_sync_v2_capabilities",
+        "enroll_sync_v2_dataset",
+        "push_sync_v2_envelopes",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_rejects_uncheckpointed_dry_run_pull_response_before_persisting(
+    tmp_path,
+):
+    envelope = _sync_v2_envelope(device_id="remote-device")
+    client = FakeSyncClient(
+        pull_response={
+            "dataset_id": "dataset-1",
+            "envelopes": [envelope.model_dump(mode="json")],
+            "next_cursor": None,
+            "has_more": False,
+        }
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    with pytest.raises(ValueError, match="envelopes.*next_cursor"):
+        await service.run_v2_dry_run(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            display_name="Laptop",
+            domains=["notes"],
+        )
+
+    assert repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    ) is None
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    ).cursor is None
+    assert client.calls[-1] == (
+        "pull_sync_v2_envelopes",
+        "dataset-1",
+        "device-1",
+        None,
+        ["notes"],
+        1,
+        False,
+    )
+
+
+@pytest.mark.asyncio
 async def test_server_sync_service_rejects_mismatched_v2_push_dataset_before_dispatch():
     client = FakeSyncClient()
     service = ServerSyncService(client=client)

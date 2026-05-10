@@ -204,6 +204,14 @@ class ServerSyncService:
             SyncV2PushRequest(dataset_id=dataset_id, device_id=device_id, envelopes=[])
         )
         push_record = self._dump(pushed)
+        validate_push_response_scope(
+            dataset_id=dataset_id,
+            response_dataset_id=push_record.get("dataset_id"),
+            submitted_client_envelope_ids=[],
+            accepted=push_record.get("accepted", []),
+            rejected=push_record.get("rejected", []),
+            conflicts=push_record.get("conflicts", []),
+        )
         cursor_record = self.state_repository.get_remote_pull_cursor(
             source_authority="server",
             server_profile_id=server_profile_id,
@@ -221,6 +229,22 @@ class ServerSyncService:
             include_own_changes=False,
         )
         pull_record = self._dump(pulled)
+        pulled_envelopes = [
+            SyncV2Envelope.model_validate(envelope)
+            for envelope in pull_record.get("envelopes", [])
+        ]
+        validate_pulled_response_scope(
+            dataset_id=dataset_id,
+            response_dataset_id=pull_record.get("dataset_id"),
+            envelopes=pulled_envelopes,
+            domains=sync_domains,
+            excluded_device_id=device_id,
+        )
+        validate_pull_pagination_state(
+            has_more=pull_record.get("has_more", False),
+            next_cursor=pull_record.get("next_cursor"),
+            envelope_count=len(pulled_envelopes),
+        )
 
         next_cursor = pull_record.get("next_cursor") or push_record.get("next_cursor") or cursor_record.cursor
         dataset_cursors = dict(dataset_record.get("cursors") or {})
