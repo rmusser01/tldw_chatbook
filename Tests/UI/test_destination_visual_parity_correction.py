@@ -13,6 +13,7 @@ from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
+    StaticWatchlistsScopeService,
     StaticPersonasScopeService,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -695,6 +696,40 @@ async def test_source_prep_default_empty_or_unavailable_states_preserve_workbenc
             actions=contract["actions"],
             height=42,
         )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_screen_matches_approved_control_plane_columns():
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wc-empty-state")
+
+        assert (
+            _visible_static_text(screen).find(
+                "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server"
+            )
+            >= 0
+        )
+        visible_text = _visible_static_text(screen)
+        assert "Filters: Running Failed Recent Alerts Sources Feeds" in visible_text
+        assert "Column 1: Watchlist List" in visible_text
+        assert "Column 2: Detail / Items / Runs" in visible_text
+        assert "Column 3: Status Inspector" in visible_text
+        assert "State:" in visible_text
+        assert "Retry/backoff:" in visible_text
+        assert "Collections" not in visible_text
+
+        for selector in (
+            "#watchlists-list-detail-divider",
+            "#watchlists-detail-inspector-divider",
+        ):
+            divider = screen.query_one(selector)
+            assert divider.has_class("destination-pane-divider")
+            assert divider.region.width == 1
 
 
 @pytest.mark.asyncio
