@@ -83,7 +83,7 @@ class SyncRestoreService:
                 cursor=cursor,
                 domains=domains,
                 page_size=page_size,
-                include_own_changes=False,
+                include_own_changes=True,
             )
         )
         applier = SyncEnvelopeApplier(dataset_key=key, local_store=self.local_store)

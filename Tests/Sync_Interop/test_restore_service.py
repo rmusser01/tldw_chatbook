@@ -139,7 +139,7 @@ async def test_restore_selection_filters_pull_and_decrypts_before_local_apply():
         page_size=25,
     )
 
-    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], 25, False)
+    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], 25, True)
     assert result["applied"] == 1
     assert store.note_content["note-1"] == {"body": "private restored body", "title": "Restored"}
     assert store.note_metadata["note-1"] == {"status": "active"}
@@ -188,7 +188,7 @@ async def test_restore_selection_recovers_dataset_key_with_recovery_secret():
         None,
         "dataset_recovery",
     )
-    assert server.calls[1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, False)
+    assert server.calls[1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
     assert result["applied"] == 1
     assert store.note_content["note-1"] == {"body": "private restored body", "title": "Restored"}
     assert "correct horse battery staple" not in str(result)
@@ -264,7 +264,7 @@ async def test_restore_selection_tries_later_recovery_bundle_when_first_fails():
         None,
         ["notes"],
         None,
-        False,
+        True,
     )
     assert result["applied"] == 1
     assert store.note_content["note-1"] == {"body": "private restored body", "title": "Restored"}
