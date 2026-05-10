@@ -1,10 +1,12 @@
+from datetime import datetime, timezone
 from unittest.mock import Mock
 
 import pytest
 
 from tldw_chatbook.Sync_Interop import ServerSyncService
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
-from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
+from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError, RuntimeSourceState
 from tldw_chatbook.tldw_api import ClientChangesPayload, SyncOperation, SyncSendEntity, SyncSendLogEntry
 
 
@@ -25,6 +27,21 @@ def _payload() -> ClientChangesPayload:
         ],
         last_processed_server_id=30,
     )
+
+
+def _server_runtime_state() -> RuntimeSourceState:
+    return RuntimeSourceState(
+        active_source="server",
+        server_configured=True,
+        server_reachability="reachable",
+        server_reachability_checked_at=datetime.now(timezone.utc),
+        server_auth_state="authenticated",
+        server_auth_checked_at=datetime.now(timezone.utc),
+    )
+
+
+def _local_runtime_state() -> RuntimeSourceState:
+    return RuntimeSourceState(active_source="local")
 
 
 class FakeSyncClient:
@@ -445,6 +462,72 @@ async def test_server_sync_service_lists_v2_recovery_bundles_with_policy_gate():
         "dataset_recovery",
     )
     assert policy.require_allowed.call_args.kwargs["action_id"] == "sync.v2.keys.retrieve.server"
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_sync_v2_methods_are_allowed_by_real_runtime_policy(tmp_path):
+    client = FakeSyncClient()
+    service = ServerSyncService(
+        client=client,
+        policy_enforcer=ServicePolicyEnforcer(state_provider=_server_runtime_state),
+        state_repository=SyncStateRepository(tmp_path / "sync_state.db"),
+    )
+
+    dry_run = await service.run_v2_dry_run(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        display_name="Laptop",
+        domains=["notes"],
+    )
+    await service.store_v2_recovery_bundle(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        wrapped_key_blob="wrapped",
+        kdf_metadata={"algorithm": "scrypt"},
+    )
+    await service.list_v2_recovery_bundles(dataset_id="dataset-1", device_id="device-1")
+    await service.get_v2_restore_manifest(dataset_ids=["dataset-1"], domains=["notes"])
+    await service.push_v2_envelopes(dataset_id="dataset-1", device_id="device-1", envelopes=[])
+    await service.pull_v2_envelopes(dataset_id="dataset-1", device_id="device-1", domains=["notes"])
+    await service.list_v2_conflicts(dataset_id="dataset-1")
+    await service.resolve_v2_conflict(
+        conflict_id="conflict-1",
+        action="accept_remote",
+        resolved_by_device_id="device-1",
+    )
+
+    assert dry_run["dataset_id"] == "dataset-1"
+    assert [call[0] for call in client.calls] == [
+        "get_sync_v2_capabilities",
+        "register_sync_v2_device",
+        "get_sync_v2_capabilities",
+        "enroll_sync_v2_dataset",
+        "push_sync_v2_envelopes",
+        "pull_sync_v2_envelopes",
+        "store_sync_v2_key_recovery_bundle",
+        "list_sync_v2_key_recovery_bundles",
+        "get_sync_v2_restore_manifest",
+        "push_sync_v2_envelopes",
+        "pull_sync_v2_envelopes",
+        "list_sync_v2_conflicts",
+        "resolve_sync_v2_conflict",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_sync_v2_policy_denial_stops_before_dispatch():
+    client = FakeSyncClient()
+    service = ServerSyncService(
+        client=client,
+        policy_enforcer=ServicePolicyEnforcer(state_provider=_local_runtime_state),
+    )
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await service.list_v2_recovery_bundles(dataset_id="dataset-1")
+
+    assert exc.value.reason_code == "wrong_source"
+    assert client.calls == []
 
 
 @pytest.mark.asyncio
