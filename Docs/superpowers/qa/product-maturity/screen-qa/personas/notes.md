@@ -3,7 +3,7 @@
 Date: 2026-05-09
 Branch: `codex/screen-qa-personas`
 Backlog task: TASK-14.5
-Commit: pending
+Commit: `842d21fb5438a66578b027f4b57e49f92ae077bc`
 Screen: Personas
 Viewport: 2050x1240 textual-web capture
 Launch method: `tldw-serve --host 127.0.0.1 --port 8830` with isolated QA HOME/XDG paths
@@ -23,7 +23,7 @@ Fallback reason: none; actual rendered screenshot captured
 
 ## Fixes
 
-- Summary: Added explicit Personas mode strip, three named workbench columns, full-height column borders, divider rails between panes for later resizable handles, and deterministic service timeout behavior for stalled Personas snapshot loads.
+- Summary: Added explicit Personas mode strip, three named workbench columns, full-height column borders, divider rails between panes for later resizable handles, and bounded-executor timeout behavior for stalled Personas snapshot loads.
 
 ## Final Screenshot
 
@@ -35,7 +35,7 @@ Fallback reason: none; actual rendered screenshot captured
 - Commands: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_destination_visual_parity_correction.py -k personas --tb=short`
 - Commands: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_destination_shells.py -k personas --tb=short`
 - Commands: `git diff --check`
-- Results: `7 passed, 67 deselected, 1 warning`; `13 passed, 63 deselected, 1 warning`; diff check clean. The warning is the existing Requests dependency warning from the local environment.
+- Results: `7 passed, 67 deselected, 1 warning`; `14 passed, 63 deselected, 1 warning`; diff check clean. The warning is the existing Requests dependency warning from the local environment. PR #294 merged into `dev` as `842d21fb5438a66578b027f4b57e49f92ae077bc`.
 
 ## Residual Risks
 
