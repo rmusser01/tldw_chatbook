@@ -33,8 +33,8 @@ Fallback reason: none
 ## Verification
 
 - Commands:
-  - `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_destination_visual_parity_correction.py::test_mcp_uses_visible_server_detail_readiness_layout_without_overflow Tests/UI/test_destination_visual_parity_correction.py::test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry Tests/UI/test_destination_visual_parity_correction.py::test_mcp_forced_loading_state_stays_inside_workbench --tb=short`
-  - `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python tldw_chatbook/css/build_css.py`
+  - python -m pytest -q Tests/UI/test_destination_visual_parity_correction.py::test_mcp_uses_visible_server_detail_readiness_layout_without_overflow Tests/UI/test_destination_visual_parity_correction.py::test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry Tests/UI/test_destination_visual_parity_correction.py::test_mcp_forced_loading_state_stays_inside_workbench --tb=short
+  - python tldw_chatbook/css/build_css.py
   - `git diff --check`
 - Results: Focused MCP visual parity verification passed: 3 passed / 1 warning. CSS regenerated successfully; `git diff --check` passed.
 
