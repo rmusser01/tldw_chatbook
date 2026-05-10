@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 
 _APPROVAL_STATUSES = frozenset({"approval_required", "pending_approval", "pending"})
+APPROVAL_STATUSES = _APPROVAL_STATUSES
 _RUNNING_STATUSES = frozenset({"running", "queued", "active"})
 _PAUSED_STATUSES = frozenset({"paused"})
 _FAILED_STATUSES = frozenset({"failed", "error"})

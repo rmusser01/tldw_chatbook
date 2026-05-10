@@ -8,6 +8,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Rule, Static
 
+from ...Home.dashboard_state import APPROVAL_STATUSES as HOME_APPROVAL_STATUSES
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from .destination_recovery import DestinationRecoveryState
@@ -112,7 +113,7 @@ class WorkflowsScreen(BaseAppScreen):
             return "Approvals: no active run"
 
         status = self._status_text(getattr(latest_console_item, "status", None)).lower()
-        if status in {"waiting_approval", "approval_required", "pending_approval"}:
+        if status in HOME_APPROVAL_STATUSES:
             return "Approvals: pending"
         return "Approvals: none pending"
 

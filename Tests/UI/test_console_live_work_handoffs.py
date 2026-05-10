@@ -1087,6 +1087,33 @@ async def test_workflows_destination_routes_latest_active_run_to_console():
 
 
 @pytest.mark.asyncio
+async def test_workflows_destination_treats_pending_status_as_pending_approval():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        (
+            HomeActiveWorkItem(
+                item_id="workflow:run:8",
+                title="Approval workflow",
+                source="Workflows",
+                status="pending",
+                detail_route="workflows",
+                console_available=True,
+            ),
+        )
+    )
+    host = DestinationHarness(app, "workflows")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        screen_text = _screen_static_text(screen)
+
+        assert "State: pending" in screen_text
+        assert "Approvals: pending" in screen_text
+        assert "Approvals: none pending" not in screen_text
+
+
+@pytest.mark.asyncio
 async def test_watchlists_destination_keeps_console_follow_disabled_without_active_run():
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
