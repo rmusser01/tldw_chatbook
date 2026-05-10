@@ -7,6 +7,7 @@ handoffs keep working while Collections moves under Library.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -16,7 +17,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.widgets import Button, Static, Rule
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...runtime_policy.types import PolicyDeniedError
@@ -32,6 +33,7 @@ WC_LOCAL_PAGE_SIZE = 5
 WC_SERVICE_ERROR_COPY = "Watchlists services unavailable; retry Watchlists later."
 WC_SERVICE_UNAVAILABLE_COPY = "Watchlists services are unavailable in this runtime."
 WC_EMPTY_COPY = "No local Watchlists are available yet."
+WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
 
 
 class WatchlistsCollectionsScreen(BaseAppScreen):
@@ -56,6 +58,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def on_mount(self) -> None:
         super().on_mount()
         self._refresh_local_wc_snapshot()
+        self.set_timer(WC_SNAPSHOT_TIMEOUT_SECONDS, self._apply_snapshot_timeout_if_still_loading)
+
+    def _apply_snapshot_timeout_if_still_loading(self) -> None:
+        if self._wc_loaded:
+            return
+        self._apply_local_wc_snapshot(
+            (),
+            (),
+            0,
+            0,
+            True,
+            True,
+            WC_SERVICE_ERROR_COPY,
+            None,
+        )
 
     @work(exclusive=True)
     async def _refresh_local_wc_snapshot(self) -> None:
@@ -161,10 +178,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return (), (), 0, 0, True, True, WC_SERVICE_UNAVAILABLE_COPY, None
 
         try:
-            watchlist_result = await list_watch_items(
-                runtime_backend="local",
-                limit=WC_LOCAL_PAGE_SIZE,
-                offset=0,
+            watchlist_result = await asyncio.wait_for(
+                list_watch_items(
+                    runtime_backend="local",
+                    limit=WC_LOCAL_PAGE_SIZE,
+                    offset=0,
+                ),
+                timeout=WC_SNAPSHOT_TIMEOUT_SECONDS,
             )
         except PolicyDeniedError as exc:
             policy_message = self._safe_text(exc.user_message, WC_SERVICE_ERROR_COPY)
@@ -175,6 +195,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 policy_message=policy_message,
             )
             return (), (), 0, 0, True, True, recovery_state.visible_copy, recovery_state
+        except TimeoutError:
+            logger.debug("Timed out loading local Watchlists snapshot.")
+            return (), (), 0, 0, True, True, WC_SERVICE_ERROR_COPY, None
         except Exception:
             logger.debug(
                 "Failed to load local Watchlists snapshot.",
@@ -256,6 +279,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._latest_console_follow_error_logged = False
         return selected_item
 
+    @staticmethod
+    def _column_divider(divider_id: str) -> Rule:
+        return Rule(
+            line_style="heavy",
+            orientation="vertical",
+            id=divider_id,
+            classes="destination-pane-divider",
+        )
+
     def compose_content(self) -> ComposeResult:
         latest_console_item = self._latest_console_follow_item()
         self._latest_console_follow_item_id = (
@@ -265,38 +297,35 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         with Vertical(id="watchlists-collections-shell"):
             yield Static(
-                "Watchlists",
+                "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server",
                 id="watchlists-collections-title",
                 classes="ds-destination-header",
             )
-            yield Static(
-                "Monitored sources, runs, alerts, and recovery.",
-                id="watchlists-collections-purpose",
-                classes="destination-purpose",
-            )
             with DestinationModeStrip(id="watchlists-filter-strip", classes="destination-filter-strip"):
                 yield Static(
-                    "Filter: Local Watchlists | Runs: active/recent | Console follow",
+                    "Filters: Running Failed Recent Alerts Sources Feeds",
                     id="watchlists-filter-label",
                     classes="destination-section",
                 )
             with Horizontal(id="watchlists-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="watchlists-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Watchlists", classes="destination-section")
+                    yield Static("Column 1: Watchlist List", classes="destination-section watchlists-column-title")
                     yield Static(
-                        "Monitored sources, filters, jobs, runs, outputs, templates, alerts, telemetry, retry/backoff."
+                        "Monitored sources, feeds, queries, schedules, alerts, telemetry, retry/backoff."
                     )
                     yield Static(
-                        "Library now owns curated source groups, imports, saved searches, and reading workflows."
+                        "Library owns reusable source sets, imports, saved searches, and reading workflows."
                     )
+                yield self._column_divider("watchlists-list-detail-divider")
                 with Vertical(id="watchlists-detail-pane", classes="destination-workbench-pane"):
+                    yield Static("Column 2: Detail / Items / Runs", classes="destination-section watchlists-column-title")
                     if not self._wc_loaded:
                         yield Static(
-                            "Loading local Watchlists snapshot...",
-                            id="wc-loading-state",
+                            WC_SERVICE_ERROR_COPY,
+                            id="wc-service-error",
                         )
                         attach_disabled = True
-                        attach_tooltip = "Stage local Watchlists context after the local snapshot loads."
+                        attach_tooltip = "Watchlists services are unavailable; retry Watchlists before staging Console context."
                     elif self._wc_lookup_error:
                         recovery_state = self._wc_lookup_recovery_state
                         yield Static(
@@ -341,8 +370,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                             )
                         attach_disabled = False
                         attach_tooltip = "Stage local Watchlists context in Console."
+                yield self._column_divider("watchlists-detail-inspector-divider")
                 with Vertical(id="watchlists-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Actions", classes="destination-section")
+                    yield Static("Column 3: Status Inspector", classes="destination-section watchlists-column-title")
+                    yield Static(
+                        "State: ready" if self._wc_loaded and not self._wc_lookup_error else "State: unavailable",
+                        id="watchlists-state-summary",
+                    )
+                    yield Static("Retry/backoff: none", id="watchlists-retry-summary")
+                    yield Static(
+                        f"Alerts: {self._local_watchlist_count if self._has_local_wc_context() else 0}",
+                        id="watchlists-alerts-summary",
+                    )
+                    yield Static("Console actions", classes="destination-section")
                     yield Button(
                         "Stage Watchlists Context in Console",
                         id="wc-attach-to-console",

@@ -228,6 +228,12 @@ class PolicyDeniedWatchlistsScopeService:
         )
 
 
+class HangingWatchlistsScopeService:
+    async def list_watch_items(self, **kwargs):
+        await asyncio.sleep(10)
+        return []
+
+
 class StaticReadItLaterScopeService:
     def __init__(self, items):
         self.items = tuple(items)
@@ -496,7 +502,10 @@ async def test_watchlists_collections_uses_compact_title_and_clear_sections():
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
-        assert _static_text(screen.query_one("#watchlists-collections-title", Static)) == "Watchlists"
+        assert (
+            _static_text(screen.query_one("#watchlists-collections-title", Static))
+            == "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server"
+        )
         visible_text = _visible_text(screen)
         assert "Watchlists" in visible_text
         assert "Collections" not in visible_text
@@ -571,6 +580,21 @@ async def test_watchlists_collections_service_failure_uses_recovery_copy():
         assert "Watchlists services unavailable; retry Watchlists later." in _visible_text(screen)
         assert button.disabled is True
         assert "Watchlists services are unavailable" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_watchlists_collections_loading_times_out_to_recovery_copy():
+    app = _build_test_app()
+    app.watchlist_scope_service = HangingWatchlistsScopeService()
+    host = DestinationHarness(app, "watchlists_collections")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wc-service-error", timeout=3.0)
+        button = screen.query_one("#wc-attach-to-console", Button)
+
+        assert "Watchlists services unavailable; retry Watchlists later." in _visible_text(screen)
+        assert button.disabled is True
 
 
 @pytest.mark.asyncio
