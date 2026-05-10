@@ -1,9 +1,10 @@
 ---
 id: TASK-14.8
 title: 'Screen QA: Workflows'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 03:46'
+updated_date: '2026-05-10 13:44'
 labels:
   - ux
   - screen-qa
@@ -34,7 +35,7 @@ Validate and correct the Workflows top-level destination screen through actual r
 - [x] #3 Final actual screenshot captured
 - [x] #4 User approval recorded before PR
 - [x] #5 Focused tests pass
-- [ ] #6 PR merged before next screen starts unless user explicitly overrides
+- [x] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
 
 ## Implementation Plan
