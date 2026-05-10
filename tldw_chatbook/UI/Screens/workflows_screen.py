@@ -6,7 +6,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.widgets import Button, Rule, Static
 
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -87,6 +87,35 @@ class WorkflowsScreen(BaseAppScreen):
                 return item
         return None
 
+    @staticmethod
+    def _column_divider(identifier: str) -> Rule:
+        divider = Rule(orientation="vertical", id=identifier)
+        divider.add_class("destination-pane-divider")
+        return divider
+
+    @staticmethod
+    def _status_text(value, *, fallback: str = "unknown") -> str:
+        status = str(value or "").strip()
+        return status or fallback
+
+    def _inspector_state_summary(self, latest_console_item) -> str:
+        if not self._latest_console_context_loaded:
+            return "State: loading"
+        if latest_console_item is not None:
+            return f"State: {self._status_text(getattr(latest_console_item, 'status', None))}"
+        return "State: blocked"
+
+    def _approval_summary(self, latest_console_item) -> str:
+        if not self._latest_console_context_loaded:
+            return "Approvals: loading"
+        if latest_console_item is None:
+            return "Approvals: no active run"
+
+        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
+        if status in {"waiting_approval", "approval_required", "pending_approval"}:
+            return "Approvals: pending"
+        return "Approvals: none pending"
+
     def compose_content(self) -> ComposeResult:
         latest_console_item = self._current_console_follow_item
         self._latest_console_follow_item_id = (
@@ -95,28 +124,35 @@ class WorkflowsScreen(BaseAppScreen):
             else None
         )
         with Vertical(id="workflows-shell"):
-            yield Static("Workflows", id="workflows-title", classes="ds-destination-header")
             yield Static(
-                "Workflows own what procedure runs.",
-                id="workflows-purpose",
-                classes="destination-purpose",
+                "Workflows | Procedures, runs, dry-runs, approvals | Local | Console handoff",
+                id="workflows-title",
+                classes="ds-destination-header",
             )
-            with DestinationModeStrip(id="workflows-mode-strip", classes="destination-mode-strip"):
+            with DestinationModeStrip(id="workflows-mode-strip", classes="destination-filter-strip"):
                 yield Static(
-                    "Mode: Recipes | Inputs | Dry run | Approvals | Outputs",
+                    "Modes: Recipes Inputs Steps Dry run Approvals Outputs",
                     id="workflows-mode-label",
                     classes="destination-section",
                 )
             with Horizontal(id="workflows-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="workflows-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Procedure Library", classes="destination-section")
+                    yield Static(
+                        "Column 1: Procedure Library",
+                        classes="destination-section workflows-column-title",
+                    )
                     yield Static("Recipes", classes="destination-section")
                     yield Static("Inputs", classes="destination-section")
                     yield Static("Steps", classes="destination-section")
                     yield Static("Dry Run", classes="destination-section")
                     yield Static("Approvals", classes="destination-section")
                     yield Static("Outputs", classes="destination-section")
+                yield self._column_divider("workflows-list-detail-divider")
                 with Vertical(id="workflows-detail-pane", classes="destination-workbench-pane"):
+                    yield Static(
+                        "Column 2: Run Detail / Output",
+                        classes="destination-section workflows-column-title",
+                    )
                     if not self._latest_console_context_loaded:
                         yield Static(
                             "Loading workflow and Console launch context...",
@@ -139,7 +175,27 @@ class WorkflowsScreen(BaseAppScreen):
                             WORKFLOWS_EMPTY_CONSOLE_RECOVERY.visible_copy,
                             id=WORKFLOWS_EMPTY_CONSOLE_RECOVERY.stable_selector,
                         )
+                yield self._column_divider("workflows-detail-inspector-divider")
                 with Vertical(id="workflows-inspector-pane", classes="destination-workbench-pane ds-inspector"):
+                    yield Static(
+                        "Column 3: Run Inspector",
+                        classes="destination-section workflows-column-title",
+                    )
+                    yield Static(
+                        self._inspector_state_summary(latest_console_item),
+                        id="workflows-state-summary",
+                    )
+                    yield Static("Inputs: required before run", id="workflows-inputs-summary")
+                    yield Static(self._approval_summary(latest_console_item), id="workflows-approval-summary")
+                    if latest_console_item is not None:
+                        yield Static("Console: ready", id="workflows-console-state")
+                        yield Static("Next action: open in Console", id="workflows-next-action")
+                    else:
+                        yield Static("Console: blocked", id="workflows-console-state")
+                        yield Static(
+                            "Next action: start or select a workflow run",
+                            id="workflows-next-action",
+                        )
                     yield Static("Workflow Actions", classes="destination-section")
                     if not self._latest_console_context_loaded:
                         yield Button(

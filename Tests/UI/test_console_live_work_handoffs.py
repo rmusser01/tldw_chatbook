@@ -1030,8 +1030,11 @@ async def test_workflows_destination_keeps_console_launch_disabled_without_activ
 
         assert button.disabled is True
         assert str(button.label) == "Console launch unavailable"
-        assert "Unavailable: Console launch for Workflows." in _screen_static_text(screen)
-        assert "Next: Start or select a workflow run before opening it in Console." in _screen_static_text(screen)
+        screen_text = _screen_static_text(screen)
+        assert "Unavailable: Console launch for Workflows." in screen_text
+        assert "Next: Start or select a workflow run before opening it in Console." in screen_text
+        assert "State: blocked" in screen_text
+        assert "Console: blocked" in screen_text
 
     app.open_active_home_item_in_console.assert_not_called()
 
@@ -1069,7 +1072,10 @@ async def test_workflows_destination_routes_latest_active_run_to_console():
 
         assert button.disabled is False
         assert "Daily digest workflow" in str(button.label)
-        assert "failed" in _screen_static_text(screen)
+        screen_text = _screen_static_text(screen)
+        assert "failed" in screen_text
+        assert "State: failed" in screen_text
+        assert "State: ready" not in screen_text
 
         await pilot.click("#workflows-launch-in-console")
         await pilot.pause(0.1)
