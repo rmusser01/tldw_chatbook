@@ -13,6 +13,7 @@ from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
+    StaticPersonasScopeService,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
     StaticLibraryNotesScopeService,
@@ -717,6 +718,62 @@ async def test_artifacts_empty_state_exposes_full_artifact_workbench_taxonomy():
             "Provenance",
         ):
             assert expected in visible_text
+
+
+@pytest.mark.asyncio
+async def test_personas_workbench_exposes_approved_three_column_ia():
+    app = _build_test_app()
+    app.character_persona_scope_service = StaticPersonasScopeService(
+        characters=[
+            {"name": "Research Analyst", "id": 1, "description": "Synthesizes evidence."},
+        ],
+        profiles=[
+            {"name": "Fiction Character", "id": "profile-1", "description": "Roleplay voice."},
+        ],
+    )
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#personas-characters-summary")
+        visible_text = _visible_static_text(screen)
+        buttons = _visible_button_labels(screen)
+
+        for expected in (
+            "Personas | Behavior, characters, prompts, lore | Ready | Local/Server",
+            "Modes: Personas | Characters | Prompts | Dictionaries | Lore | Import/Export",
+            "Column 1: Persona List",
+            "Column 2: Behavior Profile Detail",
+            "Column 3: Attachments",
+            "Research Analyst",
+            "Fiction Character",
+            "Console: ready",
+            "Workflows: ready",
+        ):
+            assert expected in visible_text
+        assert {"Open Personas", "Attach to Console"}.issubset(buttons)
+
+
+@pytest.mark.asyncio
+async def test_personas_workbench_has_explicit_column_dividers_for_future_resize():
+    app = _build_test_app()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#personas-workbench")
+        left_pane = screen.query_one("#personas-list-pane")
+        detail_pane = screen.query_one("#personas-detail-pane")
+        inspector_pane = screen.query_one("#personas-inspector-pane")
+        left_divider = screen.query_one("#personas-list-detail-divider")
+        right_divider = screen.query_one("#personas-detail-inspector-divider")
+
+        assert "destination-pane-divider" in left_divider.classes
+        assert "destination-pane-divider" in right_divider.classes
+        assert left_pane.region.x < left_divider.region.x < detail_pane.region.x
+        assert detail_pane.region.x < right_divider.region.x < inspector_pane.region.x
+        assert left_divider.region.width == 1
+        assert right_divider.region.width == 1
 
 
 @pytest.mark.asyncio

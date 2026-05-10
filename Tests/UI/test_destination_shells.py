@@ -96,6 +96,27 @@ class SlowPersonasScopeService(StaticPersonasScopeService):
         return await super().list_characters(**kwargs)
 
 
+class HangingPersonasScopeService(StaticPersonasScopeService):
+    async def list_characters(self, **kwargs):
+        await asyncio.sleep(999)
+        return await super().list_characters(**kwargs)
+
+
+class BlockingPersonasScopeService(StaticPersonasScopeService):
+    def __init__(self, *, characters=(), profiles=(), sleep_seconds=0.3):
+        super().__init__(characters=characters, profiles=profiles)
+        self.sleep_seconds = sleep_seconds
+
+    def list_characters(self, **kwargs):
+        self.character_calls.append(kwargs)
+        time.sleep(self.sleep_seconds)
+        return list(self.characters)
+
+    def list_persona_profiles(self, **kwargs):
+        self.profile_calls.append(kwargs)
+        return list(self.profiles)
+
+
 class StaticLibraryNotesScopeService:
     def __init__(self, notes):
         self.notes = tuple(notes)
@@ -677,7 +698,7 @@ async def test_personas_destination_lists_local_behavior_snapshot_from_service()
         text = _visible_text(screen)
         button = screen.query_one("#personas-attach-to-console", Button)
 
-        assert "Local Personas snapshot" in text
+        assert "Column 2: Behavior Profile Detail" in text
         assert "Characters: 2" in text
         assert "Persona profiles: 1" in text
         assert "Research Mentor" in text
@@ -713,6 +734,67 @@ async def test_personas_destination_waits_for_threaded_snapshot_without_fixed_sl
         await _wait_for_personas_snapshot(screen, pilot)
 
         assert "Delayed Mentor" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_personas_destination_times_out_stalled_snapshot(monkeypatch):
+    monkeypatch.setattr(personas_screen_module, "PERSONAS_SNAPSHOT_TIMEOUT_SECONDS", 0.05)
+    app = _build_test_app()
+    app.character_persona_scope_service = HangingPersonasScopeService(
+        characters=[{"name": "Never Returned", "id": 1}],
+        profiles=[],
+    )
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#personas-service-error", timeout=1.0)
+        button = screen.query_one("#personas-attach-to-console", Button)
+
+        assert "Personas service unavailable; retry Personas later." in _visible_text(screen)
+        assert "Loading local Personas behavior context" not in _visible_text(screen)
+        assert button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_personas_destination_times_out_blocking_snapshot(monkeypatch):
+    monkeypatch.setattr(personas_screen_module, "PERSONAS_SNAPSHOT_TIMEOUT_SECONDS", 0.05)
+    app = _build_test_app()
+    app.character_persona_scope_service = BlockingPersonasScopeService(
+        characters=[{"name": "Blocking Mentor", "id": 1}],
+        profiles=[],
+    )
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#personas-service-error", timeout=1.0)
+
+        assert "Personas service unavailable; retry Personas later." in _visible_text(screen)
+        assert "Blocking Mentor" not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_personas_destination_does_not_enqueue_retry_while_blocking_snapshot_runs(monkeypatch):
+    monkeypatch.setattr(personas_screen_module, "PERSONAS_SNAPSHOT_TIMEOUT_SECONDS", 0.05)
+    app = _build_test_app()
+    service = BlockingPersonasScopeService(
+        characters=[{"name": "Blocking Mentor", "id": 1}],
+        profiles=[],
+        sleep_seconds=0.5,
+    )
+    app.character_persona_scope_service = service
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#personas-service-error", timeout=1.0)
+        first_call_count = len(service.character_calls)
+
+        _, _, lookup_error, _ = await screen._list_local_behavior_snapshot()
+
+        assert lookup_error == "Personas service unavailable; retry Personas later."
+        assert len(service.character_calls) == first_call_count
 
 
 @pytest.mark.asyncio

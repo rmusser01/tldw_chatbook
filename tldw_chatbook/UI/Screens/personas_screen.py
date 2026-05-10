@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Mapping, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
+from functools import partial
 from typing import Any
 
 from loguru import logger
@@ -29,6 +31,7 @@ PERSONAS_LOCAL_PAGE_SIZE = 5
 PERSONAS_SERVICE_ERROR_COPY = "Personas service unavailable; retry Personas later."
 PERSONAS_SERVICE_UNAVAILABLE_COPY = "Personas service is unavailable in this runtime."
 PERSONAS_EMPTY_COPY = "No local characters or persona profiles are available yet."
+PERSONAS_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 
 
 class PersonasScreen(BaseAppScreen):
@@ -47,10 +50,17 @@ class PersonasScreen(BaseAppScreen):
         self._personas_lookup_error: str | None = None
         self._personas_lookup_recovery_state: DestinationRecoveryState | None = None
         self._personas_loaded = False
+        self._personas_snapshot_executor: ThreadPoolExecutor | None = None
+        self._personas_snapshot_futures: set[Future[Any]] = set()
 
     def on_mount(self) -> None:
         super().on_mount()
+        self._ensure_snapshot_executor()
         self._refresh_local_behavior_snapshot()
+
+    def on_unmount(self) -> None:
+        self._shutdown_snapshot_executor()
+        super().on_unmount()
 
     @work(exclusive=True)
     async def _refresh_local_behavior_snapshot(self) -> None:
@@ -77,6 +87,43 @@ class PersonasScreen(BaseAppScreen):
         if inspect.isawaitable(value):
             return await value
         return value
+
+    def _ensure_snapshot_executor(self) -> ThreadPoolExecutor:
+        if self._personas_snapshot_executor is None:
+            self._personas_snapshot_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="personas-snapshot",
+            )
+        return self._personas_snapshot_executor
+
+    def _shutdown_snapshot_executor(self) -> None:
+        self._cancel_queued_snapshot_work()
+        if self._personas_snapshot_executor is not None:
+            self._personas_snapshot_executor.shutdown(wait=False, cancel_futures=True)
+            self._personas_snapshot_executor = None
+
+    def _has_pending_snapshot_work(self) -> bool:
+        self._personas_snapshot_futures = {
+            future for future in self._personas_snapshot_futures if not future.done()
+        }
+        return bool(self._personas_snapshot_futures)
+
+    def _cancel_queued_snapshot_work(self) -> None:
+        for future in self._personas_snapshot_futures:
+            if not future.running() and not future.done():
+                future.cancel()
+
+    async def _call_service_method(self, method: Any, **kwargs: Any) -> Any:
+        executor = self._ensure_snapshot_executor()
+        call = partial(method, **kwargs)
+        future = executor.submit(call)
+        self._personas_snapshot_futures.add(future)
+        try:
+            value = await asyncio.wrap_future(future)
+            return await self._resolve_maybe_awaitable(value)
+        finally:
+            if future.done():
+                self._personas_snapshot_futures.discard(future)
 
     @staticmethod
     def _safe_text(value: Any, fallback: str = "", *, max_length: int = 500) -> str:
@@ -150,24 +197,34 @@ class PersonasScreen(BaseAppScreen):
         empty_counts = {"characters": 0, "profiles": 0}
         if not callable(list_characters) or not callable(list_profiles):
             return empty_records, empty_counts, PERSONAS_SERVICE_UNAVAILABLE_COPY, None
+        if self._has_pending_snapshot_work():
+            logger.warning("Skipping Personas snapshot refresh; previous sync work is still running.")
+            return empty_records, empty_counts, PERSONAS_SERVICE_ERROR_COPY, None
 
         try:
-            characters_value = list_characters(
-                mode="local",
-                limit=PERSONAS_LOCAL_PAGE_SIZE,
-                offset=0,
+            characters_result, profiles_result = await asyncio.wait_for(
+                asyncio.gather(
+                    self._call_service_method(
+                        list_characters,
+                        mode="local",
+                        limit=PERSONAS_LOCAL_PAGE_SIZE,
+                        offset=0,
+                    ),
+                    self._call_service_method(
+                        list_profiles,
+                        mode="local",
+                        active_only=True,
+                        include_deleted=False,
+                        limit=PERSONAS_LOCAL_PAGE_SIZE,
+                        offset=0,
+                    ),
+                ),
+                timeout=PERSONAS_SNAPSHOT_TIMEOUT_SECONDS,
             )
-            profiles_value = list_profiles(
-                mode="local",
-                active_only=True,
-                include_deleted=False,
-                limit=PERSONAS_LOCAL_PAGE_SIZE,
-                offset=0,
-            )
-            characters_result, profiles_result = await asyncio.gather(
-                self._resolve_maybe_awaitable(characters_value),
-                self._resolve_maybe_awaitable(profiles_value),
-            )
+        except TimeoutError:
+            self._cancel_queued_snapshot_work()
+            logger.warning("Timed out loading local Personas behavior snapshot.")
+            return empty_records, empty_counts, PERSONAS_SERVICE_ERROR_COPY, None
         except PolicyDeniedError as exc:
             policy_message = self._safe_text(exc.user_message, PERSONAS_SERVICE_ERROR_COPY)
             recovery_state = policy_denied_recovery_state(
@@ -224,24 +281,30 @@ class PersonasScreen(BaseAppScreen):
             for record in self._local_behavior_records[record_type]
         ]
 
+    @staticmethod
+    def _column_divider(widget_id: str) -> Static:
+        divider = Static("", id=widget_id, classes="destination-pane-divider")
+        divider.styles.width = 1
+        divider.styles.min_width = 1
+        return divider
+
     def compose_content(self) -> ComposeResult:
         has_context = self._has_local_behavior_context()
         with Vertical(id="personas-shell"):
-            yield Static("Personas", id="personas-title", classes="ds-destination-header")
             yield Static(
-                "Characters, personas, prompts, dictionaries, lore, and behavior profiles.",
-                id="personas-purpose",
-                classes="destination-purpose",
+                "Personas | Behavior, characters, prompts, lore | Ready | Local/Server",
+                id="personas-title",
+                classes="ds-destination-header",
             )
             with DestinationModeStrip(id="personas-mode-strip", classes="destination-mode-strip"):
                 yield Static(
-                    "Scope: Local behavior profiles | Target: Console context",
+                    "Modes: Personas | Characters | Prompts | Dictionaries | Lore | Import/Export",
                     id="personas-mode-label",
                     classes="destination-section",
                 )
             with Horizontal(id="personas-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="personas-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Behavior Sources", classes="destination-section")
+                    yield Static("Column 1: Persona List", classes="destination-pane-title")
                     yield Static(
                         f"Characters: {self._local_behavior_counts['characters']}",
                         id="personas-list-characters-count",
@@ -251,12 +314,13 @@ class PersonasScreen(BaseAppScreen):
                         id="personas-list-profiles-count",
                     )
                     yield Static(
-                        "Characters, prompts, dictionaries, and lore stay here; Library owns saved conversation browsing.",
+                        "Local behavior rows feed Console context; Library owns saved conversation browsing.",
                         id="personas-boundary",
                         classes="destination-purpose",
                     )
+                yield self._column_divider("personas-list-detail-divider")
                 with Vertical(id="personas-detail-pane", classes="destination-workbench-pane"):
-                    yield Static("Local Personas snapshot", classes="destination-section")
+                    yield Static("Column 2: Behavior Profile Detail", classes="destination-pane-title")
                     if not self._personas_loaded:
                         yield Static(
                             "Loading local Personas behavior context...",
@@ -302,11 +366,20 @@ class PersonasScreen(BaseAppScreen):
                                         escape_markup(self._record_name(record_type, record))
                                     ),
                                     id=f"personas-{record_type}-item-{index}",
-                                )
+                            )
                         attach_disabled = False
                         attach_tooltip = "Stage local persona context in Console."
+                yield self._column_divider("personas-detail-inspector-divider")
                 with Vertical(id="personas-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Console Actions", classes="destination-section")
+                    yield Static("Column 3: Attachments", classes="destination-pane-title")
+                    yield Static(
+                        "Console: ready",
+                        id="personas-console-readiness",
+                    )
+                    yield Static(
+                        "Workflows: ready",
+                        id="personas-workflows-readiness",
+                    )
                     yield Button(
                         "Open Personas",
                         id="personas-open-profiles",

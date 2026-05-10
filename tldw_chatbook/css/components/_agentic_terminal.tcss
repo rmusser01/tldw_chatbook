@@ -106,7 +106,8 @@
 #home-dashboard,
 #console-shell,
 #library-shell,
-#artifacts-shell {
+#artifacts-shell,
+#personas-shell {
     height: 100%;
     min-height: 0;
 }
@@ -114,7 +115,8 @@
 #home-title,
 #console-title,
 #library-title,
-#artifacts-title {
+#artifacts-title,
+#personas-title {
     height: $ds-destination-header-height;
     min-height: $ds-destination-header-height;
     padding: 0 1;
@@ -129,7 +131,8 @@
 #console-status-row,
 #library-status-row,
 #console-mode-bar,
-#artifacts-mode-strip {
+#artifacts-mode-strip,
+#personas-mode-strip {
     height: $ds-destination-compact-strip-height;
     min-height: $ds-destination-compact-strip-height;
     padding: 0 1;
@@ -192,6 +195,14 @@
 }
 
 .home-pane-divider {
+    width: 1;
+    min-width: 1;
+    height: 100%;
+    min-height: 0;
+    background: $ds-grid-line;
+}
+
+.destination-pane-divider {
     width: 1;
     min-width: 1;
     height: 100%;
@@ -535,7 +546,8 @@
 }
 
 #library-contract-grid,
-#artifacts-workbench {
+#artifacts-workbench,
+#personas-workbench {
     height: 1fr;
     min-height: 20;
     padding: 1;
@@ -547,12 +559,30 @@
 
 #artifacts-list-pane,
 #artifacts-detail-pane,
-#artifacts-inspector-pane {
+#artifacts-inspector-pane,
+#personas-list-pane,
+#personas-detail-pane,
+#personas-inspector-pane {
     margin: 0 1 0 0;
 }
 
-#artifacts-inspector-pane {
+#artifacts-inspector-pane,
+#personas-inspector-pane {
     margin: 0;
+}
+
+#personas-list-pane,
+#personas-detail-pane,
+#personas-inspector-pane {
+    height: 100%;
+    min-height: 0;
+    border: solid #6f7378;
+    background: $ds-surface-panel;
+}
+
+#personas-list-detail-divider,
+#personas-detail-inspector-divider {
+    background: #6f7378;
 }
 
 .artifacts-column-title {
