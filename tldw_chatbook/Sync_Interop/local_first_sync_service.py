@@ -7,6 +7,7 @@ import json
 from typing import Any, Mapping
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
+from tldw_chatbook.Sync_Interop.validation import validate_pulled_dataset_identity
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
@@ -135,9 +136,18 @@ class LocalFirstSyncService:
             raise
         applier = SyncEnvelopeApplier(dataset_key=key, local_store=self.local_store)
         try:
-            results = [
-                applier.apply(SyncV2Envelope.model_validate(envelope))
+            envelopes = [
+                SyncV2Envelope.model_validate(envelope)
                 for envelope in pulled.get("envelopes", [])
+            ]
+            validate_pulled_dataset_identity(
+                dataset_id=str(dataset_id),
+                response_dataset_id=pulled.get("dataset_id"),
+                envelopes=envelopes,
+            )
+            results = [
+                applier.apply(envelope)
+                for envelope in envelopes
             ]
         except Exception as exc:
             self._record_sync_error(profile=profile, stage="apply", exc=exc)

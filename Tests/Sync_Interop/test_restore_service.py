@@ -11,11 +11,19 @@ pytestmark = pytest.mark.asyncio
 
 
 class FakeRestoreServer:
-    def __init__(self, *, envelopes=None, conflicts=None, recovery_records=None) -> None:
+    def __init__(
+        self,
+        *,
+        envelopes=None,
+        conflicts=None,
+        recovery_records=None,
+        response_dataset_id=None,
+    ) -> None:
         self.calls: list[tuple] = []
         self.envelopes = envelopes or []
         self.conflicts = conflicts or []
         self.recovery_records = recovery_records or []
+        self.response_dataset_id = response_dataset_id
 
     async def get_v2_restore_manifest(self, *, dataset_ids=None, domains=None):
         self.calls.append(("manifest", dataset_ids, domains))
@@ -59,7 +67,12 @@ class FakeRestoreServer:
         include_own_changes=False,
     ):
         self.calls.append(("pull", dataset_id, device_id, cursor, domains, page_size, include_own_changes))
-        return {"dataset_id": dataset_id, "envelopes": self.envelopes, "next_cursor": "cursor-2", "has_more": False}
+        return {
+            "dataset_id": self.response_dataset_id or dataset_id,
+            "envelopes": self.envelopes,
+            "next_cursor": "cursor-2",
+            "has_more": False,
+        }
 
     async def list_v2_conflicts(self, *, dataset_id, status="unresolved"):
         self.calls.append(("conflicts", dataset_id, status))
@@ -143,6 +156,32 @@ async def test_restore_selection_filters_pull_and_decrypts_before_local_apply():
     assert result["applied"] == 1
     assert store.note_content["note-1"] == {"body": "private restored body", "title": "Restored"}
     assert store.note_metadata["note-1"] == {"status": "active"}
+
+
+async def test_restore_selection_rejects_wrong_dataset_pull_before_apply():
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    envelope = builder.build_note_metadata_update(note_id="note-1", status="archived")
+    store = RecordingLocalStore()
+    server = FakeRestoreServer(
+        envelopes=[envelope.model_dump(mode="json")],
+        response_dataset_id="other-dataset",
+    )
+    service = SyncRestoreService(
+        server_service=server,
+        local_store=store,
+        dataset_keys={"recoverable-dataset": dataset_key},
+    )
+
+    with pytest.raises(ValueError, match="dataset_id"):
+        await service.restore_selection(
+            dataset_id="recoverable-dataset",
+            device_id="device-1",
+            domains=["notes"],
+        )
+
+    assert store.note_metadata == {}
+    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
 
 
 async def test_restore_selection_recovers_dataset_key_with_recovery_secret():

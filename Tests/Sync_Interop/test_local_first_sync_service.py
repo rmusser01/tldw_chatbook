@@ -647,6 +647,52 @@ async def test_local_first_sync_once_records_apply_failure_without_advancing_cur
     assert store.note_content == {}
 
 
+async def test_local_first_sync_once_rejects_wrong_dataset_pull_before_apply(tmp_path):
+    dataset_key = generate_dataset_key()
+    incoming = SyncEnvelopeBuilder(
+        dataset_id="other-dataset",
+        device_id="remote-device",
+        dataset_key=dataset_key,
+    ).build_note_metadata_update(note_id="note-1", status="archived")
+    repo = _repo_with_profile(tmp_path)
+    store = RecordingLocalStore()
+    server = FakeLocalFirstServer(pull_envelopes=[incoming.model_dump(mode="json")])
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=store,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    with pytest.raises(ValueError, match="dataset_id"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes"],
+        )
+
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert profile["last_error"] == (
+        "apply_failed: pulled Sync v2 envelope dataset_id must match requested dataset_id"
+    )
+    assert profile["dataset_cursors"]["sync_v2"] == "7"
+    assert repo.get_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+    ).cursor == "7"
+    assert store.note_metadata == {}
+
+
 async def test_local_first_sync_once_treats_adapter_rejection_as_failed_apply(tmp_path):
     dataset_key = generate_dataset_key()
     rejected_workspace_envelope = SyncV2Envelope(
