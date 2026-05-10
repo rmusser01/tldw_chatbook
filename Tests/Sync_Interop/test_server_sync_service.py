@@ -54,13 +54,14 @@ def _sync_v2_envelope(
     *,
     dataset_id: str = "dataset-1",
     device_id: str | None = "device-1",
+    domain: str = "notes",
     entity_id: str = "note-1",
 ) -> SyncV2Envelope:
     return SyncV2Envelope(
-        client_envelope_id=f"{device_id or 'unknown'}:notes:{entity_id}:1",
+        client_envelope_id=f"{device_id or 'unknown'}:{domain}:{entity_id}:1",
         dataset_id=dataset_id,
         device_id=device_id,
-        domain="notes",
+        domain=domain,
         entity_id=entity_id,
         operation="upsert",
         adapter_version=1,
@@ -70,9 +71,10 @@ def _sync_v2_envelope(
 
 
 class FakeSyncClient:
-    def __init__(self, *, push_response=None):
+    def __init__(self, *, push_response=None, pull_response=None):
         self.calls = []
         self.push_response = push_response
+        self.pull_response = pull_response
 
     async def send_sync_changes(self, request_data):
         self.calls.append(("send_sync_changes", request_data.model_dump(mode="json")))
@@ -156,6 +158,8 @@ class FakeSyncClient:
                 include_own_changes,
             )
         )
+        if self.pull_response is not None:
+            return self.pull_response
         return {"dataset_id": dataset_id, "envelopes": [], "next_cursor": "6", "has_more": False}
 
     async def get_sync_v2_restore_manifest(self, *, dataset_ids=None, domains=None):
@@ -532,6 +536,74 @@ async def test_server_sync_service_rejects_unknown_v2_push_response_id_after_dis
         )
 
     assert [call[0] for call in client.calls] == ["push_sync_v2_envelopes"]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_rejects_mismatched_v2_pull_response_dataset_after_dispatch():
+    client = FakeSyncClient(
+        pull_response={
+            "dataset_id": "other-dataset",
+            "envelopes": [],
+            "next_cursor": "cursor-2",
+            "has_more": False,
+        }
+    )
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="pull response dataset_id"):
+        await service.pull_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            domains=["notes"],
+        )
+
+    assert [call[0] for call in client.calls] == ["pull_sync_v2_envelopes"]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_rejects_own_device_v2_pull_response_after_dispatch():
+    envelope = _sync_v2_envelope(device_id="device-1")
+    client = FakeSyncClient(
+        pull_response={
+            "dataset_id": "dataset-1",
+            "envelopes": [envelope.model_dump(mode="json")],
+            "next_cursor": "cursor-2",
+            "has_more": False,
+        }
+    )
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="own device"):
+        await service.pull_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            domains=["notes"],
+        )
+
+    assert [call[0] for call in client.calls] == ["pull_sync_v2_envelopes"]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_rejects_nonempty_v2_pull_response_without_next_cursor_after_dispatch():
+    envelope = _sync_v2_envelope(device_id="remote-device")
+    client = FakeSyncClient(
+        pull_response={
+            "dataset_id": "dataset-1",
+            "envelopes": [envelope.model_dump(mode="json")],
+            "next_cursor": None,
+            "has_more": False,
+        }
+    )
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="envelopes.*next_cursor"):
+        await service.pull_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            domains=["notes"],
+        )
+
+    assert [call[0] for call in client.calls] == ["pull_sync_v2_envelopes"]
 
 
 @pytest.mark.asyncio

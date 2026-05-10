@@ -6,6 +6,8 @@ from typing import Any, Mapping, Optional
 
 from tldw_chatbook.Sync_Interop.validation import (
     validate_outgoing_envelope_scope,
+    validate_pull_pagination_state,
+    validate_pulled_response_scope,
     validate_push_response_scope,
 )
 
@@ -377,7 +379,7 @@ class ServerSyncService:
         """Pull selected Sync v2 envelopes for restore or incremental sync."""
 
         self._enforce("sync.v2.restore.pull.server")
-        return self._dump(
+        response = self._dump(
             await self._require_client().pull_sync_v2_envelopes(
                 dataset_id=dataset_id,
                 device_id=device_id,
@@ -387,6 +389,23 @@ class ServerSyncService:
                 include_own_changes=include_own_changes,
             )
         )
+        envelopes = [
+            SyncV2Envelope.model_validate(envelope)
+            for envelope in response.get("envelopes", [])
+        ]
+        validate_pulled_response_scope(
+            dataset_id=dataset_id,
+            response_dataset_id=response.get("dataset_id"),
+            envelopes=envelopes,
+            domains=domains,
+            excluded_device_id=None if include_own_changes else device_id,
+        )
+        validate_pull_pagination_state(
+            has_more=response.get("has_more", False),
+            next_cursor=response.get("next_cursor"),
+            envelope_count=len(envelopes),
+        )
+        return response
 
     async def list_v2_conflicts(
         self,
