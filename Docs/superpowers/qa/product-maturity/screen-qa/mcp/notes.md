@@ -3,7 +3,7 @@
 Date: 2026-05-10
 Branch: `codex/screen-qa-mcp`
 Backlog task: TASK-14.9
-Commit: pending
+Commit: 5ddb311ed56bb750290ab9daf413fe552da3ce37
 Screen: MCP
 Viewport: 2050x1240
 Launch method: `tldw-serve --host 127.0.0.1 --port 8832` with isolated HOME/XDG profile and `[general] default_tab = "mcp"`

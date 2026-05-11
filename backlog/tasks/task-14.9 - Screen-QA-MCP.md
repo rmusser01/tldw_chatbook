@@ -1,10 +1,10 @@
 ---
 id: TASK-14.9
 title: 'Screen QA: MCP'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 03:46'
-updated_date: '2026-05-10 14:58'
+updated_date: '2026-05-10 15:55'
 labels:
   - ux
   - screen-qa
@@ -35,7 +35,7 @@ Validate and correct the MCP top-level destination screen through actual rendere
 - [x] #3 Final actual screenshot captured
 - [x] #4 User approval recorded before PR
 - [x] #5 Focused tests pass
-- [ ] #6 PR merged before next screen starts unless user explicitly overrides
+- [x] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -55,4 +55,5 @@ Validate and correct the MCP top-level destination screen through actual rendere
 - Corrected MCP destination shell styling so title, purpose, and mode strips render compactly and the Servers And Scope / Server Detail / Readiness And Actions workbench uses the available viewport height.
 - Added a focused visual parity regression for MCP compact shell rows and taller workbench panes.
 - Regenerated the modular TCSS bundle from the source TCSS module.
+- PR #301 merged into dev; follow-up consolidated redundant MCP pane selectors raised during review.
 <!-- SECTION:NOTES:END -->

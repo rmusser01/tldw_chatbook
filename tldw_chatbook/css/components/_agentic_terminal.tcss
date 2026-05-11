@@ -176,6 +176,7 @@
     width: 1fr;
     min-width: 0;
     height: 100%;
+    min-height: 0;
     padding: 1;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
@@ -623,10 +624,7 @@
 #schedules-inspector-pane,
 #workflows-list-pane,
 #workflows-detail-pane,
-#workflows-inspector-pane,
-#mcp-server-tree-pane,
-#mcp-detail-pane,
-#mcp-readiness-pane {
+#workflows-inspector-pane {
     height: 100%;
     min-height: 0;
     border: solid $ds-grid-line;
