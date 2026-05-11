@@ -31,6 +31,18 @@ class FakeSyncService:
             "latest_change_id": 33,
         }
 
+    async def run_v2_dry_run(self, **kwargs):
+        self.calls.append(("run_v2_dry_run", kwargs))
+        return {
+            "dry_run": True,
+            "server_profile_id": kwargs["server_profile_id"],
+            "workspace_scope": kwargs.get("workspace_scope"),
+            "device_id": "device-1",
+            "dataset_id": "dataset-1",
+            "domains": kwargs.get("domains") or ["notes"],
+            "profile_mode": "local_first",
+        }
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason=None):
@@ -198,3 +210,99 @@ def test_sync_scope_service_requires_repository_for_dry_run_mirror_reports():
             server_profile_id="server-a",
             workspace_scope="workspace-1",
         )
+
+
+@pytest.mark.asyncio
+async def test_sync_scope_service_prepares_local_only_mode_without_sync_side_effects(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    server = FakeSyncService()
+    scope = SyncScopeService(server_service=server, state_repository=repo)
+
+    result = await scope.prepare_sync_v2_profile_mode(
+        profile_mode="local_only",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert result == {
+        "dry_run": True,
+        "profile_mode": "local_only",
+        "backend": "local",
+        "server_profile_id": "server-a",
+        "workspace_scope": "workspace-1",
+        "sync_dataset_created": False,
+        "local_sync_enabled": False,
+        "server_frontend": False,
+    }
+    assert server.calls == []
+    assert repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_sync_scope_service_prepares_server_frontend_mode_without_local_sync_state(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    server = FakeSyncService()
+    scope = SyncScopeService(server_service=server, state_repository=repo)
+
+    result = await scope.prepare_sync_v2_profile_mode(
+        profile_mode="server_frontend",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert result == {
+        "dry_run": True,
+        "profile_mode": "server_frontend",
+        "backend": "server",
+        "server_profile_id": "server-a",
+        "workspace_scope": "workspace-1",
+        "sync_dataset_created": False,
+        "local_sync_enabled": False,
+        "server_frontend": True,
+    }
+    assert server.calls == []
+    assert repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_sync_scope_service_delegates_local_first_mode_to_sync_v2_dry_run():
+    server = FakeSyncService()
+    scope = SyncScopeService(server_service=server)
+
+    result = await scope.prepare_sync_v2_profile_mode(
+        profile_mode="local_first",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        display_name="Laptop",
+        domains=["notes", "chat"],
+        client_version="0.1.0",
+    )
+
+    assert result["profile_mode"] == "local_first"
+    assert result["device_id"] == "device-1"
+    assert server.calls == [
+        (
+            "run_v2_dry_run",
+            {
+                "server_profile_id": "server-a",
+                "authenticated_principal_id": "user-a",
+                "workspace_scope": "workspace-1",
+                "display_name": "Laptop",
+                "domains": ["notes", "chat"],
+                "client_version": "0.1.0",
+                "scope_type": "personal",
+                "encryption_policy": "client_private_v1",
+            },
+        )
+    ]

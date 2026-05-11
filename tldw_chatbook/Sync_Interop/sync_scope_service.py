@@ -8,6 +8,7 @@ from typing import Any
 
 from tldw_chatbook.runtime_policy.server_parity_models import SyncIdentityMapEntry
 
+from .sync_state import SyncV2ProfileMode
 from .sync_mirror_report import build_sync_mirror_report
 from .sync_readiness import (
     DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
@@ -70,6 +71,14 @@ class SyncScopeService:
             return SyncBackend(str(mode))
         except ValueError as exc:
             raise ValueError(f"Invalid sync backend: {mode}") from exc
+
+    def _normalize_profile_mode(self, profile_mode: SyncV2ProfileMode | str) -> SyncV2ProfileMode:
+        if isinstance(profile_mode, SyncV2ProfileMode):
+            return profile_mode
+        try:
+            return SyncV2ProfileMode(str(profile_mode))
+        except ValueError as exc:
+            raise ValueError(f"Invalid Sync v2 profile mode: {profile_mode}") from exc
 
     def _require_server_service(self, mode: SyncBackend) -> Any:
         if mode == SyncBackend.LOCAL:
@@ -212,6 +221,69 @@ class SyncScopeService:
             service.get_changes(client_id=client_id, since_change_id=since_change_id)
         )
         return self._normalize_get_result(normalized_mode, client_id, result)
+
+    async def prepare_sync_v2_profile_mode(
+        self,
+        *,
+        profile_mode: SyncV2ProfileMode | str,
+        server_profile_id: str,
+        authenticated_principal_id: str | None = None,
+        workspace_scope: str | None = None,
+        display_name: str | None = None,
+        domains: list[str] | None = None,
+        client_version: str | None = None,
+        scope_type: str = "personal",
+        encryption_policy: str = "client_private_v1",
+    ) -> dict[str, Any]:
+        """Dry-run a Sync v2 product mode without implying hidden local sync writes."""
+
+        normalized_mode = self._normalize_profile_mode(profile_mode)
+        if normalized_mode == SyncV2ProfileMode.LOCAL_ONLY:
+            return {
+                "dry_run": True,
+                "profile_mode": normalized_mode.value,
+                "backend": SyncBackend.LOCAL.value,
+                "server_profile_id": server_profile_id,
+                "workspace_scope": workspace_scope,
+                "sync_dataset_created": False,
+                "local_sync_enabled": False,
+                "server_frontend": False,
+            }
+        if normalized_mode == SyncV2ProfileMode.SERVER_FRONTEND:
+            return {
+                "dry_run": True,
+                "profile_mode": normalized_mode.value,
+                "backend": SyncBackend.SERVER.value,
+                "server_profile_id": server_profile_id,
+                "workspace_scope": workspace_scope,
+                "sync_dataset_created": False,
+                "local_sync_enabled": False,
+                "server_frontend": True,
+            }
+
+        if display_name is None:
+            raise ValueError("display_name is required for local-first Sync v2 dry-run")
+        service = self._require_server_service(SyncBackend.SERVER)
+        result = await self._maybe_await(
+            service.run_v2_dry_run(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                display_name=display_name,
+                domains=domains,
+                client_version=client_version,
+                scope_type=scope_type,
+                encryption_policy=encryption_policy,
+            )
+        )
+        if not isinstance(result, dict):
+            result = {"result": result}
+        record = dict(result)
+        record.setdefault("profile_mode", normalized_mode.value)
+        record.setdefault("local_sync_enabled", True)
+        record.setdefault("server_frontend", False)
+        record.setdefault("sync_dataset_created", bool(record.get("dataset_id")))
+        return record
 
     def record_dry_run_mirror_report(
         self,

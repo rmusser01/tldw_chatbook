@@ -762,6 +762,14 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
     "sync_transport": _action_ids("""
         sync.changes.launch.server
         sync.changes.observe.server
+        sync.v2.conflicts.observe.server
+        sync.v2.conflicts.resolve.server
+        sync.v2.dry_run.server
+        sync.v2.keys.retrieve.server
+        sync.v2.keys.store.server
+        sync.v2.push.server
+        sync.v2.restore.pull.server
+        sync.v2.restore_manifest.observe.server
     """),
     "cross_cutting_runtime_policy": _action_ids("""
         runtime.policy.configure.local
@@ -1719,6 +1727,44 @@ def test_policy_engine_denies_unknown_action_ids_without_raising():
     assert decision.allowed is False
     assert decision.reason_code == "authority_denied"
     assert decision.authority_owner == "unknown"
+
+
+@pytest.mark.parametrize(
+    "action_id",
+    [
+        "sync.v2.conflicts.observe.server",
+        "sync.v2.conflicts.resolve.server",
+        "sync.v2.dry_run.server",
+        "sync.v2.keys.retrieve.server",
+        "sync.v2.keys.store.server",
+        "sync.v2.push.server",
+        "sync.v2.restore.pull.server",
+        "sync.v2.restore_manifest.observe.server",
+    ],
+)
+def test_policy_engine_knows_sync_v2_server_actions_and_denies_local_mode(action_id):
+    engine = PolicyEngine(CAPABILITY_REGISTRY)
+
+    local_decision = engine.evaluate(
+        action_id=action_id,
+        state=RuntimeSourceState(active_source="local"),
+    )
+    server_decision = engine.evaluate(
+        action_id=action_id,
+        state=RuntimeSourceState(
+            active_source="server",
+            server_configured=True,
+            server_reachability="reachable",
+            server_reachability_checked_at=datetime.now(timezone.utc),
+            server_auth_state="authenticated",
+            server_auth_checked_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    assert local_decision.allowed is False
+    assert local_decision.reason_code == "wrong_source"
+    assert server_decision.allowed is True
+    assert server_decision.authority_owner == "server"
 
 
 def test_runtime_policy_registry_contains_full_audited_rows():

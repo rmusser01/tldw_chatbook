@@ -9,6 +9,7 @@ from tldw_chatbook.Sync_Interop.sync_state import (
     RemotePullCursor,
     SyncProfileState,
     SyncProfileStateStore,
+    SyncV2ProfileMode,
 )
 
 
@@ -20,9 +21,30 @@ def test_sync_profile_state_store_keys_state_by_server_profile_id() -> None:
     server_a.enabled_domains.add("notes")
 
     assert server_a.server_profile_id == "server-a"
+    assert server_a.profile_mode == SyncV2ProfileMode.LOCAL_ONLY
     assert server_b.server_profile_id == "server-b"
     assert store.get_or_create("server-a") is server_a
     assert server_b.enabled_domains == set()
+
+
+def test_sync_profile_state_tracks_sync_v2_device_dataset_and_cursors() -> None:
+    state = SyncProfileState(
+        server_profile_id="server-a",
+        profile_mode=SyncV2ProfileMode.LOCAL_FIRST,
+        workspace_id="workspace-a",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"notes": "cursor-1"},
+    )
+
+    state.dataset_cursors["chat"] = "cursor-2"
+
+    assert state.profile_mode == SyncV2ProfileMode.LOCAL_FIRST
+    assert state.device_id == "device-1"
+    assert state.dataset_id == "dataset-1"
+    assert state.dataset_key_available is False
+    assert state.key_recovery_available is False
+    assert state.dataset_cursors == {"notes": "cursor-1", "chat": "cursor-2"}
 
 
 def test_sync_profile_state_store_isolates_same_server_by_workspace_id() -> None:

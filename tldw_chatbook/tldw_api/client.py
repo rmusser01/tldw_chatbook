@@ -400,7 +400,24 @@ from .mcp_governance_schemas import (
     MCPSecretSetRequest,
 )
 from .text2sql_schemas import Text2SQLRequest, Text2SQLResponse
-from .sync_schemas import ClientChangesPayload, ServerChangesResponse
+from .sync_schemas import (
+    ClientChangesPayload,
+    ServerChangesResponse,
+    SyncV2CapabilitiesResponse,
+    SyncV2ConflictRecord,
+    SyncV2ConflictResolveRequest,
+    SyncV2DatasetEnrollRequest,
+    SyncV2DatasetEnrollResponse,
+    SyncV2DeviceRegisterRequest,
+    SyncV2DeviceRegisterResponse,
+    SyncV2KeyRecoveryBundleListResponse,
+    SyncV2KeyRecoveryBundleRequest,
+    SyncV2KeyRecoveryBundleResponse,
+    SyncV2PullResponse,
+    SyncV2PushRequest,
+    SyncV2PushResponse,
+    SyncV2RestoreManifestResponse,
+)
 from .prompt_studio_schemas import (
     PromptStudioCompareStrategiesRequest,
     PromptStudioDeleteMessage,
@@ -1198,8 +1215,8 @@ class TLDWAPIClient:
                         error_detail = f"Validation Error: {response_data['detail'][0].get('msg', '')} for field '{'.'.join(map(str, response_data['detail'][0].get('loc', [])))}'"
                     elif isinstance(response_data["detail"], str):
                         error_detail = response_data["detail"]
-            except Exception:
-                pass # Ignore if response is not JSON or detail not found
+            except ValueError:
+                pass  # Ignore if response is not JSON or detail not found
 
             if e.response.status_code == 401:
                 raise AuthenticationError(
@@ -1437,7 +1454,7 @@ class TLDWAPIClient:
                 response_data = e.response.json()
                 if isinstance(response_data, dict) and isinstance(response_data.get("detail"), str):
                     error_detail = response_data["detail"]
-            except Exception:
+            except ValueError:
                 pass
             if e.response.status_code == 401:
                 raise AuthenticationError(
@@ -14753,6 +14770,260 @@ class TLDWAPIClient:
             params={"client_id": client_id, "since_change_id": since_change_id},
         )
         return ServerChangesResponse.model_validate(response)
+
+    async def get_sync_v2_capabilities(self) -> SyncV2CapabilitiesResponse:
+        """Fetch server-advertised Sync v2 protocol capabilities.
+
+        Returns:
+            Parsed capability record with protocol versions, supported domains, and limits.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request("GET", "/api/v1/sync/capabilities")
+        return SyncV2CapabilitiesResponse.model_validate(response)
+
+    async def register_sync_v2_device(
+        self,
+        request_data: SyncV2DeviceRegisterRequest,
+    ) -> SyncV2DeviceRegisterResponse:
+        """Register or refresh a Chatbook Sync v2 device identity.
+
+        Args:
+            request_data: Device registration request with display name, client type,
+                supported domains, and optional existing device ID.
+
+        Returns:
+            Parsed device registration response with assigned device ID and server capabilities.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "POST",
+            "/api/v1/sync/devices/register",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2DeviceRegisterResponse.model_validate(response)
+
+    async def enroll_sync_v2_dataset(
+        self,
+        request_data: SyncV2DatasetEnrollRequest,
+    ) -> SyncV2DatasetEnrollResponse:
+        """Enroll or refresh a Sync v2 dataset for a registered device.
+
+        Args:
+            request_data: Dataset enrollment request containing device, scope, domains,
+                encryption policy, and optional existing dataset ID.
+
+        Returns:
+            Parsed dataset enrollment response with dataset identity, cursors, and key setup state.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "POST",
+            "/api/v1/sync/datasets/enroll",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2DatasetEnrollResponse.model_validate(response)
+
+    async def push_sync_v2_envelopes(self, request_data: SyncV2PushRequest) -> SyncV2PushResponse:
+        """Push a batch of Sync v2 envelopes to the server.
+
+        Args:
+            request_data: Push request containing dataset, device, envelopes, and retry metadata.
+
+        Returns:
+            Parsed push response with accepted, rejected, conflict, and cursor information.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "POST",
+            "/api/v1/sync/push",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2PushResponse.model_validate(response)
+
+    async def pull_sync_v2_envelopes(
+        self,
+        *,
+        dataset_id: str,
+        device_id: str,
+        cursor: str | None = None,
+        domains: list[str] | None = None,
+        page_size: int | None = None,
+        include_own_changes: bool = False,
+    ) -> SyncV2PullResponse:
+        """Pull Sync v2 envelopes for a dataset.
+
+        Args:
+            dataset_id: Dataset to pull from.
+            device_id: Local device identity making the request.
+            cursor: Optional incremental cursor.
+            domains: Optional domain filter.
+            page_size: Optional page size requested from the server.
+            include_own_changes: Whether the response may include envelopes from this device.
+
+        Returns:
+            Parsed pull response with envelopes, cursor, and pagination state.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "GET",
+            "/api/v1/sync/pull",
+            params={
+                "dataset_id": dataset_id,
+                "device_id": device_id,
+                "cursor": cursor,
+                "domain": domains,
+                "page_size": page_size,
+                "include_own_changes": include_own_changes,
+            },
+        )
+        return SyncV2PullResponse.model_validate(response)
+
+    async def get_sync_v2_restore_manifest(
+        self,
+        *,
+        dataset_ids: list[str] | None = None,
+        domains: list[str] | None = None,
+    ) -> SyncV2RestoreManifestResponse:
+        """Fetch metadata-only Sync v2 restore manifest records.
+
+        Args:
+            dataset_ids: Optional dataset IDs to include.
+            domains: Optional domains to include.
+
+        Returns:
+            Parsed restore manifest response containing datasets, devices, counts, and filters.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "GET",
+            "/api/v1/sync/restore-manifest",
+            params={"dataset_id": dataset_ids, "domain": domains},
+        )
+        return SyncV2RestoreManifestResponse.model_validate(response)
+
+    async def list_sync_v2_conflicts(
+        self,
+        *,
+        dataset_id: str,
+        status: str | None = None,
+    ) -> list[SyncV2ConflictRecord]:
+        """List Sync v2 conflicts for a dataset.
+
+        Args:
+            dataset_id: Dataset whose conflicts should be listed.
+            status: Optional conflict status filter.
+
+        Returns:
+            Parsed conflict records.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "GET",
+            "/api/v1/sync/conflicts",
+            params={"dataset_id": dataset_id, "status": status},
+        )
+        return [SyncV2ConflictRecord.model_validate(item) for item in response]
+
+    async def resolve_sync_v2_conflict(
+        self,
+        conflict_id: str,
+        request_data: SyncV2ConflictResolveRequest,
+    ) -> SyncV2ConflictRecord:
+        """Resolve a Sync v2 conflict by ID.
+
+        Args:
+            conflict_id: Server conflict identifier.
+            request_data: Resolution action, optional envelope, device, and notes.
+
+        Returns:
+            Parsed conflict record after resolution.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "POST",
+            f"/api/v1/sync/conflicts/{conflict_id}/resolve",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2ConflictRecord.model_validate(response)
+
+    async def store_sync_v2_key_recovery_bundle(
+        self,
+        request_data: SyncV2KeyRecoveryBundleRequest,
+    ) -> SyncV2KeyRecoveryBundleResponse:
+        """Store an opaque Sync v2 key recovery bundle on the server.
+
+        Args:
+            request_data: Recovery bundle request containing wrapped key material and metadata.
+
+        Returns:
+            Parsed recovery bundle record created by the server.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "POST",
+            "/api/v1/sync/keys/recovery-bundle",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2KeyRecoveryBundleResponse.model_validate(response)
+
+    async def list_sync_v2_key_recovery_bundles(
+        self,
+        *,
+        dataset_id: str,
+        device_id: str | None = None,
+        key_purpose: str | None = "dataset_recovery",
+    ) -> SyncV2KeyRecoveryBundleListResponse:
+        """List opaque Sync v2 key recovery bundles for a dataset.
+
+        Args:
+            dataset_id: Dataset whose recovery bundles should be listed.
+            device_id: Optional device filter.
+            key_purpose: Optional key purpose filter.
+
+        Returns:
+            Parsed recovery bundle list response.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "GET",
+            "/api/v1/sync/keys/recovery-bundle",
+            params={
+                "dataset_id": dataset_id,
+                "device_id": device_id,
+                "key_purpose": key_purpose,
+            },
+        )
+        return SyncV2KeyRecoveryBundleListResponse.model_validate(response)
 
 #
 # End of client.py

@@ -163,6 +163,12 @@ SUMMARIZE = _action("summarize", "launch")
 TTS = _action("tts", "launch")
 REATTACH = _action("reattach", "update")
 VALIDATE = _action("validate", "launch")
+SYNC_V2_DRY_RUN = _action("dry_run", "detail")
+SYNC_V2_PUSH = _action("push", "launch")
+SYNC_V2_PULL = _action("pull", "observe")
+SYNC_V2_RESOLVE = _action("resolve", "update")
+SYNC_V2_STORE = _action("store", "create")
+SYNC_V2_RETRIEVE = _action("retrieve", "observe")
 
 CRUD_ACTIONS = (LIST, DETAIL, CREATE, UPDATE, DELETE)
 DISCOVER_TRIGGER_OBSERVE_ACTIONS = (LIST, LAUNCH, OBSERVE)
@@ -801,6 +807,11 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=REMOTE_ONLY_SOURCES,
         resources=(
             _resource("sync.changes", actions=(LAUNCH, OBSERVE)),
+            _resource("sync.v2", actions=(SYNC_V2_DRY_RUN, SYNC_V2_PUSH)),
+            _resource("sync.v2.keys", actions=(SYNC_V2_STORE, SYNC_V2_RETRIEVE)),
+            _resource("sync.v2.restore_manifest", actions=(OBSERVE,)),
+            _resource("sync.v2.restore", actions=(SYNC_V2_PULL,)),
+            _resource("sync.v2.conflicts", actions=(OBSERVE, SYNC_V2_RESOLVE)),
         ),
     ),
     _capability(

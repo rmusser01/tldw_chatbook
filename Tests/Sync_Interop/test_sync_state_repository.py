@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
+from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
+from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Sync_Interop import sync_state_repository as sync_state_repository_module
 
 
 def test_identity_mapping_persists_scope_and_side_keys(tmp_path):
@@ -197,6 +202,240 @@ def test_sync_profile_state_persists_last_report_and_error_by_principal(tmp_path
         authenticated_principal_id="user-b",
         workspace_scope="workspace-1",
     ) is None
+
+
+def test_sync_v2_profile_state_persists_device_dataset_cursors_and_metadata(tmp_path):
+    db_path = tmp_path / "sync_state.db"
+    repo = SyncStateRepository(db_path)
+
+    profile = repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="local_first",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"notes": "cursor-1"},
+        capabilities={"max_batch_size": 100},
+        dry_run_metadata={"pulled_envelopes": 0},
+    )
+    repo.close()
+
+    reopened = SyncStateRepository(db_path)
+    stored = reopened.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert profile["profile_mode"] == "local_first"
+    assert stored["device_id"] == "device-1"
+    assert stored["dataset_id"] == "dataset-1"
+    assert stored["dataset_cursors"] == {"notes": "cursor-1"}
+    assert stored["capabilities"] == {"max_batch_size": 100}
+    assert stored["dry_run_metadata"] == {"pulled_envelopes": 0}
+
+
+def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
+    db_path = tmp_path / "sync_state.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE schema_version (
+                version INTEGER PRIMARY KEY NOT NULL
+            );
+            INSERT INTO schema_version (version) VALUES (1);
+
+            CREATE TABLE sync_profile_state (
+                source_authority TEXT NOT NULL,
+                server_profile_id TEXT NOT NULL,
+                authenticated_principal_id TEXT NOT NULL,
+                workspace_scope TEXT NOT NULL,
+                last_error TEXT,
+                last_mirror_report_id INTEGER,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (
+                    source_authority,
+                    server_profile_id,
+                    authenticated_principal_id,
+                    workspace_scope
+                )
+            );
+            """
+        )
+
+    repo = SyncStateRepository(db_path)
+    with repo._get_connection() as conn:
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(sync_profile_state)").fetchall()
+        }
+        outbox = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_v2_local_outbox'"
+        ).fetchone()
+        schema_version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        schema_versions = [
+            row[0]
+            for row in conn.execute("SELECT version FROM schema_version ORDER BY version").fetchall()
+        ]
+
+    assert {
+        "profile_mode",
+        "device_id",
+        "dataset_id",
+        "dataset_cursors",
+        "capabilities",
+        "dry_run_metadata",
+    }.issubset(columns)
+    assert outbox is not None
+    assert schema_version == 2
+    assert schema_versions == [2]
+
+
+def test_sync_v2_profile_column_migration_validates_column_identifiers(tmp_path, monkeypatch):
+    db_path = tmp_path / "sync_state.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE schema_version (
+                version INTEGER PRIMARY KEY NOT NULL
+            );
+            INSERT INTO schema_version (version) VALUES (1);
+
+            CREATE TABLE sync_profile_state (
+                source_authority TEXT NOT NULL,
+                server_profile_id TEXT NOT NULL,
+                authenticated_principal_id TEXT NOT NULL,
+                workspace_scope TEXT NOT NULL,
+                last_error TEXT,
+                last_mirror_report_id INTEGER,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (
+                    source_authority,
+                    server_profile_id,
+                    authenticated_principal_id,
+                    workspace_scope
+                )
+            );
+            """
+        )
+    calls: list[tuple[str, str | None]] = []
+
+    def record_validated_column(column_name: str, table_name: str | None = None) -> bool:
+        calls.append((column_name, table_name))
+        return True
+
+    monkeypatch.setattr(
+        sync_state_repository_module,
+        "validate_column_name",
+        record_validated_column,
+    )
+
+    SyncStateRepository(db_path)
+
+    assert ("profile_mode", "sync_profile_state") in calls
+    assert ("dry_run_metadata", "sync_profile_state") in calls
+
+
+def test_sync_v2_outbox_persists_pending_entries_and_push_results(tmp_path):
+    db_path = tmp_path / "sync_state.db"
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    )
+    accepted = builder.build_note_metadata_update(note_id="note-1", status="archived")
+    rejected = builder.build_note_metadata_update(note_id="note-2", status="active")
+    conflicted = builder.build_note_metadata_update(note_id="note-3", status="draft")
+    repo = SyncStateRepository(db_path)
+    accepted_entry = repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=accepted,
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=rejected,
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=conflicted,
+    )
+    repo.close()
+
+    reopened = SyncStateRepository(db_path)
+    pending = reopened.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
+
+    assert accepted_entry["status"] == "pending"
+    assert accepted_entry["attempt_count"] == 0
+    assert pending[0]["client_envelope_id"] == accepted.client_envelope_id
+    assert pending[0]["envelope"]["payload_clear"] == {"status": "archived"}
+    assert [entry["client_envelope_id"] for entry in pending] == [
+        accepted.client_envelope_id,
+        rejected.client_envelope_id,
+        conflicted.client_envelope_id,
+    ]
+
+    result = reopened.mark_sync_v2_outbox_push_results(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        accepted=[{"client_envelope_id": accepted.client_envelope_id}],
+        rejected=[
+            {
+                "client_envelope_id": rejected.client_envelope_id,
+                "error_code": "stale_base",
+                "message": "Local base is stale.",
+            }
+        ],
+        conflicts=[
+            {
+                "client_envelope_id": conflicted.client_envelope_id,
+                "conflict_id": "conflict-1",
+                "message": "Needs manual review.",
+            }
+        ],
+    )
+
+    pending_after = reopened.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
+    dispatched = reopened.list_sync_v2_outbox_entries(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        status="dispatched",
+    )
+
+    assert result == {"dispatched": 1, "retained": 2}
+    assert [entry["client_envelope_id"] for entry in dispatched] == [accepted.client_envelope_id]
+    assert dispatched[0]["attempt_count"] == 1
+    assert [entry["client_envelope_id"] for entry in pending_after] == [
+        rejected.client_envelope_id,
+        conflicted.client_envelope_id,
+    ]
+    assert [entry["attempt_count"] for entry in pending_after] == [1, 1]
+    assert pending_after[0]["last_error"]["error_code"] == "stale_base"
+    assert pending_after[1]["last_error"]["error_code"] == "conflict"
 
 
 def test_domain_eligibility_defaults_to_not_eligible_and_persists_override(tmp_path):
