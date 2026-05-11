@@ -43,6 +43,27 @@ class LocalFirstSyncService:
         page_size: int | None = None,
         dataset_key: bytes | None = None,
     ) -> dict[str, Any]:
+        """Run one local-first Sync v2 push, pull, and apply cycle.
+
+        Args:
+            server_profile_id: Stable identifier for the configured server profile.
+            authenticated_principal_id: Optional user or account identity for scoped state.
+            workspace_scope: Optional workspace identifier for workspace-scoped datasets.
+            domains: Sync v2 domains to include in this cycle.
+            outgoing_envelopes: Additional unsaved envelopes to push with the durable outbox.
+            page_size: Optional pull page size to request from the server.
+            dataset_key: Optional dataset key override for decrypting pulled envelopes.
+
+        Returns:
+            Summary containing pushed, pulled, applied, conflict, cursor, and outbox counts.
+
+        Raises:
+            ValueError: If profile state, dataset identity, encryption key, or transport
+                validation is invalid.
+            Exception: Propagates server transport and local apply failures after recording
+                sync state.
+        """
+
         profile = self.state_repository.get_sync_v2_profile_state(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
@@ -104,62 +125,112 @@ class LocalFirstSyncService:
             envelope.model_dump(mode="json")
             for envelope in outgoing_parsed
         ]
-        push_payloads = outbox_payloads + outgoing_payloads
-        push_record: dict[str, Any] = {}
+        push_items = [
+            {"payload": payload, "outbox_entry": entry}
+            for payload, entry in zip(outbox_payloads, outbox_entries)
+        ]
+        push_items.extend(
+            {"payload": payload, "outbox_entry": None}
+            for payload in outgoing_payloads
+        )
+        push_record: dict[str, Any] = {
+            "dataset_id": str(dataset_id),
+            "accepted": [],
+            "rejected": [],
+            "conflicts": [],
+        }
         outbox_result = {"dispatched": 0, "retained": 0}
-        if push_payloads:
-            try:
-                push_record = self._dump(
-                    await self.server_service.push_v2_envelopes(
-                        dataset_id=str(dataset_id),
-                        device_id=str(device_id),
-                        envelopes=push_payloads,
-                        idempotency_key=self._push_idempotency_key(
+        if push_items:
+            processed_outbox_ids: set[int] = set()
+            push_cursor = cursor_record.cursor
+            for batch_items in self._chunk_push_items(
+                push_items,
+                batch_size=self._max_push_batch_size(
+                    profile.get("capabilities"),
+                    fallback_size=len(push_items),
+                ),
+            ):
+                batch_payloads = [
+                    item["payload"]
+                    for item in batch_items
+                ]
+                try:
+                    batch_record = self._dump(
+                        await self.server_service.push_v2_envelopes(
                             dataset_id=str(dataset_id),
                             device_id=str(device_id),
-                            cursor=cursor_record.cursor,
-                            envelopes=push_payloads,
-                        ),
-                        last_known_cursor=cursor_record.cursor,
+                            envelopes=batch_payloads,
+                            domains=list(domains),
+                            idempotency_key=self._push_idempotency_key(
+                                dataset_id=str(dataset_id),
+                                device_id=str(device_id),
+                                cursor=push_cursor,
+                                envelopes=batch_payloads,
+                            ),
+                            last_known_cursor=push_cursor,
+                        )
                     )
-                )
-            except Exception as exc:
-                if outbox_entries:
-                    self._record_outbox_push_failure(
+                    batch_outbox_entries = [
+                        item["outbox_entry"]
+                        for item in batch_items
+                        if item["outbox_entry"] is not None
+                    ]
+                except Exception as exc:
+                    failed_outbox_entries = [
+                        entry
+                        for entry in outbox_entries
+                        if int(entry["outbox_id"]) not in processed_outbox_ids
+                    ]
+                    if failed_outbox_entries:
+                        self._record_outbox_push_failure(
+                            server_profile_id=server_profile_id,
+                            authenticated_principal_id=authenticated_principal_id,
+                            workspace_scope=workspace_scope,
+                            dataset_id=str(dataset_id),
+                            outbox_entries=failed_outbox_entries,
+                            exc=exc,
+                        )
+                    self._record_sync_error(profile=profile, stage="push", exc=exc)
+                    raise
+
+                try:
+                    validate_push_response_scope(
+                        dataset_id=str(dataset_id),
+                        response_dataset_id=batch_record.get("dataset_id"),
+                        submitted_client_envelope_ids=[
+                            str(envelope["client_envelope_id"])
+                            for envelope in batch_payloads
+                        ],
+                        accepted=batch_record.get("accepted", []),
+                        rejected=batch_record.get("rejected", []),
+                        conflicts=batch_record.get("conflicts", []),
+                    )
+                except Exception as exc:
+                    self._record_sync_error(profile=profile, stage="push", exc=exc)
+                    raise
+
+                for result_key in ("accepted", "rejected", "conflicts"):
+                    push_record[result_key].extend(batch_record.get(result_key, []))
+                if batch_record.get("next_cursor") is not None:
+                    push_cursor = batch_record.get("next_cursor")
+                    push_record["next_cursor"] = push_cursor
+
+                if batch_outbox_entries:
+                    batch_result = self.state_repository.mark_sync_v2_outbox_push_results(
                         server_profile_id=server_profile_id,
                         authenticated_principal_id=authenticated_principal_id,
                         workspace_scope=workspace_scope,
                         dataset_id=str(dataset_id),
-                        outbox_entries=outbox_entries,
-                        exc=exc,
-                )
-                self._record_sync_error(profile=profile, stage="push", exc=exc)
-                raise
-            try:
-                validate_push_response_scope(
-                    dataset_id=str(dataset_id),
-                    response_dataset_id=push_record.get("dataset_id"),
-                    submitted_client_envelope_ids=[
-                        str(envelope["client_envelope_id"])
-                        for envelope in push_payloads
-                    ],
-                    accepted=push_record.get("accepted", []),
-                    rejected=push_record.get("rejected", []),
-                    conflicts=push_record.get("conflicts", []),
-                )
-            except Exception as exc:
-                self._record_sync_error(profile=profile, stage="push", exc=exc)
-                raise
-            if outbox_entries:
-                outbox_result = self.state_repository.mark_sync_v2_outbox_push_results(
-                    server_profile_id=server_profile_id,
-                    authenticated_principal_id=authenticated_principal_id,
-                    workspace_scope=workspace_scope,
-                    dataset_id=str(dataset_id),
-                    accepted=push_record.get("accepted", []),
-                    rejected=push_record.get("rejected", []),
-                    conflicts=push_record.get("conflicts", []),
-                )
+                        accepted=batch_record.get("accepted", []),
+                        rejected=batch_record.get("rejected", []),
+                        conflicts=batch_record.get("conflicts", []),
+                    )
+                    outbox_result["dispatched"] += batch_result["dispatched"]
+                    outbox_result["retained"] += batch_result["retained"]
+                    processed_outbox_ids.update(
+                        int(entry["outbox_id"])
+                        for entry in batch_outbox_entries
+                    )
 
         try:
             pulled = self._dump(
@@ -278,6 +349,29 @@ class LocalFirstSyncService:
         if isinstance(envelope, SyncV2Envelope):
             return envelope
         return SyncV2Envelope.model_validate(envelope)
+
+    @staticmethod
+    def _max_push_batch_size(capabilities: Any, *, fallback_size: int) -> int:
+        if not isinstance(capabilities, Mapping):
+            return max(1, fallback_size)
+        raw_batch_size = capabilities.get("max_batch_size")
+        if raw_batch_size is None:
+            return max(1, fallback_size)
+        batch_size = int(raw_batch_size)
+        if batch_size <= 0:
+            raise ValueError("Sync v2 max_batch_size must be positive")
+        return batch_size
+
+    @staticmethod
+    def _chunk_push_items(
+        push_items: list[Mapping[str, Any]],
+        *,
+        batch_size: int,
+    ) -> list[list[Mapping[str, Any]]]:
+        return [
+            push_items[index:index + batch_size]
+            for index in range(0, len(push_items), batch_size)
+        ]
 
     @staticmethod
     def _push_idempotency_key(

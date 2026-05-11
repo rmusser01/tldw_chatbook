@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Sync_Interop import sync_state_repository as sync_state_repository_module
 
 
 def test_identity_mapping_persists_scope_and_side_keys(tmp_path):
@@ -231,6 +234,107 @@ def test_sync_v2_profile_state_persists_device_dataset_cursors_and_metadata(tmp_
     assert stored["dataset_cursors"] == {"notes": "cursor-1"}
     assert stored["capabilities"] == {"max_batch_size": 100}
     assert stored["dry_run_metadata"] == {"pulled_envelopes": 0}
+
+
+def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
+    db_path = tmp_path / "sync_state.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE schema_version (
+                version INTEGER PRIMARY KEY NOT NULL
+            );
+            INSERT INTO schema_version (version) VALUES (1);
+
+            CREATE TABLE sync_profile_state (
+                source_authority TEXT NOT NULL,
+                server_profile_id TEXT NOT NULL,
+                authenticated_principal_id TEXT NOT NULL,
+                workspace_scope TEXT NOT NULL,
+                last_error TEXT,
+                last_mirror_report_id INTEGER,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (
+                    source_authority,
+                    server_profile_id,
+                    authenticated_principal_id,
+                    workspace_scope
+                )
+            );
+            """
+        )
+
+    repo = SyncStateRepository(db_path)
+    with repo._get_connection() as conn:
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(sync_profile_state)").fetchall()
+        }
+        outbox = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_v2_local_outbox'"
+        ).fetchone()
+        schema_version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        schema_versions = [
+            row[0]
+            for row in conn.execute("SELECT version FROM schema_version ORDER BY version").fetchall()
+        ]
+
+    assert {
+        "profile_mode",
+        "device_id",
+        "dataset_id",
+        "dataset_cursors",
+        "capabilities",
+        "dry_run_metadata",
+    }.issubset(columns)
+    assert outbox is not None
+    assert schema_version == 2
+    assert schema_versions == [2]
+
+
+def test_sync_v2_profile_column_migration_validates_column_identifiers(tmp_path, monkeypatch):
+    db_path = tmp_path / "sync_state.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE schema_version (
+                version INTEGER PRIMARY KEY NOT NULL
+            );
+            INSERT INTO schema_version (version) VALUES (1);
+
+            CREATE TABLE sync_profile_state (
+                source_authority TEXT NOT NULL,
+                server_profile_id TEXT NOT NULL,
+                authenticated_principal_id TEXT NOT NULL,
+                workspace_scope TEXT NOT NULL,
+                last_error TEXT,
+                last_mirror_report_id INTEGER,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (
+                    source_authority,
+                    server_profile_id,
+                    authenticated_principal_id,
+                    workspace_scope
+                )
+            );
+            """
+        )
+    calls: list[tuple[str, str | None]] = []
+
+    def record_validated_column(column_name: str, table_name: str | None = None) -> bool:
+        calls.append((column_name, table_name))
+        return True
+
+    monkeypatch.setattr(
+        sync_state_repository_module,
+        "validate_column_name",
+        record_validated_column,
+    )
+
+    SyncStateRepository(db_path)
+
+    assert ("profile_mode", "sync_profile_state") in calls
+    assert ("dry_run_metadata", "sync_profile_state") in calls
 
 
 def test_sync_v2_outbox_persists_pending_entries_and_push_results(tmp_path):

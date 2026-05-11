@@ -143,7 +143,26 @@ class ServerSyncService:
         scope_type: str = "personal",
         encryption_policy: str = "client_private_v1",
     ) -> dict[str, Any]:
-        """Negotiate Sync v2 state without sending or applying content envelopes."""
+        """Negotiate Sync v2 state without sending or applying content envelopes.
+
+        Args:
+            server_profile_id: Stable identifier for the configured server profile.
+            authenticated_principal_id: Optional user or account identity for scoped state.
+            workspace_scope: Optional workspace identifier for workspace-scoped datasets.
+            display_name: Human-readable device name to register with the server.
+            domains: Candidate domains to request for the dataset.
+            client_version: Optional Chatbook client version to advertise.
+            scope_type: Dataset scope type requested from the server.
+            encryption_policy: Sync v2 encryption policy requested for the dataset.
+
+        Returns:
+            Dry-run summary with negotiated device, dataset, domain, cursor, and key setup state.
+
+        Raises:
+            ValueError: If state storage is unavailable, required identifiers are missing, or
+                the server does not support any requested domains.
+            PolicyDeniedError: If runtime policy blocks server Sync v2 dry-run access.
+        """
 
         if self.state_repository is None:
             raise ValueError("Sync state repository is required for Sync v2 dry-run.")
@@ -351,10 +370,27 @@ class ServerSyncService:
         dataset_id: str,
         device_id: str,
         envelopes: list[SyncV2Envelope | Mapping[str, Any]],
+        domains: list[str] | None = None,
         idempotency_key: str | None = None,
         last_known_cursor: str | None = None,
     ) -> dict[str, Any]:
-        """Push local-first Sync v2 envelopes through the policy-gated transport."""
+        """Push local-first Sync v2 envelopes through the policy-gated transport.
+
+        Args:
+            dataset_id: Dataset receiving the envelopes.
+            device_id: Local device identity that produced the envelopes.
+            envelopes: Sync v2 envelopes or envelope dictionaries to push.
+            domains: Optional domain allow-list for scoped outgoing validation.
+            idempotency_key: Optional stable key for retry-safe server dispatch.
+            last_known_cursor: Optional cursor known before this push.
+
+        Returns:
+            Server push response after dataset, envelope ID, and batch integrity validation.
+
+        Raises:
+            ValueError: If outgoing envelopes or the server response violate Sync v2 scope.
+            PolicyDeniedError: If runtime policy blocks server Sync v2 push access.
+        """
 
         self._enforce("sync.v2.push.server")
         coerced_envelopes = [
@@ -367,7 +403,11 @@ class ServerSyncService:
             dataset_id=dataset_id,
             device_id=device_id,
             envelopes=coerced_envelopes,
-            domains=[],
+            domains=(
+                domains
+                if domains is not None
+                else sorted({str(envelope.domain) for envelope in coerced_envelopes})
+            ),
         )
         request = SyncV2PushRequest(
             dataset_id=dataset_id,
@@ -400,7 +440,23 @@ class ServerSyncService:
         page_size: int | None = None,
         include_own_changes: bool = False,
     ) -> dict[str, Any]:
-        """Pull selected Sync v2 envelopes for restore or incremental sync."""
+        """Pull selected Sync v2 envelopes for restore or incremental sync.
+
+        Args:
+            dataset_id: Dataset to pull from.
+            device_id: Local device identity making the request.
+            cursor: Optional cursor for incremental sync.
+            domains: Optional domain filter to request and validate.
+            page_size: Optional maximum number of envelopes to request.
+            include_own_changes: Whether restore flows may include envelopes from this device.
+
+        Returns:
+            Server pull response after dataset, domain, device, and pagination validation.
+
+        Raises:
+            ValueError: If pulled envelopes or pagination state violate Sync v2 scope.
+            PolicyDeniedError: If runtime policy blocks server Sync v2 pull access.
+        """
 
         self._enforce("sync.v2.restore.pull.server")
         response = self._dump(

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from tldw_chatbook.DB.base_db import BaseDB
+from tldw_chatbook.DB.sql_validation import validate_column_name
 from tldw_chatbook.runtime_policy.server_parity_models import SourceAuthority
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
@@ -28,6 +29,7 @@ _LOCAL_NULL_ALLOWED = {"candidate", "orphaned_remote", "unsupported"}
 _REMOTE_NULL_ALLOWED = {"candidate", "orphaned_local", "unsupported"}
 _SYNC_V2_PROFILE_MODES = {"local_only", "local_first", "server_frontend"}
 _SYNC_V2_OUTBOX_STATUSES = {"pending", "dispatched"}
+SYNC_STATE_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +91,7 @@ class SyncStateRepository(BaseDB):
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY NOT NULL
                 );
-                INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+                INSERT OR IGNORE INTO schema_version (version) VALUES (2);
 
                 CREATE TABLE IF NOT EXISTS sync_identity_mappings (
                     mapping_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -215,6 +217,7 @@ class SyncStateRepository(BaseDB):
                 """
             )
             self._ensure_sync_v2_profile_columns(conn)
+            self._record_schema_version(conn)
 
     def record_identity_mapping(
         self,
@@ -1232,9 +1235,24 @@ class SyncStateRepository(BaseDB):
         }
         for column_name, definition in column_defs.items():
             if column_name not in existing_columns:
+                if not validate_column_name(column_name, "sync_profile_state"):
+                    raise ValueError(f"Invalid sync_profile_state column name: {column_name}")
                 conn.execute(
                     f"ALTER TABLE sync_profile_state ADD COLUMN {column_name} {definition}"
                 )
+
+    @staticmethod
+    def _record_schema_version(conn: sqlite3.Connection) -> None:
+        current_version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        if current_version is None or int(current_version) < SYNC_STATE_SCHEMA_VERSION:
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
+                (SYNC_STATE_SCHEMA_VERSION,),
+            )
+        conn.execute(
+            "DELETE FROM schema_version WHERE version < ?",
+            (SYNC_STATE_SCHEMA_VERSION,),
+        )
 
     @staticmethod
     def _detect_identity_conflicts(

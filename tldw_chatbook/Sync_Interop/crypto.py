@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import os
 from typing import Any, Mapping
@@ -19,6 +20,12 @@ SCRYPT_N = 16_384
 SCRYPT_R = 8
 SCRYPT_P = 1
 SCRYPT_SALT_BYTES = 32
+SCRYPT_MIN_N = SCRYPT_N
+SCRYPT_MAX_N = SCRYPT_N
+SCRYPT_MIN_R = SCRYPT_R
+SCRYPT_MAX_R = SCRYPT_R
+SCRYPT_MIN_P = SCRYPT_P
+SCRYPT_MAX_P = SCRYPT_P
 
 
 class SyncEncryptedPayload(BaseModel):
@@ -75,7 +82,7 @@ def decrypt_sync_payload(encrypted: SyncEncryptedPayload | Mapping[str, Any], *,
             _b64decode(record.tag),
         )
         value = json.loads(plaintext.decode("utf-8"))
-    except Exception as exc:
+    except (binascii.Error, json.JSONDecodeError, TypeError, UnicodeDecodeError, ValueError) as exc:
         raise ValueError("Failed to decrypt sync payload") from exc
     if not isinstance(value, dict):
         raise ValueError("Failed to decrypt sync payload")
@@ -121,7 +128,7 @@ def unwrap_recovery_bundle(
     record = _coerce_recovery_bundle(bundle)
     try:
         metadata = record.kdf_metadata
-        salt = _b64decode(str(metadata["salt"]))
+        salt, n, r, p = _validated_recovery_kdf_parameters(metadata)
         wrapped = _b64decode(record.wrapped_key_blob)
         min_len = AES_GCM_NONCE_BYTES + DATASET_KEY_BYTES + AES_GCM_TAG_BYTES
         if len(wrapped) < min_len:
@@ -132,16 +139,44 @@ def unwrap_recovery_bundle(
         wrapping_key = _derive_recovery_key(
             recovery_secret,
             salt=salt,
-            n=int(metadata.get("n", SCRYPT_N)),
-            r=int(metadata.get("r", SCRYPT_R)),
-            p=int(metadata.get("p", SCRYPT_P)),
+            n=n,
+            r=r,
+            p=p,
         )
         cipher = AES.new(wrapping_key, AES.MODE_GCM, nonce=nonce)
         dataset_key = cipher.decrypt_and_verify(ciphertext, tag)
-    except Exception as exc:
+    except ValueError as exc:
+        if str(exc).startswith("unsupported scrypt"):
+            raise
+        raise ValueError("Failed to unwrap recovery bundle") from exc
+    except (binascii.Error, KeyError, TypeError) as exc:
         raise ValueError("Failed to unwrap recovery bundle") from exc
     _validate_dataset_key(dataset_key)
     return dataset_key
+
+
+def _validated_recovery_kdf_parameters(metadata: Mapping[str, Any]) -> tuple[bytes, int, int, int]:
+    if metadata.get("algorithm") != "scrypt":
+        raise ValueError("unsupported recovery bundle kdf algorithm")
+    if int(metadata.get("version", 1)) != 1:
+        raise ValueError("unsupported recovery bundle kdf version")
+    if int(metadata.get("key_len", DATASET_KEY_BYTES)) != DATASET_KEY_BYTES:
+        raise ValueError("unsupported recovery bundle key length")
+
+    n = _validated_scrypt_parameter(metadata.get("n", SCRYPT_N), "n", SCRYPT_MIN_N, SCRYPT_MAX_N)
+    r = _validated_scrypt_parameter(metadata.get("r", SCRYPT_R), "r", SCRYPT_MIN_R, SCRYPT_MAX_R)
+    p = _validated_scrypt_parameter(metadata.get("p", SCRYPT_P), "p", SCRYPT_MIN_P, SCRYPT_MAX_P)
+    salt = _b64decode(str(metadata["salt"]))
+    if len(salt) != SCRYPT_SALT_BYTES:
+        raise ValueError("invalid recovery bundle salt length")
+    return salt, n, r, p
+
+
+def _validated_scrypt_parameter(value: Any, name: str, minimum: int, maximum: int) -> int:
+    parsed = int(value)
+    if parsed < minimum or parsed > maximum:
+        raise ValueError(f"unsupported scrypt {name}")
+    return parsed
 
 
 def _derive_recovery_key(

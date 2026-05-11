@@ -36,9 +36,10 @@ class FakeLocalFirstServer:
         envelopes,
         idempotency_key=None,
         last_known_cursor=None,
+        domains=None,
     ):
         self.calls.append(
-            ("push", dataset_id, device_id, envelopes, idempotency_key, last_known_cursor)
+            ("push", dataset_id, device_id, envelopes, idempotency_key, last_known_cursor, domains)
         )
         if self.push_error is not None:
             raise self.push_error
@@ -105,6 +106,7 @@ def _repo_with_profile(
     *,
     profile_mode="local_first",
     last_error: str | None = None,
+    capabilities: dict | None = None,
 ) -> SyncStateRepository:
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     repo.set_sync_v2_profile_state(
@@ -115,7 +117,7 @@ def _repo_with_profile(
         device_id="device-1",
         dataset_id="dataset-1",
         dataset_cursors={"sync_v2": "7"},
-        capabilities={"supported_domains": ["notes"]},
+        capabilities=capabilities or {"supported_domains": ["notes"]},
         dry_run_metadata={"dry_run": True},
         last_error=last_error,
     )
@@ -193,6 +195,44 @@ async def test_local_first_sync_once_pushes_pulls_applies_and_persists_cursor(tm
         authenticated_principal_id="user-a",
         workspace_scope="workspace-1",
     )["dataset_cursors"]["sync_v2"] == "9"
+
+
+async def test_local_first_sync_once_chunks_pushes_by_server_max_batch_size(tmp_path):
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    )
+    outgoing = [
+        builder.build_note_metadata_update(note_id=f"note-{index}", status="archived")
+        for index in range(5)
+    ]
+    repo = _repo_with_profile(
+        tmp_path,
+        capabilities={"supported_domains": ["notes"], "max_batch_size": 2},
+    )
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes"],
+        outgoing_envelopes=outgoing,
+    )
+
+    push_calls = [call for call in server.calls if call[0] == "push"]
+    assert [len(call[3]) for call in push_calls] == [2, 2, 1]
+    assert [call[6] for call in push_calls] == [["notes"], ["notes"], ["notes"]]
+    assert len({call[4] for call in push_calls}) == 3
+    assert result["pushed_envelopes"] == 5
 
 
 async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_failures(tmp_path):

@@ -571,6 +571,22 @@ async def test_server_sync_service_rejects_mismatched_v2_push_device_before_disp
 
 
 @pytest.mark.asyncio
+async def test_server_sync_service_rejects_v2_push_domain_outside_allowlist_before_dispatch():
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="domain"):
+        await service.push_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            domains=["notes"],
+            envelopes=[_sync_v2_envelope(domain="chat")],
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_server_sync_service_rejects_duplicate_v2_push_envelope_ids_before_dispatch():
     client = FakeSyncClient()
     service = ServerSyncService(client=client)

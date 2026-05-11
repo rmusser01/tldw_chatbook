@@ -14772,6 +14772,15 @@ class TLDWAPIClient:
         return ServerChangesResponse.model_validate(response)
 
     async def get_sync_v2_capabilities(self) -> SyncV2CapabilitiesResponse:
+        """Fetch server-advertised Sync v2 protocol capabilities.
+
+        Returns:
+            Parsed capability record with protocol versions, supported domains, and limits.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
         response = await self._request("GET", "/api/v1/sync/capabilities")
         return SyncV2CapabilitiesResponse.model_validate(response)
 
@@ -14779,6 +14788,19 @@ class TLDWAPIClient:
         self,
         request_data: SyncV2DeviceRegisterRequest,
     ) -> SyncV2DeviceRegisterResponse:
+        """Register or refresh a Chatbook Sync v2 device identity.
+
+        Args:
+            request_data: Device registration request with display name, client type,
+                supported domains, and optional existing device ID.
+
+        Returns:
+            Parsed device registration response with assigned device ID and server capabilities.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
         response = await self._request(
             "POST",
             "/api/v1/sync/devices/register",
@@ -14790,6 +14812,19 @@ class TLDWAPIClient:
         self,
         request_data: SyncV2DatasetEnrollRequest,
     ) -> SyncV2DatasetEnrollResponse:
+        """Enroll or refresh a Sync v2 dataset for a registered device.
+
+        Args:
+            request_data: Dataset enrollment request containing device, scope, domains,
+                encryption policy, and optional existing dataset ID.
+
+        Returns:
+            Parsed dataset enrollment response with dataset identity, cursors, and key setup state.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
         response = await self._request(
             "POST",
             "/api/v1/sync/datasets/enroll",
@@ -14798,6 +14833,18 @@ class TLDWAPIClient:
         return SyncV2DatasetEnrollResponse.model_validate(response)
 
     async def push_sync_v2_envelopes(self, request_data: SyncV2PushRequest) -> SyncV2PushResponse:
+        """Push a batch of Sync v2 envelopes to the server.
+
+        Args:
+            request_data: Push request containing dataset, device, envelopes, and retry metadata.
+
+        Returns:
+            Parsed push response with accepted, rejected, conflict, and cursor information.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
         response = await self._request(
             "POST",
             "/api/v1/sync/push",
@@ -14815,6 +14862,23 @@ class TLDWAPIClient:
         page_size: int | None = None,
         include_own_changes: bool = False,
     ) -> SyncV2PullResponse:
+        """Pull Sync v2 envelopes for a dataset.
+
+        Args:
+            dataset_id: Dataset to pull from.
+            device_id: Local device identity making the request.
+            cursor: Optional incremental cursor.
+            domains: Optional domain filter.
+            page_size: Optional page size requested from the server.
+            include_own_changes: Whether the response may include envelopes from this device.
+
+        Returns:
+            Parsed pull response with envelopes, cursor, and pagination state.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
         response = await self._request(
             "GET",
             "/api/v1/sync/pull",
@@ -14835,6 +14899,19 @@ class TLDWAPIClient:
         dataset_ids: list[str] | None = None,
         domains: list[str] | None = None,
     ) -> SyncV2RestoreManifestResponse:
+        """Fetch metadata-only Sync v2 restore manifest records.
+
+        Args:
+            dataset_ids: Optional dataset IDs to include.
+            domains: Optional domains to include.
+
+        Returns:
+            Parsed restore manifest response containing datasets, devices, counts, and filters.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
         response = await self._request(
             "GET",
             "/api/v1/sync/restore-manifest",
@@ -14848,6 +14925,19 @@ class TLDWAPIClient:
         dataset_id: str,
         status: str | None = None,
     ) -> list[SyncV2ConflictRecord]:
+        """List Sync v2 conflicts for a dataset.
+
+        Args:
+            dataset_id: Dataset whose conflicts should be listed.
+            status: Optional conflict status filter.
+
+        Returns:
+            Parsed conflict records.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
         response = await self._request(
             "GET",
             "/api/v1/sync/conflicts",
@@ -14860,6 +14950,19 @@ class TLDWAPIClient:
         conflict_id: str,
         request_data: SyncV2ConflictResolveRequest,
     ) -> SyncV2ConflictRecord:
+        """Resolve a Sync v2 conflict by ID.
+
+        Args:
+            conflict_id: Server conflict identifier.
+            request_data: Resolution action, optional envelope, device, and notes.
+
+        Returns:
+            Parsed conflict record after resolution.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
         response = await self._request(
             "POST",
             f"/api/v1/sync/conflicts/{conflict_id}/resolve",
@@ -14871,6 +14974,18 @@ class TLDWAPIClient:
         self,
         request_data: SyncV2KeyRecoveryBundleRequest,
     ) -> SyncV2KeyRecoveryBundleResponse:
+        """Store an opaque Sync v2 key recovery bundle on the server.
+
+        Args:
+            request_data: Recovery bundle request containing wrapped key material and metadata.
+
+        Returns:
+            Parsed recovery bundle record created by the server.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
         response = await self._request(
             "POST",
             "/api/v1/sync/keys/recovery-bundle",
@@ -14885,6 +15000,20 @@ class TLDWAPIClient:
         device_id: str | None = None,
         key_purpose: str | None = "dataset_recovery",
     ) -> SyncV2KeyRecoveryBundleListResponse:
+        """List opaque Sync v2 key recovery bundles for a dataset.
+
+        Args:
+            dataset_id: Dataset whose recovery bundles should be listed.
+            device_id: Optional device filter.
+            key_purpose: Optional key purpose filter.
+
+        Returns:
+            Parsed recovery bundle list response.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
         response = await self._request(
             "GET",
             "/api/v1/sync/keys/recovery-bundle",
