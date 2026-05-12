@@ -61,7 +61,7 @@ class ACPScreen(BaseAppScreen):
                     "Modes: Agents Sessions Runtimes Compatibility | Filter: Ready Blocked",
                     id="acp-mode-label",
                     classes="destination-section",
-            )
+                )
             with Horizontal(id="acp-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="acp-list-pane", classes="destination-workbench-pane"):
                     yield Static(

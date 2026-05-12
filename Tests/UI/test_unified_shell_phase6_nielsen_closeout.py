@@ -101,7 +101,7 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             acp_text = _screen_text(app)
             assert "Runtime not configured" in acp_text
             assert "Why: no ACP-compatible runtime is configured" in acp_text
-            assert "Next: Configure an ACP runtime in Settings before launch." in acp_text
+            assert "Next: Configure ACP runtime setup in ACP before launch." in acp_text
             assert app.screen.query_one("#acp-launch-agent", Button).disabled is True
 
             app.screen.query_one("#nav-library", Button).press()
