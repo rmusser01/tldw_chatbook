@@ -1,7 +1,7 @@
 ---
 id: TASK-14.11
 title: 'Screen QA: Skills'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-05-09 03:46'
 labels:
@@ -29,10 +29,22 @@ Validate and correct the Skills top-level destination screen through actual rend
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Baseline actual screenshot captured
-- [ ] #2 Interaction smoke path exercised
-- [ ] #3 Final actual screenshot captured
-- [ ] #4 User approval recorded before PR
-- [ ] #5 Focused tests pass
+- [x] #1 Baseline actual screenshot captured
+- [x] #2 Interaction smoke path exercised
+- [x] #3 Final actual screenshot captured
+- [x] #4 User approval recorded before PR
+- [x] #5 Focused tests pass
 - [ ] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Capture the current Skills screen from the running app as the baseline screenshot.
+2. Exercise a realistic Skills workflow: inspect installed/empty/local state and verify Console attach/import disabled recovery.
+3. Add or update a focused mounted regression for the approved Skills IA if current coverage does not catch the visual defect.
+4. Update the Skills screen minimally to match the approved Textual-native column pattern while preserving existing local skills listing and Console handoff behavior.
+5. Rebuild generated modular CSS if TCSS changes, run focused verification, then capture the final actual screenshot for user approval before opening a PR.
+
+## Implementation Notes
+
+Adapted the Skills destination to the approved compact three-column workbench pattern and recorded baseline/final actual textual-web screenshots. Added focused mounted coverage for the Skills column contract and empty-state behavior, and moved local skills discovery to a thread worker so the live textual-web screen resolves out of the loading state. Import remains intentionally disabled because the shell does not yet wire external Agent Skills import; the inspector now presents that state explicitly.

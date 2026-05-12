@@ -1504,6 +1504,27 @@ async def test_skills_destination_empty_state_disables_console_attach():
 
 
 @pytest.mark.asyncio
+async def test_skills_destination_uses_three_column_workbench_contract():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService([])
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        text = _visible_text(screen)
+
+        assert "Skills | Agent Skills packs, validation, Console attachments | Local" in text
+        assert "Mode: Installed / Validate / Attach | Source: local SKILL.md directories" in text
+        assert "Column 1: Skill Library" in text
+        assert "Column 2: Skill Detail / SKILL.md" in text
+        assert "Column 3: Skill Inspector" in text
+        assert screen.query_one("#skills-workbench").region.height >= 20
+        assert screen.query_one("#skills-list-detail-divider")
+        assert screen.query_one("#skills-detail-inspector-divider")
+
+
+@pytest.mark.asyncio
 async def test_skills_destination_service_failure_uses_recovery_copy():
     app = _build_test_app()
     app.skills_scope_service = RaisingSkillsScopeService()
