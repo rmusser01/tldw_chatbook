@@ -1468,8 +1468,8 @@ async def test_skills_destination_lists_local_skills_from_scope_service():
     host = DestinationHarness(app, "skills")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
         text = _visible_text(screen)
         button = screen.query_one("#skills-attach-to-console", Button)
 
@@ -1494,13 +1494,34 @@ async def test_skills_destination_empty_state_disables_console_attach():
     host = DestinationHarness(app, "skills")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
         button = screen.query_one("#skills-attach-to-console", Button)
 
         assert "No local Agent Skills are installed yet." in _visible_text(screen)
         assert button.disabled is True
         assert "Stage local skill context" in str(button.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_uses_three_column_workbench_contract():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService([])
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        text = _visible_text(screen)
+
+        assert "Skills | Agent Skills packs, validation, Console attachments | Local" in text
+        assert "Mode: Installed / Validate / Attach | Source: local SKILL.md directories" in text
+        assert "Column 1: Skill Library" in text
+        assert "Column 2: Skill Detail / SKILL.md" in text
+        assert "Column 3: Skill Inspector" in text
+        assert screen.query_one("#skills-workbench").region.height >= 20
+        assert screen.query_one("#skills-list-detail-divider")
+        assert screen.query_one("#skills-detail-inspector-divider")
 
 
 @pytest.mark.asyncio
@@ -1510,8 +1531,8 @@ async def test_skills_destination_service_failure_uses_recovery_copy():
     host = DestinationHarness(app, "skills")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
         button = screen.query_one("#skills-attach-to-console", Button)
 
         assert "Skills service unavailable; retry Skills later." in _visible_text(screen)
@@ -1526,8 +1547,8 @@ async def test_skills_destination_missing_service_uses_unavailable_state():
     host = DestinationHarness(app, "skills")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
         button = screen.query_one("#skills-attach-to-console", Button)
 
         assert "Skills service is unavailable in this runtime." in _visible_text(screen)
@@ -1596,7 +1617,8 @@ async def test_skills_attach_to_console_uses_listed_skill_context():
     host = DestinationHarness(app, "skills")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
         await pilot.click("#skills-attach-to-console")
         await pilot.pause(0.1)
 
@@ -1631,8 +1653,8 @@ async def test_skills_attach_to_console_sanitizes_listed_skill_text():
     host = DestinationHarness(app, "skills")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
         visible_text = _visible_text(screen).lower()
         await pilot.click("#skills-attach-to-console")
         await pilot.pause(0.1)

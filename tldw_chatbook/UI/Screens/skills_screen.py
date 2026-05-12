@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 
@@ -12,7 +13,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.widgets import Button, Rule, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...runtime_policy.types import PolicyDeniedError
@@ -52,10 +53,15 @@ class SkillsScreen(BaseAppScreen):
         super().on_mount()
         self._refresh_local_skills_context()
 
-    @work(exclusive=True)
-    async def _refresh_local_skills_context(self) -> None:
-        records, lookup_error, recovery_state = await self._list_local_skills()
-        self._apply_local_skills_context(records, lookup_error, recovery_state)
+    @work(exclusive=True, thread=True)
+    def _refresh_local_skills_context(self) -> None:
+        records, lookup_error, recovery_state = asyncio.run(self._list_local_skills())
+        self.app.call_from_thread(
+            self._apply_local_skills_context,
+            records,
+            lookup_error,
+            recovery_state,
+        )
 
     def _apply_local_skills_context(
         self,
@@ -159,26 +165,32 @@ class SkillsScreen(BaseAppScreen):
             for record in self._local_skill_records
         ]
 
+    @staticmethod
+    def _column_divider(identifier: str) -> Rule:
+        divider = Rule(orientation="vertical", id=identifier)
+        divider.add_class("destination-pane-divider")
+        return divider
+
     def compose_content(self) -> ComposeResult:
         local_skills_service = getattr(self.app_instance, "local_skills_service", None)
         skills_dir = getattr(local_skills_service, "skills_dir", None)
         skills_dir_label = str(skills_dir) if skills_dir is not None else "Local skills directory unavailable."
 
         with Vertical(id="skills-shell"):
-            yield Static("Skills", id="skills-title", classes="ds-destination-header")
             yield Static(
-                "Skills owns Agent Skills packs. Each skill is a directory with a required SKILL.md file.",
-                id="skills-purpose",
-                classes="destination-purpose",
+                "Skills | Agent Skills packs, validation, Console attachments | Local",
+                id="skills-title",
+                classes="ds-destination-header",
             )
             with DestinationModeStrip(id="skills-mode-strip", classes="destination-mode-strip"):
                 yield Static(
-                    "Mode: Installed | Validate | Attach",
+                    "Mode: Installed / Validate / Attach | Source: local SKILL.md directories",
                     id="skills-mode-label",
                     classes="destination-section",
                 )
             with Horizontal(id="skills-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="skills-list-pane", classes="destination-workbench-pane"):
+                    yield Static("Column 1: Skill Library", classes="destination-section skills-column-title")
                     yield Static("Installed", classes="destination-section")
                     yield Static("Discover/Import", classes="destination-section")
                     yield Static("Validate", classes="destination-section")
@@ -187,7 +199,12 @@ class SkillsScreen(BaseAppScreen):
                     yield Static("Assets", classes="destination-section")
                     yield Static("Attachments", classes="destination-section")
                     yield Static(f"Local skills directory: {skills_dir_label}", id="skills-local-directory")
+                yield self._column_divider("skills-list-detail-divider")
                 with Vertical(id="skills-detail-pane", classes="destination-workbench-pane"):
+                    yield Static(
+                        "Column 2: Skill Detail / SKILL.md",
+                        classes="destination-section skills-column-title",
+                    )
                     if not self._skills_loaded:
                         yield Static(
                             "Loading local Agent Skills...",
@@ -238,12 +255,14 @@ class SkillsScreen(BaseAppScreen):
                                     f"{escape_markup(name)} - {escape_markup(description)}"
                                 ),
                                 id=f"skills-local-skill-{index}",
-                            )
+                        )
                         attach_label = "Attach local Skills to Console"
                         attach_disabled = False
                         attach_tooltip = "Stage local skill context in Console."
+                yield self._column_divider("skills-detail-inspector-divider")
                 with Vertical(id="skills-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Skill Actions", classes="destination-section")
+                    yield Static("Column 3: Skill Inspector", classes="destination-section skills-column-title")
+                    yield Static("Actions", classes="destination-section")
                     yield Static(
                         "Skill import is not wired in this shell yet.",
                         id="skills-import-unavailable",

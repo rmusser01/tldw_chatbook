@@ -1,7 +1,7 @@
 ---
 id: TASK-14.10
 title: 'Screen QA: ACP'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 03:46'
 labels:
@@ -34,7 +34,7 @@ Validate and correct the ACP top-level destination screen through actual rendere
 - [x] #3 Final actual screenshot captured
 - [x] #4 User approval recorded before PR
 - [x] #5 Focused tests pass
-- [ ] #6 PR merged before next screen starts unless user explicitly overrides
+- [x] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,3 +51,4 @@ Validate and correct the ACP top-level destination screen through actual rendere
 - Updated ACP from a weak runtime-unconfigured row into a compact three-column shell with explicit pane titles and dividers.
 - Kept ACP runtime launch/follow honestly blocked while moving runtime setup ownership copy into ACP rather than Settings.
 - Added a mounted regression that verifies the visible ACP runtime setup and compatibility column contract.
+- PR #304 merged on 2026-05-12 as merge commit `34bed23340652e667f1087d96d897028b3725d81`.

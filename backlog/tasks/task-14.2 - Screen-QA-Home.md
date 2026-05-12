@@ -1,7 +1,7 @@
 ---
 id: TASK-14.2
 title: 'Screen QA: Home'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 03:46'
 updated_date: '2026-05-09 17:03'
@@ -35,7 +35,7 @@ Validate and correct the Home top-level destination screen through actual render
 - [x] #3 Final actual screenshot captured
 - [x] #4 User approval recorded before PR
 - [x] #5 Focused tests pass
-- [ ] #6 PR merged before next screen starts unless user explicitly overrides
+- [x] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,5 +53,5 @@ Validate and correct the Home top-level destination screen through actual render
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-PR #288 opened against dev for the approved Home screenshot QA pass. AC #6 remains open until PR merge is confirmed.
+PR #288 opened against dev for the approved Home screenshot QA pass and merged on 2026-05-09 as merge commit `3b4ae0405c92258258b44f82b60091cc0e50c82f`.
 <!-- SECTION:NOTES:END -->
