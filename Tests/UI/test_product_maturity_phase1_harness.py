@@ -74,6 +74,25 @@ def _task_text_by_id(task_id: str) -> str:
     raise AssertionError(f"task {task_id!r} not found by YAML frontmatter id")
 
 
+def _task_ids_by_path() -> dict[str, list[Path]]:
+    task_ids: dict[str, list[Path]] = {}
+
+    for path in sorted((REPO_ROOT / BACKLOG_TASKS).glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        frontmatter_match = FRONTMATTER_RE.match(text)
+        if not frontmatter_match:
+            continue
+        id_match = re.search(
+            r"^id:\s*['\"]?(TASK-[0-9]+(?:\.[0-9]+)*)['\"]?\s*$",
+            frontmatter_match.group("body"),
+            re.MULTILINE,
+        )
+        if id_match:
+            task_ids.setdefault(id_match.group(1), []).append(path.relative_to(REPO_ROOT))
+
+    return task_ids
+
+
 def _phase_row(markdown: str, phase_title: str) -> list[str]:
     for line in markdown.splitlines():
         if not line.startswith("|"):
@@ -82,6 +101,17 @@ def _phase_row(markdown: str, phase_title: str) -> list[str]:
         if columns and columns[0] == phase_title:
             return columns
     raise AssertionError(f"{phase_title!r} row not found")
+
+
+def test_backlog_task_frontmatter_ids_are_unique() -> None:
+    task_ids = _task_ids_by_path()
+    duplicates = {
+        task_id: paths
+        for task_id, paths in task_ids.items()
+        if len(paths) > 1
+    }
+
+    assert duplicates == {}
 
 
 def test_product_maturity_phase_one_harness_files_exist() -> None:
