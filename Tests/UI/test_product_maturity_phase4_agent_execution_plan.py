@@ -63,7 +63,7 @@ def test_phase4_agent_execution_plan_splits_parent_into_reviewable_child_tasks()
     assert PLAN.as_posix() in parent_task
     assert PLAN.as_posix() in tracker
     assert PHASE_4_QA_README.as_posix() in tracker
-    assert "Status: planned; child tasks defined" in qa_readme
+    assert "Status: verified for planning baseline; implementation slices remain open" in qa_readme
 
     for required_section in (
         "## Source Of Truth",
@@ -80,14 +80,20 @@ def test_phase4_agent_execution_plan_splits_parent_into_reviewable_child_tasks()
         assert task_id in plan
         assert task_id in parent_task
         assert task_id in tracker
-        assert "status: To Do" in task
+        if task_id == "TASK-11.1":
+            assert "status: Done" in task
+            for ac_number in range(1, 5):
+                assert f"- [x] #{ac_number}" in task
+            assert "## Implementation Notes" in task
+        else:
+            assert "status: To Do" in task
         assert "parent_task_id:" in task
         assert "TASK-11" in task
         assert "QA walkthrough" in task
         assert "focused regression" in task.lower()
 
     phase_row = _markdown_table_row(tracker, "Phase 4: Agent Configuration And Execution")
-    assert "in-progress; child tasks planned" in phase_row[2]
+    assert "in-progress; TASK-11.1 verified" in phase_row[2]
     for task_id in PHASE_4_CHILD_TASKS:
         assert task_id in phase_row[3]
     assert "phase-4/" in phase_row[4]
