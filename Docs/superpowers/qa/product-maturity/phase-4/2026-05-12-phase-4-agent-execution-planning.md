@@ -19,6 +19,6 @@ Phase 4 is ready for sequential execution. `TASK-11.1` is verified for planning 
 
 ## Verification
 
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_product_maturity_phase4_agent_execution_plan.py Tests/UI/test_product_maturity_phase3_layout_contracts.py Tests/UI/test_post_ux_product_roadmap_handoff.py --tb=short`
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_product_maturity_phase1_harness.py::test_backlog_task_frontmatter_ids_are_unique --tb=short`
+- `python -m pytest -q Tests/UI/test_product_maturity_phase4_agent_execution_plan.py Tests/UI/test_product_maturity_phase3_layout_contracts.py Tests/UI/test_post_ux_product_roadmap_handoff.py --tb=short`
+- `python -m pytest -q Tests/UI/test_product_maturity_phase1_harness.py::test_backlog_task_frontmatter_ids_are_unique --tb=short`
 - `git diff --check`
