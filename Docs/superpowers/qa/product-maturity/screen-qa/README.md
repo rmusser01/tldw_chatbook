@@ -26,5 +26,5 @@ This folder tracks actual rendered screenshot approval for the 12 top-level dest
 | 8 | Workflows | TASK-14.8 | `codex/screen-qa-workflows` | `workflows/baseline-2026-05-10-workflows.png` | `workflows/final-2026-05-10-workflows.png` | approved | #299 | merged |
 | 9 | MCP | TASK-14.9 | `codex/screen-qa-mcp` | `mcp/baseline-2026-05-10-mcp.png` | `mcp/final-2026-05-10-mcp.png` | approved | #301 | merged |
 | 10 | ACP | TASK-14.10 | `codex/screen-qa-acp` | `acp/baseline-2026-05-10-acp-rerun.png` | `acp/final-2026-05-10-acp-columns.png` | approved | #304 | merged |
-| 11 | Skills | TASK-14.11 | `codex/screen-qa-skills` | `skills/baseline-2026-05-11-skills.png` | `skills/final-2026-05-11-skills.png` | approved | pending | pending |
-| 12 | Settings | TASK-14.12 | `codex/screen-qa-settings` | pending | pending | pending | pending | pending |
+| 11 | Skills | TASK-14.11 | `codex/screen-qa-skills` | `skills/baseline-2026-05-11-skills.png` | `skills/final-2026-05-11-skills.png` | approved | #305 | merged |
+| 12 | Settings | TASK-14.12 | `codex/screen-qa-settings` | `settings/baseline-2026-05-11-settings.png` | `settings/final-2026-05-11-settings.png` | approved | pending | pending |

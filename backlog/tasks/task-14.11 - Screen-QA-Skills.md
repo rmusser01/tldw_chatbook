@@ -1,7 +1,7 @@
 ---
 id: TASK-14.11
 title: 'Screen QA: Skills'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 03:46'
 labels:
@@ -34,7 +34,7 @@ Validate and correct the Skills top-level destination screen through actual rend
 - [x] #3 Final actual screenshot captured
 - [x] #4 User approval recorded before PR
 - [x] #5 Focused tests pass
-- [ ] #6 PR merged before next screen starts unless user explicitly overrides
+- [x] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,3 +48,5 @@ Validate and correct the Skills top-level destination screen through actual rend
 ## Implementation Notes
 
 Adapted the Skills destination to the approved compact three-column workbench pattern and recorded baseline/final actual textual-web screenshots. Added focused mounted coverage for the Skills column contract and empty-state behavior, and moved local skills discovery to a thread worker so the live textual-web screen resolves out of the loading state. Import remains intentionally disabled because the shell does not yet wire external Agent Skills import; the inspector now presents that state explicitly.
+
+PR #305 was merged into `dev` at merge commit `3bb8f36ab6f9440a85f519f854182bbd9e099bac`.
