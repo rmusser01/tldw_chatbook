@@ -1316,6 +1316,34 @@ async def test_runtime_and_settings_default_states_preserve_workbench_geometry(
         )
 
 
+@pytest.mark.asyncio
+async def test_acp_runtime_blocked_state_uses_setup_and_compatibility_columns():
+    app = _build_test_app()
+    host = DestinationHarness(app, "acp")
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#acp-workbench")
+        _assert_ascii_workbench_contract(
+            screen,
+            workbench="#acp-workbench",
+            strip="#acp-mode-strip",
+            panes=("#acp-list-pane", "#acp-detail-pane", "#acp-inspector-pane"),
+            actions=("#acp-follow-in-console", "#acp-launch-agent"),
+            height=42,
+            start_by=8,
+            min_pane_rows=26,
+        )
+        visible_text = _visible_static_text(screen)
+        assert "Agents / Sessions" in visible_text
+        assert "Session Detail / Runtime Setup" in visible_text
+        assert "Compatibility / Actions" in visible_text
+        assert "Runtime owner: ACP" in visible_text
+        assert "ACP version: n/a" in visible_text
+        runtime_copy = str(screen.query_one("#acp-empty-state").renderable)
+        assert "Settings" not in runtime_copy
+        assert "Configure ACP runtime setup in ACP" in runtime_copy
+
+
 COMPACT_DESTINATION_CONTRACTS = {
     "home": {
         "identity": "#home-title",

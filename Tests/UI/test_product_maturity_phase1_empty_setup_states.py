@@ -179,14 +179,13 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             )
             await _wait_until(
                 pilot,
-                lambda: bool(app.screen.query("#chat-empty-state")),
-                context="console empty state",
+                lambda: bool(app.screen.query("#console-provider-blocker")),
+                context="console provider setup blocker",
             )
-            console_empty_state = app.screen.query_one("#chat-empty-state", Static)
-            console_text = str(console_empty_state.renderable)
-            assert "Provider readiness: OpenAI is not ready: Missing API key." in console_text
-            assert "Add api_key under [api_settings.openai]." in console_text
-            assert "Ctrl+P opens commands." in console_text
+            console_provider_blocker = app.screen.query_one("#console-provider-blocker", Static)
+            console_text = str(console_provider_blocker.renderable)
+            assert "Provider setup needed: OpenAI missing API key -> Settings" in console_text
+            assert "More: Ctrl+P" in _screen_text(app)
 
             await app.handle_screen_navigation(NavigateToScreen("acp"))
             await _wait_until(
@@ -198,10 +197,10 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             acp_launch = app.screen.query_one("#acp-launch-agent", Button)
             assert "Runtime not configured" in acp_text
             assert "Why: no ACP-compatible runtime is configured." in acp_text
-            assert "Next: Configure an ACP runtime in Settings before launch." in acp_text
-            assert "Owner: local app runtime." in acp_text
+            assert "Next: Configure ACP runtime setup in ACP before launch." in acp_text
+            assert "Owner: ACP runtime." in acp_text
             assert acp_launch.disabled is True
-            assert "Configure an ACP-compatible runtime" in str(acp_launch.tooltip)
+            assert "Configure an ACP-compatible runtime in ACP before launching an ACP agent." in str(acp_launch.tooltip)
 
 
 @pytest.mark.asyncio
