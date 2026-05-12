@@ -1,7 +1,7 @@
 ---
 id: TASK-14.12
 title: 'Screen QA: Settings'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-09 03:46'
 labels:
@@ -34,7 +34,7 @@ Validate and correct the Settings top-level destination screen through actual re
 - [x] #3 Final actual screenshot captured
 - [x] #4 User approval recorded before PR
 - [x] #5 Focused tests pass
-- [ ] #6 PR merged before next screen starts unless user explicitly overrides
+- [x] #6 PR merged before next screen starts unless user explicitly overrides
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,3 +48,5 @@ Validate and correct the Settings top-level destination screen through actual re
 ## Implementation Notes
 
 Adapted Settings to a compact three-column workbench with a narrower settings-section column and wider preference-detail and scope-inspector columns. Replaced the unreadable checkbox glyph with a readable button toggle for Console large-paste display, preserved the persisted `console.collapse_large_pastes` setting, and kept MCP/ACP runtime control ownership explicit. Added mounted regressions for the Settings column contract, narrow-left column geometry, Appearance routing, and large-paste toggle persistence. Final actual textual-web screenshot was approved before PR creation.
+
+PR #306 was merged into `dev` at merge commit `6baee11e59039340c10e2027567f62922929e968`.

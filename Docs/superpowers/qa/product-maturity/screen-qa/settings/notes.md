@@ -3,7 +3,7 @@
 Date: 2026-05-11
 Branch: `codex/screen-qa-settings`
 Backlog task: TASK-14.12
-Commit: pending
+Commit: PR #306 merge `6baee11e59039340c10e2027567f62922929e968`
 Screen: Settings
 Viewport: 2050x1240 textual-web browser capture
 Launch method: `tldw-serve --host 127.0.0.1 --port 8832` with isolated HOME/XDG config and `default_tab = "settings"`
