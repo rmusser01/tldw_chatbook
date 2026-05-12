@@ -69,11 +69,11 @@ class SettingsScreen(BaseAppScreen):
                 yield self._column_divider("settings-category-detail-divider")
                 with Vertical(id="settings-detail-pane", classes="destination-workbench-pane"):
                     yield Static("Column 2: Preference Detail", classes="destination-section settings-column-title")
-                    yield Static("Global Preferences", classes="destination-section")
+                    yield Static("Global preferences", classes="destination-section")
                     yield Static("Appearance controls are available in the customization surface.")
                     yield Static("Accounts/Auth and storage defaults remain global app settings.")
                     yield Static("Runtime-specific MCP and ACP controls stay with their destinations.")
-                    yield Static("Console Behavior", classes="destination-section")
+                    yield Static("Console behavior", classes="destination-section")
                     yield Static(
                         "Large paste display: collapse paste chunks over 50 characters.",
                         id="settings-console-collapse-large-pastes-label",
