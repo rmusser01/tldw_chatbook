@@ -1685,6 +1685,30 @@ def test_skills_destination_service_adoption_tracking_evidence_exists():
 
 
 @pytest.mark.asyncio
+async def test_settings_destination_uses_three_column_workbench_contract():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Settings | Global preferences, appearance, accounts, storage | Local" in text
+        assert "Mode: Global / Console behavior / Appearance | Runtime controls stay in MCP and ACP" in text
+        assert "Column 1: Settings Sections" in text
+        assert "Column 2: Preference Detail" in text
+        assert "Column 3: Scope Inspector" in text
+        assert screen.query_one("#settings-workbench").region.height >= 20
+        category_pane = screen.query_one("#settings-category-pane")
+        detail_pane = screen.query_one("#settings-detail-pane")
+        impact_pane = screen.query_one("#settings-impact-pane")
+        assert category_pane.region.width < detail_pane.region.width
+        assert category_pane.region.width < impact_pane.region.width
+        assert screen.query_one("#settings-category-detail-divider")
+        assert screen.query_one("#settings-detail-impact-divider")
+
+
+@pytest.mark.asyncio
 async def test_settings_appearance_action_routes_to_customize_surface():
     app = _build_test_app()
     seen_routes = []
@@ -1699,17 +1723,17 @@ async def test_settings_appearance_action_routes_to_customize_surface():
 
 
 @pytest.mark.parametrize(
-    ("initial_value", "expected_checkbox_value", "expected_saved_value"),
+    ("initial_value", "expected_label", "expected_saved_value"),
     [
-        (True, True, False),
-        ("false", False, True),
+        (True, "Enabled", False),
+        ("false", "Disabled", True),
     ],
 )
 @pytest.mark.asyncio
-async def test_settings_console_paste_collapse_checkbox_reflects_and_persists_config(
+async def test_settings_console_paste_collapse_toggle_reflects_and_persists_config(
     monkeypatch,
     initial_value,
-    expected_checkbox_value,
+    expected_label,
     expected_saved_value,
 ):
     app = _build_test_app()
@@ -1731,14 +1755,14 @@ async def test_settings_console_paste_collapse_checkbox_reflects_and_persists_co
     async with host.run_test(size=(180, 40)) as pilot:
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
-        checkbox = screen.query_one(
-            "#settings-console-collapse-large-pastes-checkbox",
-            Checkbox,
+        toggle = screen.query_one(
+            "#settings-console-collapse-large-pastes-toggle",
+            Button,
         )
 
-        assert checkbox.value is expected_checkbox_value
+        assert expected_label in str(toggle.label)
 
-        await pilot.click("#settings-console-collapse-large-pastes-checkbox")
+        await pilot.click("#settings-console-collapse-large-pastes-toggle")
         await pilot.pause(0.1)
 
     assert app.app_config["console"]["collapse_large_pastes"] is expected_saved_value
