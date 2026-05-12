@@ -24,8 +24,13 @@ PHASE_2_5_EVIDENCE = PHASE_2_ROOT / "2026-05-06-phase-2-5-core-loop-closeout-rep
 PHASE_1_2_PLAN = Path("Docs/superpowers/plans/2026-05-05-product-maturity-phase-1-2-first-run-walkthrough.md")
 BACKLOG_TASKS = Path("backlog/tasks")
 
-TASK_ID_RE = re.compile(r"`(TASK-[0-9]+(?:\.[0-9]+)*)`")
-FRONTMATTER_RE = re.compile(r"\A---\n(?P<body>.*?)\n---\n", re.DOTALL)
+TASK_ID_PATTERN = r"TASK-[0-9]+(?:\.[0-9]+)*"
+TASK_ID_RE = re.compile(rf"`({TASK_ID_PATTERN})`")
+FRONTMATTER_RE = re.compile(r"\A\ufeff?\s*---\n(?P<body>.*?)\n---\n", re.DOTALL)
+TASK_FRONTMATTER_ID_RE = re.compile(
+    rf"^id:\s*['\"]?({TASK_ID_PATTERN})['\"]?\s*(?:#.*)?$",
+    re.MULTILINE,
+)
 
 REQUIRED_TEMPLATE_SECTIONS = {
     "Environment",
@@ -65,11 +70,10 @@ def _task_ids_from_phase_row(row: list[str]) -> set[str]:
 
 
 def _task_text_by_id(task_id: str) -> str:
-    id_line_re = re.compile(rf"^id:\s*['\"]?{re.escape(task_id)}['\"]?\s*$", re.MULTILINE)
     for path in sorted((REPO_ROOT / BACKLOG_TASKS).glob("*.md")):
         text = path.read_text(encoding="utf-8")
         frontmatter_match = FRONTMATTER_RE.match(text)
-        if frontmatter_match and id_line_re.search(frontmatter_match.group("body")):
+        if frontmatter_match and task_id in TASK_FRONTMATTER_ID_RE.findall(frontmatter_match.group("body")):
             return text
     raise AssertionError(f"task {task_id!r} not found by YAML frontmatter id")
 
@@ -80,15 +84,15 @@ def _task_ids_by_path() -> dict[str, list[Path]]:
     for path in sorted((REPO_ROOT / BACKLOG_TASKS).glob("*.md")):
         text = path.read_text(encoding="utf-8")
         frontmatter_match = FRONTMATTER_RE.match(text)
-        if not frontmatter_match:
-            continue
-        id_match = re.search(
-            r"^id:\s*['\"]?(TASK-[0-9]+(?:\.[0-9]+)*)['\"]?\s*$",
-            frontmatter_match.group("body"),
-            re.MULTILINE,
+        assert frontmatter_match is not None, f"{path.relative_to(REPO_ROOT)} must start with YAML frontmatter"
+
+        parsed_ids = TASK_FRONTMATTER_ID_RE.findall(frontmatter_match.group("body"))
+        assert len(parsed_ids) == 1, (
+            f"{path.relative_to(REPO_ROOT)} must contain exactly one valid TASK-* id in frontmatter; "
+            f"found {parsed_ids!r}"
         )
-        if id_match:
-            task_ids.setdefault(id_match.group(1), []).append(path.relative_to(REPO_ROOT))
+
+        task_ids.setdefault(parsed_ids[0], []).append(path.relative_to(REPO_ROOT))
 
     return task_ids
 

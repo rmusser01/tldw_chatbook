@@ -210,7 +210,7 @@ def test_phase30_collections_are_library_owned_with_later_citation_snippet_scope
 
     phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
     assert "Library-owned local Collections management" in phase_three_row[5]
-    assert "verified" in phase_three_row[5]
+    assert re.search(r"\bare verified\b", phase_three_row[5])
     assert "collection item membership" in phase_three_row[5]
     assert "citations/snippets" in phase_three_row[5]
 
