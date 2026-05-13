@@ -1663,6 +1663,31 @@ async def test_skills_destination_distinguishes_valid_and_invalid_skill_readines
 
 
 @pytest.mark.asyncio
+async def test_skills_destination_escapes_selected_skill_metadata_in_inspector():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "[red]summarize-notes[/red]",
+                "description": "Summarize note collections",
+                "record_id": "local:skill:[red]summarize-notes[/red]",
+                "validation_status": "valid",
+                "validation_errors": [],
+            }
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        text = _visible_text(screen)
+
+        assert "Selected: [red]summarize-notes[/red]" in text
+        assert "Runtime target: local:skill:[red]summarize-notes[/red]" in text
+
+
+@pytest.mark.asyncio
 async def test_skills_destination_empty_state_disables_console_attach():
     app = _build_test_app()
     app.skills_scope_service = StaticSkillsScopeService([])

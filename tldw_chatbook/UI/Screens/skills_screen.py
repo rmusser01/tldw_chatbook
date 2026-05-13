@@ -31,7 +31,7 @@ SKILLS_POLICY_DENIED_FALLBACK_COPY = "Local Skills are blocked by the current ru
 SKILL_TEXT_LIMITS = {
     "name": 64,
     "skill_name": 64,
-    "description": 1024,
+    "description": 1000,
     "argument_hint": 500,
     "record_id": 256,
     "backend": 32,
@@ -165,6 +165,10 @@ class SkillsScreen(BaseAppScreen):
         status = self._skill_field(record, "validation_status", "valid").lower()
         return "invalid" if status == "invalid" else "valid"
 
+    @staticmethod
+    def _plain_text(value: str) -> Text:
+        return Text(value)
+
     def _is_skill_valid(self, record: Mapping[str, Any]) -> bool:
         return self._skill_validation_status(record) == "valid"
 
@@ -252,7 +256,7 @@ class SkillsScreen(BaseAppScreen):
         for selector, text in updates.items():
             for widget in self.query(selector):
                 if isinstance(widget, Static):
-                    widget.update(text)
+                    widget.update(self._plain_text(text))
                     widget.display = bool(text)
         for button in self.query("#skills-attach-to-console"):
             if isinstance(button, Button):
@@ -364,7 +368,7 @@ class SkillsScreen(BaseAppScreen):
                             )
                             if validation_errors:
                                 yield Static(
-                                    validation_errors,
+                                    self._plain_text(validation_errors),
                                     id=f"skills-validation-errors-{index}",
                                 )
                             yield Button(
@@ -392,11 +396,11 @@ class SkillsScreen(BaseAppScreen):
                             classes="destination-section",
                         )
                         yield Static(
-                            f"Selected: {selected_metadata['selected_skill_name']}",
+                            self._plain_text(f"Selected: {selected_metadata['selected_skill_name']}"),
                             id="skills-selected-context",
                         )
                         yield Static(
-                            f"Runtime target: {selected_metadata['selected_target_id']}",
+                            self._plain_text(f"Runtime target: {selected_metadata['selected_target_id']}"),
                             id="skills-selected-runtime-target",
                         )
                         is_selected_valid = selected_metadata["validation_status"] == "valid"
@@ -407,13 +411,13 @@ class SkillsScreen(BaseAppScreen):
                             id="skills-execution-readiness",
                         )
                         yield Static(
-                            "" if is_selected_valid else (
+                            self._plain_text("" if is_selected_valid else (
                                 "Reason: "
                                 + (
                                     "; ".join(selected_metadata["validation_errors"])
                                     or "Selected skill is not valid."
                                 )
-                            ),
+                            )),
                             id="skills-execution-blocked-reason",
                         )
                     yield Static("Actions", classes="destination-section")
