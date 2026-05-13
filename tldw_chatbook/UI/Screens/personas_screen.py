@@ -280,22 +280,35 @@ class PersonasScreen(BaseAppScreen):
                 return
 
     @staticmethod
+    def _qualified_record_id(record: Mapping[str, Any]) -> str | None:
+        record_id = record.get("record_id")
+        if record_id in (None, ""):
+            return None
+        return PersonasScreen._safe_text(record_id, max_length=120) or None
+
+    @staticmethod
     def _record_id(record_type: str, record: Mapping[str, Any]) -> str:
         keys = {
-            "characters": ("record_id", "id", "uuid", "character_id"),
-            "profiles": ("record_id", "id", "uuid", "profile_id"),
+            "characters": ("id", "uuid", "character_id"),
+            "profiles": ("id", "uuid", "profile_id"),
         }[record_type]
         for key in keys:
             value = record.get(key)
             if value not in (None, ""):
                 return PersonasScreen._safe_text(value, max_length=120)
+        qualified_id = PersonasScreen._qualified_record_id(record)
+        if qualified_id is not None:
+            if qualified_id.startswith("local:") or qualified_id.startswith("server:"):
+                return qualified_id.rsplit(":", 1)[-1] or "unknown"
+            return qualified_id
         return "unknown"
 
     @classmethod
     def _runtime_target_id(cls, record_type: str, record: Mapping[str, Any]) -> str:
+        qualified_id = cls._qualified_record_id(record)
+        if qualified_id and (qualified_id.startswith("local:") or qualified_id.startswith("server:")):
+            return qualified_id
         record_id = cls._record_id(record_type, record)
-        if record_id.startswith("local:") or record_id.startswith("server:"):
-            return record_id
         target_type = "character" if record_type == "characters" else "persona_profile"
         return f"local:{target_type}:{record_id}"
 
@@ -328,6 +341,21 @@ class PersonasScreen(BaseAppScreen):
             if line.startswith("Why:"):
                 return line.removeprefix("Why:").strip().rstrip(".")
         return self._personas_lookup_error.splitlines()[0].strip().rstrip(".")
+
+    def _apply_selected_behavior_widgets(self) -> None:
+        selected_metadata = self._selected_behavior_metadata()
+        if not selected_metadata:
+            return
+        updates = {
+            "#personas-selected-context": f"Selected: {selected_metadata['selected_name']}",
+            "#personas-selected-runtime-target": (
+                f"Runtime target: {selected_metadata['selected_target_id']}"
+            ),
+        }
+        for selector, text in updates.items():
+            for widget in self.query(selector):
+                if isinstance(widget, Static):
+                    widget.update(text)
 
     def _snapshot_body(self) -> str:
         lines = ["Local Personas behavior context staged for Console:", ""]
@@ -485,7 +513,7 @@ class PersonasScreen(BaseAppScreen):
                             "Console: ready" if has_context and not self._personas_lookup_error else "Console: blocked",
                             id="personas-console-readiness",
                         )
-                        if self._personas_lookup_error:
+                        if not has_context or self._personas_lookup_error:
                             yield Static(
                                 f"Reason: {self._blocked_reason()}",
                                 id="personas-console-blocked-reason",
@@ -529,7 +557,7 @@ class PersonasScreen(BaseAppScreen):
             return
         self._selected_behavior_kind = record_type
         self._selected_behavior_index = index
-        self.refresh(recompose=True)
+        self._apply_selected_behavior_widgets()
 
     @on(Button.Pressed, "#personas-attach-to-console")
     def attach_to_console(self, event: Button.Pressed) -> None:
