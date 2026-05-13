@@ -31,7 +31,7 @@ SKILLS_POLICY_DENIED_FALLBACK_COPY = "Local Skills are blocked by the current ru
 SKILL_TEXT_LIMITS = {
     "name": 64,
     "skill_name": 64,
-    "description": 1024,
+    "description": 1000,
     "argument_hint": 500,
     "record_id": 256,
     "backend": 32,
@@ -48,6 +48,7 @@ class SkillsScreen(BaseAppScreen):
         self._skills_lookup_error: str | None = None
         self._skills_lookup_recovery_state: DestinationRecoveryState | None = None
         self._skills_loaded = False
+        self._selected_skill_index: int | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -73,6 +74,7 @@ class SkillsScreen(BaseAppScreen):
         self._skills_lookup_error = lookup_error
         self._skills_lookup_recovery_state = recovery_state
         self._skills_loaded = True
+        self._ensure_selected_skill()
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -136,17 +138,85 @@ class SkillsScreen(BaseAppScreen):
         max_length = SKILL_TEXT_LIMITS.get(key, 1000)
         return cls._safe_skill_text(value, fallback=fallback, max_length=max_length)
 
-    def _skill_body(self) -> str:
+    def _skill_name(self, record: Mapping[str, Any]) -> str:
+        return self._skill_field(record, "name") or self._skill_field(record, "skill_name", "Untitled skill")
+
+    def _skill_record_id(self, record: Mapping[str, Any]) -> str:
+        name = self._skill_name(record)
+        return self._skill_field(record, "id") or name
+
+    def _skill_target_id(self, record: Mapping[str, Any]) -> str:
+        record_id = self._skill_field(record, "record_id")
+        if record_id.startswith("local:") or record_id.startswith("server:"):
+            return record_id
+        return f"local:skill:{self._skill_record_id(record)}"
+
+    def _skill_validation_errors(self, record: Mapping[str, Any]) -> list[str]:
+        errors = record.get("validation_errors")
+        if not isinstance(errors, list):
+            return []
+        return [
+            self._safe_skill_text(error, max_length=300)
+            for error in errors
+            if self._safe_skill_text(error, max_length=300)
+        ]
+
+    def _skill_validation_status(self, record: Mapping[str, Any]) -> str:
+        status = self._skill_field(record, "validation_status", "valid").lower()
+        return "invalid" if status == "invalid" else "valid"
+
+    @staticmethod
+    def _plain_text(value: str) -> Text:
+        return Text(value)
+
+    def _is_skill_valid(self, record: Mapping[str, Any]) -> bool:
+        return self._skill_validation_status(record) == "valid"
+
+    def _ensure_selected_skill(self) -> None:
+        if not self._local_skill_records or self._skills_lookup_error:
+            self._selected_skill_index = None
+            return
+        if self._selected_skill_index is not None and 0 <= self._selected_skill_index < len(self._local_skill_records):
+            return
+        for index, record in enumerate(self._local_skill_records):
+            if self._is_skill_valid(record):
+                self._selected_skill_index = index
+                return
+        self._selected_skill_index = 0
+
+    def _selected_skill_record(self) -> Mapping[str, Any] | None:
+        self._ensure_selected_skill()
+        if self._selected_skill_index is None:
+            return None
+        if not (0 <= self._selected_skill_index < len(self._local_skill_records)):
+            return None
+        return self._local_skill_records[self._selected_skill_index]
+
+    def _selected_skill_metadata(self) -> dict[str, Any]:
+        record = self._selected_skill_record()
+        if record is None:
+            return {}
+        return {
+            "selected_skill_name": self._skill_name(record),
+            "selected_record_id": self._skill_record_id(record),
+            "selected_target_id": self._skill_target_id(record),
+            "validation_status": self._skill_validation_status(record),
+            "validation_errors": self._skill_validation_errors(record),
+        }
+
+    def _skill_body(self, records: tuple[Mapping[str, Any], ...] | None = None) -> str:
+        records = records if records is not None else self._local_skill_records
         lines = [
             "Local Agent Skills available to stage into Console:",
             "",
         ]
-        for index, record in enumerate(self._local_skill_records, start=1):
-            name = self._skill_field(record, "name") or self._skill_field(record, "skill_name", "Untitled skill")
+        for index, record in enumerate(records, start=1):
+            name = self._skill_name(record)
             description = self._skill_field(record, "description")
             argument_hint = self._skill_field(record, "argument_hint")
             record_id = self._skill_field(record, "record_id")
             backend = self._skill_field(record, "backend", "local")
+            validation_status = self._skill_validation_status(record)
 
             lines.append(f"{index}. {name}")
             if description:
@@ -156,14 +226,46 @@ class SkillsScreen(BaseAppScreen):
             if record_id:
                 lines.append(f"   record id: {record_id}")
             lines.append(f"   backend: {backend}")
+            lines.append(f"   validation: {validation_status}")
             lines.append("")
         return "\n".join(lines).strip()
 
-    def _skill_names(self) -> list[str]:
+    def _skill_names(self, records: tuple[Mapping[str, Any], ...] | None = None) -> list[str]:
+        records = records if records is not None else self._local_skill_records
         return [
-            self._skill_field(record, "name") or self._skill_field(record, "skill_name", "Untitled skill")
-            for record in self._local_skill_records
+            self._skill_name(record)
+            for record in records
         ]
+
+    def _apply_selected_skill_widgets(self) -> None:
+        metadata = self._selected_skill_metadata()
+        if not metadata:
+            return
+        selected_name = metadata["selected_skill_name"]
+        target_id = metadata["selected_target_id"]
+        valid = metadata["validation_status"] == "valid"
+        reason = "; ".join(metadata["validation_errors"]) or "Selected skill is not valid."
+        updates = {
+            "#skills-selected-context": f"Selected: {selected_name}",
+            "#skills-selected-runtime-target": f"Runtime target: {target_id}",
+            "#skills-execution-readiness": (
+                "Execution: ready to stage in Console" if valid else "Execution: blocked"
+            ),
+            "#skills-execution-blocked-reason": "" if valid else f"Reason: {reason}",
+        }
+        for selector, text in updates.items():
+            for widget in self.query(selector):
+                if isinstance(widget, Static):
+                    widget.update(self._plain_text(text))
+                    widget.display = bool(text)
+        for button in self.query("#skills-attach-to-console"):
+            if isinstance(button, Button):
+                button.disabled = not valid
+                button.tooltip = (
+                    "Stage selected valid Agent Skill in Console."
+                    if valid
+                    else "Fix SKILL.md validation errors before staging this skill in Console."
+                )
 
     @staticmethod
     def _column_divider(identifier: str) -> Rule:
@@ -175,6 +277,7 @@ class SkillsScreen(BaseAppScreen):
         local_skills_service = getattr(self.app_instance, "local_skills_service", None)
         skills_dir = getattr(local_skills_service, "skills_dir", None)
         skills_dir_label = str(skills_dir) if skills_dir is not None else "Local skills directory unavailable."
+        selected_metadata = self._selected_skill_metadata()
 
         with Vertical(id="skills-shell"):
             yield Static(
@@ -244,24 +347,79 @@ class SkillsScreen(BaseAppScreen):
                             id="skills-local-summary",
                         )
                         for index, record in enumerate(self._local_skill_records):
-                            name = self._skill_field(record, "name") or self._skill_field(
-                                record,
-                                "skill_name",
-                                "Untitled skill",
-                            )
+                            name = self._skill_name(record)
                             description = self._skill_field(record, "description", "No description provided.")
+                            is_valid = self._is_skill_valid(record)
+                            validation_copy = (
+                                "Ready: valid SKILL.md"
+                                if is_valid
+                                else "Blocked: invalid SKILL.md"
+                            )
+                            validation_errors = "; ".join(self._skill_validation_errors(record))
                             yield Static(
                                 Text.from_markup(
                                     f"{escape_markup(name)} - {escape_markup(description)}"
                                 ),
                                 id=f"skills-local-skill-{index}",
-                        )
+                            )
+                            yield Static(
+                                validation_copy,
+                                id=f"skills-validation-status-{index}",
+                            )
+                            if validation_errors:
+                                yield Static(
+                                    self._plain_text(validation_errors),
+                                    id=f"skills-validation-errors-{index}",
+                                )
+                            yield Button(
+                                "Use",
+                                id=f"skills-select-local-{index}",
+                                classes="skills-select-local",
+                                tooltip=f"Use {name} as the Console skill target.",
+                            )
                         attach_label = "Attach local Skills to Console"
-                        attach_disabled = False
-                        attach_tooltip = "Stage local skill context in Console."
+                        attach_disabled = not (
+                            selected_metadata and selected_metadata.get("validation_status") == "valid"
+                        )
+                        attach_tooltip = (
+                            "Stage selected valid Agent Skill in Console."
+                            if not attach_disabled
+                            else "Fix SKILL.md validation errors before staging this skill in Console."
+                        )
                 yield self._column_divider("skills-detail-inspector-divider")
                 with Vertical(id="skills-inspector-pane", classes="destination-workbench-pane ds-inspector"):
                     yield Static("Column 3: Skill Inspector", classes="destination-section skills-column-title")
+                    if selected_metadata:
+                        yield Static(
+                            "Selected Console target",
+                            id="skills-selected-target-title",
+                            classes="destination-section",
+                        )
+                        yield Static(
+                            self._plain_text(f"Selected: {selected_metadata['selected_skill_name']}"),
+                            id="skills-selected-context",
+                        )
+                        yield Static(
+                            self._plain_text(f"Runtime target: {selected_metadata['selected_target_id']}"),
+                            id="skills-selected-runtime-target",
+                        )
+                        is_selected_valid = selected_metadata["validation_status"] == "valid"
+                        yield Static(
+                            "Execution: ready to stage in Console"
+                            if is_selected_valid
+                            else "Execution: blocked",
+                            id="skills-execution-readiness",
+                        )
+                        yield Static(
+                            self._plain_text("" if is_selected_valid else (
+                                "Reason: "
+                                + (
+                                    "; ".join(selected_metadata["validation_errors"])
+                                    or "Selected skill is not valid."
+                                )
+                            )),
+                            id="skills-execution-blocked-reason",
+                        )
                     yield Static("Actions", classes="destination-section")
                     yield Static(
                         "Skill import is not wired in this shell yet.",
@@ -280,14 +438,39 @@ class SkillsScreen(BaseAppScreen):
                         tooltip=attach_tooltip,
                     )
 
+    @on(Button.Pressed, ".skills-select-local")
+    def select_local_skill(self, event: Button.Pressed) -> None:
+        event.stop()
+        button_id = str(event.button.id or "")
+        prefix = "skills-select-local-"
+        if not button_id.startswith(prefix):
+            return
+        try:
+            index = int(button_id.removeprefix(prefix))
+        except ValueError:
+            return
+        if not (0 <= index < len(self._local_skill_records)):
+            return
+        self._selected_skill_index = index
+        self._apply_selected_skill_widgets()
+
     @on(Button.Pressed, "#skills-attach-to-console")
     def attach_to_console(self, event: Button.Pressed) -> None:
         event.stop()
-        if not self._local_skill_records:
+        selected_record = self._selected_skill_record()
+        if selected_record is None:
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(
                     "No local Agent Skills are available to stage in Console.",
+                    severity="warning",
+                )
+            return
+        if not self._is_skill_valid(selected_record):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    "Fix SKILL.md validation errors before staging this skill in Console.",
                     severity="warning",
                 )
             return
@@ -300,22 +483,26 @@ class SkillsScreen(BaseAppScreen):
                     severity="warning",
                 )
             return
-        skill_count = len(self._local_skill_records)
-        skill_names = self._skill_names()
+        selected_records = (selected_record,)
+        skill_count = 1
+        skill_names = self._skill_names(selected_records)
+        selected_metadata = self._selected_skill_metadata()
+        selected_name = selected_metadata["selected_skill_name"]
         open_chat_with_handoff(
             ChatHandoffPayload(
                 source="skills",
                 item_type="skills-context",
-                title=f"Local Agent Skills ({skill_count})",
-                body=self._skill_body(),
-                display_summary=f"{skill_count} local Agent Skill{'s' if skill_count != 1 else ''} staged.",
-                suggested_prompt="Help me choose and apply the relevant local Agent Skill.",
+                title=f"Local Agent Skill: {selected_name}",
+                body=self._skill_body(selected_records),
+                display_summary=f"Local Agent Skill {selected_name} staged.",
+                suggested_prompt=f"Use the {selected_name} Agent Skill for the next response.",
                 runtime_backend="local",
                 source_owner="local",
                 source_selector_state="local",
                 metadata={
                     "skill_count": skill_count,
                     "skill_names": skill_names,
+                    **selected_metadata,
                     "backend": "local",
                     "skills_dir": str(
                         getattr(

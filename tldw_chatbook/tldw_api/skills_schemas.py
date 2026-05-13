@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-SKILL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 SUPPORTING_FILE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$")
 MAX_SUPPORTING_FILES_COUNT = 20
 MAX_SUPPORTING_FILE_BYTES = 500000
@@ -16,10 +16,10 @@ MAX_SUPPORTING_FILES_TOTAL_BYTES = 5 * 1024 * 1024
 
 def _normalize_skill_name(value: str) -> str:
     normalized = value.strip().lower()
-    if not SKILL_NAME_PATTERN.match(normalized):
+    if not SKILL_NAME_PATTERN.match(normalized) or "--" in normalized:
         raise ValueError(
-            "Skill name must start with a letter, contain only lowercase letters, "
-            "numbers, and hyphens, and be 1-64 characters long"
+            "Skill name must contain only lowercase letters, numbers, and hyphens, "
+            "be 1-64 characters long, and not start or end with a hyphen"
         )
     return normalized
 

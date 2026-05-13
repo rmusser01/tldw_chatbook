@@ -27,6 +27,7 @@ from ..tldw_api import (
     SkillUpdate,
 )
 from ..tldw_api.skills_schemas import _normalize_skill_name
+from ..Utils.input_validation import sanitize_string, validate_text_input
 
 
 _INDEX_FILENAME = "tldw_chatbook_skills.json"
@@ -34,13 +35,32 @@ _SKILLS_DIRNAME = "skills"
 _SKILL_FILENAME = "SKILL.md"
 _FRONT_MATTER_PATTERN = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 _METADATA_FIELDS = {
+    "name",
     "description",
     "argument_hint",
     "allowed_tools",
+    "allowed-tools",
+    "license",
+    "compatibility",
+    "metadata",
     "model",
     "context",
     "user_invocable",
     "disable_model_invocation",
+}
+_AGENT_SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+_FRONT_MATTER_MAX_LENGTH = 500000
+_AGENT_SKILL_DESCRIPTION_MAX = 1000
+_TEXT_FIELD_LIMITS = {
+    "name": 64,
+    "description": _AGENT_SKILL_DESCRIPTION_MAX,
+    "argument_hint": 100,
+    "license": 100,
+    "compatibility": 500,
+    "model": 128,
+    "metadata_key": 128,
+    "metadata_value": 1000,
+    "allowed_tool": 128,
 }
 
 
@@ -126,7 +146,11 @@ class LocalSkillsService:
         match = _FRONT_MATTER_PATTERN.match(content)
         if match is None:
             return {}, content
-        raw_metadata = yaml.safe_load(match.group(1)) or {}
+        yaml_text = sanitize_string(match.group(1), max_length=_FRONT_MATTER_MAX_LENGTH)
+        try:
+            raw_metadata = yaml.safe_load(yaml_text) or {}
+        except yaml.YAMLError:
+            raw_metadata = {}
         if not isinstance(raw_metadata, dict):
             raw_metadata = {}
         metadata = {str(key): value for key, value in raw_metadata.items() if str(key) in _METADATA_FIELDS}
@@ -141,6 +165,102 @@ class LocalSkillsService:
                 continue
             return stripped[:1000]
         return None
+
+    @staticmethod
+    def _safe_front_matter_text(
+        value: Any,
+        *,
+        max_length: int,
+        allow_html: bool = False,
+    ) -> str | None:
+        if not isinstance(value, str):
+            return None
+        text = sanitize_string(value, max_length=max_length).strip()
+        if not text:
+            return None
+        if not validate_text_input(text, max_length=max_length, allow_html=allow_html):
+            return None
+        return text
+
+    @classmethod
+    def _sanitize_metadata_map(cls, value: Any) -> dict[str, str] | None:
+        if not isinstance(value, dict):
+            return None
+        sanitized: dict[str, str] = {}
+        for key, item in value.items():
+            if not isinstance(item, (str, int, float, bool)):
+                continue
+            safe_key = cls._safe_front_matter_text(
+                str(key),
+                max_length=_TEXT_FIELD_LIMITS["metadata_key"],
+            )
+            safe_value = cls._safe_front_matter_text(
+                str(item),
+                max_length=_TEXT_FIELD_LIMITS["metadata_value"],
+            )
+            if safe_key and safe_value:
+                sanitized[safe_key] = safe_value
+        return sanitized or None
+
+    @classmethod
+    def _normalize_allowed_tools(cls, value: Any) -> list[str] | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, str):
+            tools = [
+                tool
+                for raw_tool in value.split()
+                if (
+                    tool := cls._safe_front_matter_text(
+                        raw_tool,
+                        max_length=_TEXT_FIELD_LIMITS["allowed_tool"],
+                    )
+                )
+            ]
+            return tools or None
+        if isinstance(value, list):
+            tools = [
+                tool
+                for raw_tool in value
+                if (
+                    tool := cls._safe_front_matter_text(
+                        raw_tool,
+                        max_length=_TEXT_FIELD_LIMITS["allowed_tool"],
+                    )
+                )
+            ]
+            return tools or None
+        return None
+
+    @classmethod
+    def _agent_skill_validation(cls, *, directory_name: str, front_matter: dict[str, Any]) -> dict[str, Any]:
+        errors: list[str] = []
+        agent_skill_name = front_matter.get("name")
+        description = front_matter.get("description")
+
+        if not isinstance(agent_skill_name, str) or not agent_skill_name.strip():
+            errors.append("name is required")
+            normalized_agent_name = None
+        else:
+            normalized_agent_name = agent_skill_name.strip()
+            if (
+                not _AGENT_SKILL_NAME_PATTERN.match(normalized_agent_name)
+                or "--" in normalized_agent_name
+            ):
+                errors.append("name must use lowercase letters, numbers, and hyphens")
+            if normalized_agent_name != directory_name:
+                errors.append("name must match the parent directory name")
+
+        if not isinstance(description, str) or not description.strip():
+            errors.append("description is required")
+        elif len(description) > _AGENT_SKILL_DESCRIPTION_MAX:
+            errors.append("description must be 1000 characters or fewer")
+
+        return {
+            "agent_skill_name": normalized_agent_name,
+            "validation_status": "invalid" if errors else "valid",
+            "validation_errors": errors,
+        }
 
     @classmethod
     def _metadata_from_content(
@@ -176,9 +296,66 @@ class LocalSkillsService:
             base["directory_path"] = str(skill_dir)
         if front_matter:
             for field, value in front_matter.items():
-                base[field] = value
+                if field == "name":
+                    safe_value = cls._safe_front_matter_text(
+                        value,
+                        max_length=_TEXT_FIELD_LIMITS["name"],
+                    )
+                    if safe_value is not None:
+                        base["agent_skill_name"] = safe_value
+                elif field == "description":
+                    base["description"] = cls._safe_front_matter_text(
+                        value,
+                        max_length=_TEXT_FIELD_LIMITS["description"],
+                    )
+                elif field == "argument_hint":
+                    base["argument_hint"] = cls._safe_front_matter_text(
+                        value,
+                        max_length=_TEXT_FIELD_LIMITS["argument_hint"],
+                    )
+                elif field == "allowed-tools":
+                    base["allowed_tools"] = cls._normalize_allowed_tools(value)
+                elif field == "allowed_tools":
+                    base["allowed_tools"] = cls._normalize_allowed_tools(value)
+                elif field == "license":
+                    license_value = cls._safe_front_matter_text(
+                        value,
+                        max_length=_TEXT_FIELD_LIMITS["license"],
+                    )
+                    if license_value is not None:
+                        base["license"] = license_value
+                elif field == "compatibility":
+                    compatibility_value = cls._safe_front_matter_text(
+                        value,
+                        max_length=_TEXT_FIELD_LIMITS["compatibility"],
+                    )
+                    if compatibility_value is not None:
+                        base["compatibility"] = compatibility_value
+                elif field == "metadata":
+                    metadata_value = cls._sanitize_metadata_map(value)
+                    if metadata_value is not None:
+                        base["metadata"] = metadata_value
+                elif field == "model":
+                    base["model"] = cls._safe_front_matter_text(
+                        value,
+                        max_length=_TEXT_FIELD_LIMITS["model"],
+                    )
+                elif field == "context":
+                    if value in {"inline", "fork"}:
+                        base["context"] = value
+                elif field in {"user_invocable", "disable_model_invocation"}:
+                    if isinstance(value, bool):
+                        base[field] = value
+                else:
+                    base[field] = value
         if base["description"] is None:
             base["description"] = cls._body_description(content)
+        base.update(
+            cls._agent_skill_validation(
+                directory_name=_normalize_skill_name(name),
+                front_matter=front_matter,
+            )
+        )
         SkillSummary(
             name=base["name"],
             description=base["description"],
@@ -213,7 +390,7 @@ class LocalSkillsService:
 
     @staticmethod
     def _summary_for_record(record: dict[str, Any]) -> dict[str, Any]:
-        return LocalSkillsService._dump(
+        summary = LocalSkillsService._dump(
             SkillSummary(
                 name=record["name"],
                 description=record.get("description"),
@@ -223,6 +400,10 @@ class LocalSkillsService:
                 context=record.get("context", "inline"),
             )
         )
+        for field in ("agent_skill_name", "validation_status", "validation_errors", "record_id", "backend"):
+            if field in record:
+                summary[field] = record[field]
+        return summary
 
     def _require_record(self, skill_name: str, records: dict[str, dict[str, Any]]) -> dict[str, Any]:
         normalized_name = _normalize_skill_name(skill_name)
@@ -256,8 +437,8 @@ class LocalSkillsService:
         elif "." in candidate:
             candidate = candidate.rsplit(".", 1)[0]
         candidate = re.sub(r"[^a-z0-9-]+", "-", candidate.strip().lower()).strip("-")
-        if not candidate or not candidate[0].isalpha():
-            candidate = f"skill-{candidate or 'import'}"
+        if not candidate:
+            candidate = "skill-import"
         return _normalize_skill_name(candidate[:64].rstrip("-") or "skill-import")
 
     @staticmethod

@@ -21,6 +21,23 @@ disable_model_invocation: false
 Summarize {{args}}.
 """
 
+AGENT_SKILL_WITH_METADATA = """---
+name: summarize-notes
+description: Summarize note collections. Use when a user asks for a concise notes summary.
+allowed-tools: Read Bash(git:*)
+---
+# Summarize
+Summarize {{args}}.
+"""
+
+INVALID_AGENT_SKILL = """---
+name: Summarize Notes
+description: ""
+---
+# Invalid
+Missing valid Agent Skills metadata.
+"""
+
 
 @pytest.mark.asyncio
 async def test_local_skills_service_persists_skill_metadata(tmp_path):
@@ -44,6 +61,128 @@ async def test_local_skills_service_persists_skill_metadata(tmp_path):
     assert listed["skills"][0]["description"] == "Summarize notes"
     assert context["available_skills"][0]["argument_hint"] == "note id"
     assert "- summarize-notes" in context["context_text"]
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_validates_agent_skill_metadata_contract(tmp_path):
+    service = LocalSkillsService(store_dir=tmp_path)
+
+    created = await service.create_skill(name="summarize-notes", content=AGENT_SKILL_WITH_METADATA)
+    listed = await service.list_skills()
+    context = await service.get_context()
+
+    assert created["validation_status"] == "valid"
+    assert created["validation_errors"] == []
+    assert created["agent_skill_name"] == "summarize-notes"
+    assert created["description"] == "Summarize note collections. Use when a user asks for a concise notes summary."
+    assert created["allowed_tools"] == ["Read", "Bash(git:*)"]
+    assert listed["skills"][0]["validation_status"] == "valid"
+    assert listed["skills"][0]["validation_errors"] == []
+    assert context["available_skills"][0]["validation_status"] == "valid"
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_sanitizes_agent_skill_frontmatter_fields(tmp_path):
+    service = LocalSkillsService(store_dir=tmp_path)
+    content = """---
+name: summarize-notes
+description: Summarize notes.
+license: "Apache-2.0\u0000"
+compatibility: "<script>alert(1)</script>"
+metadata:
+  author: "Example\u0000Org"
+  nested:
+    ignored: true
+  long: "{}"
+---
+
+Summarize the selected notes.
+""".format("x" * 1200)
+
+    created = await service.create_skill(name="summarize-notes", content=content)
+
+    assert created["license"] == "Apache-2.0"
+    assert "compatibility" not in created
+    assert created["metadata"] == {
+        "author": "ExampleOrg",
+        "long": "x" * 1000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_accepts_agent_skill_name_starting_with_number(tmp_path):
+    service = LocalSkillsService(store_dir=tmp_path)
+    content = """---
+name: 1-summary
+description: Summarize notes. Use when a user asks for a concise notes summary.
+---
+
+Summarize the selected notes.
+"""
+
+    created = await service.create_skill(name="1-summary", content=content)
+
+    assert created["name"] == "1-summary"
+    assert created["agent_skill_name"] == "1-summary"
+    assert created["validation_status"] == "valid"
+    assert created["validation_errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_import_preserves_digit_leading_agent_skill_name(tmp_path):
+    service = LocalSkillsService(store_dir=tmp_path)
+    content = b"""---
+name: 1-summary
+description: Summarize notes. Use when a user asks for a concise notes summary.
+---
+
+Summarize the selected notes.
+"""
+
+    imported = await service.import_skill_file(
+        content,
+        filename="1-summary.md",
+        content_type="text/markdown",
+    )
+
+    assert imported["name"] == "1-summary"
+    assert imported["agent_skill_name"] == "1-summary"
+    assert imported["validation_status"] == "valid"
+    assert imported["validation_errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_marks_over_schema_limit_description_invalid_without_crashing(tmp_path):
+    service = LocalSkillsService(store_dir=tmp_path)
+    oversized_description = "x" * 1001
+    content = f"""---
+name: summarize-notes
+description: {oversized_description}
+---
+
+Summarize the selected notes.
+"""
+
+    created = await service.create_skill(name="summarize-notes", content=content)
+
+    assert created["description"] == "x" * 1000
+    assert created["validation_status"] == "invalid"
+    assert "description must be 1000 characters or fewer" in created["validation_errors"]
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_reports_invalid_agent_skill_metadata_without_mutating_content(tmp_path):
+    service = LocalSkillsService(store_dir=tmp_path)
+
+    created = await service.create_skill(name="summarize-notes", content=INVALID_AGENT_SKILL)
+    listed = await service.list_skills()
+    loaded = await service.get_skill("summarize-notes")
+
+    assert created["validation_status"] == "invalid"
+    assert "name must use lowercase letters, numbers, and hyphens" in created["validation_errors"]
+    assert "description is required" in created["validation_errors"]
+    assert listed["skills"][0]["validation_status"] == "invalid"
+    assert loaded["content"] == INVALID_AGENT_SKILL
 
 
 @pytest.mark.asyncio
