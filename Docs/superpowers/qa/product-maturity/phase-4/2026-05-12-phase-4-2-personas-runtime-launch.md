@@ -10,7 +10,8 @@ TASK-11.2 verifies that the Personas destination exposes local character/persona
 
 - Actual running-app empty state screenshot: `Docs/superpowers/qa/product-maturity/phase-4/personas-empty-2026-05-12.png`
 - Actual textual-web fixture screenshot with selectable records: `Docs/superpowers/qa/product-maturity/phase-4/personas-selected-2026-05-12.png`
-- The selected-state screenshot shows a local character, local persona profile, `Use` controls, `Selected: Research Mentor`, `Runtime target: local:character:1`, and enabled `Attach to Console`.
+- User-approved polished textual-web fixture screenshot with clearly delineated columns: `Docs/superpowers/qa/product-maturity/phase-4/personas-selected-polish-2026-05-12.png`
+- The approved selected-state screenshot shows distinct pane frames, a local character, local persona profile, `Use` controls, `Selected: Research Mentor`, `Runtime target: local:character:1`, and enabled `Attach to Console`.
 
 ## Regression Evidence
 

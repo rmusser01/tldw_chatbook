@@ -15,6 +15,9 @@ TASK_11_2_QA_EVIDENCE = Path(
 TASK_11_2_SCREENSHOT = Path(
     "Docs/superpowers/qa/product-maturity/phase-4/personas-selected-2026-05-12.png"
 )
+TASK_11_2_APPROVED_SCREENSHOT = Path(
+    "Docs/superpowers/qa/product-maturity/phase-4/personas-selected-polish-2026-05-12.png"
+)
 TASK_11 = Path(
     "backlog/tasks/task-11 - Product-Maturity-Phase-4-Agent-Configuration-And-Execution.md"
 )
@@ -74,7 +77,9 @@ def test_phase4_agent_execution_plan_splits_parent_into_reviewable_child_tasks()
     assert "Status: TASK-11.1 and TASK-11.2 verified; implementation slices remain open" in qa_readme
     assert TASK_11_2_QA_EVIDENCE.as_posix() in qa_readme
     assert TASK_11_2_SCREENSHOT.as_posix() in personas_evidence
+    assert TASK_11_2_APPROVED_SCREENSHOT.as_posix() in personas_evidence
     assert (REPO_ROOT / TASK_11_2_SCREENSHOT).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert (REPO_ROOT / TASK_11_2_APPROVED_SCREENSHOT).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
     for required_section in (
         "## Source Of Truth",

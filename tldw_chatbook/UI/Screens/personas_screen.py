@@ -461,27 +461,39 @@ class PersonasScreen(BaseAppScreen):
                 with Vertical(id="personas-inspector-pane", classes="destination-workbench-pane ds-inspector"):
                     yield Static("Column 3: Attachments", classes="destination-pane-title")
                     if selected_metadata:
+                        with Vertical(id="personas-selected-target-card"):
+                            yield Static(
+                                "Selected Console target",
+                                id="personas-selected-target-title",
+                                classes="destination-section",
+                            )
+                            yield Static(
+                                f"Selected: {selected_metadata['selected_name']}",
+                                id="personas-selected-context",
+                            )
+                            yield Static(
+                                f"Runtime target: {selected_metadata['selected_target_id']}",
+                                id="personas-selected-runtime-target",
+                            )
+                    with Vertical(id="personas-readiness-card"):
                         yield Static(
-                            f"Selected: {selected_metadata['selected_name']}",
-                            id="personas-selected-context",
+                            "Runtime readiness",
+                            id="personas-readiness-title",
+                            classes="destination-section",
                         )
                         yield Static(
-                            f"Runtime target: {selected_metadata['selected_target_id']}",
-                            id="personas-selected-runtime-target",
+                            "Console: ready" if has_context and not self._personas_lookup_error else "Console: blocked",
+                            id="personas-console-readiness",
                         )
-                    yield Static(
-                        "Console: ready" if has_context and not self._personas_lookup_error else "Console: blocked",
-                        id="personas-console-readiness",
-                    )
-                    if self._personas_lookup_error:
+                        if self._personas_lookup_error:
+                            yield Static(
+                                f"Reason: {self._blocked_reason()}",
+                                id="personas-console-blocked-reason",
+                            )
                         yield Static(
-                            f"Reason: {self._blocked_reason()}",
-                            id="personas-console-blocked-reason",
+                            "Workflows: ready",
+                            id="personas-workflows-readiness",
                         )
-                    yield Static(
-                        "Workflows: ready",
-                        id="personas-workflows-readiness",
-                    )
                     yield Button(
                         "Open Personas",
                         id="personas-open-profiles",
