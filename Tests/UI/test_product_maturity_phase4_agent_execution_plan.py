@@ -9,6 +9,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PLAN = Path("Docs/superpowers/plans/2026-05-12-phase-4-agent-configuration-execution.md")
 PHASE_4_QA_README = Path("Docs/superpowers/qa/product-maturity/phase-4/README.md")
+TASK_11_2_QA_EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-4/2026-05-12-phase-4-2-personas-runtime-launch.md"
+)
+TASK_11_2_SCREENSHOT = Path(
+    "Docs/superpowers/qa/product-maturity/phase-4/personas-selected-2026-05-12.png"
+)
 TASK_11 = Path(
     "backlog/tasks/task-11 - Product-Maturity-Phase-4-Agent-Configuration-And-Execution.md"
 )
@@ -36,6 +42,7 @@ PHASE_4_CHILD_TASKS = {
         "backlog/tasks/task-11.7 - Phase-4.7-Agent-execution-QA-closeout.md"
     ),
 }
+PHASE_4_COMPLETED_TASKS = {"TASK-11.1", "TASK-11.2"}
 
 
 def _text(path: Path) -> str:
@@ -58,12 +65,16 @@ def test_phase4_agent_execution_plan_splits_parent_into_reviewable_child_tasks()
     parent_task = _text(TASK_11)
     tracker = _text(TRACKER)
     qa_readme = _text(PHASE_4_QA_README)
+    personas_evidence = _text(TASK_11_2_QA_EVIDENCE)
 
     assert "status: In Progress" in parent_task
     assert PLAN.as_posix() in parent_task
     assert PLAN.as_posix() in tracker
     assert PHASE_4_QA_README.as_posix() in tracker
-    assert "Status: verified for planning baseline; implementation slices remain open" in qa_readme
+    assert "Status: TASK-11.1 and TASK-11.2 verified; implementation slices remain open" in qa_readme
+    assert TASK_11_2_QA_EVIDENCE.as_posix() in qa_readme
+    assert TASK_11_2_SCREENSHOT.as_posix() in personas_evidence
+    assert (REPO_ROOT / TASK_11_2_SCREENSHOT).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
     for required_section in (
         "## Source Of Truth",
@@ -80,7 +91,7 @@ def test_phase4_agent_execution_plan_splits_parent_into_reviewable_child_tasks()
         assert task_id in plan
         assert task_id in parent_task
         assert task_id in tracker
-        if task_id == "TASK-11.1":
+        if task_id in PHASE_4_COMPLETED_TASKS:
             assert "status: Done" in task
             for ac_number in range(1, 5):
                 assert f"- [x] #{ac_number}" in task
@@ -93,9 +104,10 @@ def test_phase4_agent_execution_plan_splits_parent_into_reviewable_child_tasks()
         assert "focused regression" in task.lower()
 
     phase_row = _markdown_table_row(tracker, "Phase 4: Agent Configuration And Execution")
-    assert "in-progress; TASK-11.1 verified" in phase_row[2]
+    assert "in-progress; TASK-11.1 verified; TASK-11.2 verified" in phase_row[2]
     for task_id in PHASE_4_CHILD_TASKS:
         assert task_id in phase_row[3]
     assert "phase-4/" in phase_row[4]
+    assert TASK_11_2_QA_EVIDENCE.name in phase_row[4]
     assert "ACP runtime" in phase_row[5]
     assert "server parity" in phase_row[5]

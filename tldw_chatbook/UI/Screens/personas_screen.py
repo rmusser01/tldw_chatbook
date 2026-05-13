@@ -52,6 +52,8 @@ class PersonasScreen(BaseAppScreen):
         self._personas_loaded = False
         self._personas_snapshot_executor: ThreadPoolExecutor | None = None
         self._personas_snapshot_futures: set[Future[Any]] = set()
+        self._selected_behavior_kind: str | None = None
+        self._selected_behavior_index: int | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -79,6 +81,7 @@ class PersonasScreen(BaseAppScreen):
         self._personas_lookup_error = lookup_error
         self._personas_lookup_recovery_state = recovery_state
         self._personas_loaded = True
+        self._ensure_selected_behavior()
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -259,8 +262,86 @@ class PersonasScreen(BaseAppScreen):
     def _has_local_behavior_context(self) -> bool:
         return any(count > 0 for count in self._local_behavior_counts.values())
 
+    def _ensure_selected_behavior(self) -> None:
+        if not self._has_local_behavior_context() or self._personas_lookup_error:
+            self._selected_behavior_kind = None
+            self._selected_behavior_index = None
+            return
+
+        if self._selected_behavior_kind in {"characters", "profiles"} and self._selected_behavior_index is not None:
+            records = self._local_behavior_records[self._selected_behavior_kind]
+            if 0 <= self._selected_behavior_index < len(records):
+                return
+
+        for record_type in ("characters", "profiles"):
+            if self._local_behavior_records[record_type]:
+                self._selected_behavior_kind = record_type
+                self._selected_behavior_index = 0
+                return
+
+    @staticmethod
+    def _record_id(record_type: str, record: Mapping[str, Any]) -> str:
+        keys = {
+            "characters": ("record_id", "id", "uuid", "character_id"),
+            "profiles": ("record_id", "id", "uuid", "profile_id"),
+        }[record_type]
+        for key in keys:
+            value = record.get(key)
+            if value not in (None, ""):
+                return PersonasScreen._safe_text(value, max_length=120)
+        return "unknown"
+
+    @classmethod
+    def _runtime_target_id(cls, record_type: str, record: Mapping[str, Any]) -> str:
+        record_id = cls._record_id(record_type, record)
+        if record_id.startswith("local:") or record_id.startswith("server:"):
+            return record_id
+        target_type = "character" if record_type == "characters" else "persona_profile"
+        return f"local:{target_type}:{record_id}"
+
+    def _selected_behavior_record(self) -> tuple[str, Mapping[str, Any]] | None:
+        self._ensure_selected_behavior()
+        if self._selected_behavior_kind is None or self._selected_behavior_index is None:
+            return None
+        records = self._local_behavior_records[self._selected_behavior_kind]
+        if not (0 <= self._selected_behavior_index < len(records)):
+            return None
+        return self._selected_behavior_kind, records[self._selected_behavior_index]
+
+    def _selected_behavior_metadata(self) -> dict[str, str]:
+        selected = self._selected_behavior_record()
+        if selected is None:
+            return {}
+        record_type, record = selected
+        selected_kind = "character" if record_type == "characters" else "persona_profile"
+        return {
+            "selected_kind": selected_kind,
+            "selected_name": self._record_name(record_type, record),
+            "selected_record_id": self._record_id(record_type, record),
+            "selected_target_id": self._runtime_target_id(record_type, record),
+        }
+
+    def _blocked_reason(self) -> str:
+        if not self._personas_lookup_error:
+            return "No local behavior context is available"
+        for line in self._personas_lookup_error.splitlines():
+            if line.startswith("Why:"):
+                return line.removeprefix("Why:").strip().rstrip(".")
+        return self._personas_lookup_error.splitlines()[0].strip().rstrip(".")
+
     def _snapshot_body(self) -> str:
         lines = ["Local Personas behavior context staged for Console:", ""]
+        selected = self._selected_behavior_metadata()
+        if selected:
+            lines.extend(
+                [
+                    "Selected behavior target:",
+                    f"  kind: {selected['selected_kind']}",
+                    f"  name: {selected['selected_name']}",
+                    f"  target_id: {selected['selected_target_id']}",
+                    "",
+                ]
+            )
         for record_type, label in (
             ("characters", "Characters"),
             ("profiles", "Persona profiles"),
@@ -290,6 +371,7 @@ class PersonasScreen(BaseAppScreen):
 
     def compose_content(self) -> ComposeResult:
         has_context = self._has_local_behavior_context()
+        selected_metadata = self._selected_behavior_metadata()
         with Vertical(id="personas-shell"):
             yield Static(
                 "Personas | Behavior, characters, prompts, lore | Ready | Local/Server",
@@ -367,15 +449,35 @@ class PersonasScreen(BaseAppScreen):
                                     ),
                                     id=f"personas-{record_type}-item-{index}",
                             )
+                                yield Button(
+                                    "Use",
+                                    id=f"personas-select-{record_type}-{index}",
+                                    classes="personas-select-behavior",
+                                    tooltip=f"Use {self._record_name(record_type, record)} as the Console behavior target.",
+                                )
                         attach_disabled = False
                         attach_tooltip = "Stage local persona context in Console."
                 yield self._column_divider("personas-detail-inspector-divider")
                 with Vertical(id="personas-inspector-pane", classes="destination-workbench-pane ds-inspector"):
                     yield Static("Column 3: Attachments", classes="destination-pane-title")
+                    if selected_metadata:
+                        yield Static(
+                            f"Selected: {selected_metadata['selected_name']}",
+                            id="personas-selected-context",
+                        )
+                        yield Static(
+                            f"Runtime target: {selected_metadata['selected_target_id']}",
+                            id="personas-selected-runtime-target",
+                        )
                     yield Static(
-                        "Console: ready",
+                        "Console: ready" if has_context and not self._personas_lookup_error else "Console: blocked",
                         id="personas-console-readiness",
                     )
+                    if self._personas_lookup_error:
+                        yield Static(
+                            f"Reason: {self._blocked_reason()}",
+                            id="personas-console-blocked-reason",
+                        )
                     yield Static(
                         "Workflows: ready",
                         id="personas-workflows-readiness",
@@ -395,6 +497,27 @@ class PersonasScreen(BaseAppScreen):
     @on(Button.Pressed, "#personas-open-profiles")
     def open_profiles(self) -> None:
         self.post_message(NavigateToScreen("ccp"))
+
+    @on(Button.Pressed, ".personas-select-behavior")
+    def select_behavior_context(self, event: Button.Pressed) -> None:
+        event.stop()
+        button_id = str(event.button.id or "")
+        prefix = "personas-select-"
+        if not button_id.startswith(prefix):
+            return
+        target = button_id.removeprefix(prefix)
+        record_type, _, raw_index = target.rpartition("-")
+        if record_type not in {"characters", "profiles"}:
+            return
+        try:
+            index = int(raw_index)
+        except ValueError:
+            return
+        if not (0 <= index < len(self._local_behavior_records[record_type])):
+            return
+        self._selected_behavior_kind = record_type
+        self._selected_behavior_index = index
+        self.refresh(recompose=True)
 
     @on(Button.Pressed, "#personas-attach-to-console")
     def attach_to_console(self, event: Button.Pressed) -> None:
@@ -423,7 +546,11 @@ class PersonasScreen(BaseAppScreen):
                 title="Local Personas Context",
                 body=self._snapshot_body(),
                 display_summary="Local Personas context staged.",
-                suggested_prompt="Use these local characters and persona profiles to guide the next response.",
+                suggested_prompt=(
+                    "Use "
+                    f"{self._selected_behavior_metadata().get('selected_name', 'these local characters and persona profiles')} "
+                    "to guide the next response."
+                ),
                 runtime_backend="local",
                 source_owner="local",
                 source_selector_state="local",
@@ -433,6 +560,7 @@ class PersonasScreen(BaseAppScreen):
                     "character_names": self._record_names("characters"),
                     "persona_profile_names": self._record_names("profiles"),
                     "backend": "local",
+                    **self._selected_behavior_metadata(),
                 },
             )
         )
