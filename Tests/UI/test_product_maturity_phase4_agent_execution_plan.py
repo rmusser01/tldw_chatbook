@@ -18,6 +18,12 @@ TASK_11_2_SCREENSHOT = Path(
 TASK_11_2_APPROVED_SCREENSHOT = Path(
     "Docs/superpowers/qa/product-maturity/phase-4/personas-selected-polish-2026-05-12.png"
 )
+TASK_11_3_QA_EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-4/2026-05-12-phase-4-3-skills-attach-validation.md"
+)
+TASK_11_3_SCREENSHOT = Path(
+    "Docs/superpowers/qa/product-maturity/phase-4/skills-valid-invalid-2026-05-12.png"
+)
 TASK_11 = Path(
     "backlog/tasks/task-11 - Product-Maturity-Phase-4-Agent-Configuration-And-Execution.md"
 )
@@ -45,7 +51,7 @@ PHASE_4_CHILD_TASKS = {
         "backlog/tasks/task-11.7 - Phase-4.7-Agent-execution-QA-closeout.md"
     ),
 }
-PHASE_4_COMPLETED_TASKS = {"TASK-11.1", "TASK-11.2"}
+PHASE_4_COMPLETED_TASKS = {"TASK-11.1", "TASK-11.2", "TASK-11.3"}
 
 
 def _text(path: Path) -> str:
@@ -69,17 +75,24 @@ def test_phase4_agent_execution_plan_splits_parent_into_reviewable_child_tasks()
     tracker = _text(TRACKER)
     qa_readme = _text(PHASE_4_QA_README)
     personas_evidence = _text(TASK_11_2_QA_EVIDENCE)
+    skills_evidence = _text(TASK_11_3_QA_EVIDENCE)
 
     assert "status: In Progress" in parent_task
     assert PLAN.as_posix() in parent_task
     assert PLAN.as_posix() in tracker
     assert PHASE_4_QA_README.as_posix() in tracker
-    assert "Status: TASK-11.1 and TASK-11.2 verified; implementation slices remain open" in qa_readme
+    assert "Status: TASK-11.1 through TASK-11.3 verified; implementation slices remain open" in qa_readme
     assert TASK_11_2_QA_EVIDENCE.as_posix() in qa_readme
+    assert TASK_11_3_QA_EVIDENCE.as_posix() in qa_readme
     assert TASK_11_2_SCREENSHOT.as_posix() in personas_evidence
     assert TASK_11_2_APPROVED_SCREENSHOT.as_posix() in personas_evidence
+    assert TASK_11_3_SCREENSHOT.as_posix() in skills_evidence
+    assert "User approval: approved" in skills_evidence
+    assert "valid SKILL.md" in skills_evidence
+    assert "invalid SKILL.md" in skills_evidence
     assert (REPO_ROOT / TASK_11_2_SCREENSHOT).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert (REPO_ROOT / TASK_11_2_APPROVED_SCREENSHOT).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert (REPO_ROOT / TASK_11_3_SCREENSHOT).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
     for required_section in (
         "## Source Of Truth",
@@ -109,10 +122,11 @@ def test_phase4_agent_execution_plan_splits_parent_into_reviewable_child_tasks()
         assert "focused regression" in task.lower()
 
     phase_row = _markdown_table_row(tracker, "Phase 4: Agent Configuration And Execution")
-    assert "in-progress; TASK-11.1 verified; TASK-11.2 verified" in phase_row[2]
+    assert "in-progress; TASK-11.1 verified; TASK-11.2 verified; TASK-11.3 verified" in phase_row[2]
     for task_id in PHASE_4_CHILD_TASKS:
         assert task_id in phase_row[3]
     assert "phase-4/" in phase_row[4]
     assert TASK_11_2_QA_EVIDENCE.name in phase_row[4]
+    assert TASK_11_3_QA_EVIDENCE.name in phase_row[4]
     assert "ACP runtime" in phase_row[5]
     assert "server parity" in phase_row[5]

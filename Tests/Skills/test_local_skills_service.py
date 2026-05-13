@@ -21,6 +21,23 @@ disable_model_invocation: false
 Summarize {{args}}.
 """
 
+AGENT_SKILL_WITH_METADATA = """---
+name: summarize-notes
+description: Summarize note collections. Use when a user asks for a concise notes summary.
+allowed-tools: Read Bash(git:*)
+---
+# Summarize
+Summarize {{args}}.
+"""
+
+INVALID_AGENT_SKILL = """---
+name: Summarize Notes
+description: ""
+---
+# Invalid
+Missing valid Agent Skills metadata.
+"""
+
 
 @pytest.mark.asyncio
 async def test_local_skills_service_persists_skill_metadata(tmp_path):
@@ -44,6 +61,58 @@ async def test_local_skills_service_persists_skill_metadata(tmp_path):
     assert listed["skills"][0]["description"] == "Summarize notes"
     assert context["available_skills"][0]["argument_hint"] == "note id"
     assert "- summarize-notes" in context["context_text"]
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_validates_agent_skill_metadata_contract(tmp_path):
+    service = LocalSkillsService(store_dir=tmp_path)
+
+    created = await service.create_skill(name="summarize-notes", content=AGENT_SKILL_WITH_METADATA)
+    listed = await service.list_skills()
+    context = await service.get_context()
+
+    assert created["validation_status"] == "valid"
+    assert created["validation_errors"] == []
+    assert created["agent_skill_name"] == "summarize-notes"
+    assert created["description"] == "Summarize note collections. Use when a user asks for a concise notes summary."
+    assert created["allowed_tools"] == ["Read", "Bash(git:*)"]
+    assert listed["skills"][0]["validation_status"] == "valid"
+    assert listed["skills"][0]["validation_errors"] == []
+    assert context["available_skills"][0]["validation_status"] == "valid"
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_accepts_agent_skill_name_starting_with_number(tmp_path):
+    service = LocalSkillsService(store_dir=tmp_path)
+    content = """---
+name: 1-summary
+description: Summarize notes. Use when a user asks for a concise notes summary.
+---
+
+Summarize the selected notes.
+"""
+
+    created = await service.create_skill(name="1-summary", content=content)
+
+    assert created["name"] == "1-summary"
+    assert created["agent_skill_name"] == "1-summary"
+    assert created["validation_status"] == "valid"
+    assert created["validation_errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_reports_invalid_agent_skill_metadata_without_mutating_content(tmp_path):
+    service = LocalSkillsService(store_dir=tmp_path)
+
+    created = await service.create_skill(name="summarize-notes", content=INVALID_AGENT_SKILL)
+    listed = await service.list_skills()
+    loaded = await service.get_skill("summarize-notes")
+
+    assert created["validation_status"] == "invalid"
+    assert "name must use lowercase letters numbers and hyphens" in created["validation_errors"]
+    assert "description is required" in created["validation_errors"]
+    assert listed["skills"][0]["validation_status"] == "invalid"
+    assert loaded["content"] == INVALID_AGENT_SKILL
 
 
 @pytest.mark.asyncio

@@ -34,14 +34,20 @@ _SKILLS_DIRNAME = "skills"
 _SKILL_FILENAME = "SKILL.md"
 _FRONT_MATTER_PATTERN = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 _METADATA_FIELDS = {
+    "name",
     "description",
     "argument_hint",
     "allowed_tools",
+    "allowed-tools",
+    "license",
+    "compatibility",
+    "metadata",
     "model",
     "context",
     "user_invocable",
     "disable_model_invocation",
 }
+_AGENT_SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 
 
 class LocalSkillsService:
@@ -142,6 +148,48 @@ class LocalSkillsService:
             return stripped[:1000]
         return None
 
+    @staticmethod
+    def _normalize_allowed_tools(value: Any) -> list[str] | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, str):
+            tools = [tool.strip() for tool in value.split() if tool.strip()]
+            return tools or None
+        if isinstance(value, list):
+            tools = [str(tool).strip() for tool in value if str(tool).strip()]
+            return tools or None
+        return None
+
+    @classmethod
+    def _agent_skill_validation(cls, *, directory_name: str, front_matter: dict[str, Any]) -> dict[str, Any]:
+        errors: list[str] = []
+        agent_skill_name = front_matter.get("name")
+        description = front_matter.get("description")
+
+        if not isinstance(agent_skill_name, str) or not agent_skill_name.strip():
+            errors.append("name is required")
+            normalized_agent_name = None
+        else:
+            normalized_agent_name = agent_skill_name.strip()
+            if (
+                not _AGENT_SKILL_NAME_PATTERN.match(normalized_agent_name)
+                or "--" in normalized_agent_name
+            ):
+                errors.append("name must use lowercase letters numbers and hyphens")
+            if normalized_agent_name != directory_name:
+                errors.append("name must match parent directory")
+
+        if not isinstance(description, str) or not description.strip():
+            errors.append("description is required")
+        elif len(description) > 1024:
+            errors.append("description must be 1024 characters or fewer")
+
+        return {
+            "agent_skill_name": normalized_agent_name,
+            "validation_status": "invalid" if errors else "valid",
+            "validation_errors": errors,
+        }
+
     @classmethod
     def _metadata_from_content(
         cls,
@@ -176,9 +224,17 @@ class LocalSkillsService:
             base["directory_path"] = str(skill_dir)
         if front_matter:
             for field, value in front_matter.items():
-                base[field] = value
+                if field == "name":
+                    base["agent_skill_name"] = value
+                elif field == "allowed-tools":
+                    base["allowed_tools"] = cls._normalize_allowed_tools(value)
+                elif field == "allowed_tools":
+                    base["allowed_tools"] = cls._normalize_allowed_tools(value)
+                else:
+                    base[field] = value
         if base["description"] is None:
             base["description"] = cls._body_description(content)
+        base.update(cls._agent_skill_validation(directory_name=name, front_matter=front_matter))
         SkillSummary(
             name=base["name"],
             description=base["description"],
@@ -213,7 +269,7 @@ class LocalSkillsService:
 
     @staticmethod
     def _summary_for_record(record: dict[str, Any]) -> dict[str, Any]:
-        return LocalSkillsService._dump(
+        summary = LocalSkillsService._dump(
             SkillSummary(
                 name=record["name"],
                 description=record.get("description"),
@@ -223,6 +279,10 @@ class LocalSkillsService:
                 context=record.get("context", "inline"),
             )
         )
+        for field in ("agent_skill_name", "validation_status", "validation_errors", "record_id", "backend"):
+            if field in record:
+                summary[field] = record[field]
+        return summary
 
     def _require_record(self, skill_name: str, records: dict[str, dict[str, Any]]) -> dict[str, Any]:
         normalized_name = _normalize_skill_name(skill_name)

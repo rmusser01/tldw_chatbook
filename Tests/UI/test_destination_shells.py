@@ -1616,6 +1616,53 @@ async def test_skills_destination_lists_local_skills_from_scope_service():
 
 
 @pytest.mark.asyncio
+async def test_skills_destination_distinguishes_valid_and_invalid_skill_readiness():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "record_id": "local:skill:summarize-notes",
+                "validation_status": "valid",
+                "validation_errors": [],
+            },
+            {
+                "name": "broken-skill",
+                "description": "Missing valid frontmatter",
+                "record_id": "local:skill:broken-skill",
+                "validation_status": "invalid",
+                "validation_errors": ["description is required"],
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        text = _visible_text(screen)
+        attach_button = screen.query_one("#skills-attach-to-console", Button)
+
+        assert "Ready: valid SKILL.md" in text
+        assert "Blocked: invalid SKILL.md" in text
+        assert "description is required" in text
+        assert "Selected: summarize-notes" in text
+        assert "Runtime target: local:skill:summarize-notes" in text
+        assert "Execution: ready to stage in Console" in text
+        assert attach_button.disabled is False
+
+        await pilot.click("#skills-select-local-1")
+        await pilot.pause()
+        text = _visible_text(screen)
+
+        assert "Selected: broken-skill" in text
+        assert "Execution: blocked" in text
+        assert "Reason: description is required" in text
+        assert attach_button.disabled is True
+
+
+@pytest.mark.asyncio
 async def test_skills_destination_empty_state_disables_console_attach():
     app = _build_test_app()
     app.skills_scope_service = StaticSkillsScopeService([])
@@ -1755,13 +1802,59 @@ async def test_skills_attach_to_console_uses_listed_skill_context():
     assert isinstance(payload, ChatHandoffPayload)
     assert payload.source == "skills"
     assert payload.item_type == "skills-context"
-    assert payload.title == "Local Agent Skills (1)"
+    assert payload.title == "Local Agent Skill: summarize-notes"
     assert "summarize-notes" in payload.body
     assert "Summarize note collections" in payload.body
     assert "argument hint: note id" in payload.body
     assert "Stage installed skills, SKILL.md instructions" not in payload.body
     assert payload.metadata["skill_count"] == 1
     assert payload.metadata["skill_names"] == ["summarize-notes"]
+    assert payload.metadata["selected_skill_name"] == "summarize-notes"
+    assert payload.metadata["selected_target_id"] == "local:skill:summarize-notes"
+
+
+@pytest.mark.asyncio
+async def test_skills_attach_to_console_uses_selected_valid_skill_context_only():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "argument_hint": "note id",
+                "record_id": "local:skill:summarize-notes",
+                "backend": "local",
+                "validation_status": "valid",
+                "validation_errors": [],
+            },
+            {
+                "name": "broken-skill",
+                "description": "Broken metadata",
+                "record_id": "local:skill:broken-skill",
+                "validation_status": "invalid",
+                "validation_errors": ["description is required"],
+            },
+        ]
+    )
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        await pilot.click("#skills-attach-to-console")
+        await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
+
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert payload.title == "Local Agent Skill: summarize-notes"
+    assert "summarize-notes" in payload.body
+    assert "broken-skill" not in payload.body
+    assert payload.metadata["skill_count"] == 1
+    assert payload.metadata["skill_names"] == ["summarize-notes"]
+    assert payload.metadata["selected_skill_name"] == "summarize-notes"
+    assert payload.metadata["selected_record_id"] == "summarize-notes"
+    assert payload.metadata["selected_target_id"] == "local:skill:summarize-notes"
+    assert payload.metadata["validation_status"] == "valid"
 
 
 @pytest.mark.asyncio
