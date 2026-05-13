@@ -1,6 +1,6 @@
 # Product Maturity Phase 4 QA
 
-Status: verified for planning baseline; implementation slices remain open
+Status: TASK-11.1 and TASK-11.2 verified; implementation slices remain open
 
 Phase 4 covers agent configuration and execution surfaces: Personas, Skills, MCP, ACP, Schedules, and Workflows. This phase is not verified until the running app has been walked through and actual screenshots are captured for every changed visible screen.
 
@@ -9,6 +9,7 @@ Phase 4 covers agent configuration and execution surfaces: Personas, Skills, MCP
 | Slice | Evidence | Status |
 | --- | --- | --- |
 | Phase 4.1 planning baseline | `Docs/superpowers/qa/product-maturity/phase-4/2026-05-12-phase-4-agent-execution-planning.md` | verified |
+| Phase 4.2 Personas runtime launch | `Docs/superpowers/qa/product-maturity/phase-4/2026-05-12-phase-4-2-personas-runtime-launch.md` | verified |
 
 ## QA Rules
 

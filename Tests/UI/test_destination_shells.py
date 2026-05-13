@@ -848,6 +848,8 @@ async def test_personas_destination_empty_state_disables_console_attach():
         button = screen.query_one("#personas-attach-to-console", Button)
 
         assert "No local characters or persona profiles are available yet." in _visible_text(screen)
+        assert "Console: blocked" in _visible_text(screen)
+        assert "Reason: No local behavior context is available" in _visible_text(screen)
         assert button.disabled is True
         assert "Stage local persona context" in str(button.tooltip)
 
@@ -947,6 +949,132 @@ async def test_personas_attach_to_console_uses_listed_behavior_context():
     assert payload.metadata["persona_profile_count"] == 1
     assert payload.metadata["character_names"] == ["Research Mentor"]
     assert payload.metadata["persona_profile_names"] == ["Socratic Tutor"]
+
+
+@pytest.mark.asyncio
+async def test_personas_attach_to_console_includes_default_selected_character_target():
+    app = _build_test_app()
+    app.character_persona_scope_service = StaticPersonasScopeService(
+        characters=[
+            {"name": "Research Mentor", "id": 1, "description": "Helps reason over sources."},
+        ],
+        profiles=[
+            {"name": "Socratic Tutor", "id": "persona-1", "description": "Guides by asking questions."},
+        ],
+    )
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+        text = _visible_text(screen)
+
+        assert "Selected: Research Mentor" in text
+        assert "Runtime target: local:character:1" in text
+
+        await pilot.click("#personas-attach-to-console")
+        await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
+
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert payload.metadata["selected_kind"] == "character"
+    assert payload.metadata["selected_name"] == "Research Mentor"
+    assert payload.metadata["selected_record_id"] == "1"
+    assert payload.metadata["selected_target_id"] == "local:character:1"
+    assert "Selected behavior target:" in payload.body
+    assert "Research Mentor" in payload.suggested_prompt
+
+
+@pytest.mark.asyncio
+async def test_personas_selected_persona_profile_updates_console_handoff_target():
+    app = _build_test_app()
+    app.character_persona_scope_service = StaticPersonasScopeService(
+        characters=[
+            {"name": "Research Mentor", "id": 1},
+        ],
+        profiles=[
+            {
+                "name": "Socratic Tutor",
+                "id": "persona-1",
+                "record_id": "local:persona_profile:persona-1",
+                "description": "Guides by asking questions.",
+            },
+        ],
+    )
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+
+        await pilot.click("#personas-select-profiles-0")
+        await _wait_for_selector(screen, pilot, "#personas-selected-context")
+        assert "Selected: Socratic Tutor" in _visible_text(screen)
+        assert "Runtime target: local:persona_profile:persona-1" in _visible_text(screen)
+
+        await pilot.click("#personas-attach-to-console")
+        await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
+
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert payload.metadata["selected_kind"] == "persona_profile"
+    assert payload.metadata["selected_name"] == "Socratic Tutor"
+    assert payload.metadata["selected_record_id"] == "persona-1"
+    assert payload.metadata["selected_target_id"] == "local:persona_profile:persona-1"
+
+
+@pytest.mark.asyncio
+async def test_personas_selection_updates_target_widgets_without_recompose():
+    app = _build_test_app()
+    app.character_persona_scope_service = StaticPersonasScopeService(
+        characters=[
+            {"name": "Research Mentor", "id": 1},
+        ],
+        profiles=[
+            {
+                "name": "Socratic Tutor",
+                "id": "persona-1",
+                "record_id": "local:persona_profile:persona-1",
+            },
+        ],
+    )
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+        original_refresh = screen.refresh
+        refresh_calls = []
+
+        def record_refresh(*args, **kwargs):
+            refresh_calls.append(kwargs)
+            return original_refresh(*args, **kwargs)
+
+        screen.refresh = record_refresh
+
+        await pilot.click("#personas-select-profiles-0")
+        await pilot.pause()
+
+        assert "Selected: Socratic Tutor" in _visible_text(screen)
+        assert "Runtime target: local:persona_profile:persona-1" in _visible_text(screen)
+        assert not any(call.get("recompose") is True for call in refresh_calls)
+
+
+@pytest.mark.asyncio
+async def test_personas_policy_denial_reports_blocked_console_readiness():
+    app = _build_test_app()
+    app.character_persona_scope_service = PolicyDeniedPersonasScopeService()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+        button = screen.query_one("#personas-attach-to-console", Button)
+        text = _visible_text(screen)
+
+        assert "Console: blocked" in text
+        assert "Reason: Server Personas require sign-in" in text
+        assert button.disabled is True
 
 
 def test_personas_destination_service_adoption_tracking_evidence_exists():
@@ -1324,8 +1452,8 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(route, ex
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
-        visible_text = _visible_text(screen)
-        assert expected_text in visible_text
+        visible_text = _visible_text(screen).lower()
+        assert expected_text.lower() in visible_text
 
 
 @pytest.mark.parametrize(

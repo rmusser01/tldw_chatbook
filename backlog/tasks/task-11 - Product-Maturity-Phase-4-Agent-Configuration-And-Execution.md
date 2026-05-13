@@ -43,5 +43,5 @@ Primary implementation plan: Docs/superpowers/plans/2026-05-12-phase-4-agent-con
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Started Phase 4 with TASK-11.1 as the planning and tracking slice. The phase is now split into PR-sized child tasks for Personas Skills MCP ACP Schedules Workflows and QA closeout. Parent remains open until mounted QA walkthroughs with actual screenshots verify the running app is usable for Phase 4 target workflows.
+Started Phase 4 with TASK-11.1 as the planning and tracking slice. TASK-11.2 now verifies Personas local character/persona selection, honest blocked readiness, and stable Console handoff metadata. The phase remains open for Skills MCP ACP Schedules Workflows and QA closeout.
 <!-- SECTION:NOTES:END -->
