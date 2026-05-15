@@ -1396,6 +1396,97 @@ async def test_library_search_action_switches_to_search_mode_without_route_hando
     assert seen_routes == []
 
 
+@pytest.mark.asyncio
+async def test_acp_missing_runtime_explains_acp_owned_setup_recovery():
+    app = _build_test_app()
+    host = DestinationHarness(app, "acp")
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        visible_text = _visible_text(screen)
+        follow_button = screen.query_one("#acp-follow-in-console", Button)
+        launch_button = screen.query_one("#acp-launch-agent", Button)
+
+    assert "Runtime not configured" in visible_text
+    assert "Configure ACP runtime setup in ACP before launch." in visible_text
+    assert "Runtime owner: ACP" in visible_text
+    assert "Settings" not in visible_text
+    assert follow_button.disabled is True
+    assert launch_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_acp_configured_runtime_without_session_disables_console_follow():
+    app = _build_test_app()
+    app.acp_runtime_session_state = {
+        "runtime_id": "codex-local",
+        "runtime_label": "Codex local ACP",
+        "runtime_version": "0.1",
+        "session_id": None,
+    }
+    host = DestinationHarness(app, "acp")
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        visible_text = _visible_text(screen)
+        follow_button = screen.query_one("#acp-follow-in-console", Button)
+
+    assert "Runtime configured" in visible_text
+    assert "Runtime: Codex local ACP" in visible_text
+    assert "ACP version: 0.1" in visible_text
+    assert "Session: none" in visible_text
+    assert "Console follow disabled: no ACP session payload" in visible_text
+    assert "Start or resume an ACP session in ACP before following it in Console." in visible_text
+    assert "Runtime owner: ACP" in visible_text
+    assert follow_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_acp_session_payload_enables_console_follow_live_work_handoff():
+    app = _build_test_app()
+    app.acp_runtime_session_state = {
+        "runtime_id": "codex-local",
+        "runtime_label": "Codex local ACP",
+        "runtime_version": "0.1",
+        "session_id": "session-1",
+        "session_title": "Research agent",
+        "session_status": "running",
+        "session_payload": {
+            "thread_id": "thread-1",
+            "workspace": "docs",
+        },
+    }
+    app.open_console_for_live_work = Mock()
+    host = DestinationHarness(app, "acp")
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        visible_text = _visible_text(screen)
+        follow_button = screen.query_one("#acp-follow-in-console", Button)
+        await pilot.click("#acp-follow-in-console")
+        await _wait_for_mock_call(app.open_console_for_live_work, pilot)
+
+    assert "Session ready: Research agent" in visible_text
+    assert "Console follow ready: session payload available" in visible_text
+    assert follow_button.disabled is False
+    app.open_console_for_live_work.assert_called_once()
+    kwargs = app.open_console_for_live_work.call_args.kwargs
+    assert kwargs["source"] == "ACP"
+    assert kwargs["title"] == "Research agent"
+    assert kwargs["status"] == "running"
+    assert kwargs["action_label"] == "Follow ACP session"
+    assert kwargs["payload"]["target_id"] == "local:acp_session:session-1"
+    assert kwargs["payload"]["session_id"] == "session-1"
+    assert kwargs["payload"]["runtime_id"] == "codex-local"
+    assert kwargs["payload"]["session_payload"] == {
+        "thread_id": "thread-1",
+        "workspace": "docs",
+    }
+
+
 @pytest.mark.parametrize("route", SCREEN_BY_ROUTE)
 @pytest.mark.asyncio
 async def test_destination_action_buttons_explain_their_outcome(route):
