@@ -336,7 +336,22 @@ class SyncV2PullResponse(BaseModel):
 
 
 class SyncV2AttachmentUploadRequest(BaseModel):
-    """Request metadata for uploading a small encrypted Sync v2 attachment."""
+    """Request metadata for uploading a small encrypted Sync v2 attachment.
+
+    Attributes:
+        dataset_id: Sync dataset that owns the attachment.
+        domain: Sync domain associated with the attached entity.
+        entity_id: Entity identifier that the attachment belongs to.
+        attachment_id: Client-stable attachment identifier.
+        content_type: MIME type for the encrypted attachment payload.
+        size_bytes: Original encrypted payload size in bytes.
+        payload_ciphertext: Opaque encrypted attachment content.
+        payload_hash: Hash of the encrypted payload used for integrity checks.
+        encryption_policy: Encryption policy applied to the payload.
+        metadata: Routing-safe attachment metadata.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     dataset_id: str
     domain: SyncV2Domain
@@ -351,7 +366,17 @@ class SyncV2AttachmentUploadRequest(BaseModel):
 
 
 class SyncV2AttachmentUploadResponse(BaseModel):
-    """Response after storing or deduplicating a Sync v2 attachment."""
+    """Response after storing or deduplicating a Sync v2 attachment.
+
+    Attributes:
+        attachment_id: Attachment identifier accepted by the server.
+        dataset_id: Sync dataset that owns the attachment.
+        stored: Whether the server stored a new payload instead of reusing one.
+        size_bytes: Stored encrypted payload size in bytes.
+        payload_hash: Hash of the encrypted payload acknowledged by the server.
+        download_url: Optional temporary download URL when exposed by the server.
+        expires_at: Optional expiration timestamp for the download URL.
+    """
 
     attachment_id: str
     dataset_id: str

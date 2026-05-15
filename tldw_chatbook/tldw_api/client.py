@@ -14941,7 +14941,7 @@ class TLDWAPIClient:
         response = await self._request(
             "POST",
             "/api/v1/sync/attachments",
-            json_data=request_data.model_dump(mode="json"),
+            json_data=request_data.model_dump(mode="json", exclude_none=True),
         )
         return SyncV2AttachmentUploadResponse.model_validate(response)
 
