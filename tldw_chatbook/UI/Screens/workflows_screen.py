@@ -117,6 +117,51 @@ class WorkflowsScreen(BaseAppScreen):
             return "Approvals: pending"
         return "Approvals: none pending"
 
+    def _run_control_summary(self, latest_console_item) -> str:
+        if not self._latest_console_context_loaded:
+            return "Run control: loading"
+        if latest_console_item is None:
+            return "Run control: no active run selected"
+
+        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
+        if status in {"failed", "error", "errored", "cancelled", "canceled"}:
+            return "Run control: retry available"
+        if status in {"running", "active", "queued", "pending", "scheduled"}:
+            return "Run control: pause available"
+        if status == "paused":
+            return "Run control: resume available"
+        if status in HOME_APPROVAL_STATUSES:
+            return "Run control: approval required"
+        return "Run control: inspect status before acting"
+
+    def _next_action_summary(self, latest_console_item) -> str:
+        if latest_console_item is None:
+            return "Next action: start or select a workflow run"
+
+        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
+        if status in {"failed", "error", "errored", "cancelled", "canceled"}:
+            return "Next action: retry or open in Console"
+        if status == "paused":
+            return "Next action: resume or open in Console"
+        if status in HOME_APPROVAL_STATUSES:
+            return "Next action: review approval before Console follow"
+        return "Next action: open in Console"
+
+    def _action_state_label(self, latest_console_item) -> str:
+        if latest_console_item is None:
+            return "Recovery controls require an active workflow run"
+
+        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
+        if status in {"failed", "error", "errored", "cancelled", "canceled"}:
+            return "Retry controls are not wired yet"
+        if status in {"running", "active", "queued", "pending", "scheduled"}:
+            return "Pause controls are not wired yet"
+        if status == "paused":
+            return "Resume controls are not wired yet"
+        if status in HOME_APPROVAL_STATUSES:
+            return "Approval review controls are not wired yet"
+        return "Run controls depend on selected workflow state"
+
     def compose_content(self) -> ComposeResult:
         latest_console_item = self._current_console_follow_item
         self._latest_console_follow_item_id = (
@@ -140,19 +185,20 @@ class WorkflowsScreen(BaseAppScreen):
                 with Vertical(id="workflows-list-pane", classes="destination-workbench-pane"):
                     yield Static(
                         "Column 1: Procedure Library",
-                        classes="destination-section workflows-column-title",
+                        classes="destination-pane-title workflows-column-title",
                     )
-                    yield Static("Recipes", classes="destination-section")
-                    yield Static("Inputs", classes="destination-section")
-                    yield Static("Steps", classes="destination-section")
-                    yield Static("Dry Run", classes="destination-section")
-                    yield Static("Approvals", classes="destination-section")
-                    yield Static("Outputs", classes="destination-section")
+                    yield Static("Recipes 0", classes="destination-section")
+                    yield Static("Inputs 0", classes="destination-section")
+                    yield Static("Steps 0", classes="destination-section")
+                    yield Static("Dry Run 0", classes="destination-section")
+                    yield Static("Approvals 0", classes="destination-section")
+                    yield Static("Outputs 0", classes="destination-section")
+                    yield Static("No workflow runs are active.", id="workflows-queue-empty")
                 yield self._column_divider("workflows-list-detail-divider")
                 with Vertical(id="workflows-detail-pane", classes="destination-workbench-pane"):
                     yield Static(
                         "Column 2: Run Detail / Output",
-                        classes="destination-section workflows-column-title",
+                        classes="destination-pane-title workflows-column-title",
                     )
                     if not self._latest_console_context_loaded:
                         yield Static(
@@ -164,6 +210,10 @@ class WorkflowsScreen(BaseAppScreen):
                         status = str(getattr(latest_console_item, "status", None) or "unknown")
                         yield Static("Console launch available", classes="destination-section")
                         yield Static(
+                            f"Status: {escape_markup(status)}",
+                            id="workflows-run-status",
+                        )
+                        yield Static(
                             Text.from_markup(
                                 "Console can launch active workflow run: "
                                 f"{escape_markup(title)} ({escape_markup(status)})."
@@ -172,6 +222,8 @@ class WorkflowsScreen(BaseAppScreen):
                         )
                     else:
                         yield Static("Console launch unavailable", classes="destination-section")
+                        yield Static("No active workflow run selected", id="workflows-empty-state")
+                        yield Static("Select a workflow run or start a procedure to enable controls.")
                         yield Static(
                             WORKFLOWS_EMPTY_CONSOLE_RECOVERY.visible_copy,
                             id=WORKFLOWS_EMPTY_CONSOLE_RECOVERY.stable_selector,
@@ -180,7 +232,7 @@ class WorkflowsScreen(BaseAppScreen):
                 with Vertical(id="workflows-inspector-pane", classes="destination-workbench-pane ds-inspector"):
                     yield Static(
                         "Column 3: Run Inspector",
-                        classes="destination-section workflows-column-title",
+                        classes="destination-pane-title workflows-column-title",
                     )
                     yield Static(
                         self._inspector_state_summary(latest_console_item),
@@ -188,16 +240,42 @@ class WorkflowsScreen(BaseAppScreen):
                     )
                     yield Static("Inputs: required before run", id="workflows-inputs-summary")
                     yield Static(self._approval_summary(latest_console_item), id="workflows-approval-summary")
+                    yield Static(
+                        self._run_control_summary(latest_console_item),
+                        id="workflows-run-control-summary",
+                    )
                     if latest_console_item is not None:
                         yield Static("Console: ready", id="workflows-console-state")
-                        yield Static("Next action: open in Console", id="workflows-next-action")
+                        yield Static(self._next_action_summary(latest_console_item), id="workflows-next-action")
                     else:
                         yield Static("Console: blocked", id="workflows-console-state")
                         yield Static(
-                            "Next action: start or select a workflow run",
+                            self._next_action_summary(latest_console_item),
                             id="workflows-next-action",
                         )
-                    yield Static("Workflow Actions", classes="destination-section")
+                    yield Static(
+                        self._action_state_label(latest_console_item),
+                        id="workflows-action-state-label",
+                        classes="destination-section",
+                    )
+                    yield Button(
+                        "Retry run",
+                        id="workflows-retry-run",
+                        disabled=True,
+                        tooltip="Retry this workflow run from Workflows when run-control services are available.",
+                    )
+                    yield Button(
+                        "Pause run",
+                        id="workflows-pause-run",
+                        disabled=True,
+                        tooltip="Pause this workflow run from Workflows when run-control services are available.",
+                    )
+                    yield Button(
+                        "Review approval",
+                        id="workflows-review-approval",
+                        disabled=True,
+                        tooltip="Review this workflow approval from Workflows when approval services are available.",
+                    )
                     if not self._latest_console_context_loaded:
                         yield Button(
                             "Console launch unavailable",

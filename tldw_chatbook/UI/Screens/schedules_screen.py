@@ -185,6 +185,57 @@ class SchedulesScreen(BaseAppScreen):
             return "Retry/backoff: paused"
         return "Retry/backoff: status unknown"
 
+    def _run_control_summary(self, latest_console_item) -> str:
+        if not self._latest_console_context_loaded:
+            return "Run control: loading"
+        if latest_console_item is None:
+            if self._latest_console_launch_kwargs is not None:
+                return "Run control: digest output is read-only"
+            return "Run control: no active run selected"
+
+        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
+        if status in {"failed", "error", "errored", "cancelled", "canceled"}:
+            return "Run control: retry available"
+        if status in {"running", "active", "queued", "pending", "scheduled"}:
+            return "Run control: pause available"
+        if status == "paused":
+            return "Run control: resume available"
+        if status in {"approval_required", "pending_approval"}:
+            return "Run control: approval required"
+        return "Run control: inspect status before acting"
+
+    def _next_action_summary(self, latest_console_item) -> str:
+        if latest_console_item is None:
+            if self._latest_console_launch_kwargs is not None:
+                return "Next action: open digest output in Console"
+            return "Next action: start or select a schedule run"
+
+        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
+        if status in {"failed", "error", "errored", "cancelled", "canceled"}:
+            return "Next action: retry or open in Console"
+        if status == "paused":
+            return "Next action: resume or open in Console"
+        if status in {"approval_required", "pending_approval"}:
+            return "Next action: review approval before Console follow"
+        return "Next action: open in Console"
+
+    def _action_state_label(self, latest_console_item) -> str:
+        if latest_console_item is None:
+            if self._latest_console_launch_kwargs is not None:
+                return "Digest output is read-only"
+            return "Recovery controls require an active schedule run"
+
+        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
+        if status in {"failed", "error", "errored", "cancelled", "canceled"}:
+            return "Retry controls are not wired yet"
+        if status in {"running", "active", "queued", "pending", "scheduled"}:
+            return "Pause controls are not wired yet"
+        if status == "paused":
+            return "Resume controls are not wired yet"
+        if status in {"approval_required", "pending_approval"}:
+            return "Approval review controls are not wired yet"
+        return "Run controls depend on selected schedule state"
+
     def compose_content(self) -> ComposeResult:
         latest_console_item = self._current_console_follow_item
         self._latest_console_follow_item_id = (
@@ -206,15 +257,16 @@ class SchedulesScreen(BaseAppScreen):
                 )
             with Horizontal(id="schedules-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="schedules-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 1: Schedule Queue", classes="destination-section schedules-column-title")
-                    yield Static("Next Run", classes="destination-section")
-                    yield Static("Paused", classes="destination-section")
-                    yield Static("Failed", classes="destination-section")
-                    yield Static("Retry", classes="destination-section")
-                    yield Static("History", id="schedules-history-row", classes="destination-section")
+                    yield Static("Column 1: Schedule Queue", classes="destination-pane-title schedules-column-title")
+                    yield Static("Next Run 0", classes="destination-section")
+                    yield Static("Paused 0", classes="destination-section")
+                    yield Static("Failed 0", classes="destination-section")
+                    yield Static("Retry 0", classes="destination-section")
+                    yield Static("History 0", id="schedules-history-row", classes="destination-section")
+                    yield Static("No scheduled runs are active.", id="schedules-queue-empty")
                 yield self._column_divider("schedules-list-detail-divider")
                 with Vertical(id="schedules-detail-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 2: Run Detail / Output", classes="destination-section schedules-column-title")
+                    yield Static("Column 2: Run Detail / Output", classes="destination-pane-title schedules-column-title")
                     if not self._latest_console_context_loaded:
                         yield Static(
                             "Loading schedule and Console follow context...",
@@ -224,6 +276,10 @@ class SchedulesScreen(BaseAppScreen):
                         title = str(getattr(latest_console_item, "title", None) or "Untitled")
                         status = str(getattr(latest_console_item, "status", None) or "unknown")
                         yield Static("Console launch available", classes="destination-section")
+                        yield Static(
+                            f"Status: {escape_markup(status)}",
+                            id="schedules-run-status",
+                        )
                         yield Static(
                             Text.from_markup(
                                 "Console can follow active schedule run: "
@@ -242,7 +298,8 @@ class SchedulesScreen(BaseAppScreen):
                             id="schedules-console-available",
                         )
                     else:
-                        yield Static("No scheduler data is available yet.", id="schedules-empty-state")
+                        yield Static("No active schedule run selected", id="schedules-empty-state")
+                        yield Static("Select a run from the queue or create a scheduled job to enable controls.")
                         yield Static("Console recovery unavailable", classes="destination-section")
                         yield Static(
                             SCHEDULES_EMPTY_CONSOLE_RECOVERY.visible_copy,
@@ -250,7 +307,7 @@ class SchedulesScreen(BaseAppScreen):
                         )
                 yield self._column_divider("schedules-detail-inspector-divider")
                 with Vertical(id="schedules-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Column 3: Status Inspector", classes="destination-section schedules-column-title")
+                    yield Static("Column 3: Status Inspector", classes="destination-pane-title schedules-column-title")
                     yield Static(
                         self._inspector_state_summary(latest_console_item),
                         id="schedules-state-summary",
@@ -259,16 +316,42 @@ class SchedulesScreen(BaseAppScreen):
                         self._retry_backoff_summary(latest_console_item),
                         id="schedules-retry-summary",
                     )
+                    yield Static(
+                        self._run_control_summary(latest_console_item),
+                        id="schedules-run-control-summary",
+                    )
                     if latest_console_item is not None or self._latest_console_launch_kwargs is not None:
                         yield Static("Console: ready", id="schedules-console-state")
-                        yield Static("Next action: open in Console", id="schedules-next-action")
+                        yield Static(self._next_action_summary(latest_console_item), id="schedules-next-action")
                     else:
                         yield Static("Console: blocked", id="schedules-console-state")
                         yield Static(
-                            "Next action: start or select a schedule run",
+                            self._next_action_summary(latest_console_item),
                             id="schedules-next-action",
                         )
-                    yield Static("Schedule Actions", classes="destination-section")
+                    yield Static(
+                        self._action_state_label(latest_console_item),
+                        id="schedules-action-state-label",
+                        classes="destination-section",
+                    )
+                    yield Button(
+                        "Retry run",
+                        id="schedules-retry-run",
+                        disabled=True,
+                        tooltip="Retry this schedule run from Schedules when run-control services are available.",
+                    )
+                    yield Button(
+                        "Pause run",
+                        id="schedules-pause-run",
+                        disabled=True,
+                        tooltip="Pause this schedule run from Schedules when run-control services are available.",
+                    )
+                    yield Button(
+                        "Review approval",
+                        id="schedules-review-approval",
+                        disabled=True,
+                        tooltip="Review this schedule approval from Schedules when approval services are available.",
+                    )
                     if not self._latest_console_context_loaded:
                         yield Button(
                             "Console recovery unavailable",
