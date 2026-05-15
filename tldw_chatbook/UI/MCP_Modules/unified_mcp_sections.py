@@ -20,7 +20,28 @@ def render_unified_mcp_section(section: str, payload: Mapping[str, Any] | None) 
 
 def render_overview_section(payload: Mapping[str, Any] | None) -> str:
     payload = dict(payload or {})
-    return _render_json_block("Unified MCP Overview", payload)
+    inventory = dict(payload.get("inventory") or {})
+    external_servers = dict(payload.get("external_servers") or {})
+    governance = dict(payload.get("governance") or {})
+    lines = [
+        "Unified MCP Overview",
+        "",
+        "Summary",
+        f"Source: {payload.get('source') or 'local'}",
+        f"Server: {payload.get('server_id') or 'local'}",
+        f"Scope: {payload.get('selected_scope') or payload.get('scope') or 'personal'}",
+        f"Section: {payload.get('section') or 'overview'}",
+        f"Tools: {_count_value(inventory.get('tools'))}",
+        f"Resources: {_count_value(inventory.get('resources'))}",
+        f"Prompts: {_count_value(inventory.get('prompts'))}",
+        f"External server profiles: {_count_value(external_servers.get('profiles'))}",
+        f"Governance rules: {_count_value(governance.get('rules'))}",
+        "",
+        "Next: select Inventory to inspect tools and actions.",
+        "",
+        "Raw detail: hidden by default. Select Advanced for diagnostics.",
+    ]
+    return "\n".join(lines)
 
 
 def render_inventory_section(payload: Mapping[str, Any] | None) -> str:
@@ -31,11 +52,12 @@ def render_inventory_section(payload: Mapping[str, Any] | None) -> str:
     lines = [
         "Unified MCP Inventory",
         "",
+        "Server hierarchy",
         f"Server: {payload.get('server_id') or 'local'}",
         f"Scope: {payload.get('selected_scope') or payload.get('scope') or 'personal'}",
         f"Scope Ref: {payload.get('selected_scope_ref') or payload.get('scope_ref') or '-'}",
         "",
-        f"Tools ({len(tools)}):",
+        f"Tools under {payload.get('server_id') or 'local'} ({len(tools)}):",
     ]
     lines.extend(_render_named_items(tools, key="name"))
     lines.append("")
@@ -226,6 +248,19 @@ def _render_named_items(items: list[Any], *, key: str) -> list[str]:
     if len(items) > 10:
         rendered.append(f"  - ... {len(items) - 10} more")
     return rendered
+
+
+def _count_value(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, Mapping):
+        return len(value)
+    try:
+        return len(value)
+    except TypeError:
+        return 1
 
 
 def _render_json_block(title: str, payload: Mapping[str, Any]) -> str:

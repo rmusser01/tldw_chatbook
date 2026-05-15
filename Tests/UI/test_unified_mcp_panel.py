@@ -14,8 +14,9 @@ from tldw_chatbook.MCP.unified_control_models import (
     SectionCapabilityFlags,
     UnifiedMCPContext,
 )
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
+from tldw_chatbook.UI.MCP_Modules.unified_mcp_sections import render_inventory_section, render_overview_section
 
 
 class FakeUnifiedMCPService:
@@ -410,16 +411,73 @@ class FakeUnifiedMCPService:
 
 
 class UnifiedMCPPanelApp(App):
-    def __init__(self, service: FakeUnifiedMCPService):
+    def __init__(self, service: FakeUnifiedMCPService, *, deny_ui_actions: bool = False):
         super().__init__()
         self.notify_messages: list[tuple[str, str]] = []
         self.unified_mcp_service = service
+        self.deny_ui_actions = deny_ui_actions
 
     def notify(self, message: str, severity: str = "information") -> None:
         self.notify_messages.append((message, severity))
 
+    def require_ui_action_allowed(self, *, action_id: str, runtime_state_override: RuntimeSourceState) -> PolicyDecision:
+        if self.deny_ui_actions:
+            return PolicyDecision(
+                allowed=False,
+                reason_code="authority_denied",
+                user_message=f"{action_id} is blocked by policy.",
+                effective_source=runtime_state_override.active_source,
+                authority_owner="local",
+            )
+        return PolicyDecision(
+            allowed=True,
+            reason_code=None,
+            user_message=f"{action_id} is allowed.",
+            effective_source=runtime_state_override.active_source,
+            authority_owner="local",
+        )
+
     def compose(self) -> ComposeResult:
         yield UnifiedMCPPanel(app_instance=self)
+
+
+def test_render_inventory_section_keeps_tools_nested_under_selected_server():
+    rendered = render_inventory_section(
+        {
+            "server_id": "server-a",
+            "selected_scope": "team",
+            "selected_scope_ref": "21",
+            "tools": [{"name": "docs.search"}],
+            "resources": [{"uri": "docs://index"}],
+            "prompts": [{"name": "summarize-docs"}],
+        }
+    )
+
+    assert "Server hierarchy" in rendered
+    assert "Server: server-a" in rendered
+    assert "Tools under server-a (1):" in rendered
+    assert "  - docs.search" in rendered
+
+
+def test_render_overview_section_shows_scannable_summary_before_raw_json():
+    rendered = render_overview_section(
+        {
+            "source": "local",
+            "section": "overview",
+            "scope": "personal",
+            "external_servers": {"discovery_snapshots": 0, "profiles": 0},
+            "inventory": {"prompts": 5, "resources": 5, "tools": 10},
+        }
+    )
+
+    assert "Summary" in rendered
+    assert "Source: local" in rendered
+    assert "Tools: 10" in rendered
+    assert "Resources: 5" in rendered
+    assert "Prompts: 5" in rendered
+    assert "Next: select Inventory to inspect tools and actions." in rendered
+    assert "Raw detail: hidden by default" in rendered
+    assert '"inventory"' not in rendered
 
 
 @pytest.mark.asyncio
@@ -563,6 +621,83 @@ async def test_unified_mcp_panel_exposes_local_inventory_runtime_actions(tmp_pat
         assert "Execute Local Tool" in action_values
         assert "Read Local Resource" in action_values
         assert "Get Local Prompt" in action_values
+        assert "Actions ready: 3 available" in str(panel.query_one("#unified-mcp-action-readiness", Static).content)
+
+
+@pytest.mark.asyncio
+async def test_unified_mcp_panel_explains_empty_and_policy_blocked_actions(tmp_path):
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    service = FakeUnifiedMCPService(target_store)
+    app = UnifiedMCPPanelApp(service)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = app.query_one(UnifiedMCPPanel)
+
+        await panel.load_context()
+        await panel.select_section("overview")
+        await pilot.pause()
+
+        action_select = panel.query_one("#unified-mcp-action", Select)
+        readiness = panel.query_one("#unified-mcp-action-readiness", Static)
+        payload_label = panel.query_one("#unified-mcp-action-payload-label", Static)
+        payload_area = panel.query_one("#unified-mcp-action-payload", TextArea)
+        payload_empty = panel.query_one("#unified-mcp-action-payload-empty", Static)
+
+        assert action_select.disabled is True
+        readiness_text = str(readiness.content)
+        assert "Blocked" in readiness_text
+        assert "No actions available for local overview." in readiness_text
+        assert "Select Section: Inventory to inspect runnable MCP tools." in readiness_text
+        assert "Run Action disabled" in readiness_text
+        assert payload_label.display is False
+        assert payload_area.display is False
+        assert payload_empty.display is True
+        assert "Choose a runnable action to edit its payload." in str(payload_empty.content)
+
+    target_store.save_targets(
+        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+    )
+    service = FakeUnifiedMCPService(target_store)
+    denied_app = UnifiedMCPPanelApp(service, deny_ui_actions=True)
+
+    async with denied_app.run_test() as pilot:
+        await pilot.pause()
+        panel = denied_app.query_one(UnifiedMCPPanel)
+
+        await panel.load_context()
+        await panel.select_section("inventory")
+        await pilot.pause()
+
+        action_select = panel.query_one("#unified-mcp-action", Select)
+        readiness = panel.query_one("#unified-mcp-action-readiness", Static)
+
+        assert action_select.disabled is True
+        assert "Run Action disabled" in str(readiness.content)
+        assert "Runtime policy blocks 3 actions for local inventory." in str(readiness.content)
+
+
+@pytest.mark.asyncio
+async def test_unified_mcp_panel_shows_payload_editor_only_for_runnable_actions(tmp_path):
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    service = FakeUnifiedMCPService(target_store)
+    app = UnifiedMCPPanelApp(service)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = app.query_one(UnifiedMCPPanel)
+
+        await panel.load_context()
+        await panel.select_section("inventory")
+        await pilot.pause()
+
+        payload_label = panel.query_one("#unified-mcp-action-payload-label", Static)
+        payload_area = panel.query_one("#unified-mcp-action-payload", TextArea)
+        payload_empty = panel.query_one("#unified-mcp-action-payload-empty", Static)
+
+        assert payload_label.display is True
+        assert payload_area.display is True
+        assert payload_empty.display is False
 
 
 @pytest.mark.asyncio

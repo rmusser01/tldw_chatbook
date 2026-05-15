@@ -45,7 +45,8 @@ class MainNavigationBar(Container):
 
     DEFAULT_CSS = """
     MainNavigationBar {
-        height: 3;
+        height: 4;
+        min-height: 4;
         width: 100%;
         dock: top;
         background: $panel;
@@ -67,7 +68,9 @@ class MainNavigationBar(Container):
         min-width: 6;
         background: transparent;
         border: none;
-        height: 3;
+        height: 4;
+        min-height: 4;
+        content-align: center middle;
     }
 
     .nav-button:hover {
@@ -136,7 +139,9 @@ class MainNavigationBar(Container):
                 if destination.destination_id == self.active_destination_id:
                     button.add_class("is-active")
                 yield button
-            yield Static("More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint")
+            overflow_hint = Static("More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint")
+            overflow_hint.tooltip = "Open command palette"
+            yield overflow_hint
 
     @on(Button.Pressed, ".nav-button")
     def handle_navigation(self, event: Button.Pressed) -> None:

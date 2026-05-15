@@ -68,7 +68,7 @@ class UnifiedMCPPanel(Container):
         height: 1fr;
         overflow: auto;
         border: round $background;
-        padding: 1;
+        padding: 0 1 1 1;
         background: $boost;
     }
 
@@ -92,6 +92,75 @@ class UnifiedMCPPanel(Container):
 
     .unified-mcp-action-row Button {
         width: auto;
+    }
+
+    #mcp-workbench {
+        height: 1fr;
+        min-height: 0;
+        width: 100%;
+        padding: 1;
+        border: solid #666666;
+    }
+
+    #mcp-workbench .mcp-workbench-pane {
+        height: 100%;
+        min-height: 0;
+        padding: 1 2;
+        border: solid #666666;
+        background: $panel;
+    }
+
+    #mcp-workbench .mcp-workbench-pane:focus-within {
+        border: solid #9a9a9a;
+    }
+
+    #mcp-workbench .mcp-column-divider {
+        width: 1;
+        min-width: 1;
+        height: 100%;
+        min-height: 0;
+        content-align: center middle;
+        color: $text-muted;
+        background: #262626;
+    }
+
+    #mcp-workbench .mcp-column-resize-handle {
+        border-left: solid #444444;
+    }
+
+    #mcp-server-tree-pane {
+        width: 2fr;
+        min-width: 22;
+    }
+
+    #mcp-detail-pane {
+        width: 5fr;
+        min-width: 38;
+    }
+
+    #mcp-readiness-pane {
+        width: 3fr;
+        min-width: 28;
+    }
+
+    .mcp-pane-title {
+        height: 1;
+        min-height: 1;
+        margin-bottom: 1;
+        text-style: bold;
+        color: $text;
+        background: #3a3a3a;
+        padding: 0 1;
+    }
+
+    .unified-mcp-action-readiness,
+    .unified-mcp-action-payload-empty {
+        width: 100%;
+        height: auto;
+        min-height: 3;
+        content-align: left middle;
+        text-align: left;
+        text-style: none;
     }
     """
 
@@ -211,13 +280,23 @@ class UnifiedMCPPanel(Container):
                 yield Static("Unified MCP is loading...", id="unified-mcp-content", classes="unified-mcp-content")
                 with Vertical(classes="unified-mcp-actions"):
                     yield Label("Action", classes="form-label")
+                    yield Static(
+                        "Actions blocked: Unified MCP is loading.",
+                        id="unified-mcp-action-readiness",
+                        classes="unified-mcp-action-readiness",
+                    )
                     yield Select(
                         [("No actions available", Select.BLANK)],
                         id="unified-mcp-action",
                         value=Select.BLANK,
                     )
-                    yield Label("Payload (JSON)", classes="form-label")
+                    yield Static("Payload (JSON)", id="unified-mcp-action-payload-label", classes="form-label")
                     yield TextArea("{}", id="unified-mcp-action-payload")
+                    yield Static(
+                        "Choose a runnable action to edit its payload.",
+                        id="unified-mcp-action-payload-empty",
+                        classes="unified-mcp-action-payload-empty",
+                    )
                     with Horizontal(classes="unified-mcp-action-row"):
                         yield Button(
                             "Run Action",
@@ -237,15 +316,22 @@ class UnifiedMCPPanel(Container):
         initial_scope_ref_options: list[tuple[str, object]],
         initial_scope_ref_value: object,
     ) -> ComposeResult:
-        with Horizontal(id="mcp-workbench", classes="ds-panel destination-workbench"):
-            with Vertical(id="mcp-server-tree-pane", classes="destination-workbench-pane"):
-                yield Static("Servers And Scope", classes="destination-section")
+        with Horizontal(id="mcp-workbench", classes="destination-workbench"):
+            with Vertical(id="mcp-server-tree-pane", classes="mcp-workbench-pane destination-workbench-pane"):
+                yield Static("Servers + Scope", classes="mcp-pane-title destination-section")
                 yield Label("Source", classes="form-label")
                 yield Select(
                     [("Local", "local"), ("Server", "server")],
                     id="unified-mcp-source",
                     allow_blank=False,
                     value=initial_source,
+                )
+                yield Label("Section", classes="form-label")
+                yield Select(
+                    [("Overview", "overview"), ("Inventory", "inventory"), ("External Servers", "external_servers")],
+                    id="unified-mcp-section",
+                    allow_blank=False,
+                    value=initial_section,
                 )
                 yield Label("Server", classes="form-label")
                 yield Select(
@@ -266,28 +352,37 @@ class UnifiedMCPPanel(Container):
                     id="unified-mcp-scope-ref",
                     value=initial_scope_ref_value,
                 )
-                yield Label("Section", classes="form-label")
-                yield Select(
-                    [("Overview", "overview"), ("Inventory", "inventory"), ("External Servers", "external_servers")],
-                    id="unified-mcp-section",
-                    allow_blank=False,
-                    value=initial_section,
-                )
-            with Vertical(id="mcp-detail-pane", classes="destination-workbench-pane"):
-                yield Static("Server Detail", classes="destination-section")
+            left_divider = Static("|", id="mcp-column-divider-left", classes="mcp-column-divider mcp-column-resize-handle")
+            left_divider.tooltip = "Resize columns"
+            yield left_divider
+            with Vertical(id="mcp-detail-pane", classes="mcp-workbench-pane destination-workbench-pane"):
+                yield Static("Server Detail", classes="mcp-pane-title destination-section")
                 yield Static("", id="unified-mcp-status", classes="unified-mcp-status")
                 yield Static("Unified MCP is loading...", id="unified-mcp-content", classes="unified-mcp-content")
-            with Vertical(id="mcp-readiness-pane", classes="destination-workbench-pane ds-inspector"):
-                yield Static("Readiness And Actions", classes="destination-section")
+            right_divider = Static("|", id="mcp-column-divider-right", classes="mcp-column-divider mcp-column-resize-handle")
+            right_divider.tooltip = "Resize columns"
+            yield right_divider
+            with Vertical(id="mcp-readiness-pane", classes="mcp-workbench-pane destination-workbench-pane ds-inspector"):
+                yield Static("Readiness + Actions", classes="mcp-pane-title destination-section")
                 with Vertical(classes="unified-mcp-actions"):
                     yield Label("Action", classes="form-label")
+                    yield Static(
+                        "Actions blocked: Unified MCP is loading.",
+                        id="unified-mcp-action-readiness",
+                        classes="unified-mcp-action-readiness",
+                    )
                     yield Select(
                         [("No actions available", Select.BLANK)],
                         id="unified-mcp-action",
                         value=Select.BLANK,
                     )
-                    yield Label("Payload (JSON)", classes="form-label")
+                    yield Static("Payload (JSON)", id="unified-mcp-action-payload-label", classes="form-label")
                     yield TextArea("{}", id="unified-mcp-action-payload")
+                    yield Static(
+                        "Choose a runnable action to edit its payload.",
+                        id="unified-mcp-action-payload-empty",
+                        classes="unified-mcp-action-payload-empty",
+                    )
                     with Horizontal(classes="unified-mcp-action-row"):
                         yield Button(
                             "Run Action",
@@ -539,8 +634,12 @@ class UnifiedMCPPanel(Container):
         action_select = self.query_one("#unified-mcp-action", Select)
         payload_area = self.query_one("#unified-mcp-action-payload", TextArea)
         run_button = self.query_one("#unified-mcp-action-run", Button)
+        readiness = self.query_one("#unified-mcp-action-readiness", Static)
+        payload_label = self.query_one("#unified-mcp-action-payload-label", Static)
+        payload_empty = self.query_one("#unified-mcp-action-payload-empty", Static)
 
-        descriptors = self._available_actions()
+        descriptors, readiness_text = self._available_actions_with_readiness()
+        readiness.update(readiness_text)
         self._action_templates = {
             str(descriptor["name"]): str(descriptor.get("payload_template") or "{}")
             for descriptor in descriptors
@@ -551,7 +650,11 @@ class UnifiedMCPPanel(Container):
                 action_select.value = Select.BLANK
                 action_select.disabled = True
                 payload_area.disabled = True
+                payload_area.display = False
+                payload_label.display = False
+                payload_empty.display = True
                 run_button.disabled = True
+                run_button.tooltip = readiness_text
                 payload_area.text = "{}"
                 return
 
@@ -564,21 +667,53 @@ class UnifiedMCPPanel(Container):
                 payload_area.text = self._action_templates.get(selected_action, "{}")
             action_select.disabled = False
             payload_area.disabled = False
+            payload_area.display = True
+            payload_label.display = True
+            payload_empty.display = False
             run_button.disabled = False
+            run_button.tooltip = readiness_text
 
-    def _available_actions(self) -> list[dict[str, Any]]:
+    def _available_actions_with_readiness(self) -> tuple[list[dict[str, Any]], str]:
         service = self._service()
         if service is None:
-            return []
+            return [], "Actions blocked: Unified MCP service unavailable."
         action_loader = getattr(service, "available_actions", None)
         if not callable(action_loader):
-            return []
+            return [], "Actions blocked: Unified MCP action catalog unavailable."
         descriptors = list(action_loader() or [])
-        return [
+        allowed_descriptors = [
             descriptor
             for descriptor in descriptors
             if self._ui_action_allowed(str(descriptor.get("action_id") or ""))
         ]
+        source = self.context.selected_source or "local"
+        section = self.context.selected_section or "overview"
+        if allowed_descriptors:
+            return (
+                allowed_descriptors,
+                f"Actions ready: {len(allowed_descriptors)} available for {source} {section}.",
+            )
+        if descriptors:
+            return (
+                [],
+                (
+                    "Run Action disabled\n"
+                    f"Runtime policy blocks {len(descriptors)} actions for {source} {section}."
+                ),
+            )
+        if source == "local" and section == "overview":
+            next_step = "Select Section: Inventory to inspect runnable MCP tools."
+        else:
+            next_step = "Select a source or section with available actions."
+        return (
+            [],
+            (
+                "Blocked\n"
+                "Run Action disabled\n"
+                f"No actions available for {source} {section}.\n"
+                f"{next_step}"
+            ),
+        )
 
     def _ui_action_allowed(self, action_id: str) -> bool:
         if not action_id:

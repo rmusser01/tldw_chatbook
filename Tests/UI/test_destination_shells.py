@@ -1498,6 +1498,35 @@ async def test_mcp_destination_embeds_unified_mcp_management_panel():
 
 
 @pytest.mark.asyncio
+async def test_mcp_destination_labels_server_first_workbench_columns():
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _wait_for_selector(_active_destination_screen(host), pilot, "#unified-mcp-action-readiness")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Servers + Scope" in text
+        assert "Server Detail" in text
+        assert "Readiness + Actions" in text
+        assert "Manage MCP servers, scoped tools, permissions, and audit readiness." in text
+        assert "Section" in text
+        assert "try Inventory" not in text
+        assert "Column 1:" not in text
+        assert "Column 2:" not in text
+        assert "Column 3:" not in text
+        assert screen.query_one("#mcp-column-divider-left").has_class("mcp-column-resize-handle")
+        assert screen.query_one("#mcp-column-divider-right").has_class("mcp-column-resize-handle")
+        assert screen.query_one("#mcp-column-divider-left").tooltip == "Resize columns"
+        assert screen.query_one("#mcp-column-divider-right").tooltip == "Resize columns"
+        assert "Blocked" in text
+        assert "Select Section: Inventory" in text
+        assert "Run Action disabled" in text
+        assert "Payload (JSON)" not in text
+
+
+@pytest.mark.asyncio
 async def test_mcp_destination_restores_unified_mcp_view_state_after_mount(tmp_path):
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
