@@ -1636,6 +1636,36 @@ async def test_schedules_failed_run_exposes_consistent_retry_control_state():
 
 
 @pytest.mark.asyncio
+async def test_schedules_pending_run_uses_shared_approval_status_taxonomy():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        HomeActiveWorkItem(
+            item_id="local:schedule_run:8",
+            title="Digest needs approval",
+            source="Schedules",
+            status="pending",
+            detail_route="schedules",
+            console_available=True,
+        )
+    )
+    app.open_active_home_item_in_console = Mock()
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 45)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#schedules-console-available")
+        visible_text = _visible_text(screen)
+        approval_button = screen.query_one("#schedules-review-approval", Button)
+
+    assert "Digest needs approval" in visible_text
+    assert "Status: pending" in visible_text
+    assert "Run control: approval required" in visible_text
+    assert "Next action: review approval before Console follow" in visible_text
+    assert "Approval review controls are not wired yet" in visible_text
+    assert approval_button.disabled is True
+
+
+@pytest.mark.asyncio
 async def test_workflows_approval_pending_run_exposes_review_before_console_state():
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(

@@ -19,8 +19,8 @@ Make Schedules and Workflows honest run-control surfaces without pretending the 
 
 - Command: `python -m pytest -q Tests/UI/test_destination_shells.py::test_schedules_empty_state_reads_as_live_queue_with_recovery_path Tests/UI/test_destination_shells.py::test_workflows_empty_state_reads_as_live_queue_with_recovery_path --tb=short`
 - Result: `2 passed, 1 warning in 6.68s`
-- Command: `python -m pytest -q Tests/UI/test_destination_shells.py::test_schedules_failed_run_exposes_consistent_retry_control_state Tests/UI/test_destination_shells.py::test_workflows_approval_pending_run_exposes_review_before_console_state Tests/UI/test_destination_shells.py::test_schedules_empty_state_reads_as_live_queue_with_recovery_path Tests/UI/test_destination_shells.py::test_workflows_empty_state_reads_as_live_queue_with_recovery_path 'Tests/UI/test_destination_shells.py::test_automation_destination_wrappers_explain_ownership[schedules-expected_sections1]' 'Tests/UI/test_destination_shells.py::test_automation_destination_wrappers_explain_ownership[workflows-expected_sections2]' Tests/Home/test_active_work_adapter.py --tb=short`
-- Result: `26 passed, 8 warnings in 14.92s`
+- Command: `python -m pytest -q Tests/UI/test_product_maturity_phase4_agent_execution_plan.py Tests/UI/test_destination_shells.py::test_schedules_failed_run_exposes_consistent_retry_control_state Tests/UI/test_destination_shells.py::test_schedules_pending_run_uses_shared_approval_status_taxonomy Tests/UI/test_destination_shells.py::test_workflows_approval_pending_run_exposes_review_before_console_state Tests/UI/test_destination_shells.py::test_schedules_empty_state_reads_as_live_queue_with_recovery_path Tests/UI/test_destination_shells.py::test_workflows_empty_state_reads_as_live_queue_with_recovery_path 'Tests/UI/test_destination_shells.py::test_automation_destination_wrappers_explain_ownership[schedules-expected_sections1]' 'Tests/UI/test_destination_shells.py::test_automation_destination_wrappers_explain_ownership[workflows-expected_sections2]' Tests/Home/test_active_work_adapter.py --tb=short`
+- Result: `28 passed, 8 warnings in 16.62s`
 - Command: `git diff --check`
 - Result: passed
 

@@ -8,7 +8,13 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Rule, Static
 
-from ...Home.dashboard_state import APPROVAL_STATUSES as HOME_APPROVAL_STATUSES
+from ...Home.dashboard_state import (
+    APPROVAL_RUN_STATUS,
+    FAILED_RUN_STATUS,
+    PAUSED_RUN_STATUS,
+    RUNNING_RUN_STATUS,
+    categorize_run_status,
+)
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from .destination_recovery import DestinationRecoveryState
@@ -112,8 +118,8 @@ class WorkflowsScreen(BaseAppScreen):
         if latest_console_item is None:
             return "Approvals: no active run"
 
-        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
-        if status in HOME_APPROVAL_STATUSES:
+        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        if status_category == APPROVAL_RUN_STATUS:
             return "Approvals: pending"
         return "Approvals: none pending"
 
@@ -123,14 +129,14 @@ class WorkflowsScreen(BaseAppScreen):
         if latest_console_item is None:
             return "Run control: no active run selected"
 
-        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
-        if status in {"failed", "error", "errored", "cancelled", "canceled"}:
+        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        if status_category == FAILED_RUN_STATUS:
             return "Run control: retry available"
-        if status in {"running", "active", "queued", "pending", "scheduled"}:
+        if status_category == RUNNING_RUN_STATUS:
             return "Run control: pause available"
-        if status == "paused":
+        if status_category == PAUSED_RUN_STATUS:
             return "Run control: resume available"
-        if status in HOME_APPROVAL_STATUSES:
+        if status_category == APPROVAL_RUN_STATUS:
             return "Run control: approval required"
         return "Run control: inspect status before acting"
 
@@ -138,12 +144,12 @@ class WorkflowsScreen(BaseAppScreen):
         if latest_console_item is None:
             return "Next action: start or select a workflow run"
 
-        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
-        if status in {"failed", "error", "errored", "cancelled", "canceled"}:
+        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        if status_category == FAILED_RUN_STATUS:
             return "Next action: retry or open in Console"
-        if status == "paused":
+        if status_category == PAUSED_RUN_STATUS:
             return "Next action: resume or open in Console"
-        if status in HOME_APPROVAL_STATUSES:
+        if status_category == APPROVAL_RUN_STATUS:
             return "Next action: review approval before Console follow"
         return "Next action: open in Console"
 
@@ -151,14 +157,14 @@ class WorkflowsScreen(BaseAppScreen):
         if latest_console_item is None:
             return "Recovery controls require an active workflow run"
 
-        status = self._status_text(getattr(latest_console_item, "status", None)).lower()
-        if status in {"failed", "error", "errored", "cancelled", "canceled"}:
+        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        if status_category == FAILED_RUN_STATUS:
             return "Retry controls are not wired yet"
-        if status in {"running", "active", "queued", "pending", "scheduled"}:
+        if status_category == RUNNING_RUN_STATUS:
             return "Pause controls are not wired yet"
-        if status == "paused":
+        if status_category == PAUSED_RUN_STATUS:
             return "Resume controls are not wired yet"
-        if status in HOME_APPROVAL_STATUSES:
+        if status_category == APPROVAL_RUN_STATUS:
             return "Approval review controls are not wired yet"
         return "Run controls depend on selected workflow state"
 
