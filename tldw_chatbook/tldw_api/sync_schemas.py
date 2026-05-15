@@ -335,6 +335,33 @@ class SyncV2PullResponse(BaseModel):
     has_more: bool = False
 
 
+class SyncV2AttachmentUploadRequest(BaseModel):
+    """Request metadata for uploading a small encrypted Sync v2 attachment."""
+
+    dataset_id: str
+    domain: SyncV2Domain
+    entity_id: str
+    attachment_id: str
+    content_type: str
+    size_bytes: int = Field(..., ge=0)
+    payload_ciphertext: str
+    payload_hash: str
+    encryption_policy: SyncV2EncryptionPolicy = "client_private_v1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SyncV2AttachmentUploadResponse(BaseModel):
+    """Response after storing or deduplicating a Sync v2 attachment."""
+
+    attachment_id: str
+    dataset_id: str
+    stored: bool
+    size_bytes: int = Field(..., ge=0)
+    payload_hash: str
+    download_url: str | None = None
+    expires_at: str | None = None
+
+
 class SyncV2RestoreManifestDataset(BaseModel):
     dataset_id: str
     scope_type: SyncV2DatasetScope

@@ -9,6 +9,8 @@ from tldw_chatbook.tldw_api import (
     SyncOperation,
     SyncSendEntity,
     SyncSendLogEntry,
+    SyncV2AttachmentUploadRequest,
+    SyncV2AttachmentUploadResponse,
     SyncV2CapabilitiesResponse,
     SyncV2ConflictRecord,
     SyncV2ConflictResolveRequest,
@@ -221,6 +223,54 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
     assert mocked.await_args_list[5].kwargs["params"] == {
         "dataset_id": ["dataset-1"],
         "domain": ["notes"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_v2_client_uploads_encrypted_attachment_metadata(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "attachment_id": "attachment-1",
+            "dataset_id": "dataset-1",
+            "stored": False,
+            "size_bytes": 128,
+            "payload_hash": "sha256:attachment",
+            "download_url": None,
+            "expires_at": None,
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    request = SyncV2AttachmentUploadRequest(
+        dataset_id="dataset-1",
+        domain="source_cache",
+        entity_id="source-1",
+        attachment_id="attachment-1",
+        content_type="text/plain",
+        size_bytes=128,
+        payload_ciphertext="opaque-ciphertext",
+        payload_hash="sha256:attachment",
+        metadata={"size_class": "small"},
+    )
+
+    response = await client.upload_sync_v2_attachment(request)
+
+    assert isinstance(response, SyncV2AttachmentUploadResponse)
+    assert response.attachment_id == "attachment-1"
+    assert response.stored is False
+    assert mocked.await_args.args[:2] == ("POST", "/api/v1/sync/attachments")
+    assert mocked.await_args.kwargs["json_data"] == {
+        "dataset_id": "dataset-1",
+        "domain": "source_cache",
+        "entity_id": "source-1",
+        "attachment_id": "attachment-1",
+        "content_type": "text/plain",
+        "size_bytes": 128,
+        "payload_ciphertext": "opaque-ciphertext",
+        "payload_hash": "sha256:attachment",
+        "encryption_policy": "client_private_v1",
+        "metadata": {"size_class": "small"},
     }
 
 

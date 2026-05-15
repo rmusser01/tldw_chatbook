@@ -403,6 +403,8 @@ from .text2sql_schemas import Text2SQLRequest, Text2SQLResponse
 from .sync_schemas import (
     ClientChangesPayload,
     ServerChangesResponse,
+    SyncV2AttachmentUploadRequest,
+    SyncV2AttachmentUploadResponse,
     SyncV2CapabilitiesResponse,
     SyncV2ConflictRecord,
     SyncV2ConflictResolveRequest,
@@ -14918,6 +14920,30 @@ class TLDWAPIClient:
             params={"dataset_id": dataset_ids, "domain": domains},
         )
         return SyncV2RestoreManifestResponse.model_validate(response)
+
+    async def upload_sync_v2_attachment(
+        self,
+        request_data: SyncV2AttachmentUploadRequest,
+    ) -> SyncV2AttachmentUploadResponse:
+        """Upload encrypted Sync v2 attachment metadata to the server.
+
+        Args:
+            request_data: Attachment upload request containing dataset, domain,
+                entity, encrypted payload, size, and hash metadata.
+
+        Returns:
+            Parsed attachment upload response with storage/deduplication status.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "POST",
+            "/api/v1/sync/attachments",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2AttachmentUploadResponse.model_validate(response)
 
     async def list_sync_v2_conflicts(
         self,
