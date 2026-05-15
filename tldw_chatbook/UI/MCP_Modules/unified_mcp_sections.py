@@ -19,11 +19,80 @@ def render_unified_mcp_section(section: str, payload: Mapping[str, Any] | None) 
 
 
 def render_overview_section(payload: Mapping[str, Any] | None) -> str:
+    """Render the Unified MCP overview section as a scannable text summary.
+
+    Args:
+        payload: Section payload from the local or server Unified MCP service.
+
+    Returns:
+        Plain text suitable for the Textual overview detail pane.
+    """
     payload = dict(payload or {})
-    return _render_json_block("Unified MCP Overview", payload)
+    inventory = dict(payload.get("inventory") or {})
+    external_servers = dict(payload.get("external_servers") or {})
+    governance = dict(payload.get("governance") or {})
+    is_server_payload = bool(
+        payload.get("source") == "server"
+        or payload.get("base_url")
+        or payload.get("section_capabilities")
+        or payload.get("target_status")
+    )
+    source = payload.get("source") or ("server" if is_server_payload else "local")
+    section = payload.get("section") or payload.get("selected_section") or "overview"
+    lines = [
+        "Unified MCP Overview",
+        "",
+        "Summary",
+        f"Source: {source}",
+        f"Server: {payload.get('server_id') or 'local'}",
+        f"Scope: {payload.get('selected_scope') or payload.get('scope') or 'personal'}",
+        f"Scope Ref: {payload.get('selected_scope_ref') or payload.get('scope_ref') or '-'}",
+        f"Section: {section}",
+    ]
+    status = _status_label(payload.get("status"))
+    target_status = _status_label(payload.get("target_status"))
+    if status:
+        lines.append(f"Status: {status}")
+    if target_status:
+        lines.append(f"Target: {target_status}")
+    if "inventory" in payload:
+        lines.extend(
+            [
+                f"Tools: {_count_value(inventory.get('tools'))}",
+                f"Resources: {_count_value(inventory.get('resources'))}",
+                f"Prompts: {_count_value(inventory.get('prompts'))}",
+            ]
+        )
+    if "external_servers" in payload:
+        lines.append(f"External server profiles: {_count_value(external_servers.get('profiles'))}")
+    if "governance" in payload:
+        lines.append(f"Governance rules: {_count_value(governance.get('rules'))}")
+    lines.extend(
+        [
+            "",
+            "Next: select Inventory to inspect tools and actions.",
+        ]
+    )
+    if is_server_payload:
+        lines.append("Server status and scope capabilities are shown here; use Inventory for runnable items.")
+    lines.extend(
+        [
+            "",
+            "Raw detail: hidden by default. Select Advanced for diagnostics.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def render_inventory_section(payload: Mapping[str, Any] | None) -> str:
+    """Render the Unified MCP inventory section with server-nested items.
+
+    Args:
+        payload: Section payload containing tool, resource, and prompt entries.
+
+    Returns:
+        Plain text inventory grouped under the selected server and scope.
+    """
     payload = dict(payload or {})
     tools = list(payload.get("tools") or [])
     resources = list(payload.get("resources") or [])
@@ -31,11 +100,12 @@ def render_inventory_section(payload: Mapping[str, Any] | None) -> str:
     lines = [
         "Unified MCP Inventory",
         "",
+        "Server hierarchy",
         f"Server: {payload.get('server_id') or 'local'}",
         f"Scope: {payload.get('selected_scope') or payload.get('scope') or 'personal'}",
         f"Scope Ref: {payload.get('selected_scope_ref') or payload.get('scope_ref') or '-'}",
         "",
-        f"Tools ({len(tools)}):",
+        f"Tools under {payload.get('server_id') or 'local'} ({len(tools)}):",
     ]
     lines.extend(_render_named_items(tools, key="name"))
     lines.append("")
@@ -226,6 +296,35 @@ def _render_named_items(items: list[Any], *, key: str) -> list[str]:
     if len(items) > 10:
         rendered.append(f"  - ... {len(items) - 10} more")
     return rendered
+
+
+def _count_value(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (str, bytes)):
+        return 1 if value else 0
+    if isinstance(value, Mapping):
+        return len(value)
+    try:
+        return len(value)
+    except TypeError:
+        return 1
+
+
+def _status_label(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, Mapping):
+        for key in ("state", "status", "reason", "message"):
+            status_value = value.get(key)
+            if status_value not in (None, ""):
+                return str(status_value)
+        if "ok" in value:
+            return "ready" if value.get("ok") else "blocked"
+        return None
+    return str(value)
 
 
 def _render_json_block(title: str, payload: Mapping[str, Any]) -> str:

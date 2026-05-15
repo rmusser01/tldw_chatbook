@@ -22,7 +22,7 @@ class MCPScreen(BaseAppScreen):
         with Vertical(id="mcp-shell"):
             yield Static("MCP", id="mcp-title", classes="ds-destination-header")
             yield Static(
-                "MCP owns tools and servers.",
+                "Manage MCP servers, scoped tools, permissions, and audit readiness.",
                 id="mcp-purpose",
                 classes="destination-purpose",
             )
