@@ -11,6 +11,7 @@ from textual.widgets import Button, Label, Select, Static, TextArea
 from tldw_chatbook.MCP.unified_control_models import ServerAccessContext, UnifiedMCPContext
 from tldw_chatbook.runtime_policy.engine import PolicyEngine
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .unified_mcp_sections import render_unified_mcp_section
 
@@ -681,10 +682,14 @@ class UnifiedMCPPanel(Container):
         if not callable(action_loader):
             return [], "Actions blocked: Unified MCP action catalog unavailable."
         descriptors = list(action_loader() or [])
+        runtime_state = self._runtime_state_override(service)
         allowed_descriptors = [
             descriptor
             for descriptor in descriptors
-            if self._ui_action_allowed(str(descriptor.get("action_id") or ""))
+            if self._ui_action_allowed(
+                str(descriptor.get("action_id") or ""),
+                runtime_state_override=runtime_state,
+            )
         ]
         source = self.context.selected_source or "local"
         section = self.context.selected_section or "overview"
@@ -715,27 +720,31 @@ class UnifiedMCPPanel(Container):
             ),
         )
 
-    def _ui_action_allowed(self, action_id: str) -> bool:
+    def _runtime_state_override(self, service: Any) -> RuntimeSourceState | None:
+        runtime_state_loader = getattr(service, "runtime_state_override", None)
+        return runtime_state_loader() if callable(runtime_state_loader) else None
+
+    def _ui_action_allowed(
+        self,
+        action_id: str,
+        *,
+        runtime_state_override: RuntimeSourceState | None,
+    ) -> bool:
         if not action_id:
             return False
-        service = self._service()
-        if service is None:
-            return False
-        runtime_state_loader = getattr(service, "runtime_state_override", None)
-        runtime_state = runtime_state_loader() if callable(runtime_state_loader) else None
-        if runtime_state is None:
+        if runtime_state_override is None:
             return False
         app_instance = self.app_instance
         require_allowed = getattr(app_instance, "require_ui_action_allowed", None)
         if callable(require_allowed):
-            decision = require_allowed(action_id=action_id, runtime_state_override=runtime_state)
+            decision = require_allowed(action_id=action_id, runtime_state_override=runtime_state_override)
         else:
             engine = getattr(app_instance, "ui_policy_engine", None)
             if engine is None:
                 engine = PolicyEngine(CAPABILITY_REGISTRY)
                 if app_instance is not None:
                     setattr(app_instance, "ui_policy_engine", engine)
-            decision = engine.evaluate(action_id=action_id, state=runtime_state)
+            decision = engine.evaluate(action_id=action_id, state=runtime_state_override)
         return bool(decision.allowed)
 
     async def execute_selected_action(self) -> Any:

@@ -121,46 +121,64 @@ class UnifiedMCPControlPlaneService:
                 access_context = self.context.per_server_state[target.server_id]
 
             if effective_section == "overview":
-                return await self._maybe_await(
-                    self.server_service.get_overview(
-                        target=target,
-                        access_context=access_context,
-                    )
+                return self._with_server_context(
+                    await self._maybe_await(
+                        self.server_service.get_overview(
+                            target=target,
+                            access_context=access_context,
+                        )
+                    ),
+                    section=effective_section,
                 )
             if effective_section == "inventory":
-                return await self._maybe_await(
-                    self.server_service.get_inventory(
-                        target=target,
-                        access_context=access_context,
-                    )
+                return self._with_server_context(
+                    await self._maybe_await(
+                        self.server_service.get_inventory(
+                            target=target,
+                            access_context=access_context,
+                        )
+                    ),
+                    section=effective_section,
                 )
             if effective_section == "catalogs":
-                return await self._maybe_await(
-                    self.server_service.get_catalogs(
-                        target=target,
-                        access_context=access_context,
-                    )
+                return self._with_server_context(
+                    await self._maybe_await(
+                        self.server_service.get_catalogs(
+                            target=target,
+                            access_context=access_context,
+                        )
+                    ),
+                    section=effective_section,
                 )
             if effective_section == "external_servers":
-                return await self._maybe_await(
-                    self.server_service.get_external_servers(
-                        target=target,
-                        access_context=access_context,
-                    )
+                return self._with_server_context(
+                    await self._maybe_await(
+                        self.server_service.get_external_servers(
+                            target=target,
+                            access_context=access_context,
+                        )
+                    ),
+                    section=effective_section,
                 )
             if effective_section == "governance":
-                return await self._maybe_await(
-                    self.server_service.get_governance(
-                        target=target,
-                        access_context=access_context,
-                    )
+                return self._with_server_context(
+                    await self._maybe_await(
+                        self.server_service.get_governance(
+                            target=target,
+                            access_context=access_context,
+                        )
+                    ),
+                    section=effective_section,
                 )
             if effective_section == "advanced":
-                return await self._maybe_await(
-                    self.server_service.get_advanced(
-                        target=target,
-                        access_context=access_context,
-                    )
+                return self._with_server_context(
+                    await self._maybe_await(
+                        self.server_service.get_advanced(
+                            target=target,
+                            access_context=access_context,
+                        )
+                    ),
+                    section=effective_section,
                 )
             raise ValueError(f"Unsupported Unified MCP section: {effective_section}")
 
@@ -186,6 +204,13 @@ class UnifiedMCPControlPlaneService:
         if inspect.isawaitable(value):
             return await value
         return value
+
+    def _with_server_context(self, payload: dict[str, Any], *, section: str) -> dict[str, Any]:
+        return {
+            **dict(payload or {}),
+            "source": "server",
+            "section": section,
+        }
 
     def available_actions(self) -> list[dict[str, Any]]:
         if self.context.selected_source != "server":

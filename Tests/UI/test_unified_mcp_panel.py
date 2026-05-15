@@ -24,6 +24,7 @@ class FakeUnifiedMCPService:
         self.target_store = target_store
         self.context = UnifiedMCPContext(selected_source="local", selected_section="overview")
         self.action_calls: list[tuple[str, dict]] = []
+        self.runtime_state_override_calls = 0
 
     async def load_context(self) -> UnifiedMCPContext:
         return self.context
@@ -394,6 +395,7 @@ class FakeUnifiedMCPService:
         return []
 
     def runtime_state_override(self) -> RuntimeSourceState:
+        self.runtime_state_override_calls += 1
         if self.context.selected_source == "server":
             return RuntimeSourceState(
                 active_source="server",
@@ -478,6 +480,51 @@ def test_render_overview_section_shows_scannable_summary_before_raw_json():
     assert "Next: select Inventory to inspect tools and actions." in rendered
     assert "Raw detail: hidden by default" in rendered
     assert '"inventory"' not in rendered
+
+
+def test_render_overview_section_preserves_server_overview_context():
+    rendered = render_overview_section(
+        {
+            "server_id": "server-a",
+            "label": "Server A",
+            "base_url": "https://a.example/api",
+            "selected_scope": "team",
+            "selected_scope_ref": "21",
+            "selected_section": "overview",
+            "status": {"state": "ready"},
+            "section_capabilities": {"overview": True, "inventory": True},
+            "target_status": {"state": "reachable"},
+        }
+    )
+
+    assert "Source: server" in rendered
+    assert "Source: local" not in rendered
+    assert "Server: server-a" in rendered
+    assert "Scope: team" in rendered
+    assert "Scope Ref: 21" in rendered
+    assert "Section: overview" in rendered
+    assert "Status: ready" in rendered
+    assert "Target: reachable" in rendered
+    assert "Tools: 0" not in rendered
+
+
+def test_render_overview_section_counts_string_inventory_values_as_single_items():
+    rendered = render_overview_section(
+        {
+            "source": "local",
+            "section": "overview",
+            "inventory": {
+                "tools": "docs.search",
+                "resources": "",
+                "prompts": b"summarize",
+            },
+        }
+    )
+
+    assert "Tools: 1" in rendered
+    assert "Resources: 0" in rendered
+    assert "Prompts: 1" in rendered
+    assert "Tools: 11" not in rendered
 
 
 @pytest.mark.asyncio
@@ -622,6 +669,27 @@ async def test_unified_mcp_panel_exposes_local_inventory_runtime_actions(tmp_pat
         assert "Read Local Resource" in action_values
         assert "Get Local Prompt" in action_values
         assert "Actions ready: 3 available" in str(panel.query_one("#unified-mcp-action-readiness", Static).content)
+
+
+@pytest.mark.asyncio
+async def test_unified_mcp_panel_fetches_runtime_state_once_per_action_sync(tmp_path):
+    target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
+    service = FakeUnifiedMCPService(target_store)
+    app = UnifiedMCPPanelApp(service)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = app.query_one(UnifiedMCPPanel)
+
+        await panel.load_context()
+        await panel.select_section("inventory")
+        await pilot.pause()
+
+        service.runtime_state_override_calls = 0
+        descriptors, _readiness = panel._available_actions_with_readiness()
+
+        assert len(descriptors) == 3
+        assert service.runtime_state_override_calls == 1
 
 
 @pytest.mark.asyncio
