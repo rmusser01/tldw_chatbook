@@ -10,8 +10,10 @@ from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 
 
 def _text(value: Any, fallback: str = "") -> str:
-    text = str(value or "").strip()
-    return text or fallback
+    if value is None:
+        return fallback
+    text = str(value).strip()
+    return text if text else fallback
 
 
 def _mapping_value(value: Any, key: str) -> Any:
@@ -34,6 +36,16 @@ class ACPRuntimeSessionState:
 
     @classmethod
     def from_any(cls, value: Any) -> "ACPRuntimeSessionState":
+        """Normalize ACP runtime/session state from app-owned values.
+
+        Args:
+            value: Existing ACPRuntimeSessionState, mapping, object with matching
+                attributes, or None.
+
+        Returns:
+            ACPRuntimeSessionState: Normalized state with missing text fields
+                coerced to empty strings and mapping payloads copied.
+        """
         if isinstance(value, cls):
             return value
         if value is None:

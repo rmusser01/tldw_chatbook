@@ -236,8 +236,7 @@ class ConsoleLiveWorkSourceReadinessState:
         Returns:
             ConsoleLiveWorkSourceReadinessState: Readiness state that marks Watchlists,
                 Schedules, Workflows, RAG, and Artifacts as connected while
-                planned future Console live-work sources stay unavailable until
-                their payload producers are wired.
+                MCP as unavailable until its payload producer is wired.
         """
         connected = "destination-section console-live-work-source-row console-live-work-source-connected"
         unavailable = "destination-section console-live-work-source-row console-live-work-source-unavailable"
@@ -267,9 +266,9 @@ class ConsoleLiveWorkSourceReadinessState:
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-acp",
                     label="ACP",
-                    status="Not wired",
-                    recovery="ACP runtime needed.",
-                    classes=unavailable,
+                    status="Connected",
+                    recovery="Stage ACP session payloads.",
+                    classes=connected,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-mcp",

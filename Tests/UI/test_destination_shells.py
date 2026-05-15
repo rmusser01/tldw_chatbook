@@ -12,6 +12,7 @@ from textual.widgets import Button, Checkbox, Select, Static, TextArea
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_unified_mcp_panel import FakeUnifiedMCPService
+from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
@@ -1416,6 +1417,27 @@ async def test_acp_missing_runtime_explains_acp_owned_setup_recovery():
     assert launch_button.disabled is True
 
 
+def test_acp_runtime_session_state_preserves_numeric_zero_fields():
+    state = ACPRuntimeSessionState.from_any(
+        {
+            "runtime_id": 0,
+            "runtime_label": 0,
+            "runtime_version": 0,
+            "session_id": 0,
+            "session_title": 0,
+            "session_status": 0,
+            "session_payload": {"ok": True},
+        }
+    )
+
+    assert state.runtime_id == "0"
+    assert state.runtime_label == "0"
+    assert state.runtime_version == "0"
+    assert state.session_id == "0"
+    assert state.session_title == "0"
+    assert state.session_status == "0"
+
+
 @pytest.mark.asyncio
 async def test_acp_configured_runtime_without_session_disables_console_follow():
     app = _build_test_app()
@@ -1441,6 +1463,42 @@ async def test_acp_configured_runtime_without_session_disables_console_follow():
     assert "Start or resume an ACP session in ACP before following it in Console." in visible_text
     assert "Runtime owner: ACP" in visible_text
     assert follow_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_acp_runtime_and_session_labels_are_markup_escaped():
+    app = _build_test_app()
+    app.acp_runtime_session_state = {
+        "runtime_id": "runtime-1",
+        "runtime_label": "[bold]Runtime[/bold]",
+        "runtime_version": "1",
+        "session_id": "session-1",
+        "session_title": "[red]Session[/red]",
+        "session_payload": {"thread_id": "thread-1"},
+    }
+    host = DestinationHarness(app, "acp")
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+
+        assert len(screen.query("#acp-agent-codex-local")) == 0
+        assert len(screen.query("#acp-no-sessions")) == 0
+        assert len(screen.query("#acp-runtime-blocked")) == 0
+        assert screen.query_one("#acp-runtime-display", Static).renderable == "> \\[bold]Runtime\\[/bold]"
+        assert screen.query_one("#acp-session-status", Static).renderable == "  Session: \\[red]Session\\[/red]"
+        assert screen.query_one("#acp-runtime-status", Static).renderable == (
+            "  Runtime configured: \\[bold]Runtime\\[/bold]"
+        )
+        assert screen.query_one("#acp-runtime-summary", Static).renderable == (
+            "Runtime: \\[bold]Runtime\\[/bold]"
+        )
+        assert screen.query_one("#acp-session-summary", Static).renderable == (
+            "Session: \\[red]Session\\[/red]"
+        )
+        assert screen.query_one("#acp-session-ready", Static).renderable == (
+            "Session ready: \\[red]Session\\[/red]"
+        )
 
 
 @pytest.mark.asyncio

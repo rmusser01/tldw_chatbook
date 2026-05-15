@@ -1,5 +1,6 @@
 """ACP destination shell for agent sessions and runtimes."""
 
+from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -71,14 +72,16 @@ class ACPScreen(BaseAppScreen):
         runtime_configured = state.runtime_configured
         console_launch = state.to_console_live_work_launch()
         has_session_payload = console_launch is not None
+        runtime_display_name = escape_markup(state.runtime_display_name)
+        session_display_name = escape_markup(state.session_display_name)
         title_state = "Runtime ready" if runtime_configured else "Runtime needed"
         runtime_line = (
-            f"  Runtime configured: {state.runtime_display_name}"
+            f"  Runtime configured: {runtime_display_name}"
             if runtime_configured
             else "  Runtime blocked"
         )
         session_line = (
-            f"  Session: {state.session_display_name}"
+            f"  Session: {session_display_name}"
             if runtime_configured
             else "  No sessions"
         )
@@ -123,9 +126,9 @@ class ACPScreen(BaseAppScreen):
                         "Column 1: Agents / Sessions",
                         classes="destination-section acp-column-title",
                     )
-                    yield Static(f"> {state.runtime_display_name}", id="acp-agent-codex-local")
-                    yield Static(session_line, id="acp-no-sessions")
-                    yield Static(runtime_line, id="acp-runtime-blocked")
+                    yield Static(f"> {runtime_display_name}", id="acp-runtime-display")
+                    yield Static(session_line, id="acp-session-status")
+                    yield Static(runtime_line, id="acp-runtime-status")
                     yield Static("  Diffs unavailable", id="acp-diffs-unavailable")
                     yield Static("  Terminal unavailable", id="acp-terminal-unavailable")
                 yield self._column_divider("acp-list-detail-divider")
@@ -136,11 +139,11 @@ class ACPScreen(BaseAppScreen):
                     )
                     if runtime_configured:
                         yield Static("Runtime configured", id="acp-runtime-ready-state")
-                        yield Static(f"Runtime: {state.runtime_display_name}", id="acp-runtime-summary")
-                        yield Static(f"Session: {state.session_display_name}", id="acp-session-summary")
+                        yield Static(f"Runtime: {runtime_display_name}", id="acp-runtime-summary")
+                        yield Static(f"Session: {session_display_name}", id="acp-session-summary")
                         if has_session_payload:
                             yield Static(
-                                f"Session ready: {state.session_display_name}",
+                                f"Session ready: {session_display_name}",
                                 id="acp-session-ready",
                             )
                             yield Static(
