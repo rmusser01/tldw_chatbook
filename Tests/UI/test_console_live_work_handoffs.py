@@ -1790,7 +1790,9 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
         )
         assert "Workflows: Connected" in str(screen.query_one("#console-live-work-source-workflows").renderable)
         assert "Schedules: Connected" in str(screen.query_one("#console-live-work-source-schedules").renderable)
-        assert "ACP: Not wired" in str(screen.query_one("#console-live-work-source-acp").renderable)
+        assert screen.query_one("#console-live-work-source-acp").renderable == (
+            "ACP: Connected - Stage ACP session payloads."
+        )
         assert "MCP: Not wired" in str(screen.query_one("#console-live-work-source-mcp").renderable)
         assert "RAG: Connected" in str(screen.query_one("#console-live-work-source-rag").renderable)
         assert "Artifacts: Connected" in str(screen.query_one("#console-live-work-source-artifacts").renderable)
