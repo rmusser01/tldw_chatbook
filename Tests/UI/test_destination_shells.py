@@ -625,23 +625,19 @@ async def test_watchlists_collections_loading_times_out_to_recovery_copy():
 
 
 @pytest.mark.asyncio
-async def test_watchlists_collections_initial_load_uses_distinct_loading_copy():
-    original_timeout = wc_screen_module.WC_SNAPSHOT_TIMEOUT_SECONDS
-    wc_screen_module.WC_SNAPSHOT_TIMEOUT_SECONDS = 30.0
+async def test_watchlists_collections_initial_load_uses_distinct_loading_copy(monkeypatch):
+    monkeypatch.setattr(wc_screen_module, "WC_SNAPSHOT_TIMEOUT_SECONDS", 30.0)
     app = _build_test_app()
     app.watchlist_scope_service = HangingWatchlistsScopeService()
     host = DestinationHarness(app, "watchlists_collections")
 
-    try:
-        async with host.run_test(size=(180, 50)) as pilot:
-            screen = _active_destination_screen(host)
-            await _wait_for_selector(screen, pilot, "#wc-loading-state", timeout=2.0)
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wc-loading-state", timeout=2.0)
 
-            text = _visible_text(screen)
-            assert "Loading local Watchlists snapshot..." in text
-            assert "Watchlists services unavailable; retry Watchlists later." not in text
-    finally:
-        wc_screen_module.WC_SNAPSHOT_TIMEOUT_SECONDS = original_timeout
+        text = _visible_text(screen)
+        assert "Loading local Watchlists snapshot..." in text
+        assert "Watchlists services unavailable; retry Watchlists later." not in text
 
 
 @pytest.mark.asyncio
