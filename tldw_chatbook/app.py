@@ -2119,12 +2119,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             store=self.client_notifications_db,
             policy_enforcer=self.service_policy_enforcer,
         )
-        self.home_active_work_adapter = LocalNotificationHomeActiveWorkAdapter(
-            notification_service=self.client_notifications_service,
-            watchlist_service=self.local_watchlists_service,
-            chatbook_service=self.local_chatbook_service,
-            runtime_policy=self.runtime_policy,
-        )
         self.notification_dispatch_service = NotificationDispatchService(
             store=self.client_notifications_db,
             policy_enforcer=self.service_policy_enforcer,
@@ -2135,6 +2129,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             policy_enforcer=self.service_policy_enforcer,
             event_state_repository=self.event_state_repository,
             server_event_scope_provider=self._server_notification_event_scope,
+        )
+        self.home_active_work_adapter = LocalNotificationHomeActiveWorkAdapter(
+            notification_service=self.client_notifications_service,
+            watchlist_service=self.local_watchlists_service,
+            chatbook_service=self.local_chatbook_service,
+            server_event_service=self.notifications_scope_service,
+            runtime_policy=self.runtime_policy,
         )
         try:
             self.server_claims_service = ServerClaimsService.from_config(

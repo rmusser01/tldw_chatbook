@@ -18,6 +18,10 @@ class NotificationsBackend(str, Enum):
     SERVER = "server"
 
 
+class ServerEventScopeRequiredError(ValueError):
+    """Raised when server event feed state needs an active server scope."""
+
+
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
         "operation_id": "notifications.reminders.local",
@@ -186,7 +190,9 @@ class NotificationsScopeService:
             or provided.get("active_server_id")
         )
         if not resolved_server_profile_id:
-            raise ValueError("server_profile_id is required for server notification event state.")
+            raise ServerEventScopeRequiredError(
+                "A server event feed requires an active server profile."
+            )
         return {
             "server_profile_id": str(resolved_server_profile_id),
             "authenticated_principal_id": (
@@ -454,6 +460,7 @@ class NotificationsScopeService:
         limit: int = 100,
         mark_presented: bool = False,
     ) -> dict[str, Any]:
+        self._enforce_policy("notifications.feed.list.server")
         scope = self._resolve_server_event_scope(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,

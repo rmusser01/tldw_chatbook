@@ -10,6 +10,7 @@ from tldw_chatbook.Home.active_work_adapter import (
     UnavailableHomeActiveWorkAdapter,
 )
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, summarize_home_dashboard
+from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 
@@ -728,6 +729,113 @@ def test_local_notification_adapter_fails_closed_when_snapshot_unavailable():
     assert dashboard_input.notification_count == 0
     assert dashboard_input.pending_approval_count == 0
     assert dashboard_input.active_run_count == 0
+
+
+def test_local_notification_adapter_distinguishes_server_events_from_local_notifications():
+    class FakeNotificationsService:
+        def list_queue(self, *, limit=100, include_dismissed=False, category=None):
+            return [
+                {"id": "local-read", "is_read": True},
+                {"id": "local-unread", "is_read": False},
+            ]
+
+    class FakeServerEventService:
+        def list_observed_server_feed(self, *, limit=20, mark_presented=False):
+            return {
+                "items": [{"record_id": "server:notification:8", "title": "Server event"}],
+                "total": 1,
+                "backend": "server",
+                "source": "event_state_repository",
+                "replay": {
+                    "state": "available",
+                    "server_refetch_required": False,
+                },
+            }
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        notification_service=FakeNotificationsService(),
+        server_event_service=FakeServerEventService(),
+    )
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+    system_status = summarize_home_dashboard(dashboard_input).sections[3].lines
+
+    assert dashboard_input.notification_count == 1
+    assert dashboard_input.server_event_count == 1
+    assert dashboard_input.server_event_state == "available"
+    assert "Local notifications: 1 unread" not in system_status
+    assert "Server events: 1 observed via server event feed" in system_status
+
+
+def test_local_notification_adapter_surfaces_server_event_replay_gap_requery_state():
+    class FakeServerEventService:
+        def list_observed_server_feed(self, *, limit=20, mark_presented=False):
+            return {
+                "items": [],
+                "total": 0,
+                "replay": {
+                    "state": "retention_gap",
+                    "server_refetch_required": True,
+                    "last_pruned_cursor": "cursor-10",
+                },
+            }
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        server_event_service=FakeServerEventService()
+    )
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+    system_status = summarize_home_dashboard(dashboard_input).sections[3].lines
+
+    assert dashboard_input.server_event_state == "requery_required"
+    assert dashboard_input.server_event_recovery == "Requery server events from the active server."
+    assert "Server events: Replay gap - requery server events" in system_status
+
+
+def test_local_notification_adapter_surfaces_server_event_reconnect_state():
+    class FakeServerEventService:
+        def list_observed_server_feed(self, *, limit=20, mark_presented=False):
+            raise ServerEventScopeRequiredError("No selected event scope.")
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        server_event_service=FakeServerEventService()
+    )
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+    system_status = summarize_home_dashboard(dashboard_input).sections[3].lines
+
+    assert dashboard_input.server_event_state == "reconnect_required"
+    assert dashboard_input.server_event_recovery == "Reconnect or select an active server."
+    assert "Server events: Reconnect required" in system_status
+
+
+def test_local_notification_adapter_surfaces_server_event_unavailable_state():
+    class FakeServerEventService:
+        def list_observed_server_feed(self, *, limit=20, mark_presented=False):
+            raise RuntimeError("Server notifications backend is unavailable.")
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        server_event_service=FakeServerEventService()
+    )
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+    system_status = summarize_home_dashboard(dashboard_input).sections[3].lines
+
+    assert dashboard_input.server_event_state == "unavailable"
+    assert dashboard_input.server_event_recovery == "Server event feed is unavailable."
+    assert "Server events: Unavailable" in system_status
 
 
 def test_unavailable_home_adapter_returns_honest_recovery_result():
