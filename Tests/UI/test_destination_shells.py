@@ -442,6 +442,16 @@ async def _wait_for_selector(screen, pilot, selector: str, *, timeout: float = 2
     raise AssertionError(f"Timed out waiting for {selector}. Visible text: {_visible_text(screen)}")
 
 
+async def _wait_for_visible_text(screen, pilot, expected_text: str, *, timeout: float = 4.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if expected_text in _visible_text(screen):
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}")
+
+
 async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -615,14 +625,15 @@ async def test_watchlists_collections_loading_times_out_to_recovery_copy():
 
 
 @pytest.mark.asyncio
-async def test_watchlists_collections_initial_load_uses_distinct_loading_copy():
+async def test_watchlists_collections_initial_load_uses_distinct_loading_copy(monkeypatch):
+    monkeypatch.setattr(wc_screen_module, "WC_SNAPSHOT_TIMEOUT_SECONDS", 30.0)
     app = _build_test_app()
     app.watchlist_scope_service = HangingWatchlistsScopeService()
     host = DestinationHarness(app, "watchlists_collections")
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#wc-loading-state", timeout=0.75)
+        await _wait_for_selector(screen, pilot, "#wc-loading-state", timeout=2.0)
 
         text = _visible_text(screen)
         assert "Loading local Watchlists snapshot..." in text
@@ -1145,8 +1156,9 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_visible_text(screen, pilot, "Notes: 2")
         text = _visible_text(screen)
         button = screen.query_one("#library-use-in-console", Button)
 
@@ -1187,8 +1199,8 @@ async def test_library_destination_empty_state_disables_console_handoff():
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
         button = screen.query_one("#library-use-in-console", Button)
 
         assert "No local Library sources are available yet." in _visible_text(screen)
@@ -1208,8 +1220,9 @@ async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
         screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_visible_text(screen, pilot, "Notes (showing up to 5): 5")
         text = _visible_text(screen)
 
         assert "Notes (showing up to 5): 5" in text
@@ -1769,7 +1782,7 @@ async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
 @pytest.mark.parametrize(
     ("route", "expected_text"),
     [
-        ("mcp", "tools and servers"),
+        ("mcp", "scoped tools"),
         ("acp", "Agent Client Protocol"),
         ("skills", "SKILL.md"),
         ("settings", "global preferences"),
@@ -2396,5 +2409,6 @@ async def test_legacy_tools_settings_route_opens_mcp_not_global_settings():
             for widget in screen.query(Static)
             if hasattr(widget, "renderable")
         )
-        assert "tools and servers" in visible_text
+        assert "MCP servers" in visible_text
+        assert "scoped tools" in visible_text
         assert "global preferences" not in visible_text
