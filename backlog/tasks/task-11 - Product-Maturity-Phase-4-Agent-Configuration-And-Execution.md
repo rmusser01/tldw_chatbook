@@ -1,7 +1,7 @@
 ---
 id: TASK-11
 title: 'Product Maturity Phase 4: Agent Configuration And Execution'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-05 15:11'
 updated_date: '2026-05-12 00:00'
@@ -20,10 +20,10 @@ Make agent configuration, tools, skills, schedules, workflows, MCP, and ACP unde
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 QA walkthrough verifies the running app is usable for this phase's target workflows.
-- [ ] #2 Focused regression evidence exists for changed seams.
-- [ ] #3 Repo-tracked QA evidence exists under Docs/superpowers/qa/product-maturity/.
-- [ ] #4 P0/P1 findings are fixed or explicitly accepted according to the spec severity policy.
+- [x] #1 QA walkthrough verifies the running app is usable for this phase's target workflows.
+- [x] #2 Focused regression evidence exists for changed seams.
+- [x] #3 Repo-tracked QA evidence exists under Docs/superpowers/qa/product-maturity/.
+- [x] #4 P0/P1 findings are fixed or explicitly accepted according to the spec severity policy.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,5 +43,5 @@ Primary implementation plan: Docs/superpowers/plans/2026-05-12-phase-4-agent-con
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Started Phase 4 with TASK-11.1 as the planning and tracking slice. TASK-11.2 verifies Personas local character/persona selection, honest blocked readiness, and stable Console handoff metadata. TASK-11.3 verifies local Agent Skills metadata validation, selected-skill readiness, and selected valid skill Console handoff. The phase remains open for MCP ACP Schedules Workflows and QA closeout.
+Closed Phase 4 through TASK-11.7. Personas, Skills, MCP, ACP, Schedules, and Workflows now have QA evidence for usable local or honest-blocked agent configuration and execution control surfaces, focused regression evidence, and actual screenshot evidence for changed screens. ACP runtime launch, full Schedules/Workflows run-control services, and server parity remain explicit Phase 5 risks rather than hidden enabled controls.
 <!-- SECTION:NOTES:END -->

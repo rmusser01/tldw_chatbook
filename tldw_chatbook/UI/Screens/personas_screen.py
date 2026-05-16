@@ -117,6 +117,8 @@ class PersonasScreen(BaseAppScreen):
                 future.cancel()
 
     async def _call_service_method(self, method: Any, **kwargs: Any) -> Any:
+        if inspect.iscoroutinefunction(method):
+            return await method(**kwargs)
         executor = self._ensure_snapshot_executor()
         call = partial(method, **kwargs)
         future = executor.submit(call)
