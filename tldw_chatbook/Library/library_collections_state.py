@@ -51,9 +51,108 @@ def _coerce_count(value: Any) -> int:
         return 0
 
 
+def _as_mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _as_sequence(value: Any) -> Sequence[Any]:
+    if value is None or isinstance(value, (str, bytes)):
+        return ()
+    if isinstance(value, Sequence):
+        return value
+    return ()
+
+
+def _reason_codes_label(value: Any) -> str:
+    reasons = tuple(
+        _safe_display_text(reason, "", max_length=80)
+        for reason in _as_sequence(value)
+    )
+    visible = tuple(reason for reason in reasons if reason)
+    return ", ".join(visible) if visible else "not available"
+
+
 def _normalize_sync_status(value: Any) -> str:
     status = _collapse(value, "local-only").lower()
-    return status if status in {"local-only", "sync-unavailable"} else "local-only"
+    allowed = {
+        "local-only",
+        "sync-unavailable",
+        "dry-run-ready",
+        "dry-run-conflict",
+        "dry-run-orphaned",
+        "dry-run-unsupported",
+    }
+    return status if status in allowed else "local-only"
+
+
+def _sync_status_from_record(record: Any) -> str:
+    explicit_status = _collapse(_value(record, "sync_status"), "").lower()
+    if explicit_status:
+        return _normalize_sync_status(explicit_status)
+
+    conflicts = _as_sequence(_value(record, "sync_conflicts"))
+    if conflicts:
+        return "dry-run-conflict"
+
+    mirror_report = _as_mapping(_value(record, "sync_mirror_report"))
+    if mirror_report:
+        if not bool(mirror_report.get("dry_run", False)):
+            return "sync-unavailable"
+        if bool(mirror_report.get("write_enabled", False)):
+            return "sync-unavailable"
+        actions = _as_sequence(mirror_report.get("actions"))
+        has_orphan = any(
+            not bool(_as_mapping(action).get("local_present", False))
+            or not bool(_as_mapping(action).get("remote_present", False))
+            for action in actions
+        )
+        if has_orphan:
+            return "dry-run-orphaned"
+        return "dry-run-ready"
+
+    readiness = _as_mapping(_value(record, "sync_readiness_report"))
+    if readiness and not bool(readiness.get("sync_eligible", False)):
+        return "dry-run-unsupported"
+
+    return _normalize_sync_status(_value(record, "sync_status"))
+
+
+def _sync_status_label(sync_status: str) -> str:
+    labels = {
+        "local-only": "Sync: local-only",
+        "sync-unavailable": "Sync: sync-unavailable",
+        "dry-run-ready": "Sync dry-run: ready",
+        "dry-run-conflict": "Sync dry-run: conflicts",
+        "dry-run-orphaned": "Sync dry-run: orphaned mappings",
+        "dry-run-unsupported": "Sync dry-run: unsupported",
+    }
+    return labels.get(sync_status, "Sync: local-only")
+
+
+def _sync_status_detail(record: Any, sync_status: str) -> str:
+    mirror_report = _as_mapping(_value(record, "sync_mirror_report"))
+    readiness = _as_mapping(_value(record, "sync_readiness_report"))
+    conflicts = _as_sequence(_value(record, "sync_conflicts"))
+
+    if sync_status == "dry-run-conflict":
+        count = len(conflicts) or _coerce_count(mirror_report.get("conflict_count"))
+        suffix = "conflict needs" if count == 1 else "conflicts need"
+        return f"Read-only mirror check: {count} {suffix} review. No writes will be queued."
+    if sync_status == "dry-run-orphaned":
+        return (
+            "Read-only mirror check: orphaned local or remote mappings need review. "
+            "No writes will be queued."
+        )
+    if sync_status == "dry-run-unsupported":
+        reasons = _reason_codes_label(readiness.get("reason_codes"))
+        return f"Read-only mirror check unavailable: {reasons}. No writes will be queued."
+    if sync_status == "dry-run-ready":
+        mapped_count = _coerce_count(mirror_report.get("mapped_count"))
+        suffix = "record" if mapped_count == 1 else "records"
+        return f"Read-only mirror check: {mapped_count} mapped {suffix}. No writes will be queued."
+    if sync_status == "sync-unavailable":
+        return "Sync dry-run is unavailable for this Collection. No writes will be queued."
+    return "This Collection is local-only. No sync writes will be queued."
 
 
 def _updated_at_label(value: Any) -> str:
@@ -112,13 +211,14 @@ class LibraryCollectionSummary:
     item_count: int
     source_authority: str
     sync_status: str
+    sync_status_detail: str
     created_at: str
     updated_at: str
     selected: bool = False
 
     @property
     def sync_status_label(self) -> str:
-        return f"Sync: {self.sync_status}"
+        return _sync_status_label(self.sync_status)
 
     @property
     def item_count_label(self) -> str:
@@ -137,6 +237,7 @@ class LibraryCollectionSummary:
             "Untitled Collection",
             max_length=LIBRARY_COLLECTIONS_NAME_MAX_LENGTH,
         )
+        sync_status = _sync_status_from_record(record)
         return cls(
             collection_id=collection_id,
             name=name,
@@ -151,7 +252,8 @@ class LibraryCollectionSummary:
                 "local",
                 max_length=64,
             ),
-            sync_status=_normalize_sync_status(_value(record, "sync_status")),
+            sync_status=sync_status,
+            sync_status_detail=_sync_status_detail(record, sync_status),
             created_at=_collapse(_value(record, "created_at")),
             updated_at=_collapse(_value(record, "updated_at")),
             selected=selected,
@@ -168,12 +270,13 @@ class LibraryCollectionDetail:
     item_count: int
     source_authority: str
     sync_status: str
+    sync_status_detail: str
     created_at: str
     updated_at: str
 
     @property
     def sync_status_label(self) -> str:
-        return f"Sync: {self.sync_status}"
+        return _sync_status_label(self.sync_status)
 
     @property
     def item_count_label(self) -> str:
@@ -193,6 +296,7 @@ class LibraryCollectionDetail:
             item_count=summary.item_count,
             source_authority=summary.source_authority,
             sync_status=summary.sync_status,
+            sync_status_detail=summary.sync_status_detail,
             created_at=summary.created_at,
             updated_at=summary.updated_at,
         )
@@ -254,6 +358,7 @@ class LibraryCollectionsPanelState:
                 item_count=record.item_count,
                 source_authority=record.source_authority,
                 sync_status=record.sync_status,
+                sync_status_detail=record.sync_status_detail,
                 created_at=record.created_at,
                 updated_at=record.updated_at,
                 selected=record.collection_id == selected_id,

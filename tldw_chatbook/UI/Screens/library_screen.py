@@ -26,6 +26,7 @@ from ...Library.library_rag_service import (
 )
 from ...Library.library_rag_state import LibraryRagPanelState
 from ...runtime_policy.types import PolicyDeniedError
+from ...Sync_Interop.sync_readiness import build_sync_readiness_report
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
@@ -121,6 +122,63 @@ LIBRARY_MODES = {
 LIBRARY_MODE_BY_BUTTON_ID = {
     mode["button_id"]: mode_id for mode_id, mode in LIBRARY_MODES.items()
 }
+
+
+def _record_value(record: Any, key: str, fallback: Any = "") -> Any:
+    if isinstance(record, Mapping):
+        return record.get(key, fallback)
+    return getattr(record, key, fallback)
+
+
+def _library_collection_record_data(record: Any) -> dict[str, Any]:
+    return {
+        "collection_id": _record_value(record, "collection_id"),
+        "name": _record_value(record, "name"),
+        "description": _record_value(record, "description"),
+        "item_count": _record_value(record, "item_count", 0),
+        "source_authority": _record_value(record, "source_authority", "local"),
+        "sync_status": _record_value(record, "sync_status", "local-only"),
+        "created_at": _record_value(record, "created_at"),
+        "updated_at": _record_value(record, "updated_at"),
+    }
+
+
+def _collection_scoped_mirror_report(
+    report: Mapping[str, Any] | None,
+    collection_id: str,
+) -> dict[str, Any] | None:
+    if not report:
+        return None
+    actions = tuple(
+        action
+        for action in report.get("actions", ())
+        if isinstance(action, Mapping)
+        and isinstance(action.get("identity"), Mapping)
+        and str(action["identity"].get("local_entity_id", "")) == collection_id
+    )
+    if not actions:
+        return None
+    scoped_report = dict(report)
+    scoped_report["actions"] = actions
+    scoped_report["mapped_count"] = len(actions)
+    scoped_report["dry_run"] = bool(report.get("dry_run", True))
+    scoped_report["write_enabled"] = bool(report.get("write_enabled", False))
+    return scoped_report
+
+
+def _collection_scoped_conflicts(
+    conflict_reports: Sequence[Mapping[str, Any]],
+    collection_id: str,
+) -> tuple[Mapping[str, Any], ...]:
+    scoped: list[Mapping[str, Any]] = []
+    for conflict in conflict_reports:
+        details = conflict.get("details", {})
+        if isinstance(details, Mapping):
+            local_entity_id = details.get("local_entity_id")
+            if local_entity_id is not None and str(local_entity_id) != collection_id:
+                continue
+        scoped.append(conflict)
+    return tuple(scoped)
 
 
 class LibraryScreen(BaseAppScreen):
@@ -954,21 +1012,68 @@ class LibraryScreen(BaseAppScreen):
             self._library_collections_loaded = True
             self._library_collections_error = "Library Collections are unavailable."
             return
-        self._library_collections_records = tuple(records or ())
+        self._library_collections_records = self._decorate_library_collection_sync_records(
+            tuple(records or ())
+        )
         self._library_collections_loaded = True
         self._library_collections_error = ""
         if (
             self._library_collections_selected_id
             and not any(
-                getattr(record, "collection_id", None) == self._library_collections_selected_id
+                _record_value(record, "collection_id") == self._library_collections_selected_id
                 for record in self._library_collections_records
             )
         ):
             self._library_collections_selected_id = ""
         if not self._library_collections_selected_id and self._library_collections_records:
             self._library_collections_selected_id = (
-                getattr(self._library_collections_records[0], "collection_id", "") or ""
+                _record_value(self._library_collections_records[0], "collection_id") or ""
             )
+
+    def _decorate_library_collection_sync_records(self, records: Sequence[Any]) -> tuple[Any, ...]:
+        repository = getattr(self.app_instance, "sync_state_repository", None)
+        if repository is None:
+            return tuple(records)
+
+        list_mirror_reports = getattr(repository, "list_mirror_reports", None)
+        list_conflict_reports = getattr(repository, "list_conflict_reports", None)
+        if not callable(list_mirror_reports) or not callable(list_conflict_reports):
+            return tuple(records)
+
+        try:
+            mirror_reports = list_mirror_reports(domain="library_collections")
+            conflict_reports = list_conflict_reports(domain="library_collections")
+        except Exception:
+            logger.warning("Failed to load Library Collections sync dry-run state.", exc_info=True)
+            return tuple(records)
+
+        latest_report = mirror_reports[-1]["report"] if mirror_reports else None
+        readiness = build_sync_readiness_report(
+            domain="library_collections",
+            server_profile_id=None,
+            workspace_id=None,
+        )
+        readiness_record = {
+            "sync_eligible": readiness.sync_eligible,
+            "write_enabled": readiness.write_enabled,
+            "reason_codes": readiness.reason_codes,
+            "details": dict(readiness.details),
+        }
+
+        decorated: list[dict[str, Any]] = []
+        for record in records:
+            collection_id = str(_record_value(record, "collection_id", ""))
+            record_data = _library_collection_record_data(record)
+            collection_report = _collection_scoped_mirror_report(latest_report, collection_id)
+            record_data["sync_mirror_report"] = collection_report or {}
+            record_data["sync_readiness_report"] = readiness_record
+            record_data["sync_conflicts"] = _collection_scoped_conflicts(conflict_reports, collection_id)
+            if collection_report:
+                record_data["sync_status"] = ""
+            elif readiness_record["reason_codes"] != ("not_registered",):
+                record_data["sync_status"] = ""
+            decorated.append(record_data)
+        return tuple(decorated)
 
     def _sync_collection_scoped_action_buttons(self) -> None:
         deferred = self._active_mode == "collections"

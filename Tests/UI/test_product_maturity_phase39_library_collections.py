@@ -8,6 +8,7 @@ import pytest
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_collections_service import LibraryCollectionRecord
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -158,6 +159,60 @@ async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions()
         assert "Collection-scoped Study, Flashcards, Quizzes, and Console are later-stage." in (
             _visible_text(screen)
         )
+
+
+@pytest.mark.asyncio
+async def test_library_collections_surfaces_sync_dry_run_report_without_write_sync(tmp_path) -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_collections_service = FakeLibraryCollectionsService(
+        (
+            LibraryCollectionRecord(
+                collection_id="collection-1",
+                name="Research",
+                description="Policy sources",
+                item_count=2,
+                source_authority="local",
+                sync_status="local-only",
+                created_at="2026-05-08T04:00:00Z",
+                updated_at="2026-05-08T04:05:00Z",
+            ),
+        )
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    repo.record_mirror_report(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="library_collections",
+        report={
+            "dry_run": True,
+            "write_enabled": False,
+            "mapped_count": 1,
+            "actions": [
+                {
+                    "identity": {"local_entity_id": "collection-1"},
+                    "local_present": True,
+                    "remote_present": True,
+                }
+            ],
+        },
+    )
+    app.sync_state_repository = repo
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+
+        visible = _visible_text(screen)
+        assert "Sync dry-run: ready" in visible
+        assert "Read-only mirror check: 1 mapped record. No writes will be queued." in visible
+        assert "write sync" not in visible.lower()
 
 
 @pytest.mark.asyncio
