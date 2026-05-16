@@ -1,7 +1,7 @@
 ---
 id: TASK-12
 title: 'Product Maturity Phase 5: Server-Parity And Live Integrations'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-05 15:11'
 labels:
@@ -19,10 +19,10 @@ Close the highest-value local and server parity gaps where they materially impro
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 QA walkthrough verifies the running app is usable for this phase's target workflows.
-- [ ] #2 Focused regression evidence exists for changed seams.
-- [ ] #3 Repo-tracked QA evidence exists under Docs/superpowers/qa/product-maturity/.
-- [ ] #4 P0/P1 findings are fixed or explicitly accepted according to the spec severity policy.
+- [x] #1 QA walkthrough verifies the running app is usable for this phase's target workflows.
+- [x] #2 Focused regression evidence exists for changed seams.
+- [x] #3 Repo-tracked QA evidence exists under Docs/superpowers/qa/product-maturity/.
+- [x] #4 P0/P1 findings are fixed or explicitly accepted according to the spec severity policy.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,5 +43,5 @@ Reviewable child tasks:
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Started Phase 5 with TASK-12.1 as a current-state inventory and planning slice. Current dev already contains active-server/auth, event-state, dry-run sync, domain-edge, and UX contract foundations, so Phase 5 proceeds by surfacing those seams in running-app workflows rather than reimplementing the older April server-parity foundation plans. ACP runtime launch, Schedules/Workflows run-control services, and write sync remain explicit residual risks until later child tasks prove or defer them.
+Closed Phase 5 with TASK-12.1 through TASK-12.6 verified. The phase now has running-app and mounted evidence for active server/auth status, server event/feed visibility, read-only sync dry-run surfacing, and source-honest Library/Search/RAG to Console handoff authority. The closeout replay accepts ACP runtime launch, full Schedules/Workflows run-control services, write sync, and deeper remote RAG/client orchestration as explicit future residuals rather than hidden Phase 5 scope.
 <!-- SECTION:NOTES:END -->
