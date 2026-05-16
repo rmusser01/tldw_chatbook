@@ -288,6 +288,20 @@ class SyncScopeService:
         record.setdefault("sync_dataset_created", bool(record.get("dataset_id")))
         return record
 
+    def get_sync_v2_profile_summary(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None = None,
+        workspace_scope: str | None = None,
+    ) -> dict[str, Any]:
+        repository = self._require_state_repository()
+        return repository.get_sync_v2_profile_summary(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+
     def record_dry_run_mirror_report(
         self,
         *,

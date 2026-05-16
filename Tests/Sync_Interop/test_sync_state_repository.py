@@ -513,6 +513,156 @@ def test_sync_v2_outbox_persists_pending_entries_and_push_results(tmp_path):
     assert pending_after[1]["last_error"]["error_code"] == "conflict"
 
 
+def test_sync_v2_profile_summary_aggregates_state_counts_and_status(tmp_path):
+    db_path = tmp_path / "sync_state.db"
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=dataset_key,
+    )
+    pending = builder.build_note_metadata_update(note_id="note-1", status="active")
+    accepted = builder.build_note_metadata_update(note_id="note-2", status="archived")
+    conflicted = builder.build_note_metadata_update(note_id="note-3", status="draft")
+    repo = SyncStateRepository(db_path)
+    report = repo.record_mirror_report(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="notes",
+        report={"dry_run": True, "write_enabled": False, "mapped_count": 1},
+    )
+    repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "cursor-profile"},
+        capabilities={"max_batch_size": 25},
+        dry_run_metadata={"domains": ["notes", "chat"]},
+        last_error="push_conflicts: 1",
+        last_mirror_report_id=report["report_id"],
+    )
+    repo.set_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+        cursor="cursor-remote",
+    )
+    repo.record_identity_mapping(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="notes",
+        entity_type="note",
+        local_entity_id="local-note-1",
+        remote_entity_id="remote-note-1",
+        mapping_status="confirmed",
+    )
+    repo.record_identity_mapping(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="notes",
+        entity_type="note",
+        local_entity_id="local-note-1",
+        remote_entity_id="remote-note-2",
+        mapping_status="confirmed",
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=pending,
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=accepted,
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=conflicted,
+    )
+    repo.mark_sync_v2_outbox_push_results(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        accepted=[{"client_envelope_id": accepted.client_envelope_id}],
+        rejected=[],
+        conflicts=[
+            {
+                "client_envelope_id": conflicted.client_envelope_id,
+                "conflict_id": "conflict-1",
+            }
+        ],
+    )
+
+    summary = repo.get_sync_v2_profile_summary(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert summary["status"] == "attention_required"
+    assert summary["profile"]["profile_mode"] == "local_first_sync"
+    assert summary["profile"]["device_id"] == "device-1"
+    assert summary["profile"]["dataset_id"] == "dataset-1"
+    assert summary["profile"]["last_error"] == "push_conflicts: 1"
+    assert summary["cursor"]["remote_cursor"] == "cursor-remote"
+    assert summary["cursor"]["profile_cursor"] == "cursor-profile"
+    assert summary["outbox"] == {
+        "pending": 2,
+        "dispatched": 1,
+        "failed": 0,
+        "by_domain": {"notes": {"pending": 2, "dispatched": 1, "failed": 0}},
+    }
+    assert summary["identity_map"] == {
+        "total": 2,
+        "confirmed": 1,
+        "conflict": 1,
+        "by_domain": {"notes": {"confirmed": 1, "conflict": 1}},
+    }
+    assert summary["conflicts"]["count"] == 1
+    assert summary["last_mirror_report"]["report_id"] == report["report_id"]
+    assert summary["last_mirror_report"]["domain"] == "notes"
+
+
+def test_sync_v2_profile_summary_reports_missing_profile(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+
+    summary = repo.get_sync_v2_profile_summary(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert summary == {
+        "status": "not_configured",
+        "profile": None,
+        "cursor": None,
+        "outbox": {"pending": 0, "dispatched": 0, "failed": 0, "by_domain": {}},
+        "identity_map": {"total": 0, "by_domain": {}},
+        "conflicts": {"count": 0, "latest": []},
+        "last_mirror_report": None,
+    }
+
+
 def test_domain_eligibility_defaults_to_not_eligible_and_persists_override(tmp_path):
     db_path = tmp_path / "sync_state.db"
     repo = SyncStateRepository(db_path)
