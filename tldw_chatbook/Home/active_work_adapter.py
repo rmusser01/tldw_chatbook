@@ -13,6 +13,7 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 from loguru import logger
 from rich.markup import escape
 
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Utils.path_validation import validate_path
 from .dashboard_state import HomeActiveWorkItem, HomeDashboardInput
@@ -112,6 +113,9 @@ class UnavailableHomeActiveWorkAdapter(HomeActiveWorkAdapter):
         HomeControlAction.OPEN_IN_CONSOLE: "Open in Console",
     }
 
+    def __init__(self, *, runtime_policy: Any | None = None) -> None:
+        self.runtime_policy = runtime_policy
+
     def build_dashboard_input(
         self,
         *,
@@ -129,6 +133,7 @@ class UnavailableHomeActiveWorkAdapter(HomeActiveWorkAdapter):
             has_library_content=False,
             has_recent_work=has_recent_work,
             active_detail_route="chat",
+            **_runtime_server_status_fields(self.runtime_policy),
         )
 
     def handle_control(
@@ -166,7 +171,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         notification_service: Any | None = None,
         watchlist_service: Any | None = None,
         chatbook_service: Any | None = None,
-    ):
+        runtime_policy: Any | None = None,
+    ) -> None:
+        super().__init__(runtime_policy=runtime_policy)
         self.notification_service = notification_service
         self.watchlist_service = watchlist_service
         self.chatbook_service = chatbook_service
@@ -464,6 +471,27 @@ def _is_local_watchlist_run_id(value: str | None) -> bool:
 
 def _is_local_chatbook_id(value: str | None) -> bool:
     return bool(value and str(value).startswith("local:chatbook:"))
+
+
+def _runtime_server_status_fields(runtime_policy: Any | None) -> dict[str, object]:
+    state = getattr(runtime_policy, "state", None)
+    if not isinstance(state, RuntimeSourceState):
+        return {
+            "runtime_source": "local",
+            "active_server_id": None,
+            "server_label": None,
+            "server_configured": False,
+            "server_reachability": "unknown",
+            "server_auth_state": "unknown",
+        }
+    return {
+        "runtime_source": state.active_source,
+        "active_server_id": state.active_server_id,
+        "server_label": state.last_known_server_label or state.active_server_id,
+        "server_configured": state.server_configured,
+        "server_reachability": state.server_reachability,
+        "server_auth_state": state.server_auth_state,
+    }
 
 
 def _csv(value: Any) -> str | None:

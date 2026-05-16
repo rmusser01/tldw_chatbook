@@ -215,7 +215,7 @@
     min-height: $ds-home-dashboard-grid-height;
     padding: 0 1;
     margin: 0;
-    border: solid $ds-grid-line;
+    border: solid $ds-column-line;
     background: $ds-surface-panel;
 }
 
@@ -240,8 +240,16 @@
 #home-inspector,
 #home-next-actions-region,
 #home-recent-work-region {
-    border: round $ds-grid-line;
+    border: solid $ds-column-line;
     background: $ds-surface-panel;
+}
+
+.home-narrow-pane {
+    width: 1fr;
+}
+
+.home-wide-pane {
+    width: 2fr;
 }
 
 .home-pane-divider {
@@ -249,7 +257,7 @@
     min-width: 1;
     height: 100%;
     min-height: 0;
-    background: $ds-grid-line;
+    background: $ds-column-line;
 }
 
 .destination-pane-divider {
@@ -261,7 +269,7 @@
 }
 
 #home-attention,
-#home-active-work,
+#home-system-status,
 #home-next-best-action,
 #home-recent-work {
     height: $ds-home-compact-row-height;

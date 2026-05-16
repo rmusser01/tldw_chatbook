@@ -11,6 +11,14 @@ PAUSED_RUN_STATUS = "paused"
 RUNNING_RUN_STATUS = "running"
 UNKNOWN_RUN_STATUS = "unknown"
 
+RUNTIME_SOURCE_LOCAL = "local"
+RUNTIME_SOURCE_SERVER = "server"
+SERVER_REACHABILITY_REACHABLE = "reachable"
+SERVER_REACHABILITY_UNREACHABLE = "unreachable"
+SERVER_AUTH_AUTHENTICATED = "authenticated"
+SERVER_AUTH_REQUIRED = "auth_required"
+SERVER_AUTH_SESSION_INVALID = "session_invalid"
+
 APPROVAL_STATUSES = frozenset({"approval_required", "pending_approval", "pending"})
 RUNNING_STATUSES = frozenset({"running", "queued", "active", "scheduled"})
 PAUSED_STATUSES = frozenset({"paused"})
@@ -52,6 +60,12 @@ class HomeDashboardInput:
     mcp_ready: bool = True
     acp_ready: bool = True
     rag_ready: bool = False
+    runtime_source: str = RUNTIME_SOURCE_LOCAL
+    active_server_id: str | None = None
+    server_label: str | None = None
+    server_configured: bool = False
+    server_reachability: str = UNKNOWN_RUN_STATUS
+    server_auth_state: str = UNKNOWN_RUN_STATUS
     pending_approval_count: int = 0
     active_run_count: int = 0
     running_run_count: int = 0
@@ -292,6 +306,8 @@ def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
         f"RAG: {'Ready' if state.rag_ready else 'Missing sources'} | "
         f"MCP: {'Ready' if state.mcp_ready else 'Blocked'} | "
         f"ACP: {'Ready' if state.acp_ready else 'Blocked'} | "
+        f"Mode: {_runtime_source_label(state.runtime_source)} | "
+        f"Server: {_server_status_label(state)} | "
         f"Active: {active_count} | "
         f"Approvals: {approval_count}"
     )
@@ -312,6 +328,11 @@ def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
                 "active_work",
                 "Active Work",
                 _active_work_lines(state),
+            ),
+            HomeSection(
+                "system_status",
+                "System Status",
+                _system_status_lines(state),
             ),
             HomeSection(
                 "next_best_action",
@@ -399,6 +420,70 @@ def _active_work_lines(state: HomeDashboardInput) -> tuple[str, ...]:
         f"Paused: {state.paused_run_count}",
         f"Failed: {state.failed_run_count}",
     )
+
+
+def _system_status_lines(state: HomeDashboardInput) -> tuple[str, ...]:
+    source_label = _runtime_source_label(state.runtime_source)
+    server_label = _server_status_label(state)
+    active_count = _active_run_count(state)
+    approval_count = _pending_approval_count(state)
+    lines = [
+        f"Runtime: {source_label}",
+        f"Server sync: {server_label}",
+        _runtime_explanation_line(state),
+        (
+            "Agent readiness: "
+            f"Model {'ready' if state.model_ready else 'blocked'}, "
+            f"RAG {'ready' if state.rag_ready else 'needs sources'}, "
+            f"MCP {'ready' if state.mcp_ready else 'blocked'}, "
+            f"ACP {'ready' if state.acp_ready else 'blocked'}"
+        ),
+        f"Work: {active_count} active, {approval_count} approvals",
+    ]
+    return tuple(lines)
+
+
+def _runtime_source_label(value: object) -> str:
+    source = str(value or RUNTIME_SOURCE_LOCAL).strip().lower()
+    return "Server" if source == RUNTIME_SOURCE_SERVER else "Local"
+
+
+def _runtime_explanation_line(state: HomeDashboardInput) -> str:
+    source = str(state.runtime_source or RUNTIME_SOURCE_LOCAL).strip().lower()
+    reachability = str(state.server_reachability or UNKNOWN_RUN_STATUS).strip().lower()
+    auth_state = str(state.server_auth_state or UNKNOWN_RUN_STATUS).strip().lower()
+    if source != RUNTIME_SOURCE_SERVER:
+        return "Local mode is active. Server sync is optional."
+    if not state.server_configured or not state.active_server_id:
+        return "Choose or configure a server before server-backed work."
+    if reachability == SERVER_REACHABILITY_UNREACHABLE:
+        return "Server is unreachable. Check network or server status."
+    if auth_state == SERVER_AUTH_REQUIRED:
+        return "Authentication is required before server-backed work."
+    if auth_state == SERVER_AUTH_SESSION_INVALID:
+        return "Authentication expired. Reconnect before server-backed work."
+    if reachability == SERVER_REACHABILITY_REACHABLE and auth_state == SERVER_AUTH_AUTHENTICATED:
+        return "Server mode is ready for authenticated work."
+    return "Checking server readiness."
+
+
+def _server_status_label(state: HomeDashboardInput) -> str:
+    source = str(state.runtime_source or RUNTIME_SOURCE_LOCAL).strip().lower()
+    reachability = str(state.server_reachability or UNKNOWN_RUN_STATUS).strip().lower()
+    auth_state = str(state.server_auth_state or UNKNOWN_RUN_STATUS).strip().lower()
+    if source != RUNTIME_SOURCE_SERVER:
+        return "Configured; local mode" if state.server_configured else "Not configured (local mode)"
+    if not state.server_configured or not state.active_server_id:
+        return "Missing active server"
+    if reachability == SERVER_REACHABILITY_UNREACHABLE:
+        return "Unreachable"
+    if auth_state == SERVER_AUTH_REQUIRED:
+        return "Auth required"
+    if auth_state == SERVER_AUTH_SESSION_INVALID:
+        return "Auth expired"
+    if reachability == SERVER_REACHABILITY_REACHABLE and auth_state == SERVER_AUTH_AUTHENTICATED:
+        return "Ready"
+    return "Checking"
 
 
 def _next_action_lines(
