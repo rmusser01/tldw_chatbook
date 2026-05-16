@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT_PARENT_DEPTH = 2
+REPO_ROOT = Path(__file__).resolve().parents[REPO_ROOT_PARENT_DEPTH]
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PLAN = Path("Docs/superpowers/plans/2026-05-16-phase-5-server-parity-live-integrations.md")
 PHASE_5_QA_README = Path("Docs/superpowers/qa/product-maturity/phase-5/README.md")
@@ -109,11 +110,14 @@ def test_phase5_server_parity_plan_reconciles_current_dev_state() -> None:
             assert "## Implementation Notes" in task
         else:
             assert "status: To Do" in task
+            for ac_number in range(1, 5):
+                assert f"- [ ] #{ac_number}" in task
 
     phase_row = _markdown_table_row(tracker, "Phase 5: Server-Parity And Live Integrations")
     assert "in-progress; TASK-12.1 verified" in phase_row[2]
     for task_id in PHASE_5_CHILD_TASKS:
         assert task_id in phase_row[3]
     assert TASK_12_1_QA_EVIDENCE.name in phase_row[4]
+    assert PLAN.as_posix() in phase_row[4]
     assert "live server/auth" in phase_row[5]
     assert "write sync" in phase_row[5]

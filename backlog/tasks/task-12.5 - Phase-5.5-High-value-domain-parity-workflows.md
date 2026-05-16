@@ -25,3 +25,13 @@ Close high-value running-app domain parity workflows where existing backend cont
 - [ ] #3 Repo-tracked QA evidence exists under Docs/superpowers/qa/product-maturity/phase-5/.
 - [ ] #4 P0/P1 findings are fixed or explicitly accepted according to the spec severity policy.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:NOTES:END -->
