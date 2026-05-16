@@ -39,4 +39,6 @@ Expose sync mirror readiness and conflict reports in product workflows without e
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented Library Collections dry-run sync surfacing from existing `Sync_Interop` state. The selected Collection detail now shows ready, conflict, orphaned, and unsupported dry-run statuses with explicit no-write copy. The mounted workflow regression seeds a read-only mirror report and verifies the UI surfaces it without exposing write sync.
+
+PR review follow-up bounded sync repository reads, moved mirror/conflict report loading through the worker-backed service helper, scoped conflicts by persisted side keys, and made unregistered readiness reachable as an unsupported dry-run state for otherwise local-only records.
 <!-- SECTION:NOTES:END -->

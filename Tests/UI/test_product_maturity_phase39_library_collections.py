@@ -216,6 +216,91 @@ async def test_library_collections_surfaces_sync_dry_run_report_without_write_sy
 
 
 @pytest.mark.asyncio
+async def test_library_collections_scopes_sync_conflicts_to_selected_collection(tmp_path) -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_collections_service = FakeLibraryCollectionsService(
+        (
+            LibraryCollectionRecord(
+                collection_id="collection-ready",
+                name="Ready Collection",
+                description="Policy sources",
+                item_count=2,
+                source_authority="local",
+                sync_status="local-only",
+                created_at="2026-05-08T04:00:00Z",
+                updated_at="2026-05-08T04:05:00Z",
+            ),
+            LibraryCollectionRecord(
+                collection_id="collection-conflict",
+                name="Conflict Collection",
+                description="Review mappings",
+                item_count=1,
+                source_authority="local",
+                sync_status="local-only",
+                created_at="2026-05-08T04:00:00Z",
+                updated_at="2026-05-08T04:05:00Z",
+            ),
+        )
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    repo.record_mirror_report(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="library_collections",
+        report={
+            "dry_run": True,
+            "write_enabled": False,
+            "mapped_count": 1,
+            "actions": [
+                {
+                    "identity": {"local_entity_id": "collection-ready"},
+                    "local_present": True,
+                    "remote_present": True,
+                }
+            ],
+        },
+    )
+    repo.record_identity_mapping(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="library_collections",
+        entity_type="collection",
+        local_entity_id="collection-conflict",
+        remote_entity_id="remote-a",
+        mapping_status="confirmed",
+    )
+    repo.record_identity_mapping(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="library_collections",
+        entity_type="collection",
+        local_entity_id="collection-conflict",
+        remote_entity_id="remote-b",
+        mapping_status="confirmed",
+    )
+    app.sync_state_repository = repo
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+
+        visible = _visible_text(screen)
+        assert "Sync dry-run: ready" in visible
+        assert "Sync dry-run: conflicts" not in visible
+
+
+@pytest.mark.asyncio
 async def test_library_collections_create_rename_and_delete_workflow() -> None:
     app = _build_test_app()
     _seed_library_sources(app)
@@ -241,7 +326,7 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
 
         assert service.created == [("Research", "Policy sources")]
         assert "0 items" in _visible_text(screen)
-        assert "Sync: local-only" in _visible_text(screen)
+        assert "Sync dry-run: unsupported" in _visible_text(screen)
         assert "Updated 2026-05-08 04:01 UTC" in _visible_text(screen)
 
         screen.query_one("#library-collection-name-input", Input).value = "Briefing Queue"

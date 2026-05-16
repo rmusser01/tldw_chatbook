@@ -59,6 +59,7 @@ LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
 LIBRARY_FRAME_BORDER = ("solid", "#6f7782")
 LIBRARY_FRAME_PADDING = Spacing(1, 1, 1, 1)
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
+LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
 LIBRARY_MODE_BAR_HEIGHT = 2
 LIBRARY_MODE_LABEL_WIDTH = 7
 LIBRARY_MODE_CHIP_MIN_WIDTH = 9
@@ -171,7 +172,18 @@ def _collection_scoped_conflicts(
     collection_id: str,
 ) -> tuple[Mapping[str, Any], ...]:
     scoped: list[Mapping[str, Any]] = []
+    local_side_suffix = f":local:{collection_id}"
+    remote_side_suffix = f":remote:{collection_id}"
     for conflict in conflict_reports:
+        local_side_key = str(conflict.get("local_side_key") or "")
+        remote_side_key = str(conflict.get("remote_side_key") or "")
+        if local_side_key or remote_side_key:
+            if (
+                local_side_key.endswith(local_side_suffix)
+                or remote_side_key.endswith(remote_side_suffix)
+            ):
+                scoped.append(conflict)
+            continue
         details = conflict.get("details", {})
         if isinstance(details, Mapping):
             local_entity_id = details.get("local_entity_id")
@@ -1012,7 +1024,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_collections_loaded = True
             self._library_collections_error = "Library Collections are unavailable."
             return
-        self._library_collections_records = self._decorate_library_collection_sync_records(
+        self._library_collections_records = await self._decorate_library_collection_sync_records(
             tuple(records or ())
         )
         self._library_collections_loaded = True
@@ -1030,24 +1042,38 @@ class LibraryScreen(BaseAppScreen):
                 _record_value(self._library_collections_records[0], "collection_id") or ""
             )
 
-    def _decorate_library_collection_sync_records(self, records: Sequence[Any]) -> tuple[Any, ...]:
+    async def _decorate_library_collection_sync_records(
+        self,
+        records: Sequence[Any],
+    ) -> tuple[Any, ...]:
         repository = getattr(self.app_instance, "sync_state_repository", None)
         if repository is None:
             return tuple(records)
 
-        list_mirror_reports = getattr(repository, "list_mirror_reports", None)
+        get_latest_mirror_report = getattr(repository, "get_latest_mirror_report", None)
         list_conflict_reports = getattr(repository, "list_conflict_reports", None)
-        if not callable(list_mirror_reports) or not callable(list_conflict_reports):
+        if not callable(get_latest_mirror_report) or not callable(list_conflict_reports):
             return tuple(records)
 
         try:
-            mirror_reports = list_mirror_reports(domain="library_collections")
-            conflict_reports = list_conflict_reports(domain="library_collections")
+            latest_mirror_record, conflict_reports = await asyncio.gather(
+                self._run_library_service_call(
+                    get_latest_mirror_report,
+                    domain="library_collections",
+                    isolate_in_worker=True,
+                ),
+                self._run_library_service_call(
+                    list_conflict_reports,
+                    domain="library_collections",
+                    limit=LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT,
+                    isolate_in_worker=True,
+                ),
+            )
         except Exception:
             logger.warning("Failed to load Library Collections sync dry-run state.", exc_info=True)
             return tuple(records)
 
-        latest_report = mirror_reports[-1]["report"] if mirror_reports else None
+        latest_report = latest_mirror_record["report"] if latest_mirror_record else None
         readiness = build_sync_readiness_report(
             domain="library_collections",
             server_profile_id=None,
@@ -1070,7 +1096,10 @@ class LibraryScreen(BaseAppScreen):
             record_data["sync_conflicts"] = _collection_scoped_conflicts(conflict_reports, collection_id)
             if collection_report:
                 record_data["sync_status"] = ""
-            elif readiness_record["reason_codes"] != ("not_registered",):
+            elif (
+                not readiness_record["sync_eligible"]
+                and _record_value(record, "sync_status", "local-only") == "local-only"
+            ):
                 record_data["sync_status"] = ""
             decorated.append(record_data)
         return tuple(decorated)

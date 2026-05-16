@@ -63,7 +63,7 @@ Result: `45 passed, 8 warnings`.
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_product_maturity_phase5_server_parity_plan.py Tests/UI/test_product_maturity_phase39_library_collections.py Tests/Library/test_library_collections_state.py Tests/Widgets/test_library_collections_panel.py Tests/Sync_Interop/test_sync_mirror_report.py Tests/Sync_Interop/test_sync_readiness.py Tests/Sync_Interop/test_sync_scope_service.py Tests/Sync_Interop/test_sync_state_repository.py --tb=short
 ```
 
-Result: `46 passed, 8 warnings`.
+Result: `49 passed, 8 warnings`.
 
 ```bash
 git diff --check
