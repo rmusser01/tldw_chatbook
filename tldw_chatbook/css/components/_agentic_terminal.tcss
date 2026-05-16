@@ -236,7 +236,7 @@
 }
 
 #home-attention-queue,
-#home-system-status-region,
+#home-active-work-region,
 #home-inspector,
 #home-next-actions-region,
 #home-recent-work-region {

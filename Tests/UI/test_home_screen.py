@@ -315,12 +315,13 @@ async def test_home_dashboard_uses_bordered_terminal_panes():
         assert home.query_one("#home-dashboard-grid").has_class("destination-workbench")
         for selector in [
             "#home-attention-queue",
-            "#home-system-status-region",
+            "#home-active-work-region",
             "#home-inspector",
         ]:
             assert home.query_one(selector).has_class("destination-workbench-pane")
         assert home.query_one("#home-attention-queue").has_class("home-narrow-pane")
-        assert home.query_one("#home-system-status-region").has_class("home-wide-pane")
+        assert home.query_one("#home-active-work-region").has_class("home-wide-pane")
+        assert home.query_one("#home-active-work-region").has_class("home-system-status-region")
         assert home.query_one("#home-inspector").has_class("ds-inspector")
         for selector in [
             "#home-attention-active-divider",

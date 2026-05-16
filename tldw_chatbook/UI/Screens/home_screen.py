@@ -190,8 +190,11 @@ class HomeScreen(BaseAppScreen):
                     yield Static(section_text("attention"), id="home-attention-body")
                 yield Static("", id="home-attention-active-divider", classes="home-pane-divider")
                 with Vertical(
-                    id="home-system-status-region",
-                    classes="home-dashboard-region home-wide-pane destination-workbench-pane",
+                    id="home-active-work-region",
+                    classes=(
+                        "home-dashboard-region home-wide-pane "
+                        "home-system-status-region destination-workbench-pane"
+                    ),
                 ):
                     yield Static("System Status", id="home-system-status", classes="destination-section")
                     for control in dashboard.controls:

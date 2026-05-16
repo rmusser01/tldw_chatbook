@@ -50,6 +50,7 @@ def test_home_adapter_surfaces_runtime_server_status_without_credentials():
     status = summarize_home_dashboard(dashboard_input).sections[0].lines[0]
 
     assert dashboard_input.runtime_source == "server"
+    assert dashboard_input.active_server_id == "primary"
     assert dashboard_input.server_label == "Primary Server"
     assert dashboard_input.server_configured is True
     assert dashboard_input.server_reachability == "reachable"
@@ -70,6 +71,17 @@ def test_home_adapter_runtime_server_status_matrix_is_source_honest():
                 active_source="server",
                 active_server_id=None,
                 server_configured=False,
+            ),
+            "Mode: Server",
+            "Server: Missing active server",
+        ),
+        (
+            RuntimeSourceState(
+                active_source="server",
+                active_server_id=None,
+                server_configured=True,
+                server_reachability="reachable",
+                server_auth_state="authenticated",
             ),
             "Mode: Server",
             "Server: Missing active server",

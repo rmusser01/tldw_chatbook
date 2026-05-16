@@ -172,7 +172,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         watchlist_service: Any | None = None,
         chatbook_service: Any | None = None,
         runtime_policy: Any | None = None,
-    ):
+    ) -> None:
         super().__init__(runtime_policy=runtime_policy)
         self.notification_service = notification_service
         self.watchlist_service = watchlist_service
@@ -478,6 +478,7 @@ def _runtime_server_status_fields(runtime_policy: Any | None) -> dict[str, objec
     if not isinstance(state, RuntimeSourceState):
         return {
             "runtime_source": "local",
+            "active_server_id": None,
             "server_label": None,
             "server_configured": False,
             "server_reachability": "unknown",
@@ -485,6 +486,7 @@ def _runtime_server_status_fields(runtime_policy: Any | None) -> dict[str, objec
         }
     return {
         "runtime_source": state.active_source,
+        "active_server_id": state.active_server_id,
         "server_label": state.last_known_server_label or state.active_server_id,
         "server_configured": state.server_configured,
         "server_reachability": state.server_reachability,
