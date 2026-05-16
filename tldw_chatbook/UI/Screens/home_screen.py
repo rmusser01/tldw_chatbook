@@ -58,6 +58,14 @@ def _home_route_label(route: str) -> str:
         return route.replace("_", " ").replace("-", " ").title()
 
 
+def _home_runtime_status_label(state: HomeDashboardInput) -> str:
+    source = str(state.runtime_source or "local").strip().lower()
+    if source != "server":
+        return "Local"
+    server_label = str(state.server_label or "").strip()
+    return f"Server: {server_label}" if server_label else "Server"
+
+
 class HomeActionButton(Button):
     """Home button that emits press events even when app chrome hides layout."""
 
@@ -134,7 +142,8 @@ class HomeScreen(BaseAppScreen):
                 f"{dashboard.next_action.label}\n"
                 f"{dashboard.next_action.reason}\n"
                 f"Destination: {_home_route_label(dashboard.next_action.target_route)}\n"
-                "Enter opens selected action."
+                f"Enter: Open {_home_route_label(dashboard.next_action.target_route)}\n"
+                "Ctrl+P: Search commands"
             )
         )
         next_action_copy = section_text("next_best_action")
@@ -149,7 +158,8 @@ class HomeScreen(BaseAppScreen):
             yield Static(
                 (
                     "Home | Status, notifications, active work | "
-                    f"{'Ready' if dashboard_input.model_ready else 'Blocked'} | Local"
+                    f"{'Ready' if dashboard_input.model_ready else 'Blocked'} | "
+                    f"{_home_runtime_status_label(dashboard_input)}"
                 ),
                 id="home-status-row",
                 classes="destination-status-row",
@@ -168,7 +178,7 @@ class HomeScreen(BaseAppScreen):
             with Horizontal(id="home-dashboard-grid", classes="ds-panel destination-workbench"):
                 with Vertical(
                     id="home-attention-queue",
-                    classes="home-dashboard-region destination-workbench-pane",
+                    classes="home-dashboard-region home-narrow-pane destination-workbench-pane",
                 ):
                     yield Static("Attention Queue", id="home-attention", classes="destination-section")
                     yield HomeActionButton(
@@ -180,10 +190,10 @@ class HomeScreen(BaseAppScreen):
                     yield Static(section_text("attention"), id="home-attention-body")
                 yield Static("", id="home-attention-active-divider", classes="home-pane-divider")
                 with Vertical(
-                    id="home-active-work-region",
-                    classes="home-dashboard-region destination-workbench-pane",
+                    id="home-system-status-region",
+                    classes="home-dashboard-region home-wide-pane destination-workbench-pane",
                 ):
-                    yield Static("Active Work", id="home-active-work", classes="destination-section")
+                    yield Static("System Status", id="home-system-status", classes="destination-section")
                     for control in dashboard.controls:
                         yield HomeActionButton(
                             control.label,
@@ -193,6 +203,7 @@ class HomeScreen(BaseAppScreen):
                                 self._activate_home_control(control_id)
                             ),
                         )
+                    yield Static(section_text("system_status"), id="home-system-status-body")
                     yield Static(section_text("active_work"), id="home-active-work-body")
                 yield Static("", id="home-active-inspector-divider", classes="home-pane-divider")
                 with Vertical(

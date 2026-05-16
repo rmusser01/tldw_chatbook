@@ -1,4 +1,5 @@
 from typing import get_type_hints
+from types import SimpleNamespace
 
 from tldw_chatbook.Home.active_work_adapter import (
     HomeConsoleLaunch,
@@ -8,7 +9,8 @@ from tldw_chatbook.Home.active_work_adapter import (
     LocalNotificationHomeActiveWorkAdapter,
     UnavailableHomeActiveWorkAdapter,
 )
-from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem
+from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, summarize_home_dashboard
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 
 def test_unavailable_home_adapter_builds_dashboard_input_from_runtime_context():
@@ -24,6 +26,90 @@ def test_unavailable_home_adapter_builds_dashboard_input_from_runtime_context():
     assert dashboard_input.pending_approval_count == 0
     assert dashboard_input.active_run_count == 0
     assert dashboard_input.active_detail_route == "chat"
+    assert dashboard_input.runtime_source == "local"
+    assert dashboard_input.server_configured is False
+
+
+def test_home_adapter_surfaces_runtime_server_status_without_credentials():
+    runtime_policy = SimpleNamespace(
+        state=RuntimeSourceState(
+            active_source="server",
+            active_server_id="primary",
+            server_configured=True,
+            server_reachability="reachable",
+            server_auth_state="auth_required",
+            last_known_server_label="Primary Server",
+        )
+    )
+    adapter = UnavailableHomeActiveWorkAdapter(runtime_policy=runtime_policy)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={},
+        has_recent_work=False,
+    )
+    status = summarize_home_dashboard(dashboard_input).sections[0].lines[0]
+
+    assert dashboard_input.runtime_source == "server"
+    assert dashboard_input.server_label == "Primary Server"
+    assert dashboard_input.server_configured is True
+    assert dashboard_input.server_reachability == "reachable"
+    assert dashboard_input.server_auth_state == "auth_required"
+    assert "Mode: Server" in status
+    assert "Server: Auth required" in status
+
+
+def test_home_adapter_runtime_server_status_matrix_is_source_honest():
+    cases = [
+        (
+            RuntimeSourceState(active_source="local"),
+            "Mode: Local",
+            "Server: Not configured (local mode)",
+        ),
+        (
+            RuntimeSourceState(
+                active_source="server",
+                active_server_id=None,
+                server_configured=False,
+            ),
+            "Mode: Server",
+            "Server: Missing active server",
+        ),
+        (
+            RuntimeSourceState(
+                active_source="server",
+                active_server_id="primary",
+                server_configured=True,
+                server_reachability="unreachable",
+                server_auth_state="unknown",
+            ),
+            "Mode: Server",
+            "Server: Unreachable",
+        ),
+        (
+            RuntimeSourceState(
+                active_source="server",
+                active_server_id="primary",
+                server_configured=True,
+                server_reachability="reachable",
+                server_auth_state="authenticated",
+            ),
+            "Mode: Server",
+            "Server: Ready",
+        ),
+    ]
+
+    for runtime_state, mode_text, server_text in cases:
+        adapter = UnavailableHomeActiveWorkAdapter(
+            runtime_policy=SimpleNamespace(state=runtime_state)
+        )
+        dashboard_input = adapter.build_dashboard_input(
+            providers_models={"OpenAI": ["gpt-4.1"]},
+            has_recent_work=False,
+        )
+        status = summarize_home_dashboard(dashboard_input).sections[0].lines[0]
+
+        assert mode_text in status
+        assert server_text in status
 
 
 def test_local_notification_adapter_counts_unread_local_notifications():

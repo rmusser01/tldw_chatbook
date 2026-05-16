@@ -9,6 +9,7 @@ $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
 $ds-grid-line: $surface-lighten-1;
+$ds-column-line: $surface-lighten-2;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
 $ds-action-focus: $primary;

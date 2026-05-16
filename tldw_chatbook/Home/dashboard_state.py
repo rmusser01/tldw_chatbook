@@ -52,6 +52,11 @@ class HomeDashboardInput:
     mcp_ready: bool = True
     acp_ready: bool = True
     rag_ready: bool = False
+    runtime_source: str = "local"
+    server_label: str | None = None
+    server_configured: bool = False
+    server_reachability: str = "unknown"
+    server_auth_state: str = "unknown"
     pending_approval_count: int = 0
     active_run_count: int = 0
     running_run_count: int = 0
@@ -292,6 +297,8 @@ def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
         f"RAG: {'Ready' if state.rag_ready else 'Missing sources'} | "
         f"MCP: {'Ready' if state.mcp_ready else 'Blocked'} | "
         f"ACP: {'Ready' if state.acp_ready else 'Blocked'} | "
+        f"Mode: {_runtime_source_label(state.runtime_source)} | "
+        f"Server: {_server_status_label(state)} | "
         f"Active: {active_count} | "
         f"Approvals: {approval_count}"
     )
@@ -312,6 +319,11 @@ def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
                 "active_work",
                 "Active Work",
                 _active_work_lines(state),
+            ),
+            HomeSection(
+                "system_status",
+                "System Status",
+                _system_status_lines(state),
             ),
             HomeSection(
                 "next_best_action",
@@ -399,6 +411,76 @@ def _active_work_lines(state: HomeDashboardInput) -> tuple[str, ...]:
         f"Paused: {state.paused_run_count}",
         f"Failed: {state.failed_run_count}",
     )
+
+
+def _system_status_lines(state: HomeDashboardInput) -> tuple[str, ...]:
+    source_label = _runtime_source_label(state.runtime_source)
+    server_label = _server_status_label(state)
+    active_count = _active_run_count(state)
+    approval_count = _pending_approval_count(state)
+    lines = [
+        f"Runtime: {source_label}",
+        f"Server sync: {server_label}",
+        _runtime_explanation_line(state),
+        (
+            "Agent readiness: "
+            f"Model {'ready' if state.model_ready else 'blocked'}, "
+            f"RAG {'ready' if state.rag_ready else 'needs sources'}, "
+            f"MCP {'ready' if state.mcp_ready else 'blocked'}, "
+            f"ACP {'ready' if state.acp_ready else 'blocked'}"
+        ),
+        f"Work: {active_count} active, {approval_count} approvals",
+    ]
+    if state.active_work_items:
+        lines.append("Live items:")
+        lines.extend(
+            f"- {item.title} [{item.status}] via {item.source}"
+            for item in state.active_work_items[:3]
+        )
+    return tuple(lines)
+
+
+def _runtime_source_label(value: object) -> str:
+    source = str(value or "local").strip().lower()
+    return "Server" if source == "server" else "Local"
+
+
+def _runtime_explanation_line(state: HomeDashboardInput) -> str:
+    source = str(state.runtime_source or "local").strip().lower()
+    reachability = str(state.server_reachability or "unknown").strip().lower()
+    auth_state = str(state.server_auth_state or "unknown").strip().lower()
+    if source != "server":
+        return "Local mode is active. Server sync is optional."
+    if not state.server_configured:
+        return "Choose or configure a server before server-backed work."
+    if reachability == "unreachable":
+        return "Server is unreachable. Check network or server status."
+    if auth_state == "auth_required":
+        return "Authentication is required before server-backed work."
+    if auth_state == "session_invalid":
+        return "Authentication expired. Reconnect before server-backed work."
+    if reachability == "reachable" and auth_state == "authenticated":
+        return "Server mode is ready for authenticated work."
+    return "Checking server readiness."
+
+
+def _server_status_label(state: HomeDashboardInput) -> str:
+    source = str(state.runtime_source or "local").strip().lower()
+    reachability = str(state.server_reachability or "unknown").strip().lower()
+    auth_state = str(state.server_auth_state or "unknown").strip().lower()
+    if source != "server":
+        return "Configured; local mode" if state.server_configured else "Not configured (local mode)"
+    if not state.server_configured:
+        return "Missing active server"
+    if reachability == "unreachable":
+        return "Unreachable"
+    if auth_state == "auth_required":
+        return "Auth required"
+    if auth_state == "session_invalid":
+        return "Auth expired"
+    if reachability == "reachable" and auth_state == "authenticated":
+        return "Ready"
+    return "Checking"
 
 
 def _next_action_lines(

@@ -1401,7 +1401,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_study_initial_section: Optional[str] = None
         self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
-        self.home_active_work_adapter = UnavailableHomeActiveWorkAdapter()
+        self.home_active_work_adapter = UnavailableHomeActiveWorkAdapter(
+            runtime_policy=self.runtime_policy,
+        )
         self.loguru_logger = loguru_logger
         self.loguru_logger.info(f"Loaded app_config - strip_thinking_tags: {self.app_config.get('chat_defaults', {}).get('strip_thinking_tags', 'NOT SET')}") # Make loguru_logger an instance variable for handlers
         self.client_id = CLI_APP_CLIENT_ID
@@ -2121,6 +2123,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             notification_service=self.client_notifications_service,
             watchlist_service=self.local_watchlists_service,
             chatbook_service=self.local_chatbook_service,
+            runtime_policy=self.runtime_policy,
         )
         self.notification_dispatch_service = NotificationDispatchService(
             store=self.client_notifications_db,

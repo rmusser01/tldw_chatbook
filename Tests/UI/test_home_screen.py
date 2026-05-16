@@ -12,6 +12,7 @@ from tldw_chatbook.Home.active_work_adapter import (
     HomeControlResultStatus,
 )
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from Tests.UI.test_screen_navigation import _build_test_app
 
@@ -93,7 +94,7 @@ async def test_home_screen_shows_dashboard_sections():
         for selector in [
             "#home-status",
             "#home-attention",
-            "#home-active-work",
+            "#home-system-status",
             "#home-next-best-action",
             "#home-recent-work",
         ]:
@@ -128,6 +129,61 @@ async def test_home_screen_compacts_multi_module_readiness_summary():
 
 
 @pytest.mark.asyncio
+async def test_home_system_status_groups_runtime_readiness_and_work_state():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        rag_ready=False,
+        mcp_ready=True,
+        acp_ready=False,
+        runtime_source="local",
+        server_configured=False,
+        active_run_count=2,
+        pending_approval_count=1,
+        has_library_content=True,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        system_title = str(home.query_one("#home-system-status").renderable)
+        system_text = str(home.query_one("#home-system-status-body").renderable)
+
+        assert "System Status" in system_title
+        assert "Runtime: Local" in system_text
+        assert "Server sync: Not configured (local mode)" in system_text
+        assert "Local mode is active. Server sync is optional." in system_text
+        assert "Agent readiness: Model ready, RAG needs sources, MCP ready, ACP blocked" in system_text
+        assert "Work: 2 active, 1 approvals" in system_text
+
+
+@pytest.mark.asyncio
+async def test_home_screen_status_row_surfaces_server_auth_state():
+    app = _build_test_app()
+    app.runtime_policy.state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="primary",
+        server_configured=True,
+        server_reachability="reachable",
+        server_auth_state="session_invalid",
+        last_known_server_label="Primary Server",
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        status_text = str(home.query_one("#home-status").renderable)
+        status_row_text = str(home.query_one("#home-status-row").renderable)
+        assert "Mode: Server" in status_text
+        assert "Server: Auth expired" in status_text
+        assert "Primary Server" in status_row_text
+
+
+@pytest.mark.asyncio
 async def test_home_empty_state_inspector_explains_selected_primary_action():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
@@ -145,7 +201,8 @@ async def test_home_empty_state_inspector_explains_selected_primary_action():
         assert "Selected action" in selected_title
         assert "Import Library sources" in selected_text
         assert "Destination: Library" in selected_text
-        assert "Enter opens selected action" in selected_text
+        assert "Enter: Open Library" in selected_text
+        assert "Ctrl+P: Search commands" in selected_text
 
         hint_text = str(home.query_one("#home-action-hints").renderable)
         assert "Enter open selected" in hint_text
@@ -258,10 +315,12 @@ async def test_home_dashboard_uses_bordered_terminal_panes():
         assert home.query_one("#home-dashboard-grid").has_class("destination-workbench")
         for selector in [
             "#home-attention-queue",
-            "#home-active-work-region",
+            "#home-system-status-region",
             "#home-inspector",
         ]:
             assert home.query_one(selector).has_class("destination-workbench-pane")
+        assert home.query_one("#home-attention-queue").has_class("home-narrow-pane")
+        assert home.query_one("#home-system-status-region").has_class("home-wide-pane")
         assert home.query_one("#home-inspector").has_class("ds-inspector")
         for selector in [
             "#home-attention-active-divider",
