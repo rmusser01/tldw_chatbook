@@ -10,6 +10,7 @@ from tldw_chatbook.Home.active_work_adapter import (
     UnavailableHomeActiveWorkAdapter,
 )
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, summarize_home_dashboard
+from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 
@@ -765,7 +766,7 @@ def test_local_notification_adapter_distinguishes_server_events_from_local_notif
     assert dashboard_input.notification_count == 1
     assert dashboard_input.server_event_count == 1
     assert dashboard_input.server_event_state == "available"
-    assert "Local notifications: 1 unread" in system_status
+    assert "Local notifications: 1 unread" not in system_status
     assert "Server events: 1 observed via server event feed" in system_status
 
 
@@ -800,7 +801,7 @@ def test_local_notification_adapter_surfaces_server_event_replay_gap_requery_sta
 def test_local_notification_adapter_surfaces_server_event_reconnect_state():
     class FakeServerEventService:
         def list_observed_server_feed(self, *, limit=20, mark_presented=False):
-            raise ValueError("server_profile_id is required for server notification event state.")
+            raise ServerEventScopeRequiredError("No selected event scope.")
 
     adapter = LocalNotificationHomeActiveWorkAdapter(
         server_event_service=FakeServerEventService()

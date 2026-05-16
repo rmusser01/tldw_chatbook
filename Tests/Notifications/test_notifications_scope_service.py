@@ -1,7 +1,10 @@
 import pytest
 
 from tldw_chatbook.Notifications import EventStateRepository
-from tldw_chatbook.Notifications.notifications_scope_service import NotificationsScopeService
+from tldw_chatbook.Notifications.notifications_scope_service import (
+    NotificationsScopeService,
+    ServerEventScopeRequiredError,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -206,6 +209,17 @@ def test_notifications_scope_service_enforces_policy_for_observed_server_feed(tm
         scope.list_observed_server_feed()
 
     assert exc.value.action_id == "notifications.feed.list.server"
+
+
+def test_notifications_scope_service_raises_structured_missing_server_event_scope(tmp_path):
+    repo = EventStateRepository(tmp_path / "events.db")
+    scope = NotificationsScopeService(
+        event_state_repository=repo,
+        server_event_scope_provider=lambda: {},
+    )
+
+    with pytest.raises(ServerEventScopeRequiredError):
+        scope.list_observed_server_feed()
 
 
 @pytest.mark.asyncio

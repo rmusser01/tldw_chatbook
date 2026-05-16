@@ -16,7 +16,7 @@ Verified by focused Home adapter and Notifications regressions:
 
 1. Build the Home dashboard from local notification queue records and an observed server event feed.
 2. Confirm unread local notifications are counted separately from observed server events.
-3. Confirm Home status copy includes both `Local notifications: 1 unread` and `Server events: 1 observed via server event feed`.
+3. Confirm Home status copy includes `Server events: 1 observed via server event feed` without duplicating the Attention queue's unread local notification count.
 4. Confirm replay retention gaps tell the user to requery server events instead of pretending the local cache is complete.
 5. Confirm missing active-server scope tells the user to reconnect or select an active server.
 6. Confirm unavailable server-event backend renders as unavailable, while local notification state remains local.
@@ -41,9 +41,9 @@ Verified by focused Home adapter and Notifications regressions:
 ## Visual Evidence
 
 - Actual rendered screenshot: `Docs/superpowers/qa/product-maturity/screen-qa/home/phase-5-3-home-server-events-2026-05-16.png`
-- Screenshot capture method: `textual-web` on `127.0.0.1:8837` with `PYTHONPATH` pinned to this worktree and an isolated temporary HOME/XDG profile.
+- Screenshot capture method: `textual-web` on `127.0.0.1:8838` with `PYTHONPATH` pinned to this worktree and an isolated temporary HOME/XDG profile.
 - Screenshot file verification: `PNG image data, 2050 x 1240, 8-bit/color RGB, non-interlaced`.
-- Visual approval: approved by user on 2026-05-16 after actual rendered screenshot review; recaptured and reapproved after PR review fixes changed clean local-mode server-event copy from reconnect-required to unavailable.
+- Visual approval: approved by user on 2026-05-16 after actual rendered screenshot review; recaptured and reapproved after policy review fixes changed clean local-mode server-event copy from reconnect-required to unavailable; recaptured again after open PR review fixes removed duplicate local notification status copy.
 
 ## Verification Commands
 
@@ -66,6 +66,14 @@ python -m pytest -q Tests/Home/test_active_work_adapter.py Tests/Home/test_dashb
 ```
 
 Result: `97 passed, 8 warnings`.
+
+Latest PR review-fix verification:
+
+```bash
+python -m pytest -q Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/UI/test_home_screen.py Tests/Notifications/test_event_state_repository.py Tests/Notifications/test_notifications_scope_service.py Tests/UI/test_product_maturity_phase5_server_parity_plan.py --tb=short
+```
+
+Result: `98 passed, 8 warnings`.
 
 ```bash
 git diff --check

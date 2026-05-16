@@ -13,6 +13,7 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 from loguru import logger
 from rich.markup import escape
 
+from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Utils.path_validation import validate_path
@@ -336,14 +337,13 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             }
         try:
             feed = list_feed(limit=_HOME_SERVER_EVENT_FEED_LIMIT, mark_presented=False)
+        except ServerEventScopeRequiredError:
+            return {
+                "server_event_count": 0,
+                "server_event_state": SERVER_EVENT_STATE_RECONNECT_REQUIRED,
+                "server_event_recovery": "Reconnect or select an active server.",
+            }
         except ValueError as exc:
-            message = str(exc).lower()
-            if "server_profile_id" in message or "active server" in message:
-                return {
-                    "server_event_count": 0,
-                    "server_event_state": SERVER_EVENT_STATE_RECONNECT_REQUIRED,
-                    "server_event_recovery": "Reconnect or select an active server.",
-                }
             logger.warning(f"Failed to resolve server event feed scope for Home: {exc}")
             return {
                 "server_event_count": 0,

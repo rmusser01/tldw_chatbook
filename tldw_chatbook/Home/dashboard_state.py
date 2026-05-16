@@ -446,7 +446,6 @@ def _system_status_lines(state: HomeDashboardInput) -> tuple[str, ...]:
             f"MCP {'ready' if state.mcp_ready else 'blocked'}, "
             f"ACP {'ready' if state.acp_ready else 'blocked'}"
         ),
-        f"Local notifications: {state.notification_count} unread",
         _server_event_status_line(state),
         f"Work: {active_count} active, {approval_count} approvals",
     ]
