@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from tldw_chatbook.Sync_Interop.crypto import wrap_dataset_key_for_recovery
-from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
+from tldw_chatbook.Sync_Interop.sync_state import SyncV2ProfileMode, is_local_first_sync_profile_mode
 
 
 class SyncKeyRecoveryService:
@@ -43,6 +43,7 @@ class SyncKeyRecoveryService:
             raise ValueError("local_first Sync v2 profile is required")
         if not is_local_first_sync_profile_mode(profile.get("profile_mode")):
             raise ValueError("key recovery setup requires a local_first Sync v2 profile")
+        profile_mode = str(profile.get("profile_mode") or SyncV2ProfileMode.LOCAL_FIRST_SYNC.value)
 
         dataset_id = profile.get("dataset_id")
         device_id = profile.get("device_id")
@@ -89,7 +90,7 @@ class SyncKeyRecoveryService:
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
-            profile_mode="local_first",
+            profile_mode=profile_mode,
             device_id=resolved_device_id,
             dataset_id=resolved_dataset_id,
             dataset_cursors=dict(profile.get("dataset_cursors") or {}),

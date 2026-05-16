@@ -33,6 +33,7 @@ Aligned profile mode handling with the server sync-engine plan by adding canonic
 Verification: `../../.venv/bin/python -m pytest Tests/Sync_Interop/test_sync_state.py Tests/Sync_Interop/test_sync_state_repository.py Tests/Sync_Interop/test_sync_scope_service.py Tests/Sync_Interop/test_local_first_sync_service.py Tests/Sync_Interop/test_key_recovery_service.py -q` passed with 66 tests.
 Verification: `../../.venv/bin/python -m pytest Tests/Sync_Interop Tests/tldw_api/test_sync_client.py -q` passed with 136 tests.
 Verification: `git diff --check` passed.
+Review follow-up: addressed PR #320 Qodo/Gemini feedback by giving `is_local_first_sync_profile_mode` a Google-style public docstring, passing normalized profile modes from `SyncScopeService` into `ServerSyncService.run_v2_dry_run`, defaulting direct dry-runs to canonical `local_first_sync`, preserving explicit legacy `local_first` requests, and preserving stored canonical mode during key recovery. Verification: `../../.venv/bin/python -m pytest Tests/Sync_Interop/test_sync_state.py Tests/Sync_Interop/test_sync_state_repository.py Tests/Sync_Interop/test_sync_scope_service.py Tests/Sync_Interop/test_server_sync_service.py Tests/Sync_Interop/test_local_first_sync_service.py Tests/Sync_Interop/test_key_recovery_service.py -q` passed with 92 tests; `../../.venv/bin/python -m pytest Tests/Sync_Interop Tests/tldw_api/test_sync_client.py -q` passed with 137 tests; `git diff --check` passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

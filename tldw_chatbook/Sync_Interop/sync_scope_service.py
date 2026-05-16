@@ -276,6 +276,7 @@ class SyncScopeService:
                 client_version=client_version,
                 scope_type=scope_type,
                 encryption_policy=encryption_policy,
+                profile_mode=normalized_mode.value,
             )
         )
         if not isinstance(result, dict):

@@ -163,6 +163,12 @@ async def test_key_recovery_service_accepts_canonical_local_first_sync_mode(tmp_
 
     assert result["key_recovery_configured"] is True
     assert server.calls[0]["dataset_id"] == "dataset-1"
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+    assert profile["profile_mode"] == "local_first_sync"
 
 
 async def test_key_recovery_service_requires_local_first_profile_device_dataset_and_key(tmp_path):

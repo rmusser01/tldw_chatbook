@@ -303,6 +303,7 @@ async def test_sync_scope_service_delegates_local_first_mode_to_sync_v2_dry_run(
                 "client_version": "0.1.0",
                 "scope_type": "personal",
                 "encryption_policy": "client_private_v1",
+                "profile_mode": "local_first",
             },
         )
     ]
@@ -325,3 +326,4 @@ async def test_sync_scope_service_delegates_canonical_local_first_sync_mode_to_d
     assert result["profile_mode"] == "local_first_sync"
     assert result["device_id"] == "device-1"
     assert server.calls[0][0] == "run_v2_dry_run"
+    assert server.calls[0][1]["profile_mode"] == "local_first_sync"

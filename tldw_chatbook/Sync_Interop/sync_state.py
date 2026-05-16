@@ -74,7 +74,14 @@ LOCAL_FIRST_SYNC_PROFILE_MODES = {
 
 
 def is_local_first_sync_profile_mode(profile_mode: SyncV2ProfileMode | str | None) -> bool:
-    """Return whether a profile mode enables local-first Sync v2 behavior."""
+    """Return whether a profile mode enables local-first Sync v2 behavior.
+
+    Args:
+        profile_mode: Profile mode enum or serialized mode value to check.
+
+    Returns:
+        True when the mode represents local-first Sync v2 behavior.
+    """
 
     if isinstance(profile_mode, SyncV2ProfileMode):
         return profile_mode.value in LOCAL_FIRST_SYNC_PROFILE_MODES

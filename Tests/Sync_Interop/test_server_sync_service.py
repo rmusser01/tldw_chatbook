@@ -426,7 +426,7 @@ async def test_server_sync_service_runs_sync_v2_no_content_dry_run_and_persists_
     assert result["pushed_envelopes"] == 0
     assert result["pulled_envelopes"] == 0
     assert result["next_cursor"] == "6"
-    assert profile["profile_mode"] == "local_first"
+    assert profile["profile_mode"] == "local_first_sync"
     assert profile["dataset_cursors"] == {"notes": "4", "sync_v2": "6"}
     assert cursor.cursor == "6"
     assert client.calls[0] == ("get_sync_v2_capabilities",)
@@ -442,6 +442,29 @@ async def test_server_sync_service_runs_sync_v2_no_content_dry_run_and_persists_
     assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
         "sync.v2.dry_run.server"
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_preserves_requested_sync_v2_profile_mode(tmp_path):
+    client = FakeSyncClient()
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    await service.run_v2_dry_run(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        display_name="Laptop",
+        domains=["notes"],
+        profile_mode="local_first",
+    )
+
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+    assert profile["profile_mode"] == "local_first"
 
 
 @pytest.mark.asyncio
