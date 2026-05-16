@@ -43,7 +43,7 @@ Verified by focused Home adapter and Notifications regressions:
 - Actual rendered screenshot: `Docs/superpowers/qa/product-maturity/screen-qa/home/phase-5-3-home-server-events-2026-05-16.png`
 - Screenshot capture method: `textual-web` on `127.0.0.1:8837` with `PYTHONPATH` pinned to this worktree and an isolated temporary HOME/XDG profile.
 - Screenshot file verification: `PNG image data, 2050 x 1240, 8-bit/color RGB, non-interlaced`.
-- Visual approval: approved by user on 2026-05-16 after actual rendered screenshot review.
+- Visual approval: approved by user on 2026-05-16 after actual rendered screenshot review; recaptured and reapproved after PR review fixes changed clean local-mode server-event copy from reconnect-required to unavailable.
 
 ## Verification Commands
 
@@ -65,7 +65,7 @@ Result: `50 passed`.
 python -m pytest -q Tests/Home/test_active_work_adapter.py Tests/Home/test_dashboard_state.py Tests/UI/test_home_screen.py Tests/Notifications/test_event_state_repository.py Tests/Notifications/test_notifications_scope_service.py Tests/UI/test_product_maturity_phase5_server_parity_plan.py --tb=short
 ```
 
-Result: `96 passed, 8 warnings`.
+Result: `97 passed, 8 warnings`.
 
 ```bash
 git diff --check

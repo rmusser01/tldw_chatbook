@@ -44,6 +44,7 @@ _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS = 1000
 _MAX_CHATBOOK_FILE_PATH_CHARS = 2000
 _MAX_CHATBOOK_PAYLOAD_TEXT_CHARS = 1000
 _MAX_CHATBOOK_METADATA_TEXT_CHARS = 256
+_HOME_SERVER_EVENT_FEED_LIMIT = 20
 _DANGEROUS_TEXT_PATTERNS = ("<script", "</script", "javascript:", "onclick=", "onerror=")
 
 
@@ -334,7 +335,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 "server_event_recovery": "Server event feed is unavailable.",
             }
         try:
-            feed = list_feed(limit=20, mark_presented=False)
+            feed = list_feed(limit=_HOME_SERVER_EVENT_FEED_LIMIT, mark_presented=False)
         except ValueError as exc:
             message = str(exc).lower()
             if "server_profile_id" in message or "active server" in message:

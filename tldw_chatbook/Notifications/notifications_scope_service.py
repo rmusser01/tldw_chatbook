@@ -454,6 +454,7 @@ class NotificationsScopeService:
         limit: int = 100,
         mark_presented: bool = False,
     ) -> dict[str, Any]:
+        self._enforce_policy("notifications.feed.list.server")
         scope = self._resolve_server_event_scope(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
