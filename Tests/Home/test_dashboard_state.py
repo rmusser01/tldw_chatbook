@@ -167,6 +167,7 @@ def test_dashboard_summary_exposes_required_sections():
         "status",
         "attention",
         "active_work",
+        "system_status",
         "next_best_action",
         "recent_work",
     ]

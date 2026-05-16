@@ -16,6 +16,12 @@ TASK_12 = Path(
 TASK_12_1_QA_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-5/2026-05-16-phase-5-1-current-state-inventory.md"
 )
+TASK_12_2_QA_EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-5/2026-05-16-phase-5-2-active-server-auth-live-status.md"
+)
+TASK_12_3_QA_EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-5/2026-05-16-phase-5-3-server-events-notifications-live-feed.md"
+)
 TASK_12_4_QA_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-5/2026-05-16-phase-5-4-sync-mirror-dry-run-workflow-surfacing.md"
 )
@@ -68,8 +74,10 @@ def test_phase5_server_parity_plan_reconciles_current_dev_state() -> None:
     assert PLAN.as_posix() in parent_task
     assert PLAN.as_posix() in tracker
     assert PHASE_5_QA_README.as_posix() in tracker
-    assert "Status: TASK-12.1 and TASK-12.4 verified; implementation slices remain open" in qa_readme
+    assert "Status: TASK-12.1, TASK-12.2, TASK-12.3, and TASK-12.4 verified; implementation slices remain open" in qa_readme
     assert TASK_12_1_QA_EVIDENCE.as_posix() in qa_readme
+    assert TASK_12_2_QA_EVIDENCE.as_posix() in qa_readme
+    assert TASK_12_3_QA_EVIDENCE.as_posix() in qa_readme
     assert TASK_12_4_QA_EVIDENCE.as_posix() in qa_readme
 
     for required_section in (
@@ -107,7 +115,7 @@ def test_phase5_server_parity_plan_reconciles_current_dev_state() -> None:
         assert "TASK-12" in task
         assert "QA walkthrough" in task
         assert "focused regression" in task.lower()
-        if task_id in {"TASK-12.1", "TASK-12.4"}:
+        if task_id in {"TASK-12.1", "TASK-12.2", "TASK-12.3", "TASK-12.4"}:
             assert "status: Done" in task
             for ac_number in range(1, 5):
                 assert f"- [x] #{ac_number}" in task
@@ -118,11 +126,14 @@ def test_phase5_server_parity_plan_reconciles_current_dev_state() -> None:
                 assert f"- [ ] #{ac_number}" in task
 
     phase_row = _markdown_table_row(tracker, "Phase 5: Server-Parity And Live Integrations")
-    assert "in-progress; TASK-12.1 and TASK-12.4 verified" in phase_row[2]
+    assert "in-progress; TASK-12.1, TASK-12.2, TASK-12.3, and TASK-12.4 verified" in phase_row[2]
     for task_id in PHASE_5_CHILD_TASKS:
         assert task_id in phase_row[3]
     assert TASK_12_1_QA_EVIDENCE.name in phase_row[4]
+    assert TASK_12_2_QA_EVIDENCE.name in phase_row[4]
+    assert TASK_12_3_QA_EVIDENCE.name in phase_row[4]
     assert TASK_12_4_QA_EVIDENCE.name in phase_row[4]
     assert PLAN.as_posix() in phase_row[4]
-    assert "live server/auth" in phase_row[5]
+    assert "active-server/auth" in phase_row[5]
+    assert "server event/feed" in phase_row[5]
     assert "write sync" in phase_row[5]

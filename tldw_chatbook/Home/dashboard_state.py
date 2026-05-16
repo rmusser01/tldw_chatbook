@@ -18,6 +18,11 @@ SERVER_REACHABILITY_UNREACHABLE = "unreachable"
 SERVER_AUTH_AUTHENTICATED = "authenticated"
 SERVER_AUTH_REQUIRED = "auth_required"
 SERVER_AUTH_SESSION_INVALID = "session_invalid"
+SERVER_EVENT_STATE_AVAILABLE = "available"
+SERVER_EVENT_STATE_EMPTY = "empty"
+SERVER_EVENT_STATE_REQUERY_REQUIRED = "requery_required"
+SERVER_EVENT_STATE_RECONNECT_REQUIRED = "reconnect_required"
+SERVER_EVENT_STATE_UNAVAILABLE = "unavailable"
 
 APPROVAL_STATUSES = frozenset({"approval_required", "pending_approval", "pending"})
 RUNNING_STATUSES = frozenset({"running", "queued", "active", "scheduled"})
@@ -73,6 +78,9 @@ class HomeDashboardInput:
     failed_run_count: int = 0
     failed_schedule_count: int = 0
     notification_count: int = 0
+    server_event_count: int = 0
+    server_event_state: str = SERVER_EVENT_STATE_UNAVAILABLE
+    server_event_recovery: str = "Server event feed is unavailable."
     has_library_content: bool = False
     has_recent_work: bool = False
     active_detail_route: str = "chat"
@@ -438,9 +446,24 @@ def _system_status_lines(state: HomeDashboardInput) -> tuple[str, ...]:
             f"MCP {'ready' if state.mcp_ready else 'blocked'}, "
             f"ACP {'ready' if state.acp_ready else 'blocked'}"
         ),
+        f"Local notifications: {state.notification_count} unread",
+        _server_event_status_line(state),
         f"Work: {active_count} active, {approval_count} approvals",
     ]
     return tuple(lines)
+
+
+def _server_event_status_line(state: HomeDashboardInput) -> str:
+    event_state = str(state.server_event_state or SERVER_EVENT_STATE_UNAVAILABLE).strip().lower()
+    if event_state == SERVER_EVENT_STATE_AVAILABLE:
+        return f"Server events: {state.server_event_count} observed via server event feed"
+    if event_state == SERVER_EVENT_STATE_EMPTY:
+        return "Server events: No observed server events"
+    if event_state == SERVER_EVENT_STATE_REQUERY_REQUIRED:
+        return "Server events: Replay gap - requery server events"
+    if event_state == SERVER_EVENT_STATE_RECONNECT_REQUIRED:
+        return "Server events: Reconnect required"
+    return "Server events: Unavailable"
 
 
 def _runtime_source_label(value: object) -> str:

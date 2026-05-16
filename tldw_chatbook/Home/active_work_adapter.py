@@ -16,7 +16,15 @@ from rich.markup import escape
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Utils.path_validation import validate_path
-from .dashboard_state import HomeActiveWorkItem, HomeDashboardInput
+from .dashboard_state import (
+    HomeActiveWorkItem,
+    HomeDashboardInput,
+    SERVER_EVENT_STATE_AVAILABLE,
+    SERVER_EVENT_STATE_EMPTY,
+    SERVER_EVENT_STATE_RECONNECT_REQUIRED,
+    SERVER_EVENT_STATE_REQUERY_REQUIRED,
+    SERVER_EVENT_STATE_UNAVAILABLE,
+)
 
 
 _HOME_WATCHLIST_RUN_STATUSES = frozenset(
@@ -171,12 +179,14 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         notification_service: Any | None = None,
         watchlist_service: Any | None = None,
         chatbook_service: Any | None = None,
+        server_event_service: Any | None = None,
         runtime_policy: Any | None = None,
     ) -> None:
         super().__init__(runtime_policy=runtime_policy)
         self.notification_service = notification_service
         self.watchlist_service = watchlist_service
         self.chatbook_service = chatbook_service
+        self.server_event_service = server_event_service
         self._chatbook_artifact_snapshot: tuple[Mapping[str, Any], ...] = ()
         self._chatbook_artifact_snapshot_lock = RLock()
 
@@ -216,6 +226,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         return replace(
             dashboard_input,
             notification_count=self._unread_notification_count(),
+            **self._server_event_status_fields(),
             active_work_items=tuple(
                 [
                     *self._local_watchlist_run_items(),
@@ -307,6 +318,80 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         except Exception:
             return 0
         return sum(1 for notification in notifications if _notification_is_unread(notification))
+
+    def _server_event_status_fields(self) -> dict[str, object]:
+        if self.server_event_service is None:
+            return {
+                "server_event_count": 0,
+                "server_event_state": SERVER_EVENT_STATE_UNAVAILABLE,
+                "server_event_recovery": "Server event feed is unavailable.",
+            }
+        list_feed = getattr(self.server_event_service, "list_observed_server_feed", None)
+        if not callable(list_feed):
+            return {
+                "server_event_count": 0,
+                "server_event_state": SERVER_EVENT_STATE_UNAVAILABLE,
+                "server_event_recovery": "Server event feed is unavailable.",
+            }
+        try:
+            feed = list_feed(limit=20, mark_presented=False)
+        except ValueError as exc:
+            message = str(exc).lower()
+            if "server_profile_id" in message or "active server" in message:
+                return {
+                    "server_event_count": 0,
+                    "server_event_state": SERVER_EVENT_STATE_RECONNECT_REQUIRED,
+                    "server_event_recovery": "Reconnect or select an active server.",
+                }
+            logger.warning(f"Failed to resolve server event feed scope for Home: {exc}")
+            return {
+                "server_event_count": 0,
+                "server_event_state": SERVER_EVENT_STATE_UNAVAILABLE,
+                "server_event_recovery": "Server event feed is unavailable.",
+            }
+        except Exception as exc:
+            logger.warning(f"Failed to fetch server event feed for Home: {exc}")
+            return {
+                "server_event_count": 0,
+                "server_event_state": SERVER_EVENT_STATE_UNAVAILABLE,
+                "server_event_recovery": "Server event feed is unavailable.",
+            }
+
+        if not isinstance(feed, Mapping):
+            return {
+                "server_event_count": 0,
+                "server_event_state": SERVER_EVENT_STATE_UNAVAILABLE,
+                "server_event_recovery": "Server event feed is unavailable.",
+            }
+        items = feed.get("items")
+        event_count = _bounded_nonnegative_int(feed.get("total"), default=0)
+        if event_count == 0 and isinstance(items, list):
+            event_count = len(items)
+        replay = feed.get("replay")
+        replay_state = ""
+        refetch_required = False
+        if isinstance(replay, Mapping):
+            replay_state = str(replay.get("state") or "").strip().lower()
+            refetch_required = bool(replay.get("server_refetch_required"))
+        if replay_state == "retention_gap" or refetch_required:
+            return {
+                "server_event_count": event_count,
+                "server_event_state": SERVER_EVENT_STATE_REQUERY_REQUIRED,
+                "server_event_recovery": "Requery server events from the active server.",
+            }
+        return {
+            "server_event_count": event_count,
+            "server_event_state": (
+                SERVER_EVENT_STATE_AVAILABLE
+                if event_count > 0
+                else SERVER_EVENT_STATE_EMPTY
+            ),
+            "server_event_recovery": (
+                "Review observed server-owned events without changing server read state."
+                if event_count > 0
+                else "Observe or refresh server events from the active server."
+            ),
+        }
 
     def _local_watchlist_run_items(self) -> list[HomeActiveWorkItem]:
         if self.watchlist_service is None:
@@ -463,6 +548,14 @@ def _mapping_value(value: Any, key: str) -> Any:
     if isinstance(value, Mapping):
         return value.get(key)
     return getattr(value, key, None)
+
+
+def _bounded_nonnegative_int(value: Any, *, default: int = 0) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, parsed)
 
 
 def _is_local_watchlist_run_id(value: str | None) -> bool:
