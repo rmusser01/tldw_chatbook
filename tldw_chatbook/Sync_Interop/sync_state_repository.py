@@ -388,7 +388,13 @@ class SyncStateRepository(BaseDB):
             ).fetchall()
         return [self._mapping_from_row(row) for row in rows]
 
-    def list_conflict_reports(self, *, domain: str | None = None) -> list[dict[str, Any]]:
+    def list_conflict_reports(
+        self,
+        *,
+        domain: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        limit = _normalize_optional_limit(limit)
         with self._get_connection() as conn:
             rows = conn.execute(
                 """
@@ -396,8 +402,9 @@ class SyncStateRepository(BaseDB):
                 FROM sync_conflict_reports
                 WHERE (? IS NULL OR domain = ?)
                 ORDER BY conflict_id ASC
+                LIMIT COALESCE(?, -1)
                 """,
-                (domain, domain),
+                (domain, domain, limit),
             ).fetchall()
         reports = [dict(row) for row in rows]
         for report in reports:
@@ -584,6 +591,28 @@ class SyncStateRepository(BaseDB):
             report["write_enabled"] = bool(report["write_enabled"])
             report["report"] = json.loads(report["report"])
         return reports
+
+    def get_latest_mirror_report(self, *, domain: str | None = None) -> dict[str, Any] | None:
+        """Return the newest mirror report for a domain without loading full history."""
+
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM mirror_reports
+                WHERE (? IS NULL OR domain = ?)
+                ORDER BY report_id DESC
+                LIMIT 1
+                """,
+                (domain, domain),
+            ).fetchone()
+        if row is None:
+            return None
+        report = dict(row)
+        report["dry_run"] = bool(report["dry_run"])
+        report["write_enabled"] = bool(report["write_enabled"])
+        report["report"] = json.loads(report["report"])
+        return report
 
     def clear_server_profile_state(
         self,
@@ -1396,6 +1425,18 @@ def _optional_filters(
     if not clauses:
         return "", ()
     return "WHERE " + " AND ".join(clauses), tuple(params)
+
+
+def _normalize_optional_limit(limit: int | None) -> int | None:
+    if limit is None:
+        return None
+    try:
+        normalized = int(limit)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be a positive integer") from exc
+    if normalized < 1:
+        raise ValueError("limit must be a positive integer")
+    return normalized
 
 
 def _json_dumps(value: Mapping[str, Any] | list[Any]) -> str:

@@ -67,6 +67,11 @@ class LibraryCollectionsPanel(Vertical):
                         id="library-collection-description",
                     )
                     yield Static(selected.sync_status_label, id="library-collection-sync-status")
+                    if selected.sync_status != "local-only":
+                        yield Static(
+                            selected.sync_status_detail,
+                            id="library-collection-sync-detail",
+                        )
                     yield Static(selected.item_count_label, id="library-collection-item-count")
                     yield Static(selected.updated_at_label, id="library-collection-updated-at")
 
