@@ -147,7 +147,7 @@ Product Maturity Phase 1 and Phase 2 are not reopened by default. Their existing
 | Phase 4.5 | `Docs/superpowers/qa/product-maturity/phase-4/2026-05-12-phase-4-5-acp-runtime-session.md` | verified; TASK-11.5 done |
 | Phase 4.6 | `Docs/superpowers/qa/product-maturity/phase-4/2026-05-15-phase-4-6-schedules-workflows-run-control.md` | verified; TASK-11.6 done |
 | Phase 4.7 | `Docs/superpowers/qa/product-maturity/phase-4/2026-05-16-phase-4-7-agent-execution-closeout.md` | verified; TASK-11.7 done |
-| Phase 5 QA index | `Docs/superpowers/qa/product-maturity/phase-5/README.md` | in-progress |
+| Phase 5 QA index | `Docs/superpowers/qa/product-maturity/phase-5/README.md` | verified |
 | Phase 5.1 | `Docs/superpowers/qa/product-maturity/phase-5/2026-05-16-phase-5-1-current-state-inventory.md` | verified; TASK-12.1 done |
 | Phase 5.2 | `Docs/superpowers/qa/product-maturity/phase-5/2026-05-16-phase-5-2-active-server-auth-live-status.md` | verified; TASK-12.2 done |
 | Phase 5.3 | `Docs/superpowers/qa/product-maturity/phase-5/2026-05-16-phase-5-3-server-events-notifications-live-feed.md` | verified; TASK-12.3 done |

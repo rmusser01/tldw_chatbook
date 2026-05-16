@@ -80,6 +80,9 @@ def test_phase5_server_parity_plan_reconciles_current_dev_state() -> None:
     assert PLAN.as_posix() in parent_task
     assert PLAN.as_posix() in tracker
     assert PHASE_5_QA_README.as_posix() in tracker
+    qa_index_row = _markdown_table_row(tracker, "Phase 5 QA index")
+    assert PHASE_5_QA_README.as_posix() in qa_index_row[1]
+    assert qa_index_row[2] == "verified"
     assert "Status: TASK-12.1 through TASK-12.6 verified; Phase 5 closed" in qa_readme
     assert TASK_12_1_QA_EVIDENCE.as_posix() in qa_readme
     assert TASK_12_2_QA_EVIDENCE.as_posix() in qa_readme
