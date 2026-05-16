@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 
 from tldw_chatbook.tldw_api import (
     ClientChangesPayload,
@@ -9,6 +10,8 @@ from tldw_chatbook.tldw_api import (
     SyncOperation,
     SyncSendEntity,
     SyncSendLogEntry,
+    SyncV2AttachmentUploadRequest,
+    SyncV2AttachmentUploadResponse,
     SyncV2CapabilitiesResponse,
     SyncV2ConflictRecord,
     SyncV2ConflictResolveRequest,
@@ -117,6 +120,21 @@ def test_sync_v2_envelope_rejects_plaintext_private_payload():
         )
 
 
+def test_sync_v2_attachment_upload_request_rejects_extra_fields():
+    with pytest.raises(ValidationError, match="unexpected_field"):
+        SyncV2AttachmentUploadRequest(
+            dataset_id="dataset-1",
+            domain="source_cache",
+            entity_id="source-1",
+            attachment_id="attachment-1",
+            content_type="text/plain",
+            size_bytes=128,
+            payload_ciphertext="opaque-ciphertext",
+            payload_hash="sha256:attachment",
+            unexpected_field="typo",
+        )
+
+
 @pytest.mark.asyncio
 async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
     client = TLDWAPIClient("http://localhost:8000")
@@ -222,6 +240,96 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
         "dataset_id": ["dataset-1"],
         "domain": ["notes"],
     }
+
+
+class _AttachmentUploadRequestDumpSpy:
+    def __init__(self) -> None:
+        self.dump_kwargs: dict[str, object] | None = None
+
+    def model_dump(self, **kwargs) -> dict[str, object]:
+        self.dump_kwargs = kwargs
+        return {
+            "dataset_id": "dataset-1",
+            "domain": "source_cache",
+            "entity_id": "source-1",
+            "attachment_id": "attachment-1",
+            "content_type": "text/plain",
+            "size_bytes": 128,
+            "payload_ciphertext": "opaque-ciphertext",
+            "payload_hash": "sha256:attachment",
+            "encryption_policy": "client_private_v1",
+            "metadata": {"size_class": "small"},
+        }
+
+
+@pytest.mark.asyncio
+async def test_sync_v2_client_uploads_encrypted_attachment_metadata(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "attachment_id": "attachment-1",
+            "dataset_id": "dataset-1",
+            "stored": False,
+            "size_bytes": 128,
+            "payload_hash": "sha256:attachment",
+            "download_url": None,
+            "expires_at": None,
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    request = SyncV2AttachmentUploadRequest(
+        dataset_id="dataset-1",
+        domain="source_cache",
+        entity_id="source-1",
+        attachment_id="attachment-1",
+        content_type="text/plain",
+        size_bytes=128,
+        payload_ciphertext="opaque-ciphertext",
+        payload_hash="sha256:attachment",
+        metadata={"size_class": "small"},
+    )
+
+    response = await client.upload_sync_v2_attachment(request)
+
+    assert isinstance(response, SyncV2AttachmentUploadResponse)
+    assert response.attachment_id == "attachment-1"
+    assert response.stored is False
+    assert mocked.await_args.args[:2] == ("POST", "/api/v1/sync/attachments")
+    assert mocked.await_args.kwargs["json_data"] == {
+        "dataset_id": "dataset-1",
+        "domain": "source_cache",
+        "entity_id": "source-1",
+        "attachment_id": "attachment-1",
+        "content_type": "text/plain",
+        "size_bytes": 128,
+        "payload_ciphertext": "opaque-ciphertext",
+        "payload_hash": "sha256:attachment",
+        "encryption_policy": "client_private_v1",
+        "metadata": {"size_class": "small"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_v2_attachment_upload_omits_none_values_when_serializing(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "attachment_id": "attachment-1",
+            "dataset_id": "dataset-1",
+            "stored": True,
+            "size_bytes": 128,
+            "payload_hash": "sha256:attachment",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+    request = _AttachmentUploadRequestDumpSpy()
+
+    response = await client.upload_sync_v2_attachment(request)
+
+    assert isinstance(response, SyncV2AttachmentUploadResponse)
+    assert request.dump_kwargs == {"mode": "json", "exclude_none": True}
+    assert mocked.await_args.args[:2] == ("POST", "/api/v1/sync/attachments")
 
 
 @pytest.mark.asyncio

@@ -335,6 +335,58 @@ class SyncV2PullResponse(BaseModel):
     has_more: bool = False
 
 
+class SyncV2AttachmentUploadRequest(BaseModel):
+    """Request metadata for uploading a small encrypted Sync v2 attachment.
+
+    Attributes:
+        dataset_id: Sync dataset that owns the attachment.
+        domain: Sync domain associated with the attached entity.
+        entity_id: Entity identifier that the attachment belongs to.
+        attachment_id: Client-stable attachment identifier.
+        content_type: MIME type for the encrypted attachment payload.
+        size_bytes: Original encrypted payload size in bytes.
+        payload_ciphertext: Opaque encrypted attachment content.
+        payload_hash: Hash of the encrypted payload used for integrity checks.
+        encryption_policy: Encryption policy applied to the payload.
+        metadata: Routing-safe attachment metadata.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str
+    domain: SyncV2Domain
+    entity_id: str
+    attachment_id: str
+    content_type: str
+    size_bytes: int = Field(..., ge=0)
+    payload_ciphertext: str
+    payload_hash: str
+    encryption_policy: SyncV2EncryptionPolicy = "client_private_v1"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SyncV2AttachmentUploadResponse(BaseModel):
+    """Response after storing or deduplicating a Sync v2 attachment.
+
+    Attributes:
+        attachment_id: Attachment identifier accepted by the server.
+        dataset_id: Sync dataset that owns the attachment.
+        stored: Whether the server stored a new payload instead of reusing one.
+        size_bytes: Stored encrypted payload size in bytes.
+        payload_hash: Hash of the encrypted payload acknowledged by the server.
+        download_url: Optional temporary download URL when exposed by the server.
+        expires_at: Optional expiration timestamp for the download URL.
+    """
+
+    attachment_id: str
+    dataset_id: str
+    stored: bool
+    size_bytes: int = Field(..., ge=0)
+    payload_hash: str
+    download_url: str | None = None
+    expires_at: str | None = None
+
+
 class SyncV2RestoreManifestDataset(BaseModel):
     dataset_id: str
     scope_type: SyncV2DatasetScope
