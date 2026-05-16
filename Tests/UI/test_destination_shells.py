@@ -14,6 +14,7 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_unified_mcp_panel import FakeUnifiedMCPService
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
@@ -309,6 +310,21 @@ class PolicyDeniedPersonasScopeService:
 
     async def list_persona_profiles(self, **kwargs):
         return []
+
+
+class StaticHomeActiveWorkAdapter:
+    def __init__(self, *items: HomeActiveWorkItem):
+        self.items = tuple(items)
+        self.calls = []
+
+    def build_dashboard_input(self, *, providers_models, has_recent_work):
+        self.calls.append(
+            {
+                "providers_models": providers_models,
+                "has_recent_work": has_recent_work,
+            }
+        )
+        return HomeDashboardInput(active_work_items=self.items)
 
 
 class DestinationHarness(App):
@@ -1581,6 +1597,173 @@ async def test_automation_destination_wrappers_explain_ownership(route, expected
         visible_text = _visible_text(screen)
         for section in expected_sections:
             assert section in visible_text
+
+
+@pytest.mark.asyncio
+async def test_schedules_failed_run_exposes_consistent_retry_control_state():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        HomeActiveWorkItem(
+            item_id="local:schedule_run:7",
+            title="Morning digest",
+            source="Schedules",
+            status="failed",
+            detail_route="schedules",
+            console_available=True,
+        )
+    )
+    app.open_active_home_item_in_console = Mock()
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 45)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#schedules-console-available")
+        visible_text = _visible_text(screen)
+        follow_button = screen.query_one("#schedules-follow-in-console", Button)
+        retry_button = screen.query_one("#schedules-retry-run", Button)
+        pause_button = screen.query_one("#schedules-pause-run", Button)
+
+    assert "Morning digest" in visible_text
+    assert "Status: failed" in visible_text
+    assert "State: failed" in visible_text
+    assert "Retry/backoff: retry available from Schedules" in visible_text
+    assert "Run control: retry available" in visible_text
+    assert "Next action: retry or open in Console" in visible_text
+    assert follow_button.disabled is False
+    assert retry_button.disabled is True
+    assert str(retry_button.tooltip) == "Retry this schedule run from Schedules when run-control services are available."
+    assert pause_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_schedules_pending_run_uses_shared_approval_status_taxonomy():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        HomeActiveWorkItem(
+            item_id="local:schedule_run:8",
+            title="Digest needs approval",
+            source="Schedules",
+            status="pending",
+            detail_route="schedules",
+            console_available=True,
+        )
+    )
+    app.open_active_home_item_in_console = Mock()
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 45)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#schedules-console-available")
+        visible_text = _visible_text(screen)
+        approval_button = screen.query_one("#schedules-review-approval", Button)
+
+    assert "Digest needs approval" in visible_text
+    assert "Status: pending" in visible_text
+    assert "Run control: approval required" in visible_text
+    assert "Next action: review approval before Console follow" in visible_text
+    assert "Approval review controls are not wired yet" in visible_text
+    assert approval_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_workflows_approval_pending_run_exposes_review_before_console_state():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
+        HomeActiveWorkItem(
+            item_id="local:workflow_run:9",
+            title="Publish newsletter",
+            source="Workflows",
+            status="pending_approval",
+            detail_route="workflows",
+            console_available=True,
+        )
+    )
+    app.open_active_home_item_in_console = Mock()
+    host = DestinationHarness(app, "workflows")
+
+    async with host.run_test(size=(180, 45)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#workflows-console-available")
+        visible_text = _visible_text(screen)
+        launch_button = screen.query_one("#workflows-launch-in-console", Button)
+        approval_button = screen.query_one("#workflows-review-approval", Button)
+        retry_button = screen.query_one("#workflows-retry-run", Button)
+
+    assert "Publish newsletter" in visible_text
+    assert "Status: pending_approval" in visible_text
+    assert "State: pending_approval" in visible_text
+    assert "Approvals: pending" in visible_text
+    assert "Run control: approval required" in visible_text
+    assert "Next action: review approval before Console follow" in visible_text
+    assert launch_button.disabled is False
+    assert approval_button.disabled is True
+    assert str(approval_button.tooltip) == "Review this workflow approval from Workflows when approval services are available."
+    assert retry_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_schedules_empty_state_reads_as_live_queue_with_recovery_path():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter()
+    host = DestinationHarness(app, "schedules")
+
+    async with host.run_test(size=(180, 45)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#schedules-console-unavailable")
+        visible_text = _visible_text(screen)
+        list_pane = screen.query_one("#schedules-list-pane")
+        detail_pane = screen.query_one("#schedules-detail-pane")
+        inspector_pane = screen.query_one("#schedules-inspector-pane")
+        control_label = screen.query_one("#schedules-action-state-label", Static)
+
+    for expected in (
+        "Next Run 0",
+        "Paused 0",
+        "Failed 0",
+        "Retry 0",
+        "History 0",
+        "No active schedule run selected",
+        "Next action: start or select a schedule run",
+        "Recovery controls require an active schedule run",
+    ):
+        assert expected in visible_text
+    assert "destination-workbench-pane" in list_pane.classes
+    assert "destination-workbench-pane" in detail_pane.classes
+    assert "destination-workbench-pane" in inspector_pane.classes
+    assert str(control_label.renderable) == "Recovery controls require an active schedule run"
+
+
+@pytest.mark.asyncio
+async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
+    app = _build_test_app()
+    app.home_active_work_adapter = StaticHomeActiveWorkAdapter()
+    host = DestinationHarness(app, "workflows")
+
+    async with host.run_test(size=(180, 45)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#workflows-console-unavailable")
+        visible_text = _visible_text(screen)
+        list_pane = screen.query_one("#workflows-list-pane")
+        detail_pane = screen.query_one("#workflows-detail-pane")
+        inspector_pane = screen.query_one("#workflows-inspector-pane")
+        control_label = screen.query_one("#workflows-action-state-label", Static)
+
+    for expected in (
+        "Recipes 0",
+        "Inputs 0",
+        "Steps 0",
+        "Dry Run 0",
+        "Approvals 0",
+        "Outputs 0",
+        "No active workflow run selected",
+        "Next action: start or select a workflow run",
+        "Recovery controls require an active workflow run",
+    ):
+        assert expected in visible_text
+    assert "destination-workbench-pane" in list_pane.classes
+    assert "destination-workbench-pane" in detail_pane.classes
+    assert "destination-workbench-pane" in inspector_pane.classes
+    assert str(control_label.renderable) == "Recovery controls require an active workflow run"
 
 
 @pytest.mark.parametrize(

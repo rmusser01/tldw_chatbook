@@ -5,11 +5,35 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-_APPROVAL_STATUSES = frozenset({"approval_required", "pending_approval", "pending"})
-APPROVAL_STATUSES = _APPROVAL_STATUSES
-_RUNNING_STATUSES = frozenset({"running", "queued", "active"})
-_PAUSED_STATUSES = frozenset({"paused"})
-_FAILED_STATUSES = frozenset({"failed", "error"})
+APPROVAL_RUN_STATUS = "approval"
+FAILED_RUN_STATUS = "failed"
+PAUSED_RUN_STATUS = "paused"
+RUNNING_RUN_STATUS = "running"
+UNKNOWN_RUN_STATUS = "unknown"
+
+APPROVAL_STATUSES = frozenset({"approval_required", "pending_approval", "pending"})
+RUNNING_STATUSES = frozenset({"running", "queued", "active", "scheduled"})
+PAUSED_STATUSES = frozenset({"paused"})
+FAILED_STATUSES = frozenset({"failed", "error", "errored", "cancelled", "canceled"})
+
+_APPROVAL_STATUSES = APPROVAL_STATUSES
+_RUNNING_STATUSES = RUNNING_STATUSES
+_PAUSED_STATUSES = PAUSED_STATUSES
+_FAILED_STATUSES = FAILED_STATUSES
+
+
+def categorize_run_status(value: object) -> str:
+    """Map an active-work status token into a shared run-control category."""
+    status = str(value or "").strip().lower()
+    if status in APPROVAL_STATUSES:
+        return APPROVAL_RUN_STATUS
+    if status in FAILED_STATUSES:
+        return FAILED_RUN_STATUS
+    if status in PAUSED_STATUSES:
+        return PAUSED_RUN_STATUS
+    if status in RUNNING_STATUSES:
+        return RUNNING_RUN_STATUS
+    return UNKNOWN_RUN_STATUS
 
 
 @dataclass(frozen=True)
