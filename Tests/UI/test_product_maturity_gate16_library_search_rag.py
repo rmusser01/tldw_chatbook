@@ -401,6 +401,72 @@ async def test_library_search_rag_selected_result_launches_console_live_work() -
 
 
 @pytest.mark.asyncio
+async def test_library_search_rag_server_result_launches_server_console_live_work() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Server Incident Review",
+                    "snippet": "Server retrieval found the authoritative incident record.",
+                    "score": 0.88,
+                    "source_id": "server-note-42",
+                    "chunk_id": "chunk-9",
+                    "runtime_backend": "server-rag",
+                    "citations": [{"label": "Server Incident Review p.4"}],
+                }
+            ],
+            "runtime_backend": "server-rag",
+        }
+    )
+    app.open_console_for_live_work = Mock()
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "library")
+    query = "What did the server evidence say?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+        screen.query_one("#library-rag-select-result-0", Button).press()
+        await _wait_for_inspector_selection(screen, pilot, "Server Incident Review")
+
+        screen.query_one("#library-rag-use-in-console", Button).press()
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once_with(
+        source="Library Search/RAG",
+        title="Server Incident Review",
+        payload={
+            "target_id": "server:library-rag:server-note-42:chunk-9",
+            "result_id": "server-note-42:chunk-9",
+            "query": query,
+            "title": "Server Incident Review",
+            "source_id": "server-note-42",
+            "chunk_id": "chunk-9",
+            "snippet": "Server retrieval found the authoritative incident record.",
+            "citations": ["Server Incident Review p.4"],
+            "score": 0.88,
+            "runtime_backend": "server-rag",
+            "source_authority": "server",
+            "source_selector_state": "server",
+        },
+        status="staged",
+        recovery="Review citations before sending.",
+        action_label="Review evidence in Console",
+    )
+    app.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_library_search_rag_inspector_pre_mounts_selection_states() -> None:
     app = _build_test_app()
     _seed_library_sources(app)
