@@ -145,7 +145,7 @@ def build_library_rag_console_live_work_payload(
     )
     source_authority = _library_rag_source_authority(runtime_backend)
     return {
-        "target_id": f"local:library-rag:{_safe_target_part(result_id)}",
+        "target_id": f"{source_authority}:library-rag:{_safe_target_part(result_id)}",
         "result_id": result_id,
         "query": _validated_payload_text(
             query,

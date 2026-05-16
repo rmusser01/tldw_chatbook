@@ -159,7 +159,7 @@ def test_library_rag_console_payload_uses_shared_validation_for_unsafe_text():
         query="javascript:alert(1)",
     )
 
-    assert payload["target_id"] == "local:library-rag:note-42:chunk-7"
+    assert payload["target_id"] == "server:library-rag:note-42:chunk-7"
     assert payload["result_id"] == "note-42:chunk-7"
     assert payload["query"] == ""
     assert payload["title"] == "Untitled source"
@@ -168,6 +168,33 @@ def test_library_rag_console_payload_uses_shared_validation_for_unsafe_text():
     assert payload["snippet"] == ""
     assert payload["citations"] == []
     assert payload["source_authority"] == "server"
+    assert payload["target_id"].startswith(f"{payload['source_authority']}:")
+
+
+def test_library_rag_console_payload_target_prefix_matches_source_authority():
+    local_payload = build_library_rag_console_live_work_payload(
+        {
+            "result_id": "local-note:chunk-1",
+            "title": "Local Note",
+            "runtime_backend": "local-fts",
+        },
+        query="local query",
+    )
+    server_payload = build_library_rag_console_live_work_payload(
+        {
+            "result_id": "server-note:chunk-1",
+            "title": "Server Note",
+            "runtime_backend": "server-rag",
+        },
+        query="server query",
+    )
+
+    assert local_payload["source_authority"] == "local"
+    assert local_payload["target_id"].startswith("local:library-rag:")
+    assert local_payload["target_id"].startswith(f"{local_payload['source_authority']}:")
+    assert server_payload["source_authority"] == "server"
+    assert server_payload["target_id"].startswith("server:library-rag:")
+    assert server_payload["target_id"].startswith(f"{server_payload['source_authority']}:")
 
 
 def test_library_rag_console_payload_helper_documents_contract():
