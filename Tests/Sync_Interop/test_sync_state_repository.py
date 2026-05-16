@@ -236,6 +236,31 @@ def test_sync_v2_profile_state_persists_device_dataset_cursors_and_metadata(tmp_
     assert stored["dry_run_metadata"] == {"pulled_envelopes": 0}
 
 
+def test_sync_v2_profile_state_persists_canonical_local_first_sync_mode(tmp_path):
+    db_path = tmp_path / "sync_state.db"
+    repo = SyncStateRepository(db_path)
+
+    repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"notes": "cursor-1"},
+    )
+    repo.close()
+
+    reopened = SyncStateRepository(db_path)
+    stored = reopened.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert stored["profile_mode"] == "local_first_sync"
+
+
 def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
     db_path = tmp_path / "sync_state.db"
     with sqlite3.connect(db_path) as conn:

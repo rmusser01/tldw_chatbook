@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from tldw_chatbook.Sync_Interop.crypto import wrap_dataset_key_for_recovery
+from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 
 
 class SyncKeyRecoveryService:
@@ -40,7 +41,7 @@ class SyncKeyRecoveryService:
         )
         if profile is None:
             raise ValueError("local_first Sync v2 profile is required")
-        if profile.get("profile_mode") != "local_first":
+        if not is_local_first_sync_profile_mode(profile.get("profile_mode")):
             raise ValueError("key recovery setup requires a local_first Sync v2 profile")
 
         dataset_id = profile.get("dataset_id")

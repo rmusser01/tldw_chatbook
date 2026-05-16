@@ -29,6 +29,7 @@ class SyncV2ProfileMode(str, Enum):
 
     LOCAL_ONLY = "local_only"
     LOCAL_FIRST = "local_first"
+    LOCAL_FIRST_SYNC = "local_first_sync"
     SERVER_FRONTEND = "server_frontend"
 
 
@@ -64,6 +65,20 @@ class SyncProfileState:
             raise ValueError("server_profile_id is required")
         if not isinstance(self.profile_mode, SyncV2ProfileMode):
             self.profile_mode = SyncV2ProfileMode(str(self.profile_mode))
+
+
+LOCAL_FIRST_SYNC_PROFILE_MODES = {
+    SyncV2ProfileMode.LOCAL_FIRST.value,
+    SyncV2ProfileMode.LOCAL_FIRST_SYNC.value,
+}
+
+
+def is_local_first_sync_profile_mode(profile_mode: SyncV2ProfileMode | str | None) -> bool:
+    """Return whether a profile mode enables local-first Sync v2 behavior."""
+
+    if isinstance(profile_mode, SyncV2ProfileMode):
+        return profile_mode.value in LOCAL_FIRST_SYNC_PROFILE_MODES
+    return str(profile_mode or "") in LOCAL_FIRST_SYNC_PROFILE_MODES
 
 
 class SyncProfileStateStore:

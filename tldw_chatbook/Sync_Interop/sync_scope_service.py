@@ -8,7 +8,7 @@ from typing import Any
 
 from tldw_chatbook.runtime_policy.server_parity_models import SyncIdentityMapEntry
 
-from .sync_state import SyncV2ProfileMode
+from .sync_state import SyncV2ProfileMode, is_local_first_sync_profile_mode
 from .sync_mirror_report import build_sync_mirror_report
 from .sync_readiness import (
     DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
@@ -263,6 +263,8 @@ class SyncScopeService:
 
         if display_name is None:
             raise ValueError("display_name is required for local-first Sync v2 dry-run")
+        if not is_local_first_sync_profile_mode(normalized_mode):
+            raise ValueError(f"Invalid Sync v2 profile mode: {profile_mode}")
         service = self._require_server_service(SyncBackend.SERVER)
         result = await self._maybe_await(
             service.run_v2_dry_run(
@@ -279,7 +281,7 @@ class SyncScopeService:
         if not isinstance(result, dict):
             result = {"result": result}
         record = dict(result)
-        record.setdefault("profile_mode", normalized_mode.value)
+        record["profile_mode"] = normalized_mode.value
         record.setdefault("local_sync_enabled", True)
         record.setdefault("server_frontend", False)
         record.setdefault("sync_dataset_created", bool(record.get("dataset_id")))
