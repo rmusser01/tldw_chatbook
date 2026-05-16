@@ -137,7 +137,7 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
                     "nav-settings",
                     "settings",
                     "SettingsScreen",
-                    ("Settings", "global preferences", "Appearance"),
+                    ("Settings", "Global preferences", "Appearance"),
                 ),
             ):
                 app.screen.query_one(f"#{button_id}", Button).press()
