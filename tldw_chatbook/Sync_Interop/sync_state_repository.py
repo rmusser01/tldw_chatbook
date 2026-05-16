@@ -27,7 +27,7 @@ _MAPPING_STATUSES = {
 _BOTH_SIDE_STATUSES = {"confirmed", "stale", "conflict"}
 _LOCAL_NULL_ALLOWED = {"candidate", "orphaned_remote", "unsupported"}
 _REMOTE_NULL_ALLOWED = {"candidate", "orphaned_local", "unsupported"}
-_SYNC_V2_PROFILE_MODES = {"local_only", "local_first", "server_frontend"}
+_SYNC_V2_PROFILE_MODES = {"local_only", "local_first", "local_first_sync", "server_frontend"}
 _SYNC_V2_OUTBOX_STATUSES = {"pending", "dispatched"}
 SYNC_STATE_SCHEMA_VERSION = 2
 

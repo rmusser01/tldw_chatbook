@@ -197,6 +197,29 @@ async def test_local_first_sync_once_pushes_pulls_applies_and_persists_cursor(tm
     )["dataset_cursors"]["sync_v2"] == "9"
 
 
+async def test_local_first_sync_once_accepts_canonical_profile_mode(tmp_path):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path, profile_mode="local_first_sync")
+    store = RecordingLocalStore()
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=store,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes"],
+    )
+
+    assert result["dataset_id"] == "dataset-1"
+    assert server.calls[-1][0] == "pull"
+
+
 async def test_local_first_sync_once_chunks_pushes_by_server_max_batch_size(tmp_path):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
+from tldw_chatbook.Sync_Interop.sync_state import SyncV2ProfileMode
 from tldw_chatbook.Sync_Interop.validation import (
     validate_outgoing_envelope_scope,
     validate_pull_pagination_state,
@@ -142,6 +143,7 @@ class ServerSyncService:
         client_version: str | None = None,
         scope_type: str = "personal",
         encryption_policy: str = "client_private_v1",
+        profile_mode: str = SyncV2ProfileMode.LOCAL_FIRST_SYNC.value,
     ) -> dict[str, Any]:
         """Negotiate Sync v2 state without sending or applying content envelopes.
 
@@ -154,6 +156,7 @@ class ServerSyncService:
             client_version: Optional Chatbook client version to advertise.
             scope_type: Dataset scope type requested from the server.
             encryption_policy: Sync v2 encryption policy requested for the dataset.
+            profile_mode: Sync v2 profile mode to persist with the negotiated state.
 
         Returns:
             Dry-run summary with negotiated device, dataset, domain, cursor, and key setup state.
@@ -295,7 +298,7 @@ class ServerSyncService:
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
-            profile_mode="local_first",
+            profile_mode=profile_mode,
             device_id=device_id,
             dataset_id=dataset_id,
             dataset_cursors=dataset_cursors,

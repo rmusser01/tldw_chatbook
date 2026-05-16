@@ -144,6 +144,33 @@ async def test_key_recovery_service_wraps_dataset_key_and_stores_sanitized_metad
     assert dataset_key.hex() not in serialized_metadata
 
 
+async def test_key_recovery_service_accepts_canonical_local_first_sync_mode(tmp_path):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path, profile_mode="local_first_sync")
+    server = FakeRecoveryServer()
+    service = SyncKeyRecoveryService(
+        server_service=server,
+        state_repository=repo,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.configure_recovery(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        recovery_secret="correct horse battery staple",
+    )
+
+    assert result["key_recovery_configured"] is True
+    assert server.calls[0]["dataset_id"] == "dataset-1"
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+    assert profile["profile_mode"] == "local_first_sync"
+
+
 async def test_key_recovery_service_requires_local_first_profile_device_dataset_and_key(tmp_path):
     server = FakeRecoveryServer()
     service = SyncKeyRecoveryService(

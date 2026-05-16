@@ -7,6 +7,7 @@ import json
 from typing import Any, Mapping
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
+from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 from tldw_chatbook.Sync_Interop.validation import (
     validate_pull_pagination_state,
     validate_push_response_scope,
@@ -71,7 +72,7 @@ class LocalFirstSyncService:
         )
         if profile is None:
             raise ValueError("local_first Sync v2 profile is required")
-        if profile.get("profile_mode") != "local_first":
+        if not is_local_first_sync_profile_mode(profile.get("profile_mode")):
             raise ValueError("sync_once requires a local_first Sync v2 profile")
 
         dataset_id = profile.get("dataset_id")

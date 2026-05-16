@@ -47,6 +47,15 @@ def test_sync_profile_state_tracks_sync_v2_device_dataset_and_cursors() -> None:
     assert state.dataset_cursors == {"notes": "cursor-1", "chat": "cursor-2"}
 
 
+def test_sync_profile_state_accepts_canonical_local_first_sync_mode() -> None:
+    state = SyncProfileState(
+        server_profile_id="server-a",
+        profile_mode="local_first_sync",
+    )
+
+    assert state.profile_mode == SyncV2ProfileMode.LOCAL_FIRST_SYNC
+
+
 def test_sync_profile_state_store_isolates_same_server_by_workspace_id() -> None:
     store = SyncProfileStateStore()
 
