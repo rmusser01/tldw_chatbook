@@ -4,6 +4,25 @@ Chatbook is evolving into a local-first agentic knowledge console: a place to in
 
 This roadmap is directional. It describes current priorities and likely future areas, not delivery dates or commitments.
 
+## Current Release Baseline
+
+The current release baseline is usable as a local-first product loop:
+
+- Home is the default status and notification surface for setup state, active work, notifications, and next actions.
+- Console is the live agentic control surface for chat, source handoff, approvals, run follow-up, and durable Chatbook creation.
+- Library is the source, Search/RAG, import/export, and Collections surface for preparing grounded work.
+- Chatbooks and other durable outputs live under Artifacts so completed work can be reopened and resumed.
+- Personas, Skills, MCP, ACP, Watchlists, Schedules, Workflows, and Settings stay visible as distinct product areas instead of hidden advanced settings.
+
+## Current Limits And Recovery
+
+Some capabilities remain intentionally source-honest rather than overpromised:
+
+- ACP runtime launch and write sync remain future work.
+- Server-backed functionality is surfaced only when configured; local mode remains a valid default.
+- Optional dependency groups must be installed before advanced media, RAG, MCP, or web capabilities are available.
+- Missing providers, missing sources, missing runtimes, and unavailable optional features should show the responsible surface and a recovery path.
+
 ## Now: Reliability And Product Confidence
 
 Current focus:
