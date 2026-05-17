@@ -2728,27 +2728,28 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
     """
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     logger.info(f"Attempting to save setting: [{section}].{key} = {repr(value)}")
+    config_path = _get_effective_config_path()
 
     # Ensure the parent directory for the config file exists.
     try:
-        DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        logger.error(f"Could not create config directory {DEFAULT_CONFIG_PATH.parent}: {e}")
+        logger.error(f"Could not create config directory {config_path.parent}: {e}")
         return False
 
     # Step 1: Read the current configuration from the user's file.
     # If the file doesn't exist, we start with an empty dictionary.
     config_data: Dict[str, Any] = {}
-    if DEFAULT_CONFIG_PATH.exists():
+    if config_path.exists():
         try:
-            with open(DEFAULT_CONFIG_PATH, "rb") as f:
+            with open(config_path, "rb") as f:
                 config_data = tomllib.load(f)
         except tomllib.TOMLDecodeError as e:
-            logger.error(f"Corrupted config file at {DEFAULT_CONFIG_PATH}. Cannot save. Please fix or delete it. Error: {e}")
+            logger.error(f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}")
             # Consider creating a backup of the corrupt file for the user.
             return False
         except Exception as e:
-            logger.error(f"Unexpected error reading {DEFAULT_CONFIG_PATH}: {e}", exc_info=True)
+            logger.error(f"Unexpected error reading {config_path}: {e}", exc_info=True)
             return False
 
     # Step 2: Modify the configuration data in memory.
@@ -2809,9 +2810,9 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
     
     # Step 4: Write the updated configuration back to the TOML file.
     try:
-        with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(config_path, "w", encoding="utf-8") as f:
             toml.dump(config_data, f)
-        logger.success(f"Successfully saved setting to {DEFAULT_CONFIG_PATH}")
+        logger.success(f"Successfully saved setting to {config_path}")
 
         # Step 4: Invalidate and reload global config caches to reflect changes immediately.
         # Clear both caches
@@ -2823,7 +2824,7 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
 
         return True
     except (IOError, toml.TomlDecodeError) as e:
-        logger.error(f"Failed to write updated config to {DEFAULT_CONFIG_PATH}: {e}", exc_info=True)
+        logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
         return False
 
 
