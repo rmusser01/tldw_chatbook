@@ -1,5 +1,7 @@
 """Console configuration defaults."""
 
+import tomllib
+
 from tldw_chatbook import config as config_module
 
 
@@ -26,3 +28,26 @@ def test_load_settings_coerces_console_string_false(tmp_path, monkeypatch):
     settings = config_module.load_settings(force_reload=True)
 
     assert settings["console"]["collapse_large_pastes"] is False
+
+
+def test_save_setting_respects_tldw_config_path_override(tmp_path, monkeypatch):
+    override_config = tmp_path / "override" / "config.toml"
+    default_config = tmp_path / "default" / "config.toml"
+    override_config.parent.mkdir()
+    override_config.write_text(
+        '[console]\ncollapse_large_pastes = true\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(override_config))
+    monkeypatch.setattr(config_module, "DEFAULT_CONFIG_PATH", default_config)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+    assert config_module.save_setting_to_cli_config(
+        "console",
+        "collapse_large_pastes",
+        False,
+    )
+
+    saved_override = tomllib.loads(override_config.read_text(encoding="utf-8"))
+    assert saved_override["console"]["collapse_large_pastes"] is False
+    assert not default_config.exists()
