@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from textual.css.query import NoMatches, QueryError, TooManyMatches
 from textual.widgets import Button, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -144,7 +145,8 @@ def _visual_chrome_ready(app: TldwCli, destination_id: str) -> bool:
             return False
         content = app.screen.query_one("#screen-content")
         return any(list(content.query(selector)) for selector in DESTINATION_BODY_SELECTORS[destination_id])
-    except Exception:
+    except (NoMatches, QueryError, TooManyMatches):
+        # During async recomposition, expected query misses mean the chrome is not ready yet.
         return False
 
 
