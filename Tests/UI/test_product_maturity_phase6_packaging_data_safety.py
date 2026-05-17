@@ -1,0 +1,222 @@
+"""Product maturity Phase 6.6 packaging/configuration/data-safety validation."""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PYPROJECT = Path("pyproject.toml")
+README = Path("README.md")
+RECOVERY_DOC = Path("Docs/Development/release-recovery-setup.md")
+TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
+PHASE_6_README = Path("Docs/superpowers/qa/product-maturity/phase-6/README.md")
+EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-6/2026-05-16-phase-6-6-packaging-config-data-safety.md"
+)
+CONFIG = Path("tldw_chatbook/config.py")
+CHACHANOTES_DB = Path("tldw_chatbook/DB/ChaChaNotes_DB.py")
+MEDIA_DB = Path("tldw_chatbook/DB/Client_Media_DB_v2.py")
+TASK_13 = Path(
+    "backlog/tasks/task-13 - Product-Maturity-Phase-6-Release-Hardening-And-Documentation.md"
+)
+TASK_13_6 = Path(
+    "backlog/tasks/task-13.6 - Phase-6.6-Packaging-configuration-and-data-safety-validation.md"
+)
+
+REQUIRED_VALIDATION_AREAS = {
+    "packaging",
+    "configuration",
+    "migration",
+    "data-safety",
+}
+LOCAL_PATH_PREFIXES = (
+    "/Users/",
+    "/home/",
+    "/var/home/",
+    "/private/var/folders/",
+    "C:\\Users\\",
+    "C:/Users/",
+)
+
+
+def _text(path: Path) -> str:
+    return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def _metadata(text: str) -> dict:
+    match = re.search(
+        r"<!-- PHASE_6_6_PACKAGING_DATA_SAFETY_METADATA:BEGIN -->\s*```json\s*(.*?)\s*```\s*"
+        r"<!-- PHASE_6_6_PACKAGING_DATA_SAFETY_METADATA:END -->",
+        text,
+        re.DOTALL,
+    )
+    assert match is not None
+    return json.loads(match.group(1))
+
+
+def _markdown_table_row(markdown: str, first_cell_text: str) -> list[str]:
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|") or first_cell_text not in line:
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if cells and cells[0] == first_cell_text:
+            return cells
+    raise AssertionError(f"Missing markdown table row for {first_cell_text!r}")
+
+
+def _validation_matrix_rows(evidence: str) -> dict[str, list[str]]:
+    rows: dict[str, list[str]] = {}
+    for raw_line in evidence.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if cells and cells[0] in REQUIRED_VALIDATION_AREAS:
+            rows[cells[0]] = cells
+    return rows
+
+
+def _assert_no_local_path_prefixes(text: str) -> None:
+    leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
+    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+
+
+def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> None:
+    pyproject = tomllib.loads(_text(PYPROJECT))
+    readme = _text(README)
+    recovery_doc = _text(RECOVERY_DOC)
+    config = _text(CONFIG)
+    chachanotes_db = _text(CHACHANOTES_DB)
+    media_db = _text(MEDIA_DB)
+
+    project = pyproject["project"]
+    assert project["name"] == "tldw_chatbook"
+    assert project["requires-python"] == ">=3.11"
+    assert "textual>=3.3.0" in project["dependencies"]
+    assert "tldw-cli" in project["scripts"]
+    assert project["scripts"]["tldw-cli"] == "tldw_chatbook.app:main_cli_runner"
+    assert "tldw-serve" in project["scripts"]
+    assert project["scripts"]["tldw-serve"] == "tldw_chatbook.Web_Server.serve:main"
+    for extra in ("dev", "embeddings_rag", "mcp", "web"):
+        assert extra in project["optional-dependencies"]
+
+    package_data = pyproject["tool"]["setuptools"]["package-data"]
+    assert "tldw_chatbook.css" in package_data
+    assert "tldw_chatbook.Config_Files" in package_data
+
+    for required_copy in (
+        "python3 -m venv .venv",
+        "pip install -e .",
+        "pip install -e \".[dev]\"",
+        "tldw-cli",
+        "tldw-serve",
+        "Configuration File",
+        "Environment Variables",
+    ):
+        assert required_copy in readme
+
+    assert "TLDW_CONFIG_PATH" in config
+    assert "_get_effective_config_path" in config
+    assert "_CONFIG_CACHE_SOURCE == config_path" in config
+    assert "atomic_write_text(DEFAULT_CONFIG_PATH" in config
+    assert "Do not use machine-specific absolute paths" in recovery_doc
+
+    for required_migration_signal in (
+        "db_schema_version",
+        "_initialize_schema",
+        "migration_steps",
+        "_migrate_from_v15_to_v16",
+        "SchemaError",
+        "backup_database",
+        "check_integrity",
+        "transaction",
+        "rollback",
+    ):
+        assert required_migration_signal in chachanotes_db
+    assert "PRAGMA foreign_keys = ON" in chachanotes_db
+    assert "PRAGMA journal_mode=WAL" in chachanotes_db
+
+    for required_media_signal in (
+        "schema_version",
+        "_initialize_schema",
+        "backup_database",
+        "check_integrity",
+        "transaction",
+    ):
+        assert required_media_signal in media_db
+
+
+def test_phase6_packaging_config_data_safety_evidence_and_tracking_are_current() -> None:
+    evidence = _text(EVIDENCE)
+    readme = _text(PHASE_6_README)
+    tracker = _text(TRACKER)
+    task = _text(TASK_13_6)
+    parent_task = _text(TASK_13)
+    metadata = _metadata(evidence)
+
+    _assert_no_local_path_prefixes(evidence)
+    assert metadata["task"] == "TASK-13.6"
+    assert metadata["parent_task"] == "TASK-13"
+    assert metadata["decision"] == "packaging_config_data_safety_recorded"
+    assert set(metadata["validation_areas_checked"]) == REQUIRED_VALIDATION_AREAS
+    assert metadata["p0_p1_findings"] == []
+    assert metadata["screenshot_gate"] == "not_required_no_visible_ui_changes"
+    assert metadata["build_validation"]["command"] == "python -m build --sdist --wheel"
+    assert metadata["final_focused_replay_result"]["failed"] == 0
+    assert metadata["final_focused_replay_result"]["passed"] > 0
+
+    for section in (
+        "## Environment",
+        "## Validation Matrix",
+        "## Packaging Checks",
+        "## Configuration Checks",
+        "## Migration Checks",
+        "## Data-Safety Checks",
+        "## P0/P1 Decision",
+        "## Residual Risk",
+        "## Verification",
+    ):
+        assert section in evidence
+
+    rows = _validation_matrix_rows(evidence)
+    assert set(rows) == REQUIRED_VALIDATION_AREAS
+    for area, row in rows.items():
+        assert len(row) >= 6, f"{area} row is missing required columns"
+        assert row[1] in {"verified", "accepted-risk"}
+        assert row[4] in {"P0", "P1", "P2", "P3", "none"}
+        assert EVIDENCE.as_posix() in row[5]
+
+    for portable_command in (
+        "python -m pytest -q Tests/UI/test_product_maturity_phase6_packaging_data_safety.py",
+        "python -m pytest -q Tests/UI/test_product_maturity_phase6_packaging_data_safety.py Tests/UI/test_product_maturity_phase6_release_hardening_plan.py Tests/UI/test_post_ux_product_roadmap_handoff.py --tb=short",
+        "python -m build --sdist --wheel",
+    ):
+        assert portable_command in evidence
+
+    assert EVIDENCE.name in readme
+    assert "Phase 6.6 Packaging/configuration/data-safety validation" in readme
+    assert "Status: TASK-13.1 through TASK-13.6 done; TASK-13.7 not started" in readme
+
+    phase6_row = _markdown_table_row(tracker, "Phase 6: Release Hardening And Documentation")
+    assert "in-progress; TASK-13.1 through TASK-13.6 done" in phase6_row[2]
+    assert "TASK-13.6" in phase6_row[3]
+    assert EVIDENCE.name in phase6_row[4]
+    assert "packaging/configuration/migration/data-safety verified" in phase6_row[5].lower()
+
+    qa_row = _markdown_table_row(tracker, "Phase 6.6")
+    assert EVIDENCE.as_posix() in qa_row[1]
+    assert "verified; TASK-13.6 done" == qa_row[2]
+
+    assert "TASK-13.6" in parent_task
+    assert "status: Done" in task
+    for acceptance_criterion in range(1, 5):
+        assert f"- [x] #{acceptance_criterion}" in task
+    assert "## Implementation Plan" in task
+    assert "## Implementation Notes" in task
+    assert sys.version_info >= (3, 11)

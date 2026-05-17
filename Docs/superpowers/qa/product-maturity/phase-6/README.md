@@ -1,6 +1,6 @@
 # Phase 6 QA Evidence
 
-Status: TASK-13.1 through TASK-13.5 done; TASK-13.6 through TASK-13.7 not started
+Status: TASK-13.1 through TASK-13.6 done; TASK-13.7 not started
 
 This directory contains release-hardening QA evidence for Product Maturity Phase 6. Phase 6 verifies release-candidate usability after the verified Phase 1 through Phase 5 product-maturity gates.
 
@@ -13,7 +13,7 @@ This directory contains release-hardening QA evidence for Product Maturity Phase
 | Phase 6.3 Power-user workflow release replay | `Docs/superpowers/qa/product-maturity/phase-6/2026-05-16-phase-6-3-power-user-workflow-release-replay.md` | verified |
 | Phase 6.4 Keyboard/focus/accessibility and visual sweep | `Docs/superpowers/qa/product-maturity/phase-6/2026-05-16-phase-6-4-keyboard-focus-accessibility-visual-sweep.md` | verified |
 | Phase 6.5 Recovery/setup/documentation alignment | `Docs/superpowers/qa/product-maturity/phase-6/2026-05-16-phase-6-5-recovery-setup-docs-alignment.md`; `Docs/Development/release-recovery-setup.md` | verified |
-| Phase 6.6 Packaging/configuration/data-safety validation | pending | not-started |
+| Phase 6.6 Packaging/configuration/data-safety validation | `Docs/superpowers/qa/product-maturity/phase-6/2026-05-16-phase-6-6-packaging-config-data-safety.md` | verified |
 | Phase 6.7 Public roadmap release closeout | pending | not-started |
 
 ## Release-Hardening Rules
