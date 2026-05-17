@@ -63,7 +63,7 @@ def test_phase6_release_hardening_plan_tracks_pr_sized_gates() -> None:
     assert PLAN.as_posix() in parent_task
     assert PLAN.as_posix() in tracker
     assert PHASE_6_QA_README.as_posix() in tracker
-    assert "Status: TASK-13.1 through TASK-13.3 done; TASK-13.4 through TASK-13.7 not started" in qa_readme
+    assert "Status: TASK-13.1 through TASK-13.4 done; TASK-13.5 through TASK-13.7 not started" in qa_readme
 
     for required_section in (
         "## Source Of Truth",
@@ -102,7 +102,7 @@ def test_phase6_release_hardening_plan_tracks_pr_sized_gates() -> None:
             for ac_number in range(1, 5):
                 assert f"- [x] #{ac_number}" in task
             assert "## Implementation Notes" in task
-        elif task_id in {"TASK-13.2", "TASK-13.3"}:
+        elif task_id in {"TASK-13.2", "TASK-13.3", "TASK-13.4"}:
             assert "status: Done" in task
             for ac_number in range(1, 5):
                 assert f"- [x] #{ac_number}" in task
@@ -113,7 +113,7 @@ def test_phase6_release_hardening_plan_tracks_pr_sized_gates() -> None:
                 assert f"- [ ] #{ac_number}" in task
 
     phase_row = _markdown_table_row(tracker, "Phase 6: Release Hardening And Documentation")
-    assert "in-progress; TASK-13.1 through TASK-13.3 done" in phase_row[2]
+    assert "in-progress; TASK-13.1 through TASK-13.4 done" in phase_row[2]
     for task_id in PHASE_6_CHILD_TASKS:
         assert task_id in phase_row[3]
     assert PLAN.as_posix() in phase_row[4]
