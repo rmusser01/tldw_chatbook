@@ -26,6 +26,12 @@ Destination visual parity correction status: verified
 
 The visual parity correction verifies the approved destination shell geometry for Home, Console, Library, Artifacts, Personas, Watchlists, Schedules, Workflows, MCP, ACP, Skills, and Settings at `140x42` and `100x32`. Text geometry dumps are tracked in `visual-parity/`.
 
+Phase 3 parent status: verified
+
+- `2026-05-17-phase-3-parent-closeout.md`
+
+Phase 3 parent closeout verifies that all tracked Knowledge/Study gates and the destination visual parity correction are indexed, tested, and closed with no open P0/P1 findings. Remaining deeper Workspaces, Import/Export, sync, collection membership, Study/Search/RAG depth, and citation/snippet carry-through work is deferred future scope rather than a Phase 3 blocker.
+
 ## Evidence
 
 - `2026-05-06-phase-3-0-destination-layout-contracts.md`
@@ -39,3 +45,4 @@ The visual parity correction verifies the approved destination shell geometry fo
 - `2026-05-07-gate-1-6-library-native-search-rag.md`
 - `2026-05-08-phase-3-9-library-collections.md`
 - `2026-05-08-destination-visual-parity-correction.md`
+- `2026-05-17-phase-3-parent-closeout.md`
