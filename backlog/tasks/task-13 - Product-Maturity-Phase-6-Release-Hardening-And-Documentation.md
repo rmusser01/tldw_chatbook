@@ -1,7 +1,7 @@
 ---
 id: TASK-13
 title: 'Product Maturity Phase 6: Release Hardening And Documentation'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-05 15:11'
 labels:
@@ -21,10 +21,10 @@ Convert the matured product into release-candidate usability with full walkthrou
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 QA walkthrough verifies the running app is usable for this phase's target workflows.
-- [ ] #2 Focused regression evidence exists for changed seams.
-- [ ] #3 Repo-tracked QA evidence exists under Docs/superpowers/qa/product-maturity/.
-- [ ] #4 P0/P1 findings are fixed or explicitly accepted according to the spec severity policy.
+- [x] #1 QA walkthrough verifies the running app is usable for this phase's target workflows.
+- [x] #2 Focused regression evidence exists for changed seams.
+- [x] #3 Repo-tracked QA evidence exists under Docs/superpowers/qa/product-maturity/.
+- [x] #4 P0/P1 findings are fixed or explicitly accepted according to the spec severity policy.
 <!-- AC:END -->
 
 ## Child Tasks
@@ -47,3 +47,7 @@ Convert the matured product into release-candidate usability with full walkthrou
 3. Complete TASK-13.7 only after all prior Phase 6 gates have QA evidence and P0/P1 decisions.
 4. Mark TASK-13 done only when release-hardening evidence is indexed and the product-maturity roadmap marks Phase 6 verified.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+Completed Product Maturity Phase 6 release hardening across first-time replay, power-user workflows, keyboard/focus/accessibility and visual sweep, recovery/setup/documentation alignment, packaging/configuration/migration/data-safety validation, and public roadmap release closeout. Phase 6 QA evidence is indexed under `Docs/superpowers/qa/product-maturity/phase-6/`, the public roadmap remains directional and commitment-free, and no unaccepted P0/P1 release blockers remain.
