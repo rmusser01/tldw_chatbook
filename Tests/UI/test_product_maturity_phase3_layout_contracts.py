@@ -23,6 +23,9 @@ PHASE_3_9_SPEC = Path(
 PHASE_3_9_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/2026-05-08-phase-3-9-library-collections.md"
 )
+PHASE_3_PARENT_CLOSEOUT = Path(
+    "Docs/superpowers/qa/product-maturity/phase-3/2026-05-17-phase-3-parent-closeout.md"
+)
 TASK_10 = Path(
     "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md"
 )
@@ -349,7 +352,15 @@ def test_phase30_tracker_has_evidence_row() -> None:
     assert "phase-3/2026-05-06-phase-3-2-library-source-study-context.md" in phase_three_row[4]
     assert "Phase 3.0 evidence pending" not in phase_three_row[4]
     assert "Phase 3.0 prerequisite planned" not in tracker
-    assert "Status: Phase 1 verified; Phase 2 verified; Phase 3.0 verified; Phase 3.1 verified; Phase 3.2 verified" in tracker
+    status = _status_line(tracker)
+    for verified_phase in (
+        "Phase 1 verified",
+        "Phase 2 verified",
+        "Phase 3.0 verified",
+        "Phase 3.1 verified",
+        "Phase 3.2 verified",
+    ):
+        assert verified_phase in status
 
 
 def test_phase30_backlog_task_is_closed_after_verification() -> None:
@@ -364,3 +375,26 @@ def test_phase30_backlog_task_is_closed_after_verification() -> None:
     assert (REPO_ROOT / Path("Tests/UI/test_product_maturity_phase3_layout_contracts.py")).is_file()
     assert "Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md" in task
     assert "Tests/UI/test_product_maturity_phase3_layout_contracts.py" in task
+
+
+def test_phase3_parent_is_closed_after_all_product_maturity_gates() -> None:
+    tracker = _text(TRACKER)
+    task = _text(TASK_10)
+    readme = _text(PHASE_3_README)
+    evidence = _text(PHASE_3_PARENT_CLOSEOUT)
+
+    assert "Phase 3 verified" in _status_line(tracker)
+    phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
+    assert "verified" in phase_three_row[2].lower()
+    assert "Phase 3.9 verified" in phase_three_row[2]
+    assert "destination visual parity correction verified" in phase_three_row[2]
+    assert PHASE_3_PARENT_CLOSEOUT.as_posix() in tracker
+    assert PHASE_3_PARENT_CLOSEOUT.name in readme
+
+    assert "status: Done" in task
+    for ac_number in range(1, 5):
+        assert f"- [x] #{ac_number}" in task
+    assert "Closed Phase 3 parent after all tracked Knowledge/Study gates" in task
+    assert "Phase 3 parent status: verified" in evidence
+    assert "TASK-10" in evidence
+    assert "P0/P1 findings: none open" in evidence

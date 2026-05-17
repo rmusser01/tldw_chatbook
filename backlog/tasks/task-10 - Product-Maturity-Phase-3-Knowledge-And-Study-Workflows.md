@@ -1,7 +1,7 @@
 ---
 id: TASK-10
 title: 'Product Maturity Phase 3: Knowledge And Study Workflows'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-05-05 15:11'
 updated_date: '2026-05-08 04:41'
@@ -20,11 +20,19 @@ Mature ingest, organize, retrieve, study, and reuse workflows across Library, Wo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 QA walkthrough verifies the running app is usable for this phase's target workflows.
-- [ ] #2 Focused regression evidence exists for changed seams.
-- [ ] #3 Repo-tracked QA evidence exists under Docs/superpowers/qa/product-maturity/.
-- [ ] #4 P0/P1 findings are fixed or explicitly accepted according to the spec severity policy.
+- [x] #1 QA walkthrough verifies the running app is usable for this phase's target workflows.
+- [x] #2 Focused regression evidence exists for changed seams.
+- [x] #3 Repo-tracked QA evidence exists under Docs/superpowers/qa/product-maturity/.
+- [x] #4 P0/P1 findings are fixed or explicitly accepted according to the spec severity policy.
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Add a regression that fails while the Phase 3 parent task and tracker remain inconsistent with verified child gates.
+2. Add Phase 3 parent closeout evidence under the existing Phase 3 QA evidence folder.
+3. Update the product maturity tracker and Phase 3 QA README to mark the parent closeout verified.
+4. Mark TASK-10 Done with all acceptance criteria checked and note deferred future-scope risks.
+5. Run focused documentation regression tests and diff hygiene.
 
 ## Implementation Notes
 
@@ -52,4 +60,6 @@ Closed Gate 1.6 with TASK-10.8. Library-native Search/RAG now verifies source sc
 Continued Phase 3 with TASK-10.9. Watchlists is now the top-level monitored-source destination while Library owns local Collections management with honest local-only or sync-unavailable status. Parent remains open for Workspaces, deeper Import/Export, full server sync, collection item membership, deeper Study/Search/RAG flows, citations/snippets in downstream collection workflows, and Citation/snippet carry-through into Chat artifacts and exported Chatbooks.
 
 Completed the destination visual parity correction under the TASK-10 parent. Home Console Library Artifacts Personas Watchlists Schedules Workflows MCP ACP Skills and Settings now have mounted compact workbench geometry verified at 140x42 and 100x32 with text evidence in Docs/superpowers/qa/product-maturity/phase-3/visual-parity/. The pass tightened viewport assertions to catch horizontal overflow and fixed Console composer action bounds. Parent remains open for Workspaces, deeper Import/Export, full server sync, collection item membership, downstream citations/snippets carry-through, and later server-parity depth.
+
+Closed Phase 3 parent after all tracked Knowledge/Study gates and the destination visual parity correction were verified. The closeout evidence is recorded at Docs/superpowers/qa/product-maturity/phase-3/2026-05-17-phase-3-parent-closeout.md, the product maturity tracker marks Phase 3 verified, and no P0/P1 findings remain open for the tracked Phase 3 scope. Remaining Workspaces, deeper Import/Export, full server sync, collection item membership, deeper Study/Search/RAG flows, and citation/snippet carry-through work is deferred future scope rather than a Phase 3 blocker.
 <!-- SECTION:NOTES:END -->
