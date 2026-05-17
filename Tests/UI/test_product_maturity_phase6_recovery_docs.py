@@ -63,6 +63,22 @@ def _test_cli_setting(section: str, key: str, default=None):
     return default
 
 
+def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    for env_var, relative_path in (
+        ("HOME", "home"),
+        ("XDG_CONFIG_HOME", "xdg-config"),
+        ("XDG_DATA_HOME", "xdg-data"),
+        ("XDG_CACHE_HOME", "xdg-cache"),
+    ):
+        target = tmp_path / relative_path
+        target.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv(env_var, str(target))
+
+    config_path = tmp_path / "xdg-config" / "tldw_cli" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+
 def _screen_text(app) -> str:
     pieces: list[str] = []
     for widget in app.screen.query(Static):
@@ -124,12 +140,18 @@ def _recovery_matrix_rows(evidence: str) -> dict[str, list[str]]:
 
 
 @pytest.mark.asyncio
-async def test_phase6_recovery_copy_is_visible_in_running_app() -> None:
+async def test_phase6_recovery_copy_is_visible_in_running_app(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _prepare_clean_environment(monkeypatch, tmp_path)
     app = _build_test_app()
     app.app_config["_first_run"] = False
     app._initial_tab_value = "home"
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting), patch(
+        "tldw_chatbook.config.get_cli_setting", side_effect=_test_cli_setting
+    ):
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
