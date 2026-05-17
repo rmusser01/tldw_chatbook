@@ -61,6 +61,22 @@ Product Maturity Phase 1 and Phase 2 are not reopened by default. Their existing
 | Server Parity And Live Integrations | `TASK-12` | Prioritize parity by workflow value, not endpoint count. |
 | Release Hardening And Distribution | `TASK-13` | Use only after earlier workflow gates have QA evidence. |
 
+## Post-Release UX/HCI Functional Validation
+
+Source Plan: `Docs/superpowers/plans/2026-05-17-post-release-ux-hci-functional-validation.md`
+Status: planned; `TASK-60` active
+
+This tranche reopens validation only where evidence must come from actual app use. It does not invalidate the historical Phase 3-6 closeout evidence, but it treats that evidence as insufficient for current usability certification when the rendered app may still be visually or functionally broken.
+
+Acceptance requires actual screenshots, actual-use functionality evidence, and cross-screen workflow validation. Screens that merely render, mount, or expose clickable controls are not accepted unless the user can complete or recover from the intended workflow.
+
+| Post-Release Track | Backlog Owner | Validation Rule |
+| --- | --- | --- |
+| Actual-screen UX/HCI audit harness | `TASK-60.1` | Define screenshot, CDP/textual-web, NN/g, severity, and approval evidence before auditing screens. |
+| Top-level screen functionality audit | `TASK-60.2` | Home, Console, Library, Artifacts, Personas, Watchlists, Schedules, Workflows, MCP, ACP, Skills, and Settings require rendered screenshot approval plus actual-use evidence. |
+| Cross-screen workflow validation | `TASK-60.3` | Validate handoffs into Console, Library/RAG to Console, Chatbook save/resume, agent configuration paths, and run-control paths end-to-end. |
+| Deferred feature tranche planning | `TASK-60.4` | Plan ACP runtime launch, write sync, Workspaces/Library depth, citation/snippet carry-through, and optional dependency/package polish only after audit findings are known. |
+
 ## Severity Policy
 
 | Priority | Taxonomy | Exit Rule |
@@ -127,6 +143,11 @@ Product Maturity Phase 1 and Phase 2 are not reopened by default. Their existing
   - Phase 6.5: Recovery Setup And Documentation Alignment - `TASK-13.5`
   - Phase 6.6: Packaging Configuration And Data-Safety Validation - `TASK-13.6`
   - Phase 6.7: Public Roadmap Release Closeout - `TASK-13.7`
+- Post-Release UX/HCI Functional Validation - `TASK-60`
+  - Actual-Screen UX/HCI Audit Harness - `TASK-60.1`
+  - Top-Level Screen Functionality Audit - `TASK-60.2`
+  - Cross-Screen Workflow Validation - `TASK-60.3`
+  - Deferred Feature Tranche Planning - `TASK-60.4`
 
 ## QA Evidence Index
 
