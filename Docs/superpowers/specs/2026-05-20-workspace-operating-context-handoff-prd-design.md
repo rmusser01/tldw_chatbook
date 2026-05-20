@@ -49,6 +49,7 @@ Current gaps:
 
 - Chatbook does not yet have a single local workspace registry that owns workspace identity and lifecycle.
 - Workspace membership is not consistently enforced across conversations, sources, artifacts, notes, ACP, MCP, schedules, workflows, and Chatbooks.
+- Chatbook does not yet distinguish item visibility from active-context eligibility. Workspace switching must not make Notes or Library items disappear.
 - Sync/handoff is not implemented. Existing contracts describe future sync state but do not perform local/server migration.
 - Runtime bindings are not portable. A local path, git worktree, container, VM, or ACP session cannot currently be moved as a safe, user-visible package.
 - Console can show staged context, but it cannot yet truthfully switch the current operating workspace.
@@ -58,10 +59,28 @@ Current gaps:
 These decisions keep the first implementation useful without overreaching.
 
 - Do not add a new top-level `Workspaces` destination in v1. Expose workspace context in Console and deeper workspace management under Library until the model proves it needs a dedicated destination.
+- Workspace switching changes active-context eligibility, not Library or Notes visibility. Users can still see, search, open, and edit items from other workspaces, but cannot stage them into the active Console context unless they belong to the current workspace or are explicitly copied/linked into it.
 - Start with manual push/pull handoff. Background write sync should remain deferred until conflict handling and replay safety are proven.
+- Support both source-content copy and source-reference upload in local-to-server handoff. The default should depend on source type, source location, server policy, and user choice.
+- Make the first server-backed handoff target ACP task/run packages, because this is the highest-value portable operating-context use case.
 - Treat moving a conversation between workspaces as a fork with provenance, not a silent reassignment.
 - Make v1 runtime bindings metadata-first. Local filesystem and git worktree bindings can be described and validated; ACP sessions, containers, and VMs should be inspect-only until recreation safety is designed.
+- Expose audit and diagnostic detail to users by default. The UI may collapse verbose details, but it should not hide them behind developer-only logs. Secrets still require explicit redaction/reveal handling.
+- Shared or collaborator workspace packages should degrade to a single-user local workspace when offline.
 - Ship the Console `Convos & Workspaces` rail as read-only first if the persistence model is not ready. Disabled controls must explain what is missing.
+
+## Workspace Unification Model
+
+Workspace unification should happen through a shared registry and shared context contract, not by turning every screen into a workspace screen.
+
+The unified model has four layers:
+
+1. `Workspace Registry`: the durable list of local and server-backed workspace records, membership tags, authority state, sync state, and runtime bindings.
+2. `Active Workspace Context`: the current operating workspace used by Console, ACP, MCP, Workflows, Schedules, and context staging.
+3. `Global Item Browser`: Library, Notes, Artifacts, and search surfaces can show all user-owned items with workspace tags and eligibility badges.
+4. `Context Eligibility Gate`: actions that involve the active Console context, agent manipulation, RAG staging, ACP runs, or tool use are allowed only when the selected item belongs to the active workspace or is explicitly copied/linked into it.
+
+If a future top-level `Workspaces` destination is added, it should be a management and status surface over the same registry: workspace list, sync health, memberships, handoff actions, audit logs, and runtime bindings. It must not become a second Library or a second Console.
 
 ## Problem Statement
 
@@ -69,9 +88,9 @@ The current Chatbook Console is becoming the primary agentic control surface. Us
 
 The risk is building a narrow UI selector that looks like a workspace switcher but does not actually protect workspace boundaries. If a workspace owns conversations, sources, ACP sessions, git worktrees, and runtime state, then switching the workspace affects:
 
-- which conversations are visible and resumable.
-- which Library/RAG sources can be staged.
-- which Chatbooks and artifacts are in scope.
+- which conversations are eligible for the active Console context.
+- which Library/RAG sources can be staged, not which sources can be viewed.
+- which Chatbooks and artifacts can be used by the active workspace.
 - which ACP sessions and tool permissions are valid.
 - which git worktree or sandbox filesystem the agent may read or edit.
 - whether data is local-only, server-backed, syncing, conflicted, or portable.
@@ -83,7 +102,7 @@ Without a product contract, UI work can create false affordances, leak data acro
 - Define `Workspace` as Chatbook's portable operating-context package.
 - Keep Console as the primary live work surface while giving it visible workspace context.
 - Support future local-to-server and server-to-local handoff of active work.
-- Preserve strict conversation and source isolation by workspace.
+- Preserve global visibility and search across Library, Notes, Artifacts, and conversations while enforcing strict active-context eligibility by workspace.
 - Make local, server, syncing, conflict, detached, and unavailable states visible.
 - Align Chatbook with the `tldw_server` canonical workspace roadmap instead of inventing a second model.
 - Decompose the work into PR-sized phases with screenshot-based UX approval gates.
@@ -123,6 +142,26 @@ Conversation scope must remain explicit:
 | `workspace` | Conversation belongs to exactly one workspace and must not appear in another workspace's conversation list. |
 
 Existing Chatbook code already has `scope_type` and `workspace_id` seams in chat persistence and server conversation deletion. The PRD treats those as compatibility anchors, not a complete workspace implementation.
+
+### Visibility Versus Context Eligibility
+
+Workspace switching must not hide user-owned content from Library, Notes, Artifacts, or global search.
+
+Items have workspace membership metadata:
+
+- `workspace_ids`: zero, one, or many workspace memberships.
+- `workspace_labels`: display labels for each membership.
+- `active_context_eligible`: whether the item can be staged, manipulated, or used by the current Console workspace.
+- `eligibility_reason`: user-facing explanation when the item is visible but not eligible.
+
+Examples:
+
+- A user in Workspace A can search, open, and edit a Note from Workspace B in Notes.
+- The same Note cannot be added to Workspace A's active Console context unless the user explicitly copies or links it into Workspace A.
+- Library can show all media and documents with workspace tags.
+- Console staging, agent edits, RAG grounding, ACP runs, and tool actions are limited to the active workspace.
+
+Cross-workspace items should show disabled active-context actions with recovery copy such as `Belongs to Workspace B. Copy or link into Workspace A before staging.`
 
 ### Workspace Authority
 
@@ -175,6 +214,7 @@ The Console left rail should become a two-section context rail.
 - Which conversations are available in this workspace?
 - Is the current conversation global or workspace-bound?
 - What runtime or ACP binding will the agent use?
+- Are visible Library/Notes/Artifact items eligible for the active Console context?
 
 ### Immediate UI Boundary
 
@@ -185,6 +225,7 @@ Until the workspace model exists:
 - `Change workspace` should be disabled or open an explanatory unavailable state.
 - Conversation rows should come only from currently trustworthy session metadata.
 - Any missing workspace service must render as `No workspace selected` or `Workspace service not ready`, not as a fake default workspace.
+- Library and Notes should continue to show all items. Workspace tags and eligibility states should be added before any active-context restrictions are enforced.
 - Screenshot approval is required before this shell ships.
 
 ## Handoff Model
@@ -194,19 +235,28 @@ Until the workspace model exists:
 When a user hands off an active local workspace to a server:
 
 1. Chatbook builds a workspace manifest.
-2. Chatbook validates what can be transferred, referenced, redacted, or must remain local.
+2. Chatbook validates what can be copied, referenced, redacted, or must remain local.
 3. The user sees a preflight summary: sources, conversations, artifacts, ACP sessions, runtime bindings, secrets omitted, and conflicts.
 4. Chatbook creates or upserts a server workspace record.
 5. Transfer proceeds in resumable stages.
 6. The active Console context changes to `syncing-to-server`, then `server-backed` or `conflict`.
 7. Any untransferable runtime binding becomes an explicit recovery item.
 
+The v1 server-backed handoff target is ACP task/run packages. Source and conversation metadata should be included when required to make the ACP package intelligible, but the first proof should optimize around preserving task/run operating context.
+
+Source transfer supports both modes:
+
+- `copy`: upload source content or a portable bundle to the server when policy allows.
+- `reference`: upload a stable source reference, pointer, or metadata-only binding when copying is unnecessary, disallowed, or too expensive.
+
+The handoff preflight must show which mode each source uses.
+
 ### Server To Local
 
 When a user pulls a server workspace into Chatbook:
 
 1. Chatbook fetches the workspace manifest and compatibility metadata.
-2. The user chooses materialization scope: metadata only, sources and conversations, or full local package where supported.
+2. The user chooses materialization scope: metadata only, references, copied source content, or full local package where supported.
 3. Chatbook maps remote sources to local references or downloads copies according to policy.
 4. Runtime bindings are recreated only if safe and explicitly approved.
 5. The workspace enters `syncing-from-server`, then `server-backed`, `runtime-missing`, or `conflict`.
@@ -255,6 +305,8 @@ Minimum fields:
 
 Runtime bindings must not contain raw secrets. Environment variables, keys, tokens, private filesystem paths, and server credentials need explicit redaction or pointer semantics.
 
+Membership fields should not be interpreted as browse filters. They determine active-context eligibility and provenance display. Browsing and search remain global by default unless the user applies an explicit workspace filter.
+
 ## Data And Service Boundaries
 
 ### Chatbook Local
@@ -264,6 +316,8 @@ Chatbook owns:
 - local workspace cache and local-only workspace records.
 - local conversation association.
 - local source and artifact references.
+- cross-workspace Library/Notes/Artifacts browsing with workspace membership labels.
+- active-context eligibility checks for Console staging and agent manipulation.
 - user-visible sync state.
 - local runtime binding inspection.
 - export/import package creation.
@@ -303,11 +357,12 @@ Console may show tool readiness and use tools in context, but MCP server managem
 ## Security And Privacy Requirements
 
 - Workspace export/handoff must show a redaction report before transfer.
+- All audit and diagnostic detail should be user-accessible by default through expandable UI, logs, or export. Diagnostic detail should not be developer-only.
 - Secrets and credentials are never embedded directly in a workspace manifest.
 - Filesystem paths must be classified as portable, local-only, or unsafe.
 - Server workspace reads and writes must enforce exact workspace scope.
 - ACP runtime payloads must be validated before local execution.
-- Cross-workspace reads and writes default to denied.
+- Cross-workspace Console context use and agent manipulation default to denied. Direct user browsing and editing in Library/Notes can remain available when normal item permissions allow it.
 - Audit events are required for server handoff, server pull, share, conflict resolution, and runtime binding recreation.
 
 ## Error And Recovery States
@@ -325,6 +380,7 @@ Every workspace-aware surface needs visible recovery for:
 - ACP session cannot resume.
 - MCP tool disabled by policy.
 - conversation belongs to another workspace.
+- visible item belongs to another workspace and is not active-context eligible.
 - source exists but embeddings/RAG index are not ready.
 - partial transfer interrupted.
 - manifest version unsupported.
@@ -335,7 +391,7 @@ Every workspace-aware surface needs visible recovery for:
 
 - Approve this PRD.
 - Add a decision record for Chatbook's workspace model and server alignment.
-- Decide whether Chatbook introduces a top-level Workspaces destination later or keeps workspace management distributed under Library/Console/Home.
+- Record that workspace unification is a shared registry plus active workspace context, with a possible later top-level management surface only if v1 proves it is needed.
 
 ### Phase 1: Console Context Rail Shell
 
@@ -349,7 +405,8 @@ Every workspace-aware surface needs visible recovery for:
 - Add local workspace records and service APIs.
 - Associate conversations, source refs, notes, and artifacts with workspace ids.
 - Support create, rename, archive, delete, switch, and list operations.
-- Enforce global vs workspace conversation filtering.
+- Add workspace membership labels in Library, Notes, Artifacts, and conversation browsing.
+- Enforce active-context eligibility without hiding cross-workspace Library or Notes items.
 
 ### Phase 3: Workspace Package Manifest
 
@@ -360,7 +417,8 @@ Every workspace-aware surface needs visible recovery for:
 ### Phase 4: Server Bridge
 
 - Add server workspace identity mapping.
-- Add local-to-server and server-to-local dry-run flows.
+- Add local-to-server and server-to-local dry-run flows with both copy and reference transfer modes.
+- Make ACP task/run packages the first server-backed handoff target.
 - Add resumable handoff status and conflict reporting.
 - Keep write sync disabled until conflict semantics are proven.
 
@@ -375,11 +433,12 @@ Every workspace-aware surface needs visible recovery for:
 
 - Verify Home, Console, Library, Artifacts, ACP, MCP, Schedules, Workflows, and Skills against the same active workspace.
 - Verify local-only, server-backed, syncing, conflict, and runtime-missing states.
+- Verify switching workspaces does not hide Library or Notes items, and that cross-workspace items remain viewable/editable while active-context actions are blocked with recovery copy.
 - Capture actual Textual Web/CDP screenshots for every affected screen before approval.
 
 ## Testing And QA Requirements
 
-- Unit tests for manifest validation, redaction, scope filtering, and conflict classification.
+- Unit tests for manifest validation, redaction, membership tagging, active-context eligibility, and conflict classification.
 - Service tests for local workspace CRUD and conversation/source/artifact membership.
 - Mounted Textual tests for the Console context rail shell.
 - Contract tests for local/server authority labels and disabled-action recovery copy.
@@ -387,13 +446,22 @@ Every workspace-aware surface needs visible recovery for:
 - Later server integration tests for handoff preflight and interrupted-transfer resume.
 - Actual CDP screenshots for every UI approval gate.
 
-## Remaining Open Questions
+## Resolved Decisions From User Review
 
-1. After v1 proves out, should Chatbook promote workspace management to a top-level destination or keep it distributed across Console, Library, Home, and Settings?
-2. Should local-to-server handoff copy source content, upload references, or support both depending on source type and policy?
-3. What is the first server-backed handoff target: source/conversation metadata only, full Chatbook packages, or ACP task/run packages?
-4. What audit detail must be visible to users versus stored only for diagnostics?
-5. How should shared or collaborator workspaces map to local-only Chatbook profiles when the user is offline?
+- Workspace switching must not hide Notes, Library items, Artifacts, or conversation records from global browse/search. Workspace tags and active-context eligibility replace hard filtering.
+- Unified workspace behavior comes from a shared Workspace Registry, Active Workspace Context, Global Item Browser, and Context Eligibility Gate. A future top-level Workspaces screen would manage the same registry rather than replacing Console or Library.
+- Local-to-server handoff supports both copied source content and uploaded source references, depending on source type and policy.
+- The first server-backed handoff target is ACP task/run packages.
+- Audit and diagnostic details should be visible to users by default, with expandable presentation and export paths.
+- Shared or collaborator workspaces map to single-user local workspaces when offline.
+
+## Remaining Deferred Questions
+
+1. Which source types default to copy versus reference in the first server bridge?
+2. What is the first UI for copying or linking a visible cross-workspace item into the active workspace?
+3. Which ACP task/run fields are required for a minimally useful server-backed handoff package?
+4. What exact redaction controls are required for user-visible audit exports?
+5. How should multi-workspace membership be displayed in compact terminal widths?
 
 ## Approval Gate
 

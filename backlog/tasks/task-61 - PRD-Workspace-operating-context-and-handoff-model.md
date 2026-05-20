@@ -44,12 +44,14 @@ Define the product and architecture contract for Chatbook workspaces as portable
 - Grounded the PRD in existing Chatbook seams for conversation scope, Notes workspace state, server parity workspace contracts, and the current Console staged-context rail.
 - Linked the related `tldw_server` roadmap issues for canonical workspace records, prototype workspace collaboration, and MCP/connector workspace handoff.
 - Defined the immediate Console left-rail split as a read-only shell unless a real workspace registry/switching service exists, preserving screenshot approval gates for later UI implementation.
+- Revised the PRD after user review so workspace switching does not hide Library/Notes/Artifact items; instead, workspace tags remain visible globally while active Console context actions are gated by workspace eligibility.
+- Captured user decisions that server handoff supports both copy and reference modes, ACP task/run packages are the first server-backed target, audit detail is user-visible by default, and offline shared workspaces degrade to single-user local workspaces.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Drafted and verified the PRD for workspace operating contexts and local/server handoff. No application behavior was changed.
+Drafted and verified the PRD for workspace operating contexts and local/server handoff, then revised it to preserve global item visibility while gating active Console context use by workspace membership. No application behavior was changed.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
