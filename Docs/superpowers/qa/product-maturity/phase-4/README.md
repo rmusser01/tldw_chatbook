@@ -15,6 +15,7 @@ Phase 4 covers agent configuration and execution surfaces: Personas, Skills, MCP
 | Phase 4.5 ACP runtime session | `Docs/superpowers/qa/product-maturity/phase-4/2026-05-12-phase-4-5-acp-runtime-session.md` | verified |
 | Phase 4.6 Schedules and Workflows run control | `Docs/superpowers/qa/product-maturity/phase-4/2026-05-15-phase-4-6-schedules-workflows-run-control.md` | verified |
 | Phase 4.7 Agent execution QA closeout | `Docs/superpowers/qa/product-maturity/phase-4/2026-05-16-phase-4-7-agent-execution-closeout.md` | verified |
+| Console workspace context rail | `Docs/superpowers/qa/product-maturity/phase-4/2026-05-20-console-workspace-context-rail.md` | verified |
 
 ## QA Rules
 

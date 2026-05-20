@@ -56,6 +56,11 @@ from ...Widgets.Console import (
     ConsoleRunInspector,
     ConsoleSessionSurface,
     ConsoleStagedContextTray,
+    ConsoleWorkspaceContextTray,
+)
+from ...Workspaces.display_state import (
+    ConsoleWorkspaceContextState,
+    build_console_workspace_state,
 )
 from ...Widgets.compact_model_bar import CompactModelBar
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
@@ -333,6 +338,49 @@ class ChatScreen(BaseAppScreen):
         if pending_launch is None:
             return ConsoleStagedContextState.empty()
         return ConsoleStagedContextState.from_live_work(pending_launch)
+
+    def _current_console_conversation_id(
+        self,
+        session_data: Optional[ChatSessionData] = None,
+    ) -> Optional[str]:
+        """Return the active conversation id for Console context highlighting."""
+        conversation_id = getattr(session_data, "conversation_id", None)
+        if conversation_id:
+            return str(conversation_id)
+
+        active_tab = self.chat_state.get_active_tab()
+        conversation_id = getattr(active_tab, "conversation_id", None)
+        if conversation_id:
+            return str(conversation_id)
+
+        session = self._get_active_chat_session()
+        session_data = getattr(session, "session_data", None)
+        conversation_id = getattr(session_data, "conversation_id", None)
+        return str(conversation_id) if conversation_id else None
+
+    def _build_console_workspace_context_state(
+        self,
+        session_data: Optional[ChatSessionData] = None,
+    ) -> ConsoleWorkspaceContextState:
+        return build_console_workspace_state(
+            registry_service=getattr(self.app_instance, "workspace_registry_service", None),
+            current_conversation=self._current_console_conversation_id(session_data),
+        )
+
+    def _sync_console_workspace_context(
+        self,
+        session_data: Optional[ChatSessionData] = None,
+    ) -> None:
+        try:
+            workspace_context = self.query_one(
+                "#console-workspace-context",
+                ConsoleWorkspaceContextTray,
+            )
+            workspace_context.sync_state(
+                self._build_console_workspace_context_state(session_data)
+            )
+        except (NoMatches, QueryError):
+            logger.debug("No Console workspace context tray available for sync")
 
     @staticmethod
     def _launch_targets_chatbook_artifact(
@@ -740,6 +788,7 @@ class ChatScreen(BaseAppScreen):
         control_state = self._build_console_control_state(pending_launch)
         staged_context_state = self._build_console_staged_context_state(pending_launch)
         inspector_state = self._build_console_inspector_state(pending_launch)
+        workspace_context_state = self._build_console_workspace_context_state()
         with Vertical(id="console-shell"):
             yield Static(
                 "Console | Live agent control, chat, RAG, tools, approvals | Local",
@@ -772,17 +821,35 @@ class ChatScreen(BaseAppScreen):
                 Horizontal(id="console-workspace-grid", classes="ds-panel destination-workbench")
             )
             with workspace_grid:
-                staged_context_tray = ConsoleStagedContextTray(
-                    staged_context_state,
-                    id="console-staged-context-tray",
+                left_rail = Vertical(
+                    id="console-left-rail",
                     classes="console-region destination-workbench-pane",
                 )
-                staged_context_tray.styles.width = "5fr"
-                staged_context_tray.styles.min_width = 40
-                yield self._frame_console_region(staged_context_tray)
+                left_rail.styles.width = "4fr"
+                left_rail.styles.min_width = 36
+                with left_rail:
+                    staged_context_tray = ConsoleStagedContextTray(
+                        staged_context_state,
+                        id="console-staged-context-tray",
+                        classes="console-left-rail-section",
+                    )
+                    staged_context_tray.styles.width = "100%"
+                    staged_context_tray.styles.min_width = 0
+                    staged_context_tray.styles.height = "1fr"
+                    yield self._frame_console_region(staged_context_tray)
+
+                    workspace_context_tray = ConsoleWorkspaceContextTray(
+                        workspace_context_state,
+                        id="console-workspace-context",
+                        classes="console-left-rail-section",
+                    )
+                    workspace_context_tray.styles.width = "100%"
+                    workspace_context_tray.styles.min_width = 0
+                    workspace_context_tray.styles.height = "1fr"
+                    yield self._frame_console_region(workspace_context_tray)
 
                 main_column = Vertical(id="console-main-column")
-                main_column.styles.width = "9fr"
+                main_column.styles.width = "10fr"
                 main_column.styles.min_width = 52
                 with main_column:
                     transcript_region = self._frame_console_region(
@@ -1597,6 +1664,7 @@ class ChatScreen(BaseAppScreen):
 
     def sync_shell_bar_from_session_data(self, session_data: Optional[ChatSessionData]) -> None:
         """Push the live active session contract into the mounted shell bar."""
+        self._sync_console_workspace_context(session_data)
         shell_bar = self._get_shell_bar()
         if not shell_bar:
             self._hide_console_legacy_chat_inputs()

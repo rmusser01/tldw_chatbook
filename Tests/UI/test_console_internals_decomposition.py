@@ -1028,7 +1028,7 @@ async def test_console_workbench_weights_transcript_as_primary_region():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-grid")
 
-        staged = console.query_one("#console-staged-context-tray")
+        staged = console.query_one("#console-left-rail")
         main = console.query_one("#console-main-column")
         inspector = console.query_one("#console-run-inspector")
         transcript = console.query_one("#console-transcript-region")
@@ -1052,6 +1052,7 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         for selector in (
             "#console-workspace-grid",
             "#console-staged-context-tray",
+            "#console-workspace-context",
             "#console-transcript-region",
             "#console-run-inspector",
             "#console-native-composer",
