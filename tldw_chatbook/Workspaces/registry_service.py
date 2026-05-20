@@ -7,6 +7,8 @@ import json
 import sqlite3
 from uuid import uuid4
 
+from loguru import logger
+
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
 from .models import (
@@ -18,7 +20,6 @@ from .models import (
     WorkspaceRuntimeBinding,
     WorkspaceSyncStatus,
     WorkspaceTransferPolicy,
-    scrub_secret_metadata,
     utc_now_iso,
 )
 
@@ -114,17 +115,24 @@ class LocalWorkspaceRegistryService:
     def list_workspaces(self, *, include_archived: bool = False) -> tuple[WorkspaceRecord, ...]:
         """List local workspaces in stable creation order."""
 
-        where_clause = "" if include_archived else "WHERE archived = 0"
+        if include_archived:
+            query = """
+                SELECT *
+                FROM workspace_records
+                ORDER BY created_at ASC, workspace_id ASC
+                """
+            params: tuple[object, ...] = ()
+        else:
+            query = """
+                SELECT *
+                FROM workspace_records
+                WHERE archived = ?
+                ORDER BY created_at ASC, workspace_id ASC
+                """
+            params = (0,)
         try:
             with self.db.connection() as conn:
-                rows = conn.execute(
-                    f"""
-                    SELECT *
-                    FROM workspace_records
-                    {where_clause}
-                    ORDER BY created_at ASC, workspace_id ASC
-                    """
-                ).fetchall()
+                rows = conn.execute(query, params).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_workspace_from_row(row) for row in rows)
@@ -132,6 +140,7 @@ class LocalWorkspaceRegistryService:
     def get_workspace(self, workspace_id: str) -> WorkspaceRecord | None:
         """Return one workspace record if it exists."""
 
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
             with self.db.connection() as conn:
                 row = conn.execute(
@@ -140,7 +149,7 @@ class LocalWorkspaceRegistryService:
                     FROM workspace_records
                     WHERE workspace_id = ?
                     """,
-                    (workspace_id,),
+                    (safe_workspace_id,),
                 ).fetchone()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -149,8 +158,10 @@ class LocalWorkspaceRegistryService:
     def set_active_workspace(self, workspace_id: str) -> WorkspaceRecord:
         """Set exactly one active workspace."""
 
-        if self.get_workspace(workspace_id) is None:
-            raise WorkspaceNotFound(workspace_id)
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        target_workspace = self.get_workspace(safe_workspace_id)
+        if target_workspace is None or target_workspace.archived:
+            raise WorkspaceNotFound(safe_workspace_id)
         now = self._now_factory()
         try:
             with self.db.transaction() as conn:
@@ -162,7 +173,7 @@ class LocalWorkspaceRegistryService:
                         updated_at = ?
                     WHERE workspace_id = ?
                     """,
-                    (now, workspace_id),
+                    (now, safe_workspace_id),
                 )
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -202,11 +213,12 @@ class LocalWorkspaceRegistryService:
     ) -> WorkspaceMembership:
         """Link a visible item to a workspace without hiding other memberships."""
 
-        if self.get_workspace(workspace_id) is None:
-            raise WorkspaceNotFound(workspace_id)
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        if self.get_workspace(safe_workspace_id) is None:
+            raise WorkspaceNotFound(safe_workspace_id)
         membership = WorkspaceMembership(
             membership_id=self._id_factory(),
-            workspace_id=workspace_id,
+            workspace_id=safe_workspace_id,
             item_type=item_type,
             item_id=item_id,
             role=role,
@@ -243,10 +255,28 @@ class LocalWorkspaceRegistryService:
                 )
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        memberships = self.get_item_memberships(item_type, item_id)
-        for existing in memberships:
-            if existing.workspace_id == workspace_id and existing.role == role:
-                return existing
+        try:
+            with self.db.connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM workspace_memberships
+                    WHERE workspace_id = ?
+                        AND item_type = ?
+                        AND item_id = ?
+                        AND role = ?
+                    """,
+                    (
+                        membership.workspace_id,
+                        membership.item_type,
+                        membership.item_id,
+                        membership.role,
+                    ),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if row is not None:
+            return _membership_from_row(row)
         raise WorkspaceRegistryServiceError("Workspace membership link failed.")
 
     def get_item_memberships(
@@ -256,6 +286,8 @@ class LocalWorkspaceRegistryService:
     ) -> tuple[WorkspaceMembership, ...]:
         """Return all workspace memberships for one visible item."""
 
+        safe_item_type = _normalize_required_text(item_type, "item_type")
+        safe_item_id = _normalize_required_text(item_id, "item_id")
         try:
             with self.db.connection() as conn:
                 rows = conn.execute(
@@ -266,7 +298,7 @@ class LocalWorkspaceRegistryService:
                         AND item_id = ?
                     ORDER BY created_at ASC, workspace_id ASC, role ASC
                     """,
-                    (item_type, item_id),
+                    (safe_item_type, safe_item_id),
                 ).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -278,6 +310,7 @@ class LocalWorkspaceRegistryService:
     ) -> tuple[WorkspaceMembership, ...]:
         """Return item memberships for a workspace."""
 
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
             with self.db.connection() as conn:
                 rows = conn.execute(
@@ -287,7 +320,7 @@ class LocalWorkspaceRegistryService:
                     WHERE workspace_id = ?
                     ORDER BY created_at ASC, item_type ASC, item_id ASC, role ASC
                     """,
-                    (workspace_id,),
+                    (safe_workspace_id,),
                 ).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -308,10 +341,11 @@ class LocalWorkspaceRegistryService:
             label=binding.label,
             locator=binding.locator,
             status=binding.status,
-            metadata=scrub_secret_metadata(binding.metadata),
+            metadata=binding.metadata,
             created_at=binding.created_at,
             updated_at=self._now_factory(),
         )
+        metadata_json = _metadata_to_json(safe_binding.metadata)
         try:
             with self.db.transaction() as conn:
                 conn.execute(
@@ -344,7 +378,7 @@ class LocalWorkspaceRegistryService:
                         safe_binding.label,
                         safe_binding.locator,
                         safe_binding.status.value,
-                        json.dumps(safe_binding.metadata, sort_keys=True),
+                        metadata_json,
                         safe_binding.created_at,
                         safe_binding.updated_at,
                     ),
@@ -359,6 +393,7 @@ class LocalWorkspaceRegistryService:
     def get_runtime_binding(self, binding_id: str) -> WorkspaceRuntimeBinding | None:
         """Return one runtime binding if it exists."""
 
+        safe_binding_id = _normalize_required_text(binding_id, "binding_id")
         try:
             with self.db.connection() as conn:
                 row = conn.execute(
@@ -367,7 +402,7 @@ class LocalWorkspaceRegistryService:
                     FROM workspace_runtime_bindings
                     WHERE binding_id = ?
                     """,
-                    (binding_id,),
+                    (safe_binding_id,),
                 ).fetchone()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -379,6 +414,7 @@ class LocalWorkspaceRegistryService:
     ) -> tuple[WorkspaceRuntimeBinding, ...]:
         """Return runtime bindings for a workspace."""
 
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
             with self.db.connection() as conn:
                 rows = conn.execute(
@@ -388,7 +424,7 @@ class LocalWorkspaceRegistryService:
                     WHERE workspace_id = ?
                     ORDER BY created_at ASC, binding_id ASC
                     """,
-                    (workspace_id,),
+                    (safe_workspace_id,),
                 ).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -423,7 +459,7 @@ def _membership_from_row(row: sqlite3.Row) -> WorkspaceMembership:
 
 
 def _runtime_binding_from_row(row: sqlite3.Row) -> WorkspaceRuntimeBinding:
-    metadata = json.loads(row["metadata_json"] or "{}")
+    metadata = _metadata_from_json(row["metadata_json"], binding_id=row["binding_id"])
     return WorkspaceRuntimeBinding(
         workspace_id=row["workspace_id"],
         binding_id=row["binding_id"],
@@ -435,3 +471,33 @@ def _runtime_binding_from_row(row: sqlite3.Row) -> WorkspaceRuntimeBinding:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _metadata_to_json(metadata: dict[str, object]) -> str:
+    try:
+        return json.dumps(metadata, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise WorkspaceRegistryServiceError(
+            "Runtime binding metadata must be JSON-serializable."
+        ) from exc
+
+
+def _metadata_from_json(value: str, *, binding_id: str) -> dict[str, object]:
+    try:
+        decoded = json.loads(value or "{}")
+    except json.JSONDecodeError:
+        logger.warning(
+            "Invalid workspace runtime binding metadata JSON; using empty metadata",
+            binding_id=binding_id,
+        )
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _normalize_required_text(value: str, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be text")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} is required")
+    return normalized

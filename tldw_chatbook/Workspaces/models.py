@@ -220,8 +220,15 @@ def _scrub_metadata_value(value: Any) -> Any:
 
 
 def _is_secret_metadata_key(key: str) -> bool:
-    key_lower = key.lower()
-    return any(part in key_lower for part in _SECRET_METADATA_PARTS)
+    key_normalized = _normalize_metadata_key(key)
+    return any(
+        _normalize_metadata_key(part) in key_normalized
+        for part in _SECRET_METADATA_PARTS
+    )
+
+
+def _normalize_metadata_key(key: str) -> str:
+    return "".join(character for character in key.lower() if character.isalnum())
 
 
 def _required_text(value: str, field_name: str) -> str:

@@ -66,6 +66,8 @@ def test_workspace_runtime_binding_strips_secret_metadata() -> None:
         metadata={
             "branch": "dev",
             "api_key": "should-not-persist",
+            "api-key": "should-not-persist",
+            "privateKey": "should-not-persist",
             "nested": {"token": "also-secret", "safe": "value"},
         },
     )

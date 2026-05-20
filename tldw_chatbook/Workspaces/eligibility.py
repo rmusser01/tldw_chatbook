@@ -27,6 +27,19 @@ def evaluate_workspace_eligibility(
     Workspace switching must never hide user-owned Library/Notes/Artifact records.
     The gating applies only when the item would be staged into the active Console
     context or manipulated by an agent/runtime.
+
+    Args:
+        active_workspace_id: Currently selected workspace id, if any.
+        item_workspace_ids: Workspace ids associated with the visible item.
+        item_type: Human-readable item type used in recovery copy.
+        operation: Operation being attempted against the item.
+
+    Returns:
+        A `WorkspaceEligibility` decision preserving visibility and describing
+        whether the active-context operation may proceed.
+
+    Raises:
+        ValueError: If `operation` is not a supported `WorkspaceOperation`.
     """
 
     normalized_operation = _normalize_operation(operation)
