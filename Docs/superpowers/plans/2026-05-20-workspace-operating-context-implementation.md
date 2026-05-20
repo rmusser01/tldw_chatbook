@@ -123,7 +123,7 @@ Every visible UI task below must complete this gate before the screen can be cal
 - Test: `Tests/Workspaces/test_workspace_models.py`
 - Test: `Tests/Workspaces/test_workspace_eligibility.py`
 
-- [ ] **Step 1: Write model validation tests**
+- [x] **Step 1: Write model validation tests**
 
 ```python
 def test_workspace_record_requires_non_empty_identity() -> None:
@@ -140,7 +140,7 @@ def test_workspace_membership_supports_multi_workspace_visibility() -> None:
     assert membership.workspace_id == "ws-a"
 ```
 
-- [ ] **Step 2: Write eligibility tests**
+- [x] **Step 2: Write eligibility tests**
 
 ```python
 def test_cross_workspace_note_is_visible_but_not_context_eligible() -> None:
@@ -156,13 +156,13 @@ def test_cross_workspace_note_is_visible_but_not_context_eligible() -> None:
     assert "Copy or link" in result.recovery_copy
 ```
 
-- [ ] **Step 3: Run tests and confirm they fail**
+- [x] **Step 3: Run tests and confirm they fail**
 
 Run: `python -m pytest -q Tests/Workspaces/test_workspace_models.py Tests/Workspaces/test_workspace_eligibility.py --tb=short`
 
 Expected: fail because `tldw_chatbook.Workspaces` does not exist.
 
-- [ ] **Step 4: Implement minimal models**
+- [x] **Step 4: Implement minimal models**
 
 Use dataclasses and literal-safe enums. Keep validation in constructors or small helpers.
 
@@ -178,7 +178,7 @@ class WorkspaceAuthority(str, Enum):
     RUNTIME_MISSING = "runtime-missing"
 ```
 
-- [ ] **Step 5: Implement pure eligibility decisions**
+- [x] **Step 5: Implement pure eligibility decisions**
 
 Rules:
 
@@ -187,13 +187,13 @@ Rules:
 - Global conversations are visible in Console but not silently converted into workspace conversations.
 - Cross-workspace use returns a recovery path: copy/link into the active workspace.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run: `python -m pytest -q Tests/Workspaces/test_workspace_models.py Tests/Workspaces/test_workspace_eligibility.py --tb=short`
 
 Expected: pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add tldw_chatbook/Workspaces Tests/Workspaces/test_workspace_models.py Tests/Workspaces/test_workspace_eligibility.py
@@ -209,7 +209,7 @@ git commit -m "feat: add workspace operating context models"
 - Test: `Tests/Workspaces/test_workspace_registry_service.py`
 - Test: `Tests/UI/test_screen_navigation.py`
 
-- [ ] **Step 1: Write persistence tests**
+- [x] **Step 1: Write persistence tests**
 
 ```python
 def test_registry_persists_active_workspace(tmp_path: Path) -> None:
@@ -223,7 +223,7 @@ def test_registry_persists_active_workspace(tmp_path: Path) -> None:
     assert reloaded.get_active_workspace().workspace_id == "ws-a"
 ```
 
-- [ ] **Step 2: Write membership tests**
+- [x] **Step 2: Write membership tests**
 
 ```python
 def test_registry_links_note_without_hiding_other_workspaces(tmp_path: Path) -> None:
@@ -234,13 +234,13 @@ def test_registry_links_note_without_hiding_other_workspaces(tmp_path: Path) -> 
     assert {m.workspace_id for m in service.get_item_memberships("note", "note-1")} == {"ws-a", "ws-b"}
 ```
 
-- [ ] **Step 3: Run tests and confirm they fail**
+- [x] **Step 3: Run tests and confirm they fail**
 
 Run: `python -m pytest -q Tests/Workspaces/test_workspace_registry_service.py --tb=short`
 
 Expected: fail because storage/service are missing.
 
-- [ ] **Step 4: Implement `WorkspaceDB`**
+- [x] **Step 4: Implement `WorkspaceDB`**
 
 Use `BaseDB` for path handling and a local schema version table scoped to this DB. Minimum schema:
 
@@ -258,7 +258,7 @@ CREATE TABLE IF NOT EXISTS workspace_records (
 );
 ```
 
-- [ ] **Step 5: Implement `LocalWorkspaceRegistryService`**
+- [x] **Step 5: Implement `LocalWorkspaceRegistryService`**
 
 Service responsibilities:
 
@@ -269,17 +269,17 @@ Service responsibilities:
 - Store runtime binding metadata without secrets.
 - Return deterministic ordering for UI lists.
 
-- [ ] **Step 6: Wire app-owned service**
+- [x] **Step 6: Wire app-owned service**
 
 In `tldw_chatbook/app.py`, instantiate `WorkspaceDB` and `LocalWorkspaceRegistryService` next to existing local DB/service setup. Expose as `self.workspace_registry_service`.
 
-- [ ] **Step 7: Run focused tests**
+- [x] **Step 7: Run focused tests**
 
 Run: `python -m pytest -q Tests/Workspaces/test_workspace_registry_service.py Tests/UI/test_screen_navigation.py --tb=short`
 
 Expected: pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add tldw_chatbook/DB/Workspace_DB.py tldw_chatbook/Workspaces/registry_service.py tldw_chatbook/app.py Tests/Workspaces/test_workspace_registry_service.py Tests/UI/test_screen_navigation.py
