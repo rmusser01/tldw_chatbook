@@ -24,6 +24,12 @@ CHILD_TASKS = {
     "TASK-60.4": Path(
         "backlog/tasks/task-60.4 - Post-release-deferred-feature-tranche-planning.md"
     ),
+    "TASK-60.5": Path(
+        "backlog/tasks/task-60.5 - Fix-Personas-destination-indefinite-behavior-context-loading-state.md"
+    ),
+    "TASK-60.6": Path(
+        "backlog/tasks/task-60.6 - Fix-Watchlists-destination-indefinite-local-snapshot-loading-state.md"
+    ),
 }
 REQUIRED_SCREENS = (
     "Home",
@@ -86,7 +92,11 @@ def test_post_release_qa_harness_requires_real_screenshots_and_approval() -> Non
         assert required in readme
 
     for screen in REQUIRED_SCREENS:
-        assert f"| {screen} | pending | pending | pending | `TASK-60.2` |" in readme
+        matching_rows = [
+            row for row in readme.splitlines() if row.startswith(f"| {screen} |")
+        ]
+        assert matching_rows, f"{screen} row missing from post-release QA index"
+        assert "pending" in matching_rows[0], f"{screen} row must track screenshot approval"
 
     for required_field in (
         "Evidence method:",
@@ -116,8 +126,9 @@ def test_post_release_backlog_tasks_track_screens_workflows_and_deferred_feature
         assert "parent_task_id: TASK-60" in task
         assert "<!-- AC:BEGIN -->" in task
 
-    assert "status: Done" in _text(CHILD_TASKS["TASK-60.1"])
-    for task_id in ("TASK-60.2", "TASK-60.3", "TASK-60.4"):
+    for task_id in ("TASK-60.1", "TASK-60.2"):
+        assert "status: Done" in _text(CHILD_TASKS[task_id])
+    for task_id in ("TASK-60.3", "TASK-60.4", "TASK-60.5", "TASK-60.6"):
         assert "status: To Do" in _text(CHILD_TASKS[task_id])
 
     assert "forbids SVG/code-layout substitutes" in _text(CHILD_TASKS["TASK-60.1"])
@@ -127,6 +138,12 @@ def test_post_release_backlog_tasks_track_screens_workflows_and_deferred_feature
     assert "At least five power-user repeated workflows" in _text(CHILD_TASKS["TASK-60.3"])
     assert "ACP runtime launch, write sync promotion, Workspaces/Library depth" in _text(
         CHILD_TASKS["TASK-60.4"]
+    )
+    assert "Personas screen leaves loading state deterministically" in _text(
+        CHILD_TASKS["TASK-60.5"]
+    )
+    assert "Watchlists screen leaves loading state deterministically" in _text(
+        CHILD_TASKS["TASK-60.6"]
     )
 
 

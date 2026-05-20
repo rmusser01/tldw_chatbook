@@ -1,6 +1,6 @@
 # Post-Release UX/HCI Functional Validation
 
-Status: planned; `TASK-60` active
+Status: in progress; `TASK-60` active
 
 This index exists because prior mounted layout checks and phase closeout evidence are not enough to prove the app is usable. Each top-level destination and cross-screen workflow must be driven in the actual app, evaluated from a senior UX/HCI perspective, and backed by real rendered screenshots before acceptance.
 
@@ -16,18 +16,18 @@ This index exists because prior mounted layout checks and phase closeout evidenc
 
 | Screen | Evidence Status | Screenshot Approval | Functionality Status | Follow-Up |
 | --- | --- | --- | --- | --- |
-| Home | pending | pending | pending | `TASK-60.2` |
-| Console | pending | pending | pending | `TASK-60.2` |
-| Library | pending | pending | pending | `TASK-60.2` |
-| Artifacts | pending | pending | pending | `TASK-60.2` |
-| Personas | pending | pending | pending | `TASK-60.2` |
-| Watchlists | pending | pending | pending | `TASK-60.2` |
-| Schedules | pending | pending | pending | `TASK-60.2` |
-| Workflows | pending | pending | pending | `TASK-60.2` |
-| MCP | pending | pending | pending | `TASK-60.2` |
-| ACP | pending | pending | pending | `TASK-60.2` |
-| Skills | pending | pending | pending | `TASK-60.2` |
-| Settings | pending | pending | pending | `TASK-60.2` |
+| Home | recorded | pending | next-best action opens Library | `TASK-60.3` |
+| Console | recorded | pending | visible composer input and blocked-send recovery verified | `TASK-60.3` |
+| Library | recorded | pending | Search/RAG keyboard activation and blocked empty recovery verified | `TASK-60.3` |
+| Artifacts | recorded | pending | empty state and Open Console recovery verified | `TASK-60.3` |
+| Personas | recorded | pending | P1 indefinite loading blocks primary attach path | `TASK-60.5` |
+| Watchlists | recorded | pending | P1 indefinite loading blocks primary run review path | `TASK-60.6` |
+| Schedules | recorded | pending | empty/recovery baseline verified | `TASK-60.3` |
+| Workflows | recorded | pending | empty/recovery baseline verified | `TASK-60.3` |
+| MCP | recorded | pending | local overview and no-server recovery verified | `TASK-60.3` |
+| ACP | recorded | pending | runtime-not-configured recovery verified | `TASK-60.3` |
+| Skills | recorded | pending | empty state and import-not-wired recovery visible | `TASK-60.3` |
+| Settings | recorded | pending | preference and scope baseline recorded | `TASK-60.3` |
 
 ## Required Cross-Screen Workflows
 
