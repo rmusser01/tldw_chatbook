@@ -1450,6 +1450,8 @@ research_db_path = "~/.local/share/tldw_cli/tldw_chatbook_research.db"
 writing_db_path = "~/.local/share/tldw_cli/tldw_chatbook_writing.db"
 # Path to the local Library Collections database.
 library_collections_db_path = "~/.local/share/tldw_cli/tldw_chatbook_library_collections.db"
+# Path to the local Workspaces database.
+workspaces_db_path = "~/.local/share/tldw_cli/tldw_chatbook_workspaces.db"
 USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
 
 # Database integrity checking
@@ -3296,6 +3298,15 @@ def get_library_collections_db_path() -> Path:
     else:
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_library_collections.db"
+    return db_path
+
+def get_workspaces_db_path() -> Path:
+    custom_path = get_cli_setting("database", "workspaces_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("workspaces_db_path"):
+        db_path = validate_path_simple(Path(str(custom_path)).expanduser(), require_exists=False).resolve()
+    else:
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "tldw_chatbook_workspaces.db"
     return db_path
 
 def get_subscriptions_db_path() -> Path:

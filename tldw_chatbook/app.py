@@ -72,6 +72,7 @@ from .config import (
     get_research_db_path,
     get_subscriptions_db_path,
     get_user_data_dir,
+    get_workspaces_db_path,
     get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
@@ -93,6 +94,7 @@ from tldw_chatbook.Chat.server_chat_loop_service import ServerChatLoopService
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Chat import (
     ChatConversationScopeService,
@@ -315,6 +317,7 @@ from tldw_chatbook.MCP_Governance_Interop import MCPGovernanceScopeService, Serv
 from tldw_chatbook.User_Governance_Interop import ServerUserGovernanceService, UserGovernanceScopeService
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
 from tldw_chatbook.Web_Scraping_Interop import ServerWebScrapingService, WebScrapingScopeService
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Writing_Interop import LocalWritingService, ServerWritingService, WritingScopeService
 from tldw_chatbook.Subscriptions import (
     LocalWatchlistsService,
@@ -1520,6 +1523,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             policy_enforcer=self.service_policy_enforcer,
         )
         self._wire_library_collections_services()
+        self._wire_workspace_registry_services()
         self._wire_prompt_chatbook_services()
         self._wire_watchlists_and_notifications_services()
         self._wire_writing_services()
@@ -1911,6 +1915,23 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.local_library_collections_db = None
             self.local_library_collections_service = None
             self.library_collections_service = None
+
+    def _wire_workspace_registry_services(self) -> None:
+        try:
+            self.local_workspace_db = WorkspaceDB(
+                get_workspaces_db_path(),
+                CLI_APP_CLIENT_ID,
+            )
+            self.workspace_registry_service = LocalWorkspaceRegistryService(
+                self.local_workspace_db,
+            )
+        except Exception:
+            logger.warning(
+                "Local workspace registry service unavailable during app wiring",
+                exc_info=True,
+            )
+            self.local_workspace_db = None
+            self.workspace_registry_service = None
 
     def _build_chatbook_db_paths(self) -> dict[str, str]:
         return {

@@ -96,6 +96,7 @@ from tldw_chatbook.MCP_Governance_Interop import MCPGovernanceScopeService, Serv
 from tldw_chatbook.User_Governance_Interop import ServerUserGovernanceService, UserGovernanceScopeService
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
 from tldw_chatbook.Web_Scraping_Interop import ServerWebScrapingService, WebScrapingScopeService
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Writing_Interop import LocalWritingService, ServerWritingService, WritingScopeService
 from tldw_chatbook.Subscriptions import (
     LocalWatchlistsService,
@@ -287,13 +288,15 @@ def _build_test_app() -> TldwCli:
                                                     with patch("tldw_chatbook.app.get_research_db_path", return_value=":memory:"):
                                                         with patch("tldw_chatbook.app.get_writing_db_path", return_value=":memory:"):
                                                             with patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir):
-                                                                return TldwCli()
+                                                                with patch("tldw_chatbook.app.get_workspaces_db_path", return_value=user_data_dir / "workspaces.sqlite"):
+                                                                    return TldwCli()
 
 
 def test_app_uses_screen_navigation_and_wires_media_services():
     app = _build_test_app()
 
     assert app._use_screen_navigation is True
+    assert isinstance(app.workspace_registry_service, LocalWorkspaceRegistryService)
     assert isinstance(app.local_media_reading_service, LocalMediaReadingService)
     assert isinstance(app.server_media_reading_service, ServerMediaReadingService)
     assert isinstance(app.media_reading_scope_service, MediaReadingScopeService)
