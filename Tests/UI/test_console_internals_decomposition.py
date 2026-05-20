@@ -1051,7 +1051,6 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
 
         for selector in (
             "#console-workspace-grid",
-            "#console-left-rail",
             "#console-staged-context-tray",
             "#console-workspace-context",
             "#console-transcript-region",

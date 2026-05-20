@@ -18,33 +18,42 @@ class ConsoleWorkspaceContextTray(Vertical):
         super().__init__(**kwargs)
         self.state = state
 
+    def sync_state(self, state: ConsoleWorkspaceContextState) -> None:
+        """Refresh the mounted workspace context tray from new display state."""
+        self.state = state
+        self.refresh(recompose=True)
+
+    @staticmethod
+    def _static(text: str, *, id: str, classes: str = "") -> Static:
+        return Static(str(text), id=id, classes=classes, markup=False)
+
     def compose(self) -> ComposeResult:
-        yield Static(
+        yield self._static(
             self.state.heading,
             id="console-workspace-context-title",
             classes="destination-section",
         )
-        yield Static(
+        yield self._static(
             self.state.workspace_label,
             id="console-active-workspace",
             classes="console-workspace-status-row",
         )
-        yield Static(
+        yield self._static(
             self.state.authority_label,
             id="console-workspace-authority",
             classes="console-workspace-status-row",
         )
-        yield Static(
+        yield self._static(
             self.state.sync_label,
             id="console-workspace-sync",
             classes="console-workspace-status-row",
         )
-        yield Static(
+        yield self._static(
             self.state.runtime_label,
             id="console-workspace-runtime",
             classes="console-workspace-status-row",
         )
-        yield Static(
+        yield self._static(
             "Conversations",
             id="console-workspace-conversations-title",
             classes="destination-section",
@@ -54,13 +63,13 @@ class ConsoleWorkspaceContextTray(Vertical):
                 for index, row in enumerate(self.state.conversation_rows):
                     marker = "> " if row.selected else "  "
                     status = f" [{row.status}]" if row.status else ""
-                    yield Static(
+                    yield self._static(
                         f"{marker}{row.title}{status}",
                         id=f"console-workspace-conversation-{index}",
                         classes="console-workspace-conversation-row",
                     )
             else:
-                yield Static(
+                yield self._static(
                     self.state.conversation_empty_copy,
                     id="console-workspace-empty-conversations",
                     classes="console-workspace-empty-copy",
@@ -74,7 +83,7 @@ class ConsoleWorkspaceContextTray(Vertical):
         change_button.disabled = not self.state.change_workspace_enabled
         yield change_button
         if self.state.change_workspace_recovery:
-            yield Static(
+            yield self._static(
                 self.state.change_workspace_recovery,
                 id="console-change-workspace-recovery",
                 classes="console-workspace-recovery",
@@ -88,14 +97,14 @@ class ConsoleWorkspaceContextTray(Vertical):
         new_button.disabled = not self.state.new_conversation_enabled
         yield new_button
         if self.state.new_conversation_recovery:
-            yield Static(
+            yield self._static(
                 self.state.new_conversation_recovery,
                 id="console-new-workspace-conversation-recovery",
                 classes="console-workspace-recovery",
             )
 
         if self.state.recovery_copy:
-            yield Static(
+            yield self._static(
                 self.state.recovery_copy,
                 id="console-workspace-recovery",
                 classes="console-workspace-recovery",

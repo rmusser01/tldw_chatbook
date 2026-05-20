@@ -10,9 +10,11 @@ from tldw_chatbook.Workspaces import (
     RuntimeBindingKind,
     RuntimeBindingStatus,
     WorkspaceAuthority,
+    WorkspaceRecord,
     WorkspaceRuntimeBinding,
     WorkspaceSyncStatus,
 )
+from tldw_chatbook.Workspaces import display_state
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceConversationRow,
     build_console_workspace_state,
@@ -119,3 +121,47 @@ def test_console_workspace_state_derives_conversation_rows_from_memberships(
     assert state.conversation_rows[0].conversation_id == "conv-1"
     assert state.conversation_rows[0].title == "Planning thread"
     assert state.conversation_rows[0].selected is True
+
+
+def test_console_workspace_state_treats_none_memberships_as_empty() -> None:
+    class NullMembershipService:
+        def get_active_workspace(self) -> WorkspaceRecord:
+            return WorkspaceRecord(workspace_id="ws-a", name="Research Sprint")
+
+        def list_runtime_bindings(self, _workspace_id: str):
+            return ()
+
+        def list_workspace_memberships(self, _workspace_id: str):
+            return None
+
+    state = build_console_workspace_state(
+        registry_service=NullMembershipService(),
+        current_conversation="conv-1",
+    )
+
+    assert state.workspace_label == "Workspace: Research Sprint"
+    assert state.conversation_rows == ()
+    assert state.conversation_empty_copy == "No conversations in this workspace yet."
+
+
+def test_console_workspace_state_logs_registry_failures(monkeypatch) -> None:
+    class FailingRegistryService:
+        def get_active_workspace(self) -> WorkspaceRecord:
+            raise RuntimeError("workspace db unavailable")
+
+    warnings: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class FakeLogger:
+        def warning(self, *args, **kwargs) -> None:
+            warnings.append((args, kwargs))
+
+    monkeypatch.setattr(display_state, "logger", FakeLogger(), raising=False)
+
+    state = build_console_workspace_state(
+        registry_service=FailingRegistryService(),
+        current_conversation=None,
+    )
+
+    assert state.workspace_label == "No workspace selected"
+    assert warnings
+    assert warnings[0][1].get("exc_info") is True

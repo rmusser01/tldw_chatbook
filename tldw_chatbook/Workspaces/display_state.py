@@ -5,11 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from loguru import logger
+
 from .models import (
     RuntimeBindingStatus,
     WorkspaceRecord,
     WorkspaceRuntimeBinding,
 )
+
+logger = logger.bind(module="WorkspaceDisplayState")
 
 
 @dataclass(frozen=True)
@@ -46,7 +50,20 @@ def build_console_workspace_state(
     current_conversation: str | None,
     conversations: Iterable[ConsoleWorkspaceConversationRow] | None = None,
 ) -> ConsoleWorkspaceContextState:
-    """Build Console workspace display state from the local registry seam."""
+    """Build Console workspace display state from the local registry seam.
+
+    Args:
+        registry_service: Local workspace registry service used to read the
+            active workspace, runtime bindings, and workspace memberships. A
+            missing or failing service produces a safe degraded state.
+        current_conversation: Active conversation id used to mark the selected
+            conversation row, when it belongs to the active workspace.
+        conversations: Optional prebuilt conversation rows. When omitted, rows
+            are derived from `conversation` workspace memberships.
+
+    Returns:
+        Renderable Console workspace context state.
+    """
 
     if registry_service is None:
         return ConsoleWorkspaceContextState(
@@ -67,6 +84,10 @@ def build_console_workspace_state(
     try:
         active_workspace = registry_service.get_active_workspace()
     except Exception:
+        logger.warning(
+            "Failed to read active workspace for Console context rail",
+            exc_info=True,
+        )
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="No workspace selected",
@@ -126,8 +147,15 @@ def _safe_runtime_bindings(
     active_workspace: WorkspaceRecord,
 ) -> tuple[WorkspaceRuntimeBinding, ...]:
     try:
-        return tuple(registry_service.list_runtime_bindings(active_workspace.workspace_id))
+        runtime_bindings = registry_service.list_runtime_bindings(active_workspace.workspace_id)
+        if not runtime_bindings:
+            return ()
+        return tuple(runtime_bindings)
     except Exception:
+        logger.warning(
+            "Failed to read workspace runtime bindings for Console context rail",
+            exc_info=True,
+        )
         return ()
 
 
@@ -138,6 +166,12 @@ def _conversation_rows_from_memberships(
     try:
         memberships = registry_service.list_workspace_memberships(active_workspace.workspace_id)
     except Exception:
+        logger.warning(
+            "Failed to read workspace memberships for Console context rail",
+            exc_info=True,
+        )
+        return ()
+    if not memberships:
         return ()
     rows: list[ConsoleWorkspaceConversationRow] = []
     for membership in memberships:
@@ -168,7 +202,7 @@ def _select_conversation(
 def _runtime_label(bindings: tuple[WorkspaceRuntimeBinding, ...]) -> str:
     if not bindings:
         return "Runtime: none"
-    ready_count = sum(1 for binding in bindings if binding.status is RuntimeBindingStatus.READY)
+    ready_count = sum(binding.status == RuntimeBindingStatus.READY for binding in bindings)
     return (
         f"Runtime: {len(bindings)} {_plural('binding', len(bindings))}, "
         f"{ready_count} ready"

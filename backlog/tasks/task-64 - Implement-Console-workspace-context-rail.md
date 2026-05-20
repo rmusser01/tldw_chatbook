@@ -41,6 +41,7 @@ Implement PR B from the workspace operating context plan: split the Console left
 - Added a terminal-native `ConsoleWorkspaceContextTray` and split the Console left rail into staged context plus read-only workspace/conversation context.
 - Kept `Change workspace` and `New conversation` visible but disabled with explicit recovery copy because action wiring belongs to later workspace slices.
 - Added focused display-state and mounted UI regressions, updated Console geometry/parity tests for the split left rail, and captured an actual `textual-web`/CDP screenshot for approval.
+- Addressed PR review feedback by wiring active conversation highlighting, adding tray state sync, rendering workspace text without Rich markup interpretation, logging degraded registry reads, and hardening empty membership/runtime states.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

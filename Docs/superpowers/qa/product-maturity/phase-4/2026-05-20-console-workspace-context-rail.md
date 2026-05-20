@@ -19,7 +19,7 @@ This slice does not implement workspace switching, conversation persistence, wor
 ## Automated Evidence
 
 - Command: `python -m pytest -q Tests/Workspaces/test_workspace_display_state.py Tests/UI/test_console_workspace_context_rail.py Tests/UI/test_destination_visual_parity_correction.py::test_console_uses_three_pane_workbench_and_visible_composer Tests/UI/test_destination_visual_parity_correction.py::test_core_default_empty_or_blocked_states_keep_workbench_geometry Tests/UI/test_console_internals_decomposition.py::test_console_workbench_weights_transcript_as_primary_region Tests/UI/test_console_internals_decomposition.py::test_console_workbench_panes_have_visible_terminal_frames Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py::test_console_core_loop_exposes_agentic_shell_regions --tb=short`
-- Result: `12 passed, 8 warnings in 12.20s`
+- Result: `16 passed, 8 warnings in 17.94s`
 - Command: `git diff --check`
 - Result: passed with no output
 
@@ -28,6 +28,7 @@ This slice does not implement workspace switching, conversation persistence, wor
 - Capture method: actual running app via `textual-web` on localhost using Playwright-controlled Chromium/CDP.
 - Viewport: `2050x1240` browser viewport, device scale factor `1`.
 - Screenshot: `Docs/superpowers/qa/product-maturity/phase-4/actual-visual-captures/console-workspace-context-rail-2026-05-20-disabled-actions.png`
+- Review-fix screenshot: `Docs/superpowers/qa/product-maturity/phase-4/actual-visual-captures/console-workspace-context-rail-2026-05-20-review-fixes.png`
 - Image check: `2050 x 1240`, RGB PNG.
 - User approval: approved in the product UX review thread.
 
@@ -38,6 +39,7 @@ This slice does not implement workspace switching, conversation persistence, wor
 - The workspace rail shows an active workspace, authority/sync/runtime rows, and a conversation row without hiding Library or Notes content.
 - `Change workspace` and `New conversation` are visible but disabled, with recovery copy that names the later implementation slice instead of implying the actions work now.
 - The transcript remains the primary center column and the run inspector remains the narrower right column.
+- Review fix replay removes the redundant left-rail parent frame while keeping distinct framed `Staged Context` and `Convos & Workspaces` sections.
 
 ## Residual Risks
 
