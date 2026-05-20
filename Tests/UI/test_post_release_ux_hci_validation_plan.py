@@ -51,6 +51,10 @@ def _text(path: Path) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
+def _markdown_table_columns(row: str) -> list[str]:
+    return [column.strip() for column in row.strip().strip("|").split("|")]
+
+
 def test_post_release_validation_plan_requires_actual_app_use() -> None:
     plan = _text(PLAN)
 
@@ -91,12 +95,17 @@ def test_post_release_qa_harness_requires_real_screenshots_and_approval() -> Non
     ):
         assert required in readme
 
+    table_rows = [_markdown_table_columns(row) for row in readme.splitlines()]
     for screen in REQUIRED_SCREENS:
-        matching_rows = [
-            row for row in readme.splitlines() if row.startswith(f"| {screen} |")
-        ]
-        assert matching_rows, f"{screen} row missing from post-release QA index"
-        assert "pending" in matching_rows[0], f"{screen} row must track screenshot approval"
+        matching_rows = [row for row in table_rows if row and row[0] == screen]
+        assert len(matching_rows) == 1, (
+            f"{screen} must have exactly one row in the post-release QA index"
+        )
+        columns = matching_rows[0]
+        assert len(columns) >= 5, f"{screen} row must include all QA index columns"
+        assert columns[2] == "pending", (
+            f"{screen} row must track pending screenshot approval explicitly"
+        )
 
     for required_field in (
         "Evidence method:",
@@ -126,10 +135,16 @@ def test_post_release_backlog_tasks_track_screens_workflows_and_deferred_feature
         assert "parent_task_id: TASK-60" in task
         assert "<!-- AC:BEGIN -->" in task
 
-    for task_id in ("TASK-60.1", "TASK-60.2"):
-        assert "status: Done" in _text(CHILD_TASKS[task_id])
-    for task_id in ("TASK-60.3", "TASK-60.4", "TASK-60.5", "TASK-60.6"):
-        assert "status: To Do" in _text(CHILD_TASKS[task_id])
+    expected_statuses = {
+        "TASK-60.1": "Done",
+        "TASK-60.2": "Done",
+        "TASK-60.3": "To Do",
+        "TASK-60.4": "To Do",
+        "TASK-60.5": "To Do",
+        "TASK-60.6": "To Do",
+    }
+    for task_id, expected_status in expected_statuses.items():
+        assert f"status: {expected_status}" in _text(CHILD_TASKS[task_id])
 
     assert "forbids SVG/code-layout substitutes" in _text(CHILD_TASKS["TASK-60.1"])
     assert "Home, Console, Library, Artifacts, Personas, Watchlists" in _text(
