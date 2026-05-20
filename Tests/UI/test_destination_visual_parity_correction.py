@@ -267,10 +267,12 @@ async def test_console_uses_three_pane_workbench_and_visible_composer():
         _assert_ascii_workbench_contract(
             console,
             workbench="#console-workspace-grid",
-            panes=("#console-staged-context-tray", "#console-main-column", "#console-run-inspector"),
+            panes=("#console-left-rail", "#console-main-column", "#console-run-inspector"),
             actions=("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
             height=42,
         )
+        assert console.query_one("#console-staged-context-tray")
+        assert console.query_one("#console-workspace-context")
         transcript = console.query_one("#console-session-surface")
         composer = console.query_one("#console-native-composer")
         _assert_visible_in_viewport(transcript, height=42, context="Console transcript")
@@ -520,7 +522,7 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(mo
             "chat",
             ConsoleHarness,
             "#console-workspace-grid",
-            ("#console-staged-context-tray", "#console-main-column", "#console-run-inspector"),
+            ("#console-left-rail", "#console-main-column", "#console-run-inspector"),
             ("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
             ("#console-run-inspector-state",),
             "#console-run-inspector",
@@ -1355,7 +1357,7 @@ COMPACT_DESTINATION_CONTRACTS = {
     "chat": {
         "identity": "#console-title",
         "workbench": "#console-workspace-grid",
-        "object": "#console-staged-context-tray",
+        "object": "#console-left-rail",
         "detail": "#console-session-surface",
         "actions": ("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
     },

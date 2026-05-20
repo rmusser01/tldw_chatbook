@@ -56,7 +56,9 @@ from ...Widgets.Console import (
     ConsoleRunInspector,
     ConsoleSessionSurface,
     ConsoleStagedContextTray,
+    ConsoleWorkspaceContextTray,
 )
+from ...Workspaces.display_state import build_console_workspace_state
 from ...Widgets.compact_model_bar import CompactModelBar
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 
@@ -740,6 +742,10 @@ class ChatScreen(BaseAppScreen):
         control_state = self._build_console_control_state(pending_launch)
         staged_context_state = self._build_console_staged_context_state(pending_launch)
         inspector_state = self._build_console_inspector_state(pending_launch)
+        workspace_context_state = build_console_workspace_state(
+            registry_service=getattr(self.app_instance, "workspace_registry_service", None),
+            current_conversation=None,
+        )
         with Vertical(id="console-shell"):
             yield Static(
                 "Console | Live agent control, chat, RAG, tools, approvals | Local",
@@ -772,17 +778,35 @@ class ChatScreen(BaseAppScreen):
                 Horizontal(id="console-workspace-grid", classes="ds-panel destination-workbench")
             )
             with workspace_grid:
-                staged_context_tray = ConsoleStagedContextTray(
-                    staged_context_state,
-                    id="console-staged-context-tray",
+                left_rail = Vertical(
+                    id="console-left-rail",
                     classes="console-region destination-workbench-pane",
                 )
-                staged_context_tray.styles.width = "5fr"
-                staged_context_tray.styles.min_width = 40
-                yield self._frame_console_region(staged_context_tray)
+                left_rail.styles.width = "4fr"
+                left_rail.styles.min_width = 36
+                with self._frame_console_region(left_rail):
+                    staged_context_tray = ConsoleStagedContextTray(
+                        staged_context_state,
+                        id="console-staged-context-tray",
+                        classes="console-left-rail-section",
+                    )
+                    staged_context_tray.styles.width = "100%"
+                    staged_context_tray.styles.min_width = 0
+                    staged_context_tray.styles.height = "1fr"
+                    yield self._frame_console_region(staged_context_tray)
+
+                    workspace_context_tray = ConsoleWorkspaceContextTray(
+                        workspace_context_state,
+                        id="console-workspace-context",
+                        classes="console-left-rail-section",
+                    )
+                    workspace_context_tray.styles.width = "100%"
+                    workspace_context_tray.styles.min_width = 0
+                    workspace_context_tray.styles.height = "1fr"
+                    yield self._frame_console_region(workspace_context_tray)
 
                 main_column = Vertical(id="console-main-column")
-                main_column.styles.width = "9fr"
+                main_column.styles.width = "10fr"
                 main_column.styles.min_width = 52
                 with main_column:
                     transcript_region = self._frame_console_region(
