@@ -47,6 +47,8 @@
 /* Close tab button */
 .close-tab-button {
     width: 3;
+    min-width: 3;
+    max-width: 3;
     height: 2;
     padding: 0;
     margin-left: 1;
@@ -58,6 +60,12 @@
 .close-tab-button:hover {
     background: $error;
     color: $text;
+}
+
+Button.close-tab-button {
+    width: 3;
+    min-width: 3;
+    max-width: 3;
 }
 
 /* New tab button */

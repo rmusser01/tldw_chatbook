@@ -22,6 +22,9 @@ if TYPE_CHECKING:
 #
 # Classes:
 
+CHAT_TAB_CLOSE_BUTTON_WIDTH = 3
+
+
 class ChatTabBar(Horizontal):
     """
     A tab bar widget for managing multiple chat sessions.
@@ -90,11 +93,14 @@ class ChatTabBar(Horizontal):
         
         # Close button
         close_button = Button(
-            "×",
+            "x",
             id=f"close-tab-{tab_id}",
             classes="close-tab-button",
             name=tab_id  # Store tab_id in name for easy access
         )
+        close_button.styles.width = CHAT_TAB_CLOSE_BUTTON_WIDTH
+        close_button.styles.min_width = CHAT_TAB_CLOSE_BUTTON_WIDTH
+        close_button.styles.max_width = CHAT_TAB_CLOSE_BUTTON_WIDTH
         
         # Create tab container with buttons already as children
         tab_container = Horizontal(
