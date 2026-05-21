@@ -924,6 +924,37 @@ async def test_console_transcript_new_tab_control_is_fully_visible():
 
 
 @pytest.mark.asyncio
+async def test_console_chat_tab_close_control_is_compact_x_button():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#new-chat-tab-button")
+
+        chat_tab_buttons = [
+            button
+            for button in console.query(Button)
+            if button.id and button.id.startswith("chat-tab-")
+        ]
+        close_buttons = [
+            button
+            for button in console.query(Button)
+            if button.id and button.id.startswith("close-tab-")
+        ]
+
+        assert len(chat_tab_buttons) == 1
+        assert len(close_buttons) == 1
+
+        chat_tab = chat_tab_buttons[0]
+        close_button = close_buttons[0]
+
+        assert str(close_button.label) == "x"
+        assert close_button.region.width <= 4
+        assert close_button.region.width < chat_tab.region.width
+
+
+@pytest.mark.asyncio
 async def test_console_app_footer_status_bar_remains_visible_below_console():
     app = _build_test_app()
     host = ConsoleHarness(app)
