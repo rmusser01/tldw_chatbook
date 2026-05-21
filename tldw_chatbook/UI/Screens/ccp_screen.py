@@ -18,6 +18,7 @@ from textual.message import Message
 from ..Navigation.base_app_screen import BaseAppScreen
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
+from ...Chat.chat_handoff_models import ChatHandoffPayload
 
 # Import widget components
 from ...Widgets.CCP_Widgets import (
@@ -65,6 +66,26 @@ if TYPE_CHECKING:
     from ...app import TldwCli
 
 logger = logger.bind(module="CCPScreen")
+
+CCP_DESTINATION_MODE_VIEWS = {
+    "ccp-personas-mode-button": ("persona_profiles", "Personas"),
+    "ccp-characters-mode-button": ("character_card", "Characters"),
+    "ccp-prompts-mode-button": ("prompt_editor", "Prompts"),
+    "ccp-dictionaries-mode-button": ("dictionary_view", "Dictionaries"),
+    "ccp-lore-mode-button": ("lore_view", "Lore"),
+    "ccp-import-export-mode-button": ("import_export_view", "Import/Export"),
+}
+
+CCP_MODE_PLACEHOLDERS = {
+    "lore_view": (
+        "Lore",
+        "Lore mode is not wired yet. Character cards and dictionaries remain available in this slice.",
+    ),
+    "import_export_view": (
+        "Import / Export",
+        "Use the inspector actions to import or export local character cards.",
+    ),
+}
 
 
 # ========== Custom Messages ==========
@@ -736,6 +757,12 @@ class CCPScreen(BaseAppScreen):
                         yield CCPPersonaEditorWidget(parent_screen=self)
                         yield CCPPromptEditorWidget(parent_screen=self)
                         yield CCPDictionaryEditorWidget(parent_screen=self)
+                        with Vertical(id="ccp-mode-placeholder-view", classes="hidden"):
+                            yield Static("Mode unavailable", id="ccp-mode-placeholder-title")
+                            yield Static(
+                                "This mode is not wired in the destination-native route yet.",
+                                id="ccp-mode-placeholder-body",
+                            )
 
                 yield self._column_divider("ccp-detail-inspector-divider")
 
@@ -923,11 +950,33 @@ class CCPScreen(BaseAppScreen):
         event.stop()
         await self.character_handler.handle_import()
 
+    @on(Button.Pressed, ".ccp-mode-button")
+    async def handle_destination_mode_button(self, event: Button.Pressed) -> None:
+        """Switch destination-native CCP modes from the mode strip."""
+        event.stop()
+        view_config = CCP_DESTINATION_MODE_VIEWS.get(str(event.button.id or ""))
+        if view_config is None:
+            return
+        view_name, _ = view_config
+        await self._switch_view(view_name)
+
+    @on(Button.Pressed, "#ccp-attach-selected-to-console")
+    async def handle_attach_selected_character_to_console(self, event: Button.Pressed) -> None:
+        """Stage the selected character card into Console context."""
+        event.stop()
+        self._attach_selected_character_to_console()
+
     @on(Button.Pressed, "#ccp-start-selected-chat")
     async def handle_start_selected_character_chat(self, event: Button.Pressed) -> None:
         """Start a character-backed Console chat from the inspector action."""
         event.stop()
         await self._launch_character_in_chat(self.state.selected_character_id)
+
+    @on(Button.Pressed, "#ccp-export-character-native")
+    async def handle_export_selected_character(self, event: Button.Pressed) -> None:
+        """Export the selected character card from the inspector action."""
+        event.stop()
+        await self.character_handler.handle_export_character()
     
     # Note: These button handlers are now handled by the sidebar widget
     # The sidebar widget posts messages that we handle in the message handlers above
@@ -1246,7 +1295,7 @@ class CCPScreen(BaseAppScreen):
             "conversations", "conversation_messages", "character_card", 
             "character_editor", "persona_profiles", "persona_editor",
             "prompt_editor", "dictionary_view", 
-            "dictionary_editor"
+            "dictionary_editor", "lore_view", "import_export_view"
         ]
         if state.active_view not in valid_views:
             state.active_view = "conversations"
@@ -1254,6 +1303,42 @@ class CCPScreen(BaseAppScreen):
         return state
     
     # ===== Private Helper Methods =====
+
+    def _update_mode_placeholder(self, view_name: str) -> None:
+        """Update placeholder content for destination modes without full widgets."""
+        placeholder = CCP_MODE_PLACEHOLDERS.get(view_name)
+        if placeholder is None:
+            return
+        title, body = placeholder
+        try:
+            self.query_one("#ccp-mode-placeholder-title", Static).update(title)
+            self.query_one("#ccp-mode-placeholder-body", Static).update(body)
+        except NoMatches:
+            return
+
+    def _update_destination_mode_chrome(self, view_name: str) -> None:
+        """Keep mode-strip active state and status copy synchronized."""
+        active_button_id = None
+        active_label = None
+        for button_id, (candidate_view, label) in CCP_DESTINATION_MODE_VIEWS.items():
+            if candidate_view == view_name:
+                active_button_id = button_id
+                active_label = label
+                break
+
+        for button in self.query(".ccp-mode-button"):
+            if button.id == active_button_id:
+                button.add_class("is-active")
+            else:
+                button.remove_class("is-active")
+
+        if active_label is not None:
+            try:
+                self.query_one("#ccp-status-row", Static).update(
+                    f"Mode: {active_label} | Source: local character DB | Attachments: Console / Workflows / ACP / Skills"
+                )
+            except NoMatches:
+                return
     
     async def _switch_view(self, view_name: str) -> None:
         """Switch the active view in the content area.
@@ -1271,7 +1356,8 @@ class CCPScreen(BaseAppScreen):
                 "#ccp-persona-editor-view",
                 "#ccp-prompt-editor-view",
                 "#ccp-dictionary-view",
-                "#ccp-dictionary-editor-view"
+                "#ccp-dictionary-editor-view",
+                "#ccp-mode-placeholder-view",
             ]
             
             for container_id in view_containers:
@@ -1291,11 +1377,14 @@ class CCPScreen(BaseAppScreen):
                 "persona_editor": "#ccp-persona-editor-view",
                 "prompt_editor": "#ccp-prompt-editor-view",
                 "dictionary_view": "#ccp-dictionary-view",
-                "dictionary_editor": "#ccp-dictionary-editor-view"
+                "dictionary_editor": "#ccp-dictionary-editor-view",
+                "lore_view": "#ccp-mode-placeholder-view",
+                "import_export_view": "#ccp-mode-placeholder-view",
             }
             
             target_id = view_map.get(view_name)
             if target_id:
+                self._update_mode_placeholder(view_name)
                 target_view = self.query_one(target_id)
                 target_view.remove_class("hidden")
                 
@@ -1303,6 +1392,7 @@ class CCPScreen(BaseAppScreen):
                 new_state = self.state
                 new_state.active_view = view_name
                 self.state = new_state
+                self._update_destination_mode_chrome(view_name)
                 
                 logger.info(f"Switched to view: {view_name}")
             else:
@@ -1417,6 +1507,70 @@ class CCPScreen(BaseAppScreen):
                 return container
 
         return None
+
+    def _selected_character_handoff_body(self) -> str:
+        """Build a compact Console handoff body for the selected character."""
+        character_data = self.state.selected_character_data or getattr(
+            self.character_handler,
+            "current_character_data",
+            {},
+        ) or {}
+        character_name = self.state.selected_character_name or character_data.get("name") or "Selected character"
+        lines = [f"Character: {character_name}"]
+        for label, key in (
+            ("Description", "description"),
+            ("Personality", "personality"),
+            ("Scenario", "scenario"),
+            ("First message", "first_message"),
+        ):
+            value = str(character_data.get(key) or "").strip()
+            if value:
+                lines.append(f"{label}: {value}")
+        return "\n".join(lines)
+
+    def _attach_selected_character_to_console(self) -> None:
+        """Stage selected CCP character context in Console via the handoff adapter."""
+        character_id = self.state.selected_character_id or getattr(
+            self.character_handler,
+            "current_character_id",
+            None,
+        )
+        if character_id in {None, ""}:
+            self.notify("Load a character before attaching it to Console.", severity="warning")
+            return
+
+        open_chat_with_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_chat_with_handoff):
+            self.notify("Console handoff is unavailable for Personas in this runtime.", severity="warning")
+            return
+
+        character_data = self.state.selected_character_data or getattr(
+            self.character_handler,
+            "current_character_data",
+            {},
+        ) or {}
+        character_name = self.state.selected_character_name or character_data.get("name") or str(character_id)
+        target_id = f"local:character:{character_id}"
+        open_chat_with_handoff(
+            ChatHandoffPayload(
+                source="personas",
+                item_type="character-card",
+                title=f"Character: {character_name}",
+                body=self._selected_character_handoff_body(),
+                display_summary=f"{character_name} character staged.",
+                suggested_prompt=f"Use {character_name} as the active character context.",
+                runtime_backend="local",
+                source_owner="local",
+                source_selector_state="local",
+                metadata={
+                    "selected_kind": "character",
+                    "selected_name": str(character_name),
+                    "selected_record_id": str(character_id),
+                    "selected_target_id": target_id,
+                    "backend": "local",
+                },
+            )
+        )
 
     def _current_runtime_backend(self) -> str:
         """Resolve the active runtime backend for CCP-launched chats."""

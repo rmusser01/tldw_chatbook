@@ -1,12 +1,13 @@
 """Handler for character-related operations in the CCP window."""
 
+import base64
+import json
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
+
 from loguru import logger
 from textual.widgets import Select, Button, Input, TextArea, Static
-import json
-import base64
-from pathlib import Path
 
 from .ccp_messages import CharacterMessage, ViewChangeMessage
 

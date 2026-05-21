@@ -21,7 +21,16 @@ from tldw_chatbook.Widgets.CCP_Widgets import (
 
 
 async def _wait_for(predicate, pilot, *, timeout: float = 5.0) -> None:
-    """Poll mounted Textual state until a UI condition is true."""
+    """Poll mounted Textual state until a UI condition is true.
+
+    Args:
+        predicate: Callable returning truthy once the expected UI state is reached.
+        pilot: Textual test pilot driving the mounted app.
+        timeout: Maximum seconds to wait before failing.
+
+    Raises:
+        AssertionError: If the predicate does not become truthy before timeout.
+    """
     deadline = pilot.app._loop.time() + timeout
     while pilot.app._loop.time() < deadline:
         if predicate():
@@ -118,6 +127,26 @@ class TestCCPScreenIntegration:
 
             with pytest.raises(NoMatches):
                 screen.query_one("#ccp-sidebar")
+
+    async def test_destination_mode_buttons_switch_views(self, mock_app_instance):
+        app = CCPTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = pilot.app.screen
+            await pilot.click("#ccp-prompts-mode-button")
+            await _wait_for(lambda: screen.state.active_view == "prompt_editor", pilot)
+
+            assert "is-active" in screen.query_one("#ccp-prompts-mode-button", Button).classes
+            assert "Mode: Prompts" in screen.query_one("#ccp-status-row", Static).renderable
+
+            await pilot.click("#ccp-lore-mode-button")
+            await _wait_for(lambda: screen.state.active_view == "lore_view", pilot)
+
+            assert "is-active" in screen.query_one("#ccp-lore-mode-button", Button).classes
+            assert "Lore mode is not wired yet" in screen.query_one(
+                "#ccp-mode-placeholder-body",
+                Static,
+            ).renderable
 
     async def test_persona_selection_is_first_class_in_ccp_screen(self, mock_app_instance):
         app = CCPTestApp(mock_app_instance)
@@ -365,6 +394,47 @@ class TestCCPScreenIntegration:
             assert session_data.discovery_entity_id == "7"
             tab_container.switch_to_tab_async.assert_awaited_once_with("tab-1")
             display_mock.assert_not_called()
+
+    async def test_inspector_attach_button_stages_selected_character_context(self, mock_app_instance):
+        app = CCPTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = pilot.app.screen
+            screen.state.selected_character_id = "7"
+            screen.state.selected_character_name = "Alice Character"
+            screen.state.selected_character_data = {
+                "id": 7,
+                "name": "Alice Character",
+                "description": "Helpful character.",
+                "personality": "Direct.",
+            }
+            screen._update_destination_selection_summary()
+            pilot.app.open_chat_with_handoff = Mock()
+
+            screen.query_one("#ccp-attach-selected-to-console", Button).press()
+            await _wait_for(lambda: pilot.app.open_chat_with_handoff.called, pilot)
+
+            payload = pilot.app.open_chat_with_handoff.call_args.args[0]
+            assert payload.source == "personas"
+            assert payload.item_type == "character-card"
+            assert payload.metadata["selected_target_id"] == "local:character:7"
+            assert "Alice Character" in payload.body
+
+    async def test_inspector_export_button_calls_character_export(self, mock_app_instance):
+        app = CCPTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = pilot.app.screen
+            screen.state.selected_character_id = "7"
+            screen.character_handler.current_character_id = "7"
+            screen.character_handler.handle_export_character = AsyncMock()
+            screen._update_destination_selection_summary()
+
+            screen.query_one("#ccp-export-character-native", Button).press()
+            await _wait_for(
+                lambda: screen.character_handler.handle_export_character.await_count == 1,
+                pilot,
+            )
 
     async def test_start_persona_chat_launches_blank_main_chat_session(self, mock_app_instance, monkeypatch):
         app = CCPTestApp(mock_app_instance)
