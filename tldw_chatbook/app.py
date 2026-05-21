@@ -1531,13 +1531,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}")
 
+        self._ui_ready = False  # Track if UI is fully composed
+        self._shutting_down = False  # Track if app is shutting down
+
         # --- Setup Default view for CCP tab ---
         # Initialize self.ccp_active_view based on initial tab or default state if needed
         if self._initial_tab_value == TAB_CCP:
             self.ccp_active_view = "conversation_details_view"  # Default view for CCP tab
         # else: it will default to "conversation_details_view" anyway
-        self._ui_ready = False  # Track if UI is fully composed
-        self._shutting_down = False  # Track if app is shutting down
 
         # --- Assign DB instances for event handlers ---
         if self.prompts_service_initialized:
@@ -3506,7 +3507,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # --- Watcher for CCP Active View ---
     def watch_ccp_active_view(self, old_view: Optional[str], new_view: str) -> None:
         loguru_logger.debug(f"CCP active view changing from '{old_view}' to: '{new_view}'")
-        if not self._ui_ready:
+        if not getattr(self, "_ui_ready", False):
             loguru_logger.debug("watch_ccp_active_view: UI not ready, returning.")
             return
         try:

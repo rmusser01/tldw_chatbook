@@ -20,7 +20,7 @@ This index exists because prior mounted layout checks and phase closeout evidenc
 | Console | recorded | pending | visible composer input and blocked-send recovery verified | `TASK-60.3` |
 | Library | recorded | pending | Search/RAG keyboard activation and blocked empty recovery verified | `TASK-60.3` |
 | Artifacts | recorded | pending | empty state and Open Console recovery verified | `TASK-60.3` |
-| Personas | recorded | pending | P1 indefinite loading blocks primary attach path | `TASK-60.5` |
+| Personas | recorded | approved | loading blocker fixed; CCP route approved as destination-native workbench | `TASK-60.5` |
 | Watchlists | recorded | pending | P1 indefinite loading blocks primary run review path | `TASK-60.6` |
 | Schedules | recorded | pending | empty/recovery baseline verified | `TASK-60.3` |
 | Workflows | recorded | pending | empty/recovery baseline verified | `TASK-60.3` |

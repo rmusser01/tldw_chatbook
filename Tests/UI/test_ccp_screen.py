@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, Static
+from textual.css.query import NoMatches
+from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.CCP_Modules import PersonaMessage
@@ -16,6 +17,16 @@ from tldw_chatbook.Widgets.CCP_Widgets import (
     StartChatRequested,
     StartPersonaChatRequested,
 )
+
+
+async def _wait_for(predicate, pilot, *, timeout: float = 5.0) -> None:
+    """Poll mounted Textual state until a UI condition is true."""
+    deadline = pilot.app._loop.time() + timeout
+    while pilot.app._loop.time() < deadline:
+        if predicate():
+            return
+        await pilot.pause(0.1)
+    raise AssertionError("Timed out waiting for CCP UI condition")
 
 
 @pytest.fixture
@@ -85,6 +96,24 @@ class TestCCPScreenState:
 class TestCCPScreenIntegration:
     """Integration coverage for persona CCP behavior."""
 
+    async def test_ccp_route_uses_destination_native_personas_workbench(self, mock_app_instance):
+        app = CCPTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = pilot.app.screen
+
+            assert screen.query_one("#ccp-destination-title", Static).renderable == (
+                "Personas | Behavior, characters, prompts, lore | Ready | Local/Server"
+            )
+            assert isinstance(screen.query_one("#ccp-mode-strip"), object)
+            assert isinstance(screen.query_one("#ccp-character-library-pane"), object)
+            assert isinstance(screen.query_one("#ccp-behavior-detail-pane"), object)
+            assert isinstance(screen.query_one("#ccp-attachment-inspector-pane"), object)
+            assert screen.query_one("#ccp-characters-mode-button", Button).label.plain == "Characters"
+
+            with pytest.raises(NoMatches):
+                screen.query_one("#ccp-sidebar")
+
     async def test_persona_selection_is_first_class_in_ccp_screen(self, mock_app_instance):
         app = CCPTestApp(mock_app_instance)
 
@@ -142,6 +171,105 @@ class TestCCPScreenIntegration:
             persona_editor = screen.query_one(CCPPersonaEditorWidget)
             assert persona_card.persona_data["name"] == "Alice Persona"
             assert persona_editor.persona_data["id"] == "persona.local.alice"
+
+    async def test_imported_character_loads_view_and_prefills_editor(
+        self,
+        mock_app_instance,
+        monkeypatch,
+    ):
+        character = {
+            "id": 3,
+            "name": "Bean_RPG",
+            "description": "A test imported card for role-play validation.",
+            "personality": "Curious and helpful.",
+            "scenario": "Testing imported character rendering.",
+            "first_message": "Hello from Bean.",
+            "tags": ["rpg", "fun"],
+            "character_version": "1.0",
+            "version": 1,
+        }
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.CCP_Modules.ccp_character_handler.fetch_all_characters",
+            Mock(return_value=[{"id": "3", "name": "Bean_RPG"}]),
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.CCP_Modules.ccp_character_handler.fetch_character_by_id",
+            Mock(return_value=character),
+        )
+        app = CCPTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = pilot.app.screen
+
+            await screen.character_handler.load_character("3")
+            await _wait_for(lambda: screen.state.selected_character_id == "3", pilot)
+
+            assert screen.state.active_view == "character_card"
+            assert screen.query_one("#ccp-card-name-display", Static).renderable == "Bean_RPG"
+            assert (
+                screen.query_one("#ccp-card-description-display", TextArea).text
+                == "A test imported card for role-play validation."
+            )
+            assert "hidden" not in screen.query_one("#character-details-container").classes
+
+            screen.query_one("#edit-character-btn", Button).press()
+            await _wait_for(lambda: screen.state.active_view == "character_editor", pilot)
+
+            assert screen.query_one("#ccp-editor-name", Input).value == "Bean_RPG"
+            assert screen.query_one("#ccp-editor-description", TextArea).text == (
+                "A test imported card for role-play validation."
+            )
+
+    async def test_imported_character_editor_save_updates_loaded_character(
+        self,
+        mock_app_instance,
+        monkeypatch,
+    ):
+        character = {
+            "id": 3,
+            "name": "Bean_RPG",
+            "description": "Original description.",
+            "personality": "Curious and helpful.",
+            "scenario": "Testing imported character rendering.",
+            "first_message": "Hello from Bean.",
+            "tags": ["rpg", "fun"],
+            "character_version": "1.0",
+            "version": 1,
+        }
+        saved_payloads = []
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.CCP_Modules.ccp_character_handler.fetch_all_characters",
+            Mock(return_value=[{"id": "3", "name": "Bean_RPG"}]),
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.CCP_Modules.ccp_character_handler.fetch_character_by_id",
+            Mock(return_value=character),
+        )
+
+        def capture_update(character_id, data):
+            saved_payloads.append((character_id, data))
+            return True
+
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.CCP_Modules.ccp_character_handler.update_character",
+            capture_update,
+        )
+        app = CCPTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = pilot.app.screen
+
+            await screen.character_handler.load_character("3")
+            await _wait_for(lambda: screen.state.selected_character_id == "3", pilot)
+            screen.query_one("#edit-character-btn", Button).press()
+            await _wait_for(lambda: screen.state.active_view == "character_editor", pilot)
+
+            screen.query_one("#ccp-editor-description", TextArea).text = "Edited imported card."
+            screen.query_one("#save-character-btn", Button).press()
+            await _wait_for(lambda: bool(saved_payloads), pilot)
+
+            assert saved_payloads[0][0] == "3"
+            assert saved_payloads[0][1]["description"] == "Edited imported card."
 
     async def test_save_restore_persists_persona_selection(self, mock_app_instance):
         screen = CCPScreen(mock_app_instance)
