@@ -66,6 +66,8 @@ async def test_master_shell_navigation_uses_terminal_tab_rail():
     assert all(button.has_class("ascii-nav-tab") for button in nav_buttons)
     assert separators == []
     assert active_button.has_class("is-active")
+    assert ".nav-separator" not in MainNavigationBar.DEFAULT_CSS
+    assert "background: $primary-darken-1;" in MainNavigationBar.DEFAULT_CSS
 
 
 @pytest.mark.asyncio

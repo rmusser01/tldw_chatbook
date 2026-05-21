@@ -35,6 +35,8 @@ Make the top-level navigation match the terminal-native shell by replacing dot-s
 - Updated `MainNavigationBar` to render the existing `NavigationButton` destinations as bordered ASCII-style tabs while preserving labels, route IDs, tooltips, active state, and click routing.
 - Removed the mounted dot separator widgets from the top navigation rail.
 - Captured and approved the Textual-web screenshot at `Docs/superpowers/qa/console-ui/2026-05-21-console-ascii-tabs.png`.
+- Addressed PR review feedback by removing the now-dead `.nav-separator` CSS rule and using the standard `$primary-darken-1` active-tab background token.
+- Captured post-review Textual-web evidence at `Docs/superpowers/qa/console-ui/2026-05-21-console-ascii-tabs-review-fixes.png`.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

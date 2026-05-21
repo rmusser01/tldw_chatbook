@@ -86,17 +86,10 @@ class MainNavigationBar(Container):
     }
 
     .nav-button.is-active {
-        background: $primary-background-darken-1;
+        background: $primary-darken-1;
         border: solid $primary;
         text-style: bold;
         color: $text;
-    }
-
-    .nav-separator {
-        margin: 0;
-        padding: 0;
-        color: $text-muted;
-        width: auto;
     }
 
     .nav-group-separator {
