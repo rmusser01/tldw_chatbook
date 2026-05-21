@@ -693,17 +693,18 @@ class CCPCharacterEditorWidget(Container):
             
             if self.alternate_greetings:
                 for i, greeting in enumerate(self.alternate_greetings):
+                    greeting_container = Container(classes="greeting-item")
                     greeting_text = Static(
-                        f"Greeting {i+1}: {greeting[:100]}{'...' if len(greeting) > 100 else ''}",
-                        classes="greeting-item",
+                        f"Greeting {i+1}: {greeting[:100]}{'...' if len(greeting) > 100 else ''}"
                     )
                     remove_btn = Button(
                         "Remove",
                         classes="greeting-remove-button remove-greeting-btn",
                         id=f"remove-greeting-{i}",
                     )
-                    container.mount(greeting_text)
-                    container.mount(remove_btn)
+                    greeting_container.mount(greeting_text)
+                    greeting_container.mount(remove_btn)
+                    container.mount(greeting_container)
             else:
                 placeholder = Static("No alternate greetings", classes="no-greetings-placeholder")
                 container.mount(placeholder)

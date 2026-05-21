@@ -17,10 +17,13 @@ logger = logger.bind(module="CCPCharacterHandler")
 CharacterId = Union[int, str]
 
 
-def _coerce_local_character_id(character_id: CharacterId) -> int:
+def _coerce_local_character_id(character_id: CharacterId) -> CharacterId:
     """Normalize local CCP IDs before calling the character-card DB API."""
     raw_id = str(character_id).rsplit(":", 1)[-1]
-    return int(raw_id)
+    try:
+        return int(raw_id)
+    except (TypeError, ValueError):
+        return raw_id
 
 
 def _default_character_db() -> Any:

@@ -50,6 +50,7 @@ class PersonasScreen(BaseAppScreen):
         self._personas_lookup_error: str | None = None
         self._personas_lookup_recovery_state: DestinationRecoveryState | None = None
         self._personas_loaded = False
+        self._personas_snapshot_timed_out = False
         self._personas_snapshot_executor: ThreadPoolExecutor | None = None
         self._personas_snapshot_futures: set[Future[Any]] = set()
         self._selected_behavior_kind: str | None = None
@@ -65,11 +66,11 @@ class PersonasScreen(BaseAppScreen):
         self._shutdown_snapshot_executor()
         super().on_unmount()
 
-    @work(exclusive=True, thread=True)
-    def _refresh_local_behavior_snapshot(self) -> None:
-        records, counts, lookup_error, recovery_state = asyncio.run(self._list_local_behavior_snapshot())
-        self.app.call_from_thread(
-            self._apply_local_behavior_snapshot,
+    @work(exclusive=True)
+    async def _refresh_local_behavior_snapshot(self) -> None:
+        self._personas_snapshot_timed_out = False
+        records, counts, lookup_error, recovery_state = await self._list_local_behavior_snapshot()
+        self._apply_local_behavior_snapshot(
             records,
             counts,
             lookup_error,
@@ -82,7 +83,12 @@ class PersonasScreen(BaseAppScreen):
         counts: dict[str, int],
         lookup_error: str | None = None,
         recovery_state: DestinationRecoveryState | None = None,
+        *,
+        from_timeout: bool = False,
     ) -> None:
+        if self._personas_snapshot_timed_out and not from_timeout:
+            logger.debug("Ignoring late Personas snapshot result after timeout fallback was applied.")
+            return
         self._local_behavior_records = records
         self._local_behavior_counts = counts
         self._personas_lookup_error = lookup_error
@@ -96,12 +102,14 @@ class PersonasScreen(BaseAppScreen):
         """Avoid leaving Personas in an indefinite loading state."""
         if self._personas_loaded:
             return
+        self._personas_snapshot_timed_out = True
         self._cancel_queued_snapshot_work()
         self._apply_local_behavior_snapshot(
             {"characters": (), "profiles": ()},
             {"characters": 0, "profiles": 0},
             PERSONAS_SERVICE_ERROR_COPY,
             None,
+            from_timeout=True,
         )
 
     @staticmethod

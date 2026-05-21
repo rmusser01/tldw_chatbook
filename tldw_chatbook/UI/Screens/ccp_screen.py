@@ -837,6 +837,7 @@ class CCPScreen(BaseAppScreen):
             )
             return
 
+        buttons: list[Button] = []
         for index, character in enumerate(characters):
             character_id = str(character.get("id", ""))
             name = str(character.get("name") or "Unnamed")
@@ -845,7 +846,7 @@ class CCPScreen(BaseAppScreen):
             classes = "ccp-character-list-button"
             if character_id == self.state.selected_character_id:
                 classes = f"{classes} is-active"
-            await character_list.mount(
+            buttons.append(
                 Button(
                     name,
                     id=button_id,
@@ -853,6 +854,8 @@ class CCPScreen(BaseAppScreen):
                     tooltip=f"Load {name}.",
                 )
             )
+        if buttons:
+            await character_list.mount(*buttons)
 
     def _update_destination_selection_summary(self) -> None:
         """Update destination-native selected-target summary copy."""

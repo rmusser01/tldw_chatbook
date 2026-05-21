@@ -9,6 +9,7 @@ from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.CCP_Modules import PersonaMessage
+from tldw_chatbook.UI.CCP_Modules.ccp_character_handler import _coerce_local_character_id
 from tldw_chatbook.UI.Screens.ccp_screen import CCPScreen, CCPScreenState
 from tldw_chatbook.Widgets.CCP_Widgets import (
     CCPPersonaCardWidget,
@@ -90,6 +91,10 @@ class TestCCPScreenState:
         assert state.selected_persona_id is None
         assert state.selected_conversation_id is None
         assert state.conversation_search_results == []
+
+    def test_character_id_coercion_preserves_non_numeric_destination_ids(self):
+        assert _coerce_local_character_id("local:42") == 42
+        assert _coerce_local_character_id("persona.local.alice") == "persona.local.alice"
 
 
 @pytest.mark.asyncio
