@@ -184,7 +184,9 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             )
             console_provider_blocker = app.screen.query_one("#console-provider-blocker", Static)
             console_text = str(console_provider_blocker.renderable)
-            assert "Provider setup needed: OpenAI missing API key -> Settings" in console_text
+            assert "Provider setup needed: OpenAI missing API key" in console_text
+            assert "-> Settings" not in console_text
+            assert app.screen.query_one("#console-open-provider-settings", Button)
             assert "More: Ctrl+P" in _screen_text(app)
 
             await app.handle_screen_navigation(NavigateToScreen("acp"))

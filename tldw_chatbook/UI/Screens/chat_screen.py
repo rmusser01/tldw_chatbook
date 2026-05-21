@@ -19,6 +19,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
 from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.console_display_state import (
@@ -647,13 +648,13 @@ class ChatScreen(BaseAppScreen):
         visible: bool,
     ) -> None:
         """Show provider recovery as one compact warning/action row."""
-        strip.styles.height = 1 if visible else 0
+        strip.styles.height = "auto" if visible else 0
         strip.styles.min_height = 1 if visible else 0
         strip.styles.display = "block" if visible else "none"
         blocker.update(copy if visible else "")
         blocker.styles.display = "block" if visible else "none"
         blocker.styles.width = "1fr"
-        blocker.styles.height = 1 if visible else 0
+        blocker.styles.height = "auto" if visible else 0
         blocker.styles.min_height = 1 if visible else 0
         blocker.styles.margin = 0
 
@@ -935,12 +936,6 @@ class ChatScreen(BaseAppScreen):
                                 visible=bool(provider_blocker_copy),
                             )
                             yield provider_settings_action
-                        self._configure_console_provider_recovery_strip(
-                            provider_recovery_strip,
-                            blocker,
-                            provider_blocker_copy,
-                            visible=bool(provider_blocker_copy),
-                        )
                         start_here = Static(
                             CONSOLE_START_HERE_COPY,
                             id="console-start-here",
@@ -1455,14 +1450,7 @@ class ChatScreen(BaseAppScreen):
     async def handle_console_open_provider_settings(self, event: Button.Pressed) -> None:
         """Route provider setup recovery to the Settings destination."""
         event.stop()
-        switch_tab = getattr(self.app_instance, "switch_tab", None)
-        if callable(switch_tab):
-            switch_tab(TAB_SETTINGS)
-            return
-        self.app_instance.notify(
-            "Settings navigation is unavailable from this Console session.",
-            severity="warning",
-        )
+        self.post_message(NavigateToScreen(TAB_SETTINGS))
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:

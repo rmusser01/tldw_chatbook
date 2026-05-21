@@ -13,6 +13,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
@@ -50,6 +51,14 @@ class StaticConsoleLibraryRagSearchService:
             }
         )
         return self.result
+
+
+class _PressedEvent:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
 
 
 async def _wait_for_console_library_rag_button_state(
@@ -860,8 +869,6 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
     }
     app.chat_api_provider_value = "OpenAI"
     app.chat_api_model_value = "gpt-4.1-2025-04-14"
-    routed_tabs: list[str] = []
-    app.switch_tab = routed_tabs.append
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
@@ -879,6 +886,8 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         assert button.region.width >= len("Open Settings")
         assert str(button.label) == "Open Settings"
         assert blocker.region.y == button.region.y
+        assert str(strip.styles.height) == "auto"
+        assert str(blocker.styles.height) == "auto"
         assert button.region.x > blocker.region.x
         assert blocker.region.x >= strip.region.x
         assert button.region.x + button.region.width <= strip.region.x + strip.region.width
@@ -888,9 +897,23 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         assert "Open Settings" in text
         assert text.lower().count("missing api key") == 1
 
-        await console.handle_console_open_provider_settings(Button.Pressed(button))
 
-    assert routed_tabs == ["settings"]
+@pytest.mark.asyncio
+async def test_console_provider_settings_action_posts_navigation_message(monkeypatch):
+    app = _build_test_app()
+    console = ChatScreen(app)
+    event = _PressedEvent()
+    posted_messages: list[object] = []
+    monkeypatch.setattr(console, "post_message", posted_messages.append)
+
+    await console.handle_console_open_provider_settings(event)  # type: ignore[arg-type]
+
+    assert event.stopped is True
+    assert [
+        message.screen_name
+        for message in posted_messages
+        if isinstance(message, NavigateToScreen)
+    ] == ["settings"]
 
 
 @pytest.mark.asyncio
@@ -902,7 +925,7 @@ async def test_console_provider_settings_action_hidden_when_provider_ready(monke
             "provider": "OpenAI",
             "model": "gpt-4.1-2025-04-14",
         },
-        "api_settings": {"openai": {"api_key": "sk-test"}},
+        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
     }
     app.chat_api_provider_value = "OpenAI"
     app.chat_api_model_value = "gpt-4.1-2025-04-14"
