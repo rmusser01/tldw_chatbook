@@ -106,17 +106,17 @@ def build_console_workspace_state(
     if active_workspace is None:
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
-            workspace_label="No workspace selected",
+            workspace_label="Workspace: Local Default",
             authority_label="Authority: local registry ready",
             sync_label="Sync: not configured",
             runtime_label="Runtime: none",
             conversation_rows=(),
             conversation_empty_copy="No active workspace conversations.",
             change_workspace_enabled=False,
-            change_workspace_recovery="Workspace switching is not wired yet.",
+            change_workspace_recovery="Workspace switching is read-only in this slice.",
             new_conversation_enabled=False,
-            new_conversation_recovery="Select a workspace before creating a conversation.",
-            recovery_copy="Create or select a workspace before using workspace-scoped context.",
+            new_conversation_recovery="Conversation creation is read-only until workspace selection is wired.",
+            recovery_copy="Workspace switching is read-only until workspace selection is wired.",
         )
 
     runtime_bindings = _safe_runtime_bindings(registry_service, active_workspace)

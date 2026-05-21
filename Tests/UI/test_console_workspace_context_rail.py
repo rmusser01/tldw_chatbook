@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
@@ -32,19 +32,24 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         left_rail = console.query_one("#console-left-rail")
         staged_context = console.query_one("#console-staged-context-tray")
         workspace_context = console.query_one("#console-workspace-context")
-        change_workspace = console.query_one("#console-change-workspace", Button)
-        new_conversation = console.query_one("#console-new-workspace-conversation", Button)
-
         assert staged_context.region.y < workspace_context.region.y
         assert staged_context.region.x == workspace_context.region.x
         assert staged_context.region.x == left_rail.region.x
         assert staged_context.region.width == workspace_context.region.width
-        assert change_workspace.disabled is True
-        assert new_conversation.disabled is True
+        assert workspace_context.region.height > staged_context.region.height
+        workspace_recovery = console.query_one("#console-workspace-recovery")
+        conversations_title = console.query_one("#console-workspace-conversations-title")
+        assert workspace_recovery.region.y < conversations_title.region.y
+        assert len(console.query("#console-change-workspace")) == 0
+        assert len(console.query("#console-new-workspace-conversation")) == 0
         text = _visible_text(console)
         assert "Staged Context" in text
         assert "Convos & Workspaces" in text
-        assert "No workspace selected" in text
+        assert "Workspace: Local Default" in text
+        assert "Workspace switching is read-only" in text
+        assert text.count("read-only") == 1
+        assert "Change workspace" not in text
+        assert "New conversation" not in text
 
 
 @pytest.mark.asyncio

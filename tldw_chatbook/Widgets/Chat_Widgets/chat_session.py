@@ -191,9 +191,16 @@ class ChatSession(Container):
         """Build compact first-run guidance for a tabbed Console session."""
         app_config = getattr(self.app_instance, "app_config", {})
         readiness = get_provider_readiness(self._selected_provider_for_orientation(), app_config)
+        provider_line = (
+            f"Provider ready: {readiness.provider}."
+            if readiness.ready
+            else "Provider setup required before sending."
+        )
         return (
+            "Empty transcript\n"
+            "No messages yet. Send a prompt or attach context.\n"
             "Event stream ready. Start with a command or attach sources.\n"
-            f"Provider: {readiness.user_message}\n"
+            f"{provider_line}\n"
             "Context lanes: Library, Search/RAG, Artifacts, Personas, Skills."
         )
     

@@ -48,11 +48,11 @@ def test_console_workspace_state_explains_no_active_workspace(tmp_path: Path) ->
         current_conversation=None,
     )
 
-    assert state.workspace_label == "No workspace selected"
+    assert state.workspace_label == "Workspace: Local Default"
     assert state.authority_label == "Authority: local registry ready"
     assert state.change_workspace_enabled is False
     assert state.new_conversation_enabled is False
-    assert "create or select a workspace" in state.recovery_copy.lower()
+    assert "read-only" in state.recovery_copy.lower()
 
 
 def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: Path) -> None:
