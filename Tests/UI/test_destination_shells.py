@@ -842,6 +842,50 @@ async def test_personas_destination_times_out_blocking_snapshot(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_personas_destination_mount_timeout_prevents_indefinite_loading(monkeypatch):
+    monkeypatch.setattr(personas_screen_module, "PERSONAS_SNAPSHOT_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(PersonasScreen, "_refresh_local_behavior_snapshot", lambda self: None)
+    app = _build_test_app()
+    app.character_persona_scope_service = StaticPersonasScopeService()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#personas-service-error", timeout=1.0)
+        button = screen.query_one("#personas-attach-to-console", Button)
+        text = _visible_text(screen)
+
+        assert "Loading local Personas behavior context" not in text
+        assert "Personas service unavailable; retry Personas later." in text
+        assert button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_personas_destination_ignores_late_snapshot_after_timeout(monkeypatch):
+    monkeypatch.setattr(personas_screen_module, "PERSONAS_SNAPSHOT_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(PersonasScreen, "_refresh_local_behavior_snapshot", lambda self: None)
+    app = _build_test_app()
+    app.character_persona_scope_service = StaticPersonasScopeService()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#personas-service-error", timeout=1.0)
+
+        screen._apply_local_behavior_snapshot(
+            {"characters": ({"name": "Late Mentor", "id": 1},), "profiles": ()},
+            {"characters": 1, "profiles": 0},
+            None,
+            None,
+        )
+        await pilot.pause()
+
+        text = _visible_text(screen)
+        assert "Personas service unavailable; retry Personas later." in text
+        assert "Late Mentor" not in text
+
+
+@pytest.mark.asyncio
 async def test_personas_destination_does_not_enqueue_retry_while_blocking_snapshot_runs(monkeypatch):
     monkeypatch.setattr(personas_screen_module, "PERSONAS_SNAPSHOT_TIMEOUT_SECONDS", 0.05)
     app = _build_test_app()

@@ -213,6 +213,13 @@ def test_startup_route_validation_rejects_unknown_default():
     assert app._normalize_initial_tab_from_config("definitely-not-a-route") == "chat"
 
 
+def test_ccp_default_tab_initializes_before_reactive_watcher_runs():
+    app = _build_test_app(configured_default="conversations_characters_prompts")
+
+    assert app._initial_tab_value == "conversations_characters_prompts"
+    assert app._ui_ready is False
+
+
 def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
     app = _build_test_app()
     expected_routes = {
@@ -260,7 +267,7 @@ def test_legacy_tools_settings_route_uses_mcp_context():
     assert screen_class.__name__ == "MCPScreen"
 
 
-def _build_test_app() -> TldwCli:
+def _build_test_app(configured_default: str | None = None) -> TldwCli:
     user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-test-"))
 
     def fake_runtime_policy(app):
@@ -273,8 +280,13 @@ def _build_test_app() -> TldwCli:
         app.current_runtime_backend = "local"
         return context
 
+    def fake_cli_setting(_section, _key=None, default=None):
+        if _section == "general" and _key == "default_tab" and configured_default is not None:
+            return configured_default
+        return default
+
     with patch("tldw_chatbook.app.load_settings", return_value={"tldw_api": {"base_url": "http://localhost:8000"}}):
-        with patch("tldw_chatbook.app.get_cli_setting", side_effect=lambda _section, _key, default=None: default):
+        with patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting):
             with patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None):
                 with patch("tldw_chatbook.app.ServerNotesWorkspaceService.from_config", return_value=MagicMock()):
                     with patch("tldw_chatbook.app.ServerCharacterPersonaService.from_config", return_value=MagicMock()):

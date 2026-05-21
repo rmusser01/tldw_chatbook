@@ -1,12 +1,13 @@
 """Handler for character-related operations in the CCP window."""
 
-from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
-from loguru import logger
-from textual import work
-from textual.widgets import Select, Button, Input, TextArea, Static
-import json
 import base64
+import json
+from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
+
+from loguru import logger
+from textual.widgets import Select, Button, Input, TextArea, Static
 
 from .ccp_messages import CharacterMessage, ViewChangeMessage
 
@@ -15,6 +16,30 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="CCPCharacterHandler")
 CharacterId = Union[int, str]
+
+
+def _coerce_local_character_id(character_id: CharacterId) -> CharacterId:
+    """Normalize local CCP IDs before calling the character-card DB API."""
+    raw_id = str(character_id).rsplit(":", 1)[-1]
+    try:
+        return int(raw_id)
+    except (TypeError, ValueError):
+        return raw_id
+
+
+def _default_character_db() -> Any:
+    """Return the configured local character DB for legacy CCP helpers."""
+    from ...config import get_chachanotes_db_lazy
+
+    return get_chachanotes_db_lazy()
+
+
+def _normalize_character_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Map widget field aliases into the local character-card schema."""
+    payload = dict(data)
+    if "first_mes" in payload and "first_message" not in payload:
+        payload["first_message"] = payload["first_mes"]
+    return payload
 
 
 def fetch_all_characters() -> List[Dict[str, Any]]:
@@ -37,23 +62,32 @@ def fetch_all_characters() -> List[Dict[str, Any]]:
 
 def fetch_character_by_id(character_id: CharacterId) -> Dict[str, Any]:
     """Compatibility helper for character loads."""
-    from ...Character_Chat.Character_Chat_Lib import fetch_character_card_by_id
-
-    return fetch_character_card_by_id(character_id)
+    character = _default_character_db().get_character_card_by_id(
+        _coerce_local_character_id(character_id)
+    )
+    return character or {}
 
 
 def create_character(data: Dict[str, Any]) -> CharacterId:
     """Compatibility helper for character creation."""
-    from ...Character_Chat.Character_Chat_Lib import add_character_card
-
-    return add_character_card(data)
+    return _default_character_db().add_character_card(_normalize_character_payload(data))
 
 
 def update_character(character_id: CharacterId, data: Dict[str, Any]) -> bool:
     """Compatibility helper for character updates."""
-    from ...Character_Chat.Character_Chat_Lib import update_character_card
-
-    return update_character_card(character_id, data)
+    local_id = _coerce_local_character_id(character_id)
+    db = _default_character_db()
+    current = db.get_character_card_by_id(local_id)
+    if not current:
+        return False
+    expected_version = int(current.get("version") or 1)
+    return bool(
+        db.update_character_card(
+            local_id,
+            _normalize_character_payload(data),
+            expected_version,
+        )
+    )
 
 
 def import_character_card(file_path: str) -> Any:
@@ -99,6 +133,13 @@ class CCPCharacterHandler:
         notifier = getattr(self.window, "notify", None)
         if callable(notifier):
             notifier(message, severity=severity)
+
+    def _call_from_thread(self, callback: Any, *args: Any) -> Any:
+        """Schedule a callback on Textual's main thread from a handler worker."""
+        call_from_thread = getattr(self.window, "call_from_thread", None)
+        if callable(call_from_thread):
+            return call_from_thread(callback, *args)
+        return self.window.app.call_from_thread(callback, *args)
 
     def _current_chat_id(self, chat_id: Optional[str] = None) -> str:
         """Resolve the active chat identifier for chat-scoped execution helpers."""
@@ -235,12 +276,18 @@ class CCPCharacterHandler:
         """Refresh the character select dropdown."""
         try:
             self.character_list = fetch_all_characters()
-            character_select = self.window.query_one("#conv-char-character-select", Select)
             options = [(char.get("name", "Unnamed"), str(char.get("id"))) for char in self.character_list]
-            
-            # Update the select widget
-            character_select.set_options(options)
-            
+
+            try:
+                character_select = self.window.query_one("#conv-char-character-select", Select)
+                character_select.set_options(options)
+            except Exception:
+                logger.debug("Legacy character Select not mounted; using destination-native list.")
+
+            refresh_destination_list = getattr(self.window, "refresh_character_library_list", None)
+            if callable(refresh_destination_list):
+                await refresh_destination_list(self.character_list)
+
             logger.info(f"Refreshed character list with {len(options)} characters")
             
         except Exception as e:
@@ -270,14 +317,12 @@ class CCPCharacterHandler:
         
         # Run the sync database operation in a worker thread
         self.window.run_worker(
-            self._load_character_sync,
-            character_id,
+            partial(self._load_character_sync, character_id),
             thread=True,
             exclusive=True,
             name=f"load_character_{character_id}"
         )
     
-    @work(thread=True)
     def _load_character_sync(self, character_id: CharacterId) -> None:
         """Sync method to load character data in a worker thread.
         
@@ -294,19 +339,19 @@ class CCPCharacterHandler:
                 self.current_character_data = card_data
                 
                 # Post messages from worker thread using call_from_thread
-                self.window.call_from_thread(
+                self._call_from_thread(
                     self.window.post_message,
                     CharacterMessage.Loaded(character_id, card_data)
                 )
                 
                 # Switch view to show character card
-                self.window.call_from_thread(
+                self._call_from_thread(
                     self.window.post_message,
                     ViewChangeMessage.Requested("character_card", {"character_id": character_id})
                 )
                 
                 # Update UI on main thread
-                self.window.call_from_thread(self._display_character_card)
+                self._call_from_thread(self._display_character_card)
                 
                 logger.info(f"Character {character_id} loaded successfully")
             else:
@@ -322,6 +367,15 @@ class CCPCharacterHandler:
                 return
             
             data = self.current_character_data
+
+            try:
+                card_widget = self.window.query_one("#ccp-character-card-view")
+                if hasattr(card_widget, "load_character"):
+                    card_widget.load_character(data)
+                    logger.debug(f"Displayed character card for {data.get('name', 'Unknown')}")
+                    return
+            except Exception as e:
+                logger.warning(f"Could not use character card widget loader: {e}")
             
             # Update all the character card display fields
             self._update_field("#ccp-card-name-display", data.get("name", "N/A"))
@@ -420,6 +474,14 @@ class CCPCharacterHandler:
         """Populate the character editor fields with current data."""
         try:
             data = self.current_character_data
+
+            try:
+                editor_widget = self.window.query_one("#ccp-character-editor-view")
+                if hasattr(editor_widget, "load_character"):
+                    editor_widget.load_character(data)
+                    return
+            except Exception as e:
+                logger.warning(f"Could not use character editor widget loader: {e}")
             
             # Basic fields
             self._set_input_value("#ccp-editor-char-name-input", data.get("name", ""))
@@ -478,13 +540,31 @@ class CCPCharacterHandler:
         try:
             # Gather all field values
             character_data = self._gather_editor_data()
+            await self.save_character_data(character_data)
+
+        except Exception as e:
+            logger.error(f"Error saving character: {e}", exc_info=True)
+
+    async def save_character_data(self, character_data: Dict[str, Any]) -> None:
+        """Save character data from the current editor widget."""
+        try:
             
             if self.current_character_id:
                 # Update existing character
-                await self._update_character(self.current_character_id, character_data)
+                self.window.run_worker(
+                    partial(self._update_character, self.current_character_id, character_data),
+                    thread=True,
+                    exclusive=True,
+                    name=f"update_character_{self.current_character_id}",
+                )
             else:
                 # Create new character
-                await self._create_character(character_data)
+                self.window.run_worker(
+                    partial(self._create_character, character_data),
+                    thread=True,
+                    exclusive=True,
+                    name="create_character",
+                )
                 
         except Exception as e:
             logger.error(f"Error saving character: {e}", exc_info=True)
@@ -494,6 +574,13 @@ class CCPCharacterHandler:
         data = {}
         
         try:
+            try:
+                editor_widget = self.window.query_one("#ccp-character-editor-view")
+                if hasattr(editor_widget, "get_character_data"):
+                    return editor_widget.get_character_data()
+            except Exception as e:
+                logger.warning(f"Could not gather data from character editor widget: {e}")
+
             # Basic fields
             data["name"] = self.window.query_one("#ccp-editor-char-name-input", Input).value
             data["description"] = self.window.query_one("#ccp-editor-char-description-textarea", TextArea).text
@@ -534,7 +621,6 @@ class CCPCharacterHandler:
         
         return data
     
-    @work(thread=True)
     def _update_character(
         self,
         character_id: Union[CharacterId, Dict[str, Any]],
@@ -554,22 +640,24 @@ class CCPCharacterHandler:
             
             if success:
                 logger.info(f"Updated character {character_id}")
+                updated_data = dict(self.current_character_data)
+                updated_data.update(data)
+                self.current_character_data = updated_data
                 
                 # Post update message from worker thread
-                self.window.call_from_thread(
+                self._call_from_thread(
                     self.window.post_message,
-                    CharacterMessage.Updated(character_id, data)
+                    CharacterMessage.Updated(character_id, updated_data)
                 )
                 
                 # Refresh the character list on main thread
-                self.window.call_from_thread(self.refresh_character_list)
+                self._call_from_thread(self.refresh_character_list)
             else:
                 logger.error(f"Failed to update character {character_id}")
                 
         except Exception as e:
             logger.error(f"Error updating character: {e}", exc_info=True)
     
-    @work(thread=True)
     def _create_character(self, data: Dict[str, Any]) -> None:
         """Create a new character (sync worker method)."""
         try:
@@ -579,13 +667,13 @@ class CCPCharacterHandler:
                 logger.info(f"Created new character with ID {character_id}")
                 
                 # Post creation message from worker thread
-                self.window.call_from_thread(
+                self._call_from_thread(
                     self.window.post_message,
                     CharacterMessage.Created(character_id, data.get("name", ""), data)
                 )
                 
                 # Refresh the character list on main thread
-                self.window.call_from_thread(self.refresh_character_list)
+                self._call_from_thread(self.refresh_character_list)
                 
                 # Set as current character
                 self.current_character_id = character_id

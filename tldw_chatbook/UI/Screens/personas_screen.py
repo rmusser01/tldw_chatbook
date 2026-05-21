@@ -50,6 +50,7 @@ class PersonasScreen(BaseAppScreen):
         self._personas_lookup_error: str | None = None
         self._personas_lookup_recovery_state: DestinationRecoveryState | None = None
         self._personas_loaded = False
+        self._personas_snapshot_timed_out = False
         self._personas_snapshot_executor: ThreadPoolExecutor | None = None
         self._personas_snapshot_futures: set[Future[Any]] = set()
         self._selected_behavior_kind: str | None = None
@@ -58,6 +59,7 @@ class PersonasScreen(BaseAppScreen):
     def on_mount(self) -> None:
         super().on_mount()
         self._ensure_snapshot_executor()
+        self.set_timer(PERSONAS_SNAPSHOT_TIMEOUT_SECONDS, self._apply_snapshot_timeout_if_still_loading)
         self._refresh_local_behavior_snapshot()
 
     def on_unmount(self) -> None:
@@ -66,8 +68,14 @@ class PersonasScreen(BaseAppScreen):
 
     @work(exclusive=True)
     async def _refresh_local_behavior_snapshot(self) -> None:
+        self._personas_snapshot_timed_out = False
         records, counts, lookup_error, recovery_state = await self._list_local_behavior_snapshot()
-        self._apply_local_behavior_snapshot(records, counts, lookup_error, recovery_state)
+        self._apply_local_behavior_snapshot(
+            records,
+            counts,
+            lookup_error,
+            recovery_state,
+        )
 
     def _apply_local_behavior_snapshot(
         self,
@@ -75,7 +83,12 @@ class PersonasScreen(BaseAppScreen):
         counts: dict[str, int],
         lookup_error: str | None = None,
         recovery_state: DestinationRecoveryState | None = None,
+        *,
+        from_timeout: bool = False,
     ) -> None:
+        if self._personas_snapshot_timed_out and not from_timeout:
+            logger.debug("Ignoring late Personas snapshot result after timeout fallback was applied.")
+            return
         self._local_behavior_records = records
         self._local_behavior_counts = counts
         self._personas_lookup_error = lookup_error
@@ -84,6 +97,20 @@ class PersonasScreen(BaseAppScreen):
         self._ensure_selected_behavior()
         if self.is_mounted:
             self.refresh(recompose=True)
+
+    def _apply_snapshot_timeout_if_still_loading(self) -> None:
+        """Avoid leaving Personas in an indefinite loading state."""
+        if self._personas_loaded:
+            return
+        self._personas_snapshot_timed_out = True
+        self._cancel_queued_snapshot_work()
+        self._apply_local_behavior_snapshot(
+            {"characters": (), "profiles": ()},
+            {"characters": 0, "profiles": 0},
+            PERSONAS_SERVICE_ERROR_COPY,
+            None,
+            from_timeout=True,
+        )
 
     @staticmethod
     async def _resolve_maybe_awaitable(value: Any) -> Any:

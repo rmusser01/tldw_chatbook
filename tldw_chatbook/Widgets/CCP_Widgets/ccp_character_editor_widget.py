@@ -694,16 +694,16 @@ class CCPCharacterEditorWidget(Container):
             if self.alternate_greetings:
                 for i, greeting in enumerate(self.alternate_greetings):
                     greeting_container = Container(classes="greeting-item")
-                    
                     greeting_text = Static(
                         f"Greeting {i+1}: {greeting[:100]}{'...' if len(greeting) > 100 else ''}"
                     )
+                    remove_btn = Button(
+                        "Remove",
+                        classes="greeting-remove-button remove-greeting-btn",
+                        id=f"remove-greeting-{i}",
+                    )
                     greeting_container.mount(greeting_text)
-                    
-                    remove_btn = Button(f"Remove", classes="greeting-remove-button remove-greeting-btn", 
-                                      id=f"remove-greeting-{i}")
                     greeting_container.mount(remove_btn)
-                    
                     container.mount(greeting_container)
             else:
                 placeholder = Static("No alternate greetings", classes="no-greetings-placeholder")
@@ -719,10 +719,12 @@ class CCPCharacterEditorWidget(Container):
             
             if self.tags:
                 for i, tag in enumerate(self.tags):
-                    tag_container = Container(classes="tag-item")
-                    tag_btn = Button(f"{tag} ×", id=f"remove-tag-{i}", classes="remove-tag-btn tag-button")
-                    tag_container.mount(tag_btn)
-                    container.mount(tag_container)
+                    tag_btn = Button(
+                        f"{tag} ×",
+                        id=f"remove-tag-{i}",
+                        classes="remove-tag-btn tag-button tag-item",
+                    )
+                    container.mount(tag_btn)
             else:
                 placeholder = Static("No tags", classes="no-tags-placeholder")
                 container.mount(placeholder)
