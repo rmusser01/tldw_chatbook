@@ -49,8 +49,8 @@ class MainNavigationBar(Container):
         min-height: 4;
         width: 100%;
         dock: top;
-        background: $panel;
-        border-bottom: solid $primary;
+        background: $background;
+        border-bottom: solid $surface-lighten-2;
         overflow-x: auto;
     }
 
@@ -58,28 +58,36 @@ class MainNavigationBar(Container):
         height: 100%;
         width: auto;
         layout: horizontal;
-        align: center middle;
+        align: left middle;
         padding: 0 1;
     }
 
     .nav-button {
-        margin: 0;
+        margin: 0 1 0 0;
         padding: 0 1;
         min-width: 6;
-        background: transparent;
-        border: none;
+        background: $surface-darken-1;
+        border: solid $surface-lighten-2;
         height: 4;
         min-height: 4;
         content-align: center middle;
     }
 
     .nav-button:hover {
-        background: $primary-lighten-2;
+        background: $surface;
+        border: solid $primary-lighten-1;
+        text-style: bold;
+    }
+
+    .nav-button:focus {
+        background: $surface;
+        border: solid $primary;
         text-style: bold;
     }
 
     .nav-button.is-active {
-        background: $primary;
+        background: $primary-background-darken-1;
+        border: solid $primary;
         text-style: bold;
         color: $text;
     }
@@ -102,6 +110,8 @@ class MainNavigationBar(Container):
     .nav-overflow-hint {
         width: auto;
         padding: 0 1;
+        height: 4;
+        content-align: center middle;
         color: $text-muted;
     }
     """
@@ -125,14 +135,11 @@ class MainNavigationBar(Container):
     def compose(self) -> ComposeResult:
         """Compose the navigation bar from master-shell destination metadata."""
         with Horizontal(classes="main-nav"):
-            for index, destination in enumerate(SHELL_DESTINATION_ORDER):
-                if index > 0:
-                    yield Static("·", classes="nav-separator")
-
+            for destination in SHELL_DESTINATION_ORDER:
                 button = NavigationButton(
                     destination.label,
                     id=f"nav-{destination.destination_id}",
-                    classes="nav-button",
+                    classes="nav-button ascii-nav-tab",
                     tooltip=destination.tooltip,
                     target_route=destination.primary_route,
                 )

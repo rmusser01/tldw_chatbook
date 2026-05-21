@@ -48,6 +48,27 @@ async def test_master_shell_navigation_order_and_labels():
 
 
 @pytest.mark.asyncio
+async def test_master_shell_navigation_uses_terminal_tab_rail():
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="console")
+
+    app = TestApp()
+
+    async with app.run_test(size=(180, 20)) as pilot:
+        await pilot.pause(0.1)
+
+        nav_buttons = list(app.query(".nav-button"))
+        separators = list(app.query(".nav-separator"))
+        active_button = app.query_one("#nav-console", Button)
+
+    assert nav_buttons
+    assert all(button.has_class("ascii-nav-tab") for button in nav_buttons)
+    assert separators == []
+    assert active_button.has_class("is-active")
+
+
+@pytest.mark.asyncio
 async def test_home_and_console_remain_first_primary_destinations():
     class TestApp(App):
         def compose(self):
