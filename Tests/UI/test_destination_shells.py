@@ -21,6 +21,7 @@ from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
+from tldw_chatbook.UI.Screens.conversation_screen import ConversationScreen
 from tldw_chatbook.UI.Screens.destination_recovery import DestinationRecoveryState
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
@@ -49,6 +50,7 @@ SCREEN_BY_ROUTE = {
     "acp": ACPScreen,
     "skills": SkillsScreen,
     "settings": SettingsScreen,
+    "ccp": ConversationScreen,
 }
 
 PHASE4_MCP_ADOPTION_EVIDENCE = Path(

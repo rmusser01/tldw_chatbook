@@ -164,6 +164,19 @@ def _visible_static_text(screen) -> str:
     )
 
 
+def _visible_workbench_pane_titles(screen, workbench: str) -> list[str]:
+    workbench_widget = screen.query_one(workbench)
+    titles = []
+    for widget in workbench_widget.query(Static):
+        if not widget.display or not hasattr(widget, "renderable"):
+            continue
+        if not any(str(class_name).endswith("-column-title") for class_name in widget.classes):
+            continue
+        renderable = widget.renderable
+        titles.append(getattr(renderable, "plain", str(renderable)))
+    return titles
+
+
 def _visible_button_labels(screen) -> set[str]:
     return {str(button.label) for button in screen.query(Button) if button.display}
 
@@ -744,6 +757,7 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         ("acp", "#acp-workbench", ("Agents / Sessions", "Session Detail", "Compatibility / Actions")),
         ("skills", "#skills-workbench", ("Skill Library", "Skill Detail", "Skill Inspector")),
         ("settings", "#settings-workbench", ("Settings Sections", "Preference Detail", "Scope Inspector")),
+        ("ccp", "#ccp-workbench", ("Character Library", "Character Detail", "Attach / Validate")),
     ),
 )
 @pytest.mark.asyncio
@@ -756,8 +770,7 @@ async def test_destination_pane_titles_are_user_facing_not_ordinal(route, workbe
         await _wait_for_selector(screen, pilot, workbench)
         visible_text = _visible_static_text(screen)
 
-        for expected in expected_titles:
-            assert expected in visible_text
+        assert _visible_workbench_pane_titles(screen, workbench) == list(expected_titles)
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
