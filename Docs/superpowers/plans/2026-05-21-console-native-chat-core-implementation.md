@@ -1053,7 +1053,59 @@ python -m pytest -q Tests/UI/test_console_native_chat_flow.py::test_console_nati
 
 Expected: pass.
 
-- [ ] **Step 6: Add mounted collapsed-paste send payload test**
+- [ ] **Step 6: Add mounted streaming stop test**
+
+Use a fake gateway that yields one chunk and then waits until stopped. Verify the visible controls and state transition:
+
+```python
+class WaitingGateway:
+    def __init__(self):
+        self.release = asyncio.Event()
+
+    async def resolve_for_send(self, selection):
+        return type("Resolution", (), {
+            "ready": True,
+            "provider": "llama_cpp",
+            "model": "test-model",
+            "base_url": "http://127.0.0.1:9099",
+            "visible_copy": "",
+        })()
+
+    async def stream_chat(self, resolution, messages):
+        yield "partial"
+        await self.release.wait()
+
+
+@pytest.mark.asyncio
+async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible():
+    gateway = WaitingGateway()
+    app = _build_test_app()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        await pilot.click("#console-send-message")
+        await _wait_for_text(console, pilot, "partial")
+        assert "Stop" in _visible_text(console)
+        assert "streaming" in _visible_text(console).lower()
+
+        await pilot.click("#console-stop-generation")
+        await _wait_for_text(console, pilot, "stopped")
+
+        store = console._ensure_console_chat_store()
+        messages = store.messages_for_session(store.active_session_id)
+        assert messages[-1].content == "partial"
+        assert messages[-1].status == "stopped"
+```
+
+The visible button label/state must make it clear that an active stream can be stopped. After stop, the inspector/status surfaces must show stopped state and the partial assistant response must remain in the transcript.
+
+- [ ] **Step 7: Add mounted collapsed-paste send payload test**
 
 Inject a capturing fake gateway and assert the controller receives expanded pasted text, not the collapsed composer display label:
 
@@ -1099,7 +1151,7 @@ async def test_console_native_send_uses_expanded_paste_payload_not_collapsed_lab
         assert "Pasted Text: 80 Characters" not in gateway.sent_messages[-1][-1]["content"]
 ```
 
-- [ ] **Step 7: Add mounted accepted-send test with fake gateway**
+- [ ] **Step 8: Add mounted accepted-send test with fake gateway**
 
 Inject a fake gateway through the app or screen seam so the test does not need network. Define the fake gateway in this test module instead of importing from another test file:
 
@@ -1141,11 +1193,11 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
         assert messages[-1].content == "hello"
 ```
 
-- [ ] **Step 8: Implement test injection seam**
+- [ ] **Step 9: Implement test injection seam**
 
 Prefer a narrowly named app attribute such as `console_provider_gateway_factory` only for tests and future dependency injection.
 
-- [ ] **Step 9: Run Console flow tests**
+- [ ] **Step 10: Run Console flow tests**
 
 Run:
 
@@ -1155,7 +1207,7 @@ python -m pytest -q Tests/UI/test_console_native_chat_flow.py Tests/UI/test_cons
 
 Expected: pass.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 Run:
 
@@ -1460,6 +1512,7 @@ Use typed message events or button IDs from `ConsoleTranscript`.
 
 - notify or update status for Copy/WIP
 - open `ConsoleSaveAsModal` for `Save as...`
+- call `controller.retry_message(message_id)` when a failed assistant message exposes the retry action
 - call controller continuation/regeneration methods for `--->` and `♻` where implemented
 
 Use stable transcript action button IDs so mounted tests and CDP can target actions reliably:
@@ -1467,11 +1520,66 @@ Use stable transcript action button IDs so mounted tests and CDP can target acti
 - `console-message-action-copy-<message_id>`
 - `console-message-action-edit-<message_id>`
 - `console-message-action-save-as-<message_id>`
+- `console-message-action-retry-<message_id>`
 - `console-message-action-regenerate-<message_id>`
 - `console-message-action-continue-<message_id>`
 - `console-message-action-delete-<message_id>`
 
-- [ ] **Step 9: Run action tests**
+- [ ] **Step 9: Add mounted failed-stream retry recovery test**
+
+Use a gateway that fails on the first call and streams successfully on retry:
+
+```python
+class FailThenRecoverGateway:
+    def __init__(self):
+        self.calls = 0
+
+    async def resolve_for_send(self, selection):
+        return type("Resolution", (), {
+            "ready": True,
+            "provider": "llama_cpp",
+            "model": "test-model",
+            "base_url": "http://127.0.0.1:9099",
+            "visible_copy": "",
+        })()
+
+    async def stream_chat(self, resolution, messages):
+        self.calls += 1
+        if self.calls == 1:
+            yield "partial"
+            raise RuntimeError("llama.cpp stream failed")
+        yield "recovered"
+
+
+@pytest.mark.asyncio
+async def test_console_failed_stream_renders_inline_retry_and_recovers():
+    gateway = FailThenRecoverGateway()
+    app = _build_test_app()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        await pilot.click("#console-send-message")
+        await _wait_for_text(console, pilot, "llama.cpp stream failed")
+        assert "Retry" in _visible_text(console)
+
+        failed_id = console._ensure_console_chat_store().messages_for_session(
+            console._ensure_console_chat_store().active_session_id
+        )[-1].id
+        await pilot.click(f"#console-message-action-retry-{failed_id}")
+        await _wait_for_text(console, pilot, "recovered")
+
+        assert console._ensure_console_chat_store().get_message(failed_id).status == "complete"
+```
+
+The failed transcript row must include inline visible error copy plus a retry action. A user must not need to infer recovery from logs or hidden state.
+
+- [ ] **Step 10: Run action tests**
 
 Run:
 
@@ -1481,7 +1589,7 @@ python -m pytest -q Tests/Chat/test_console_message_actions.py Tests/UI/test_con
 
 Expected: pass.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 Run:
 
@@ -1747,7 +1855,7 @@ Run:
 curl -sf http://127.0.0.1:9099/v1/models
 ```
 
-Expected: JSON response with a model list. If unavailable, document as blocked and do not claim live llama.cpp approval.
+Expected: JSON response with a non-empty model list. If unavailable, stop the closeout and document the task/PR as blocked. Do not mark the Backlog task Done, do not claim live llama.cpp approval, and do not open/mark the PR ready for review until this gate passes or the user explicitly waives live llama.cpp verification for this slice.
 
 - [ ] **Step 4: Launch textual-web/CDP QA**
 
@@ -1762,13 +1870,17 @@ Capture actual rendered screenshots for:
 - idle Console
 - typed composer
 - llama.cpp streaming
+- stopped llama.cpp stream with partial assistant message visible
 - completed response
 - selected message with action row
+- failed stream with inline retry action
+- retried failed stream after recovery
 - regenerated message with `<` / `>` controls
 - blocked provider recovery
 - WIP/unavailable action state
 
 Do not use SVG/code mockups as approval artifacts.
+If any required CDP screenshot cannot be captured, stop closeout and document the missing evidence as a blocker. Screenshot approval is a signoff gate, not an optional appendix.
 
 - [ ] **Step 5: Write QA evidence**
 
@@ -1779,6 +1891,7 @@ In `Docs/superpowers/qa/product-maturity/console-native-chat-core/2026-05-21-con
 - live llama.cpp result
 - CDP screenshot filenames/paths
 - user approval status for each screenshot
+- explicit pass/fail status for the live llama.cpp gate
 - remaining known limitations
 
 - [ ] **Step 6: Update QA README**
@@ -1787,7 +1900,7 @@ Add an index entry in `Docs/superpowers/qa/product-maturity/console-native-chat-
 
 - [ ] **Step 7: Update Backlog task**
 
-Mark acceptance criteria complete only after tests and screenshot approvals are complete.
+Mark acceptance criteria complete only after tests, live llama.cpp verification, and screenshot approvals are complete.
 
 Run:
 
@@ -1824,8 +1937,9 @@ Expected:
 - focused tests pass
 - `git diff --check` has no output
 - full-suite status is recorded before marking the Backlog task Done
-- live llama.cpp/CDP evidence is documented if the local server is available
-- screenshots are user-approved before visual claims are made
+- live llama.cpp health and streaming evidence are documented
+- required CDP screenshots are captured and user-approved before visual claims are made
+- if live llama.cpp or required CDP evidence is unavailable, the work remains blocked/in progress unless the user explicitly waives that gate
 
 ## PR Guidance
 
