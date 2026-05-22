@@ -182,6 +182,13 @@ Provider assumptions:
 - Streaming response format: OpenAI-compatible SSE chunks.
 - Models path, when available: `/v1/models`.
 
+Model resolution priority:
+
+1. Explicit Console/provider model selection.
+2. Configured `api_settings.llama_cpp` model/default.
+3. First compatible model returned by `/v1/models`.
+4. Blocked state if no model can be resolved.
+
 Readiness behavior:
 
 - If the server is reachable and a model can be resolved, provider state is ready.
@@ -282,7 +289,9 @@ The native Console composer remains the visible source of truth for draft text.
 Rules:
 
 - Normal typing stays literal.
-- Large pasted chunks over 50 characters collapse according to the existing Console large-paste design.
+- Large explicit paste chunks and paste-like insertion chunks over 50 characters collapse according to the existing Console large-paste design.
+- Normal typing never auto-collapses solely because the draft grows beyond 50 characters.
+- Restored drafts, session hydration, and ordinary programmatic `load_draft` paths remain literal unless they intentionally call the paste-like insertion API.
 - `draft_text()` must return the exact send payload, including collapsed paste contents.
 - Blocked send preserves the draft.
 - Accepted send clears the draft only after the user message is recorded.
