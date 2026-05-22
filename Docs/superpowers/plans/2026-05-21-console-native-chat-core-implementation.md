@@ -151,9 +151,12 @@ Add:
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleProviderSelection,
     ConsoleRunState,
     ConsoleRunStatus,
+    ConsoleStagedSource,
     ConsoleVariantSet,
+    ConsoleWorkspaceContext,
 )
 
 
@@ -176,6 +179,38 @@ def test_variant_set_selects_current_variant_for_continue():
     assert variants.current.content == "second"
     assert variants.can_go_previous is True
     assert variants.can_go_next is False
+
+
+def test_workspace_context_blocks_cross_workspace_sources():
+    context = ConsoleWorkspaceContext(
+        active_workspace_id="workspace-a",
+        staged_sources=(
+            ConsoleStagedSource(
+                source_id="note-1",
+                label="Other workspace note",
+                source_type="note",
+                workspace_id="workspace-b",
+            ),
+        ),
+    )
+
+    assert context.has_policy_blocks is True
+    assert context.allowed_sources == []
+    assert "Other workspace note" in context.recovery_copy
+    assert "workspace-a" in context.recovery_copy
+
+
+def test_provider_selection_carries_workspace_context():
+    context = ConsoleWorkspaceContext(active_workspace_id="workspace-a")
+    selection = ConsoleProviderSelection(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        explicit_model="local-model",
+        workspace_context=context,
+    )
+
+    assert selection.provider == "llama_cpp"
+    assert selection.workspace_context.active_workspace_id == "workspace-a"
 ```
 
 - [ ] **Step 2: Run tests and verify failure**
@@ -216,6 +251,53 @@ class ConsoleRunStatus(str, Enum):
     BLOCKED = "blocked"
     STOPPED = "stopped"
     FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class ConsoleStagedSource:
+    source_id: str
+    label: str
+    source_type: str
+    workspace_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ConsoleWorkspaceContext:
+    active_workspace_id: str = "global"
+    staged_sources: tuple[ConsoleStagedSource, ...] = ()
+    active_run_id: str | None = None
+    handoff_id: str | None = None
+
+    @property
+    def blocked_sources(self) -> list[ConsoleStagedSource]:
+        return [
+            source
+            for source in self.staged_sources
+            if source.workspace_id not in (None, self.active_workspace_id)
+        ]
+
+    @property
+    def allowed_sources(self) -> list[ConsoleStagedSource]:
+        blocked = {source.source_id for source in self.blocked_sources}
+        return [source for source in self.staged_sources if source.source_id not in blocked]
+
+    @property
+    def has_policy_blocks(self) -> bool:
+        return bool(self.blocked_sources)
+
+    @property
+    def recovery_copy(self) -> str:
+        labels = ", ".join(source.label for source in self.blocked_sources)
+        return f"Workspace policy blocked sources outside {self.active_workspace_id}: {labels}"
+
+
+@dataclass(frozen=True)
+class ConsoleProviderSelection:
+    provider: str
+    base_url: str | None = None
+    explicit_model: str | None = None
+    configured_model: str | None = None
+    workspace_context: ConsoleWorkspaceContext = field(default_factory=ConsoleWorkspaceContext)
 
 
 @dataclass(frozen=True)
@@ -310,6 +392,7 @@ Add tests using `httpx.MockTransport`:
 import httpx
 import pytest
 
+from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     LlamaCppProviderConfig,
@@ -380,6 +463,24 @@ async def test_llamacpp_empty_models_without_configured_model_returns_blocked_re
     assert resolved.ready is False
     assert resolved.model is None
     assert resolved.visible_copy == "Provider blocked: select or configure a llama.cpp model."
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_dispatches_llamacpp_selection():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://127.0.0.1:9099")
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="llama_cpp", base_url="http://127.0.0.1:9099")
+    )
+
+    assert resolved.ready is True
+    assert resolved.provider == "llama_cpp"
+    assert resolved.model == "server-model"
 ```
 
 - [ ] **Step 2: Run tests and verify failure**
@@ -399,6 +500,7 @@ Implement:
 - `LlamaCppProviderConfig(base_url, explicit_model=None, configured_model=None)`
 - `ConsoleProviderResolution(provider, base_url, model, ready, visible_copy)`
 - `ConsoleProviderGateway.resolve_llamacpp()`
+- `ConsoleProviderGateway.resolve_for_send(selection: ConsoleProviderSelection)`
 
 Resolution order must match the spec:
 
@@ -411,6 +513,9 @@ Blocked states must be specific enough for Console recovery:
 
 - unreachable server: `Provider blocked: llama.cpp server is not reachable at http://127.0.0.1:9099. Start llama.cpp or update Console provider settings.`
 - no resolvable model: `Provider blocked: select or configure a llama.cpp model.`
+- unsupported provider: `WIP: Console native provider '<provider>' is not wired yet. Select llama.cpp for this slice.`
+
+`resolve_for_send()` is the controller-facing interface. It must dispatch `provider in {"llama_cpp", "local_llamacpp"}` to `resolve_llamacpp()` and return a blocked resolution with explicit `WIP` copy for unsupported providers.
 
 - [ ] **Step 4: Add streaming contract tests**
 
@@ -443,11 +548,40 @@ async def test_llamacpp_stream_chat_yields_content_chunks():
     ]
 
     assert chunks == ["hel", "lo"]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_dispatches_llamacpp_resolution():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+        )
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://127.0.0.1:9099")
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="llama_cpp",
+            base_url="http://127.0.0.1:9099",
+            explicit_model="test-model",
+        )
+    )
+
+    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hello"}])]
+
+    assert chunks == ["ok"]
 ```
 
 - [ ] **Step 5: Implement minimal SSE parsing**
 
-Implement `stream_llamacpp_chat()` with `httpx.AsyncClient.stream()` and OpenAI-compatible `data:` line parsing. Ignore `[DONE]`; yield only content chunks.
+Implement:
+
+- `stream_llamacpp_chat()` with `httpx.AsyncClient.stream()` and OpenAI-compatible `data:` line parsing
+- `stream_chat(resolution, messages)` as the controller-facing dispatcher to llama.cpp streaming
+
+Ignore `[DONE]`; yield only content chunks.
 
 - [ ] **Step 6: Run provider tests**
 
@@ -480,7 +614,7 @@ git commit -m "Add Console llama.cpp provider gateway"
 Add:
 
 ```python
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleWorkspaceContext
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
 
@@ -512,6 +646,17 @@ def test_store_updates_streaming_message_and_marks_stopped():
     updated = store.get_message(message.id)
     assert updated.content == "hello"
     assert updated.status == "stopped"
+
+
+def test_store_tracks_active_workspace_context():
+    context = ConsoleWorkspaceContext(active_workspace_id="workspace-a")
+    store = ConsoleChatStore(workspace_context=context)
+
+    assert store.workspace_context.active_workspace_id == "workspace-a"
+
+    store.set_workspace_context(ConsoleWorkspaceContext(active_workspace_id="workspace-b"))
+
+    assert store.workspace_context.active_workspace_id == "workspace-b"
 ```
 
 - [ ] **Step 2: Run tests and verify failure**
@@ -530,6 +675,7 @@ Implement enough to pass:
 
 - session creation
 - active session ID
+- `workspace_context` storage and `set_workspace_context(...)`
 - message append
 - message lookup
 - chunk append
@@ -609,7 +755,7 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus, ConsoleStagedSource, ConsoleWorkspaceContext
 
 
 class BlockedGateway:
@@ -632,6 +778,39 @@ async def test_blocked_send_preserves_draft_and_adds_recovery_message():
     assert controller.run_state.status is ConsoleRunStatus.BLOCKED
     assert "Provider blocked" in controller.run_state.visible_copy
     assert store.messages_for_session(store.active_session_id)[-1].role.value == "system"
+
+
+@pytest.mark.asyncio
+async def test_blocked_workspace_source_preserves_draft_and_skips_provider_call():
+    class RecordingGateway(BlockedGateway):
+        calls = 0
+
+        async def resolve_for_send(self, selection):
+            self.calls += 1
+            return await super().resolve_for_send(selection)
+
+    context = ConsoleWorkspaceContext(
+        active_workspace_id="workspace-a",
+        staged_sources=(
+            ConsoleStagedSource(
+                source_id="note-1",
+                label="Workspace B note",
+                source_type="note",
+                workspace_id="workspace-b",
+            ),
+        ),
+    )
+    gateway = RecordingGateway()
+    store = ConsoleChatStore(workspace_context=context)
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is False
+    assert result.should_clear_draft is False
+    assert gateway.calls == 0
+    assert controller.run_state.status is ConsoleRunStatus.BLOCKED
+    assert "Workspace B note" in controller.run_state.visible_copy
 ```
 
 - [ ] **Step 2: Run tests and verify failure**
@@ -651,6 +830,8 @@ Implement:
 - `ConsoleChatController.submit_draft(draft: str)`
 - `ConsoleSubmitResult(accepted, should_clear_draft, visible_copy)`
 - empty draft validation
+- workspace/source policy validation before provider resolution
+- controller construction of `ConsoleProviderSelection` carrying `store.workspace_context`
 - provider blocked recovery message
 
 - [ ] **Step 4: Add streaming success test**
@@ -693,6 +874,7 @@ async def test_submit_draft_streams_assistant_message_to_completion():
 
 Implement the minimal loop:
 
+- build `ConsoleProviderSelection` from the current Console provider/model/base URL plus `store.workspace_context`
 - create user message
 - create pending assistant message
 - set run state streaming
@@ -833,9 +1015,12 @@ Add private helpers:
 - `_ensure_console_chat_store()`
 - `_ensure_console_provider_gateway()`
 - `_ensure_console_chat_controller()`
+- `_current_console_workspace_context()`
 - `_sync_console_chat_core_state()`
 
 Use `ChatPersistenceService` only when `app_instance.chachanotes_db` is available.
+
+`_current_console_workspace_context()` must collect the active workspace ID and staged sources known to Console. If the current app state has no workspace model yet, use `ConsoleWorkspaceContext(active_workspace_id="global")` and keep this fallback explicit in code. Every send must update `store.workspace_context` before calling the controller so workspace/source policy checks use current UI state.
 
 - [ ] **Step 4: Route composer send and stop buttons**
 
@@ -850,6 +1035,8 @@ Send handler:
 2. Schedule `controller.submit_draft(...)` as a Textual worker or app-owned async task; do not block the UI loop.
 3. Clear composer only when `result.should_clear_draft`.
 4. Refresh transcript/inspector/status.
+
+When the composer contains collapsed paste chips, the send handler must use `composer.draft_text()` as the exact expanded payload. It must never read the visible collapsed label such as `Pasted Text: 120 Characters` as message content.
 
 Stop handler:
 
@@ -866,7 +1053,53 @@ python -m pytest -q Tests/UI/test_console_native_chat_flow.py::test_console_nati
 
 Expected: pass.
 
-- [ ] **Step 6: Add mounted accepted-send test with fake gateway**
+- [ ] **Step 6: Add mounted collapsed-paste send payload test**
+
+Inject a capturing fake gateway and assert the controller receives expanded pasted text, not the collapsed composer display label:
+
+```python
+class CapturingGateway:
+    def __init__(self):
+        self.sent_messages = []
+
+    async def resolve_for_send(self, selection):
+        return type("Resolution", (), {
+            "ready": True,
+            "provider": "llama_cpp",
+            "model": "test-model",
+            "base_url": "http://127.0.0.1:9099",
+            "visible_copy": "",
+        })()
+
+    async def stream_chat(self, resolution, messages):
+        self.sent_messages.append(messages)
+        yield "accepted"
+
+
+@pytest.mark.asyncio
+async def test_console_native_send_uses_expanded_paste_payload_not_collapsed_label():
+    long_text = "x" * 80
+    gateway = CapturingGateway()
+    app = _build_test_app()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_pasted_text(long_text)
+
+        assert "Pasted Text: 80 Characters" in _visible_text(console)
+
+        await pilot.click("#console-send-message")
+        await pilot.pause(0.4)
+
+        assert gateway.sent_messages[-1][-1]["content"] == long_text
+        assert "Pasted Text: 80 Characters" not in gateway.sent_messages[-1][-1]["content"]
+```
+
+- [ ] **Step 7: Add mounted accepted-send test with fake gateway**
 
 Inject a fake gateway through the app or screen seam so the test does not need network. Define the fake gateway in this test module instead of importing from another test file:
 
@@ -887,7 +1120,7 @@ class StreamingGateway:
 
 
 @pytest.mark.asyncio
-async def test_console_native_send_clears_composer_after_acceptance_and_renders_messages():
+async def test_console_native_send_clears_composer_after_acceptance_and_updates_store():
     app = _build_test_app()
     app.console_provider_gateway_factory = lambda: StreamingGateway()
     host = ConsoleHarness(app)
@@ -902,15 +1135,17 @@ async def test_console_native_send_clears_composer_after_acceptance_and_renders_
         await pilot.pause(0.4)
 
         assert composer.draft_text() == ""
-        text = _visible_text(console)
-        assert "hello" in text
+        store = console._ensure_console_chat_store()
+        messages = store.messages_for_session(store.active_session_id)
+        assert messages[-2].content == "hello"
+        assert messages[-1].content == "hello"
 ```
 
-- [ ] **Step 7: Implement test injection seam**
+- [ ] **Step 8: Implement test injection seam**
 
 Prefer a narrowly named app attribute such as `console_provider_gateway_factory` only for tests and future dependency injection.
 
-- [ ] **Step 8: Run Console flow tests**
+- [ ] **Step 9: Run Console flow tests**
 
 Run:
 
@@ -920,7 +1155,7 @@ python -m pytest -q Tests/UI/test_console_native_chat_flow.py Tests/UI/test_cons
 
 Expected: pass.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 Run:
 
@@ -1016,13 +1251,30 @@ Do not implement action dispatch in this task.
 Use a mounted Console or transcript-only app:
 
 ```python
+from textual.app import App, ComposeResult
+
+
+class TranscriptHarness(App):
+    def compose(self) -> ComposeResult:
+        transcript = ConsoleTranscript(id="console-native-transcript")
+        transcript.set_messages([
+            ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hello", id="m1"),
+            ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m2"),
+        ])
+        yield transcript
+
+
 @pytest.mark.asyncio
 async def test_console_transcript_keyboard_selects_messages_and_enter_shows_actions():
-    ...
-    await pilot.press("tab")
-    await pilot.press("down")
-    await pilot.press("enter")
-    assert "Copy | Edit | Save as..." in _visible_text(app)
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.press("tab")
+        await pilot.press("down")
+        await pilot.press("enter")
+        text = _visible_text(app)
+
+    assert "Copy | Edit | Save as..." in text
 ```
 
 - [ ] **Step 7: Implement focus and key bindings**
@@ -1159,12 +1411,36 @@ Do not wire destructive DB delete until confirmation behavior is designed. For t
 Add a test that opens the modal and asserts available plus WIP entries:
 
 ```python
+from textual.app import App
+
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import _visible_text
+from tldw_chatbook.Chat.console_message_actions import ConsoleSaveDestination
+from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
+
+
+class SaveAsModalHarness(App):
+    async def on_mount(self) -> None:
+        await self.push_screen(
+            ConsoleSaveAsModal(
+                destinations=[
+                    ConsoleSaveDestination(label="Chatbook", available=True, reason=""),
+                    ConsoleSaveDestination(label="Note", available=False, reason="WIP: save as Note is not wired yet."),
+                ]
+            )
+        )
+
+
 @pytest.mark.asyncio
 async def test_save_as_modal_lists_available_and_wip_destinations():
-    ...
-    assert "Chatbook" in _visible_text(app)
-    assert "Note" in _visible_text(app)
-    assert "WIP" in _visible_text(app)
+    app = SaveAsModalHarness()
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.1)
+        text = _visible_text(app)
+
+    assert "Chatbook" in text
+    assert "Note" in text
+    assert "WIP: save as Note is not wired yet." in text
 ```
 
 - [ ] **Step 7: Implement `ConsoleSaveAsModal`**
@@ -1185,6 +1461,15 @@ Use typed message events or button IDs from `ConsoleTranscript`.
 - notify or update status for Copy/WIP
 - open `ConsoleSaveAsModal` for `Save as...`
 - call controller continuation/regeneration methods for `--->` and `♻` where implemented
+
+Use stable transcript action button IDs so mounted tests and CDP can target actions reliably:
+
+- `console-message-action-copy-<message_id>`
+- `console-message-action-edit-<message_id>`
+- `console-message-action-save-as-<message_id>`
+- `console-message-action-regenerate-<message_id>`
+- `console-message-action-continue-<message_id>`
+- `console-message-action-delete-<message_id>`
 
 - [ ] **Step 9: Run action tests**
 
@@ -1328,10 +1613,22 @@ async def test_console_continue_action_streams_new_message_from_selected_turn():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        source = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="seed")
+        console._sync_console_chat_core_state()
 
-        # Seed native store through the screen seam, select the assistant message,
-        # activate ---> with Enter, and assert a new assistant response appears.
-        ...
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(source.id)
+        console._sync_console_chat_core_state()
+
+        await pilot.click(f"#console-message-action-continue-{source.id}")
+        await pilot.pause(0.4)
+
+        messages = store.messages_for_session(session.id)
+        assert messages[-1].role is ConsoleMessageRole.ASSISTANT
+        assert messages[-1].content == "hello"
+        assert messages[-1].id != source.id
 ```
 
 - [ ] **Step 10: Run variant and continue tests**
