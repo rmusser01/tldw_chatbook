@@ -1709,7 +1709,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
         self.post_message(NavigateToScreen(TAB_CHAT))
 
-    def get_acp_runtime_session_state(self):
+    def get_acp_runtime_session_state(self) -> ACPRuntimeSessionState:
         """Return current ACP runtime/session state for ACP and Console surfaces."""
         explicit_state = getattr(self, "acp_runtime_session_state", None)
         normalized_state = ACPRuntimeSessionState.from_any(explicit_state)
@@ -1718,8 +1718,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         manager = getattr(self, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)
         if callable(snapshot):
-            return snapshot()
-        return explicit_state
+            return ACPRuntimeSessionState.from_any(snapshot())
+        return normalized_state
 
     def open_console_live_work_primary_action(self, launch: Any) -> bool:
         """Follow through on a supported Console live-work status-card action."""

@@ -1,11 +1,14 @@
 """ACP destination shell for agent sessions and runtimes."""
 
+from typing import Any
+
 from rich.markup import escape as escape_markup
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Rule, Static
 
+from ...ACP_Interop.runtime_process import ACPRuntimeProcessResult
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -371,19 +374,38 @@ class ACPScreen(BaseAppScreen):
     @on(Button.Pressed, "#acp-restart-runtime")
     def launch_acp_runtime(self, event: Button.Pressed) -> None:
         event.stop()
+        self._launch_acp_runtime_worker("ACP agent session")
+
+    @work(exclusive=True, thread=True)
+    def _launch_acp_runtime_worker(self, title: str) -> None:
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         launcher = getattr(manager, "start_session", None)
         if not callable(launcher):
-            self.notify("ACP runtime launch is unavailable.", severity="warning")
+            self.app.call_from_thread(
+                self.notify,
+                "ACP runtime launch is unavailable.",
+                severity="warning",
+            )
             return
-        result = launcher(title="ACP agent session")
+        result = launcher(title=title)
+        self.app.call_from_thread(
+            self._apply_acp_runtime_result,
+            result,
+            "ACP runtime started. Console follow is ready.",
+        )
+
+    def _apply_acp_runtime_result(
+        self,
+        result: ACPRuntimeProcessResult | Any,
+        success_message: str | None = None,
+    ) -> None:
         session_state = getattr(result, "session_state", None)
         if session_state is not None:
             self.app_instance.acp_runtime_session_state = session_state
         status = str(getattr(result, "status", "unknown"))
         recovery = (
-            "ACP runtime started. Console follow is ready."
-            if status == "running"
+            success_message
+            if status == "running" and success_message
             else str(getattr(result, "recovery", "ACP runtime state updated."))
         )
         severity = "information" if status == "running" else "warning"
@@ -393,17 +415,21 @@ class ACPScreen(BaseAppScreen):
     @on(Button.Pressed, "#acp-stop-runtime")
     def stop_acp_runtime(self, event: Button.Pressed) -> None:
         event.stop()
+        self._stop_acp_runtime_worker()
+
+    @work(exclusive=True, thread=True)
+    def _stop_acp_runtime_worker(self) -> None:
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         stopper = getattr(manager, "stop", None)
         if not callable(stopper):
-            self.notify("ACP runtime stop is unavailable.", severity="warning")
+            self.app.call_from_thread(
+                self.notify,
+                "ACP runtime stop is unavailable.",
+                severity="warning",
+            )
             return
         result = stopper()
-        session_state = getattr(result, "session_state", None)
-        if session_state is not None:
-            self.app_instance.acp_runtime_session_state = session_state
-        self.notify(str(getattr(result, "recovery", "ACP runtime stopped.")))
-        self.refresh(recompose=True)
+        self.app.call_from_thread(self._apply_acp_runtime_result, result, None)
 
     @on(Button.Pressed, "#acp-follow-in-console")
     def follow_acp_session_in_console(self, event: Button.Pressed) -> None:

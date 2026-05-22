@@ -1516,6 +1516,45 @@ def test_acp_runtime_session_state_preserves_numeric_zero_fields():
     assert state.session_status == "0"
 
 
+def test_app_acp_runtime_session_state_helper_normalizes_manager_snapshot():
+    app = _build_test_app()
+    app.acp_runtime_session_state = None
+    app.acp_runtime_process_manager = Mock()
+    app.acp_runtime_process_manager.snapshot.return_value = {
+        "runtime_id": "codex-local",
+        "runtime_label": "Codex local ACP",
+        "runtime_version": "0.1",
+        "session_id": "session-1",
+        "session_title": "Research agent",
+        "session_status": "running",
+        "session_payload": {"pid": 1234},
+    }
+
+    state = app.get_acp_runtime_session_state()
+
+    assert isinstance(state, ACPRuntimeSessionState)
+    assert state.session_id == "session-1"
+    assert state.session_payload == {"pid": 1234}
+
+
+def test_acp_runtime_button_handlers_schedule_workers_without_blocking_manager():
+    app = _build_test_app()
+    app.acp_runtime_process_manager = Mock()
+    screen = ACPScreen(app)
+    screen._launch_acp_runtime_worker = Mock()
+    screen._stop_acp_runtime_worker = Mock()
+    event = Mock()
+
+    screen.launch_acp_runtime(event)
+    screen.stop_acp_runtime(event)
+
+    assert event.stop.call_count == 2
+    screen._launch_acp_runtime_worker.assert_called_once_with("ACP agent session")
+    screen._stop_acp_runtime_worker.assert_called_once_with()
+    app.acp_runtime_process_manager.start_session.assert_not_called()
+    app.acp_runtime_process_manager.stop.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_acp_configured_runtime_without_session_disables_console_follow():
     app = _build_test_app()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import time
 import uuid
@@ -13,6 +14,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from ..Utils.path_validation import validate_path_simple
 from .runtime_session import ACPRuntimeSessionState
 
 
@@ -36,10 +38,21 @@ def _coerce_args(value: Any) -> tuple[str, ...]:
     if value is None:
         return ()
     if isinstance(value, str):
-        return tuple(part for part in value.split() if part)
+        try:
+            return tuple(shlex.split(value))
+        except ValueError:
+            return ()
     if isinstance(value, Sequence):
         return tuple(str(part) for part in value)
     return ()
+
+
+def _coerce_startup_timeout(value: Any) -> float:
+    try:
+        timeout = float(value if value is not None else 2.0)
+    except (TypeError, ValueError):
+        timeout = 2.0
+    return max(0.05, timeout)
 
 
 @dataclass(frozen=True)
@@ -68,7 +81,9 @@ class ACPRuntimeProcessConfig:
             runtime_id=_clean_text(value.get("runtime_id"), "local-acp-runtime"),
             runtime_label=_clean_text(value.get("runtime_label"), "Local ACP Runtime"),
             runtime_version=_clean_text(value.get("runtime_version")),
-            startup_timeout_seconds=float(value.get("startup_timeout_seconds") or 2.0),
+            startup_timeout_seconds=_coerce_startup_timeout(
+                value.get("startup_timeout_seconds")
+            ),
         )
 
     @property
@@ -165,13 +180,16 @@ class ACPRuntimeProcessManager:
             self._session_state = ACPRuntimeSessionState()
             return ACPRuntimeProcessResult(self._status, self._last_recovery)
 
-        self.stop() if self._process and self._process.poll() is None else None
+        if self._process and self._process.poll() is None:
+            stop_result = self.stop()
+            if stop_result.status == ACPRuntimeProcessStatus.FAILED:
+                return stop_result
         self._status = ACPRuntimeProcessStatus.STARTING
         self._last_recovery = "ACP runtime is starting."
         try:
             env = os.environ.copy()
             env.update({str(key): str(value) for key, value in self.config.env.items()})
-            cwd = str(Path(self.config.cwd).expanduser()) if self.config.cwd else None
+            cwd = self._validated_cwd()
             self._process = subprocess.Popen(
                 [self.config.command, *self.config.args],
                 cwd=cwd,
@@ -182,6 +200,11 @@ class ACPRuntimeProcessManager:
                 text=True,
                 shell=False,
             )
+        except ValueError as exc:
+            self._status = ACPRuntimeProcessStatus.FAILED
+            self._last_recovery = str(exc)
+            self._session_state = self._base_session_state()
+            return ACPRuntimeProcessResult(self._status, self._last_recovery, self._session_state)
         except OSError as exc:
             self._status = ACPRuntimeProcessStatus.FAILED
             self._last_recovery = f"ACP runtime could not start: {exc}"
@@ -203,8 +226,6 @@ class ACPRuntimeProcessManager:
                     self._session_state,
                     return_code=return_code,
                 )
-            if time.monotonic() + 0.05 >= deadline:
-                break
             time.sleep(0.01)
 
         self._status = ACPRuntimeProcessStatus.RUNNING
@@ -237,7 +258,19 @@ class ACPRuntimeProcessManager:
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait(timeout=2)
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self._process = None
+                    self._status = ACPRuntimeProcessStatus.FAILED
+                    self._last_recovery = "ACP runtime did not stop after kill timeout."
+                    self._session_state = self._base_session_state()
+                    return ACPRuntimeProcessResult(
+                        self._status,
+                        self._last_recovery,
+                        self._session_state,
+                    )
+        self._process = None
         self._status = (
             ACPRuntimeProcessStatus.STOPPED
             if self.config.is_configured
@@ -250,6 +283,20 @@ class ACPRuntimeProcessManager:
         )
         self._session_state = self._base_session_state()
         return ACPRuntimeProcessResult(self._status, self._last_recovery, self._session_state)
+
+    def _validated_cwd(self) -> str | None:
+        if not self.config.cwd:
+            return None
+        try:
+            cwd_path = validate_path_simple(
+                Path(self.config.cwd).expanduser(),
+                require_exists=True,
+            ).resolve()
+            if not cwd_path.is_dir():
+                raise ValueError(f"Path is not a directory: {cwd_path}")
+        except ValueError as exc:
+            raise ValueError(f"Invalid ACP runtime cwd: {exc}") from exc
+        return str(cwd_path)
 
     def _refresh_process_state(self) -> None:
         if self._status != ACPRuntimeProcessStatus.RUNNING or self._process is None:
