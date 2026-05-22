@@ -169,6 +169,15 @@ def test_run_state_blocks_with_visible_recovery_copy():
     assert state.is_stop_allowed is False
 
 
+def test_run_state_retrying_is_visible_and_not_sendable():
+    state = ConsoleRunState.retrying("Retrying failed response")
+
+    assert state.status is ConsoleRunStatus.RETRYING
+    assert state.visible_copy == "Retrying failed response"
+    assert state.is_send_allowed is False
+    assert state.is_stop_allowed is False
+
+
 def test_variant_set_selects_current_variant_for_continue():
     variants = ConsoleVariantSet.from_contents(
         turn_id="turn-1",
@@ -251,6 +260,7 @@ class ConsoleRunStatus(str, Enum):
     BLOCKED = "blocked"
     STOPPED = "stopped"
     FAILED = "failed"
+    RETRYING = "retrying"
 
 
 @dataclass(frozen=True)
@@ -308,6 +318,10 @@ class ConsoleRunState:
     @classmethod
     def blocked(cls, visible_copy: str) -> "ConsoleRunState":
         return cls(ConsoleRunStatus.BLOCKED, visible_copy)
+
+    @classmethod
+    def retrying(cls, visible_copy: str = "Retrying failed response") -> "ConsoleRunState":
+        return cls(ConsoleRunStatus.RETRYING, visible_copy)
 
     @property
     def is_send_allowed(self) -> bool:
@@ -402,8 +416,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 @pytest.mark.asyncio
 async def test_llamacpp_prefers_explicit_model_over_models_endpoint():
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/v1/models"
-        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+        raise AssertionError("explicit model resolution must not require /v1/models")
 
     gateway = ConsoleProviderGateway(
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://127.0.0.1:9099")
@@ -415,6 +428,23 @@ async def test_llamacpp_prefers_explicit_model_over_models_endpoint():
 
     assert resolved.ready is True
     assert resolved.model == "explicit-model"
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_prefers_configured_model_without_models_endpoint():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("configured model resolution must not require /v1/models")
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://127.0.0.1:9099")
+    )
+
+    resolved = await gateway.resolve_llamacpp(
+        LlamaCppProviderConfig(base_url="http://127.0.0.1:9099", configured_model="configured-model")
+    )
+
+    assert resolved.ready is True
+    assert resolved.model == "configured-model"
 
 
 @pytest.mark.asyncio
@@ -508,6 +538,8 @@ Resolution order must match the spec:
 2. configured `api_settings.llama_cpp` model/default
 3. first compatible `/v1/models` result
 4. blocked state
+
+Do not call `/v1/models` when an explicit or configured model is already available. A local llama.cpp server may not expose a usable models endpoint even though an explicit model can stream successfully.
 
 Blocked states must be specific enough for Console recovery:
 
@@ -926,6 +958,29 @@ async def test_retry_failed_message_streams_replacement_from_original_turn():
     assert result.accepted is True
     assert store.get_message(failed_id).status == "complete"
     assert store.get_message(failed_id).content == "hello"
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_message_records_retrying_then_streaming_transition():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
+    await controller.submit_draft("hello")
+    failed_id = store.messages_for_session(store.active_session_id)[-1].id
+
+    observed = []
+
+    class ObservingGateway(StreamingGateway):
+        async def stream_chat(self, resolution, messages):
+            observed.append(controller.run_state.status)
+            yield "recovered"
+
+    controller.provider_gateway = ObservingGateway()
+    result = await controller.retry_message(failed_id)
+
+    assert result.accepted is True
+    assert ConsoleRunStatus.RETRYING in controller.run_state_history
+    assert observed == [ConsoleRunStatus.STREAMING]
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
 ```
 
 - [ ] **Step 8: Implement stop, failure, and retry**
@@ -938,6 +993,14 @@ For streaming errors:
 - set run state `FAILED`
 - expose visible recovery copy in `run_state.visible_copy`
 - preserve enough turn context for `retry_message(message_id)` to stream a replacement without duplicating the user message
+- expose `run_state_history` or an equivalent event hook in tests so `FAILED -> RETRYING -> STREAMING -> COMPLETED` can be verified
+
+For retry:
+
+- set run state `RETRYING` immediately with visible copy before resolving the provider
+- set run state `STREAMING` once the replacement stream starts
+- keep the failed message visible while retrying
+- mark the same failed message `complete` if retry succeeds
 
 Fallback from a failed primary provider to a secondary provider is not implemented in this slice. If exposed in UI copy, label it `WIP: fallback provider routing is not implemented yet`.
 
@@ -1523,7 +1586,11 @@ Use stable transcript action button IDs so mounted tests and CDP can target acti
 - `console-message-action-retry-<message_id>`
 - `console-message-action-regenerate-<message_id>`
 - `console-message-action-continue-<message_id>`
+- `console-message-action-feedback-up-<message_id>`
+- `console-message-action-feedback-down-<message_id>`
 - `console-message-action-delete-<message_id>`
+
+Keyboard activation must use the same dispatch path as pointer activation for every action. Implement action-row focus movement and Enter activation so Copy, Edit, Save as..., Retry, Regenerate, Continue, feedback, and Delete all emit the same typed event/button handler used by click.
 
 - [ ] **Step 9: Add mounted failed-stream retry recovery test**
 
@@ -1579,7 +1646,61 @@ async def test_console_failed_stream_renders_inline_retry_and_recovers():
 
 The failed transcript row must include inline visible error copy plus a retry action. A user must not need to infer recovery from logs or hidden state.
 
-- [ ] **Step 10: Run action tests**
+- [ ] **Step 10: Add keyboard action activation parity test**
+
+Mount a transcript with a selected failed assistant message, focus each action button by ID, activate with Enter, and assert the same event/action result as clicking the button:
+
+```python
+@pytest.mark.parametrize(
+    "action_id,button_prefix",
+    [
+        ("copy", "console-message-action-copy"),
+        ("save-as", "console-message-action-save-as"),
+        ("retry", "console-message-action-retry"),
+        ("regenerate", "console-message-action-regenerate"),
+        ("continue", "console-message-action-continue"),
+        ("feedback-up", "console-message-action-feedback-up"),
+        ("feedback-down", "console-message-action-feedback-down"),
+        ("delete", "console-message-action-delete"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_console_action_row_enter_matches_click_for_all_actions(action_id, button_prefix):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        failed = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="partial",
+            status="failed",
+        )
+        console._sync_console_chat_core_state()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(failed.id)
+        console._sync_console_chat_core_state()
+
+        button_id = f"#{button_prefix}-{failed.id}"
+        await pilot.click(button_id)
+        clicked_action = console._last_console_action.action_id
+
+        console._last_console_action = None
+        transcript.focus_action(failed.id, action_id)
+        await pilot.press("enter")
+        keyboard_action = console._last_console_action.action_id
+
+        assert keyboard_action == clicked_action == action_id
+```
+
+If the final implementation tracks action results with a different test seam, assert that Enter and click both call the same `ChatScreen` handler/action ID rather than only checking text. `ConsoleTranscript.focus_action(message_id, action_id)` may be a test-visible helper; the production behavior still needs normal Tab/arrow focus movement.
+
+- [ ] **Step 11: Run action tests**
 
 Run:
 
@@ -1589,7 +1710,7 @@ python -m pytest -q Tests/Chat/test_console_message_actions.py Tests/UI/test_con
 
 Expected: pass.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 Run:
 
