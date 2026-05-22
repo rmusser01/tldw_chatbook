@@ -72,6 +72,7 @@ class ConsoleChatController:
         if self.store.workspace_context.has_policy_blocks:
             return self._block(session.id, self.store.workspace_context.recovery_copy)
 
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
         resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
         if not getattr(resolution, "ready", False):
             visible_copy = getattr(resolution, "visible_copy", "") or "Provider blocked."
@@ -179,6 +180,8 @@ class ConsoleChatController:
         emitted_content = False
         try:
             async for chunk in self.provider_gateway.stream_chat(resolution, provider_messages):
+                if not chunk:
+                    continue
                 if self._stop_requested:
                     stopped = (
                         self.store.mark_message_stopped(assistant_message_id)

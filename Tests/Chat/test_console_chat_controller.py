@@ -70,6 +70,11 @@ class EmptyStreamingGateway(StreamingGateway):
             yield ""
 
 
+class EmptyHeartbeatStreamingGateway(StreamingGateway):
+    async def stream_chat(self, resolution, messages):
+        yield ""
+
+
 class FakePersistence:
     def __init__(self):
         self.created_conversations = []
@@ -275,6 +280,39 @@ async def test_submit_draft_rejects_concurrent_send_while_streaming():
 
 
 @pytest.mark.asyncio
+async def test_submit_draft_rejects_concurrent_send_during_provider_validation():
+    class SlowResolveGateway(StreamingGateway):
+        def __init__(self):
+            self.resolve_started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def resolve_for_send(self, selection):
+            self.resolve_started.set()
+            await self.release.wait()
+            return await super().resolve_for_send(selection)
+
+        async def stream_chat(self, resolution, messages):
+            yield "done"
+
+    gateway = SlowResolveGateway()
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    task = asyncio.create_task(controller.submit_draft("first"))
+    await asyncio.wait_for(gateway.resolve_started.wait(), timeout=1)
+
+    blocked = await asyncio.wait_for(controller.submit_draft("second"), timeout=0.5)
+
+    assert blocked.accepted is False
+    assert blocked.should_clear_draft is False
+    assert "already running" in blocked.visible_copy
+    assert controller.run_state.status is ConsoleRunStatus.VALIDATING
+
+    gateway.release.set()
+    await task
+
+
+@pytest.mark.asyncio
 async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk():
     class StalledGateway(StreamingGateway):
         def __init__(self):
@@ -426,6 +464,23 @@ async def test_retry_keeps_failed_content_if_replacement_stream_is_empty():
     failed = store.messages_for_session(store.active_session_id)[-1]
 
     controller.provider_gateway = EmptyStreamingGateway()
+    result = await controller.retry_message(failed.id)
+
+    retried = store.get_message(failed.id)
+    assert result.accepted is True
+    assert retried.status == "failed"
+    assert retried.content == "partial"
+    assert controller.run_state.status is ConsoleRunStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_retry_ignores_empty_heartbeat_before_empty_replacement_stream_ends():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
+    await controller.submit_draft("hello")
+    failed = store.messages_for_session(store.active_session_id)[-1]
+
+    controller.provider_gateway = EmptyHeartbeatStreamingGateway()
     result = await controller.retry_message(failed.id)
 
     retried = store.get_message(failed.id)
