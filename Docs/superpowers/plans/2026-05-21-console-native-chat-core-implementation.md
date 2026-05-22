@@ -1307,6 +1307,30 @@ async def test_console_provider_selection_live_qa_override_wins_over_configured_
     assert selection.base_url == "http://127.0.0.1:9099"
     assert selection.explicit_model == "explicit-model"
     assert selection.configured_model == "configured-model"
+
+
+@pytest.mark.asyncio
+async def test_console_provider_selection_env_live_qa_override_wins_over_configured_url(monkeypatch):
+    monkeypatch.setenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", "http://127.0.0.1:9099/v1/chat/completions")
+    app = _build_test_app()
+    app.chat_api_provider_value = "local_llamacpp"
+    app.chat_api_model_value = "explicit-model"
+    app.app_config["api_settings"] = {
+        "local_llamacpp": {
+            "api_url": "http://127.0.0.1:8080/v1/chat/completions",
+            "model": "configured-model",
+        }
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)):
+        console = host.screen_stack[-1]
+        selection = console._build_console_provider_selection()
+
+    assert selection.provider == "local_llamacpp"
+    assert selection.base_url == "http://127.0.0.1:9099"
+    assert selection.explicit_model == "explicit-model"
+    assert selection.configured_model == "configured-model"
 ```
 
 Normalization rules:
@@ -1654,7 +1678,7 @@ Make sure keyboard users can move between every main Console area after the nati
 
 ```python
 @pytest.mark.asyncio
-async def test_console_tab_reaches_all_major_console_regions():
+async def test_console_tab_reaches_all_major_console_screen_regions():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1664,7 +1688,6 @@ async def test_console_tab_reaches_all_major_console_regions():
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         await _wait_for_selector(console, pilot, "#console-run-inspector")
-        await _wait_for_selector(console, pilot, "#app-footer-status")
 
         seen_focus_ids = set()
         for _ in range(20):
@@ -1678,13 +1701,38 @@ async def test_console_tab_reaches_all_major_console_regions():
         "console-native-transcript",
         "console-run-inspector",
         "console-native-composer",
-        "app-footer-status",
     } <= seen_focus_ids
+
+
+@pytest.mark.asyncio
+async def test_console_tab_reaches_app_footer_status_in_full_shell():
+    app = _build_test_app(configured_default="chat")
+    app._initial_tab_value = "chat"
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+            context="Console route",
+        )
+        await _wait_for_selector(app.screen, pilot, "#console-native-composer")
+        await _wait_for_selector(app, pilot, "#app-footer-status")
+
+        seen_focus_ids = set()
+        for _ in range(24):
+            focused = getattr(app, "focused", None)
+            if focused is not None and getattr(focused, "id", None):
+                seen_focus_ids.add(focused.id)
+            await pilot.press("tab")
+
+    assert "app-footer-status" in seen_focus_ids
 ```
 
 - [ ] **Step 9: Implement focus and key bindings**
 
 Add stable focusable IDs or focus proxies for each major region. If an existing container cannot receive focus directly, add a narrow focus target inside that region and keep its ID aligned with the region contract above. Do not rely on incidental Button/Input focus only; the user must be able to intentionally land on each screen area and understand where keyboard commands apply.
+
+Do not duplicate `#app-footer-status` inside `ChatScreen`. The footer is an app-level `AppFooterStatus`; test it only through a full app/shell harness. Screen-only `ConsoleHarness` tests should cover Console-owned regions and controls.
 
 Implement transcript-local handling for:
 
