@@ -1225,6 +1225,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "APP_TTS_CONFIG": {**DEFAULT_APP_TTS_CONFIG, **app_tts_config},
         "APP_DATABASE_CONFIG": {**DEFAULT_DATABASE_CONFIG, **app_database_config},
         "APP_RAG_SEARCH_CONFIG": {**DEFAULT_RAG_SEARCH_CONFIG, **app_rag_search_config},
+        "acp": get_toml_section("acp"),
 
         "COMPREHENSIVE_CONFIG_RAW": toml_config_data, # Store the raw TOML data if needed
         "OPENAI_API_KEY": openai_api_key, # Top-level convenience access
@@ -1378,6 +1379,16 @@ users_name = "default_user" # Default user name for the TUI
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
+
+[acp.runtime]
+# ACP owns runtime launch/setup. Leave command empty to keep ACP honestly blocked.
+command = ""
+args = []
+cwd = ""
+runtime_id = "local-acp-runtime"
+runtime_label = "Local ACP Runtime"
+runtime_version = ""
+startup_timeout_seconds = 2.0
 
 [tldw_api]
 base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint

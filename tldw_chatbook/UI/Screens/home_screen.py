@@ -1,6 +1,7 @@
 """Home dashboard screen for the master shell."""
 
 from collections.abc import Callable
+from dataclasses import replace
 
 from textual import on, work
 from textual.app import ComposeResult
@@ -112,10 +113,20 @@ class HomeScreen(BaseAppScreen):
 
         providers = getattr(self.app_instance, "providers_models", {}) or {}
         has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
-        return self.app_instance.home_active_work_adapter.build_dashboard_input(
+        dashboard_input = self.app_instance.home_active_work_adapter.build_dashboard_input(
             providers_models=providers,
             has_recent_work=has_recent_work,
         )
+        manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
+        snapshot = getattr(manager, "snapshot", None)
+        if callable(snapshot):
+            raw_snapshot = snapshot()
+            if isinstance(raw_snapshot, dict):
+                dashboard_input = replace(
+                    dashboard_input,
+                    acp_ready=str(raw_snapshot.get("status") or "") == "running",
+                )
+        return dashboard_input
 
     def compose_content(self) -> ComposeResult:
         """Compose the Home dashboard route."""

@@ -1516,6 +1516,45 @@ def test_acp_runtime_session_state_preserves_numeric_zero_fields():
     assert state.session_status == "0"
 
 
+def test_app_acp_runtime_session_state_helper_normalizes_manager_snapshot():
+    app = _build_test_app()
+    app.acp_runtime_session_state = None
+    app.acp_runtime_process_manager = Mock()
+    app.acp_runtime_process_manager.snapshot.return_value = {
+        "runtime_id": "codex-local",
+        "runtime_label": "Codex local ACP",
+        "runtime_version": "0.1",
+        "session_id": "session-1",
+        "session_title": "Research agent",
+        "session_status": "running",
+        "session_payload": {"pid": 1234},
+    }
+
+    state = app.get_acp_runtime_session_state()
+
+    assert isinstance(state, ACPRuntimeSessionState)
+    assert state.session_id == "session-1"
+    assert state.session_payload == {"pid": 1234}
+
+
+def test_acp_runtime_button_handlers_schedule_workers_without_blocking_manager():
+    app = _build_test_app()
+    app.acp_runtime_process_manager = Mock()
+    screen = ACPScreen(app)
+    screen._launch_acp_runtime_worker = Mock()
+    screen._stop_acp_runtime_worker = Mock()
+    event = Mock()
+
+    screen.launch_acp_runtime(event)
+    screen.stop_acp_runtime(event)
+
+    assert event.stop.call_count == 2
+    screen._launch_acp_runtime_worker.assert_called_once_with("ACP agent session")
+    screen._stop_acp_runtime_worker.assert_called_once_with()
+    app.acp_runtime_process_manager.start_session.assert_not_called()
+    app.acp_runtime_process_manager.stop.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_acp_configured_runtime_without_session_disables_console_follow():
     app = _build_test_app()
@@ -1544,6 +1583,73 @@ async def test_acp_configured_runtime_without_session_disables_console_follow():
 
 
 @pytest.mark.asyncio
+async def test_acp_configured_runtime_process_enables_launch_and_creates_session_payload():
+    app = _build_test_app()
+    app.acp_runtime_process_manager = Mock()
+    app.acp_runtime_process_manager.snapshot.return_value = {
+        "status": "configured",
+        "runtime_id": "codex-local",
+        "runtime_label": "Codex local ACP",
+        "runtime_version": "0.1",
+        "launch_available": True,
+        "recovery": "Launch ACP runtime.",
+    }
+    app.acp_runtime_process_manager.start_session.return_value = Mock(
+        status="running",
+        recovery="ACP runtime is running.",
+        session_state=ACPRuntimeSessionState(
+            runtime_id="codex-local",
+            runtime_label="Codex local ACP",
+            runtime_version="0.1",
+            session_id="session-1",
+            session_title="Research agent",
+            session_status="running",
+            session_payload={"pid": 1234, "command": "acp-runtime"},
+        ),
+    )
+    host = DestinationHarness(app, "acp")
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        launch_button = screen.query_one("#acp-launch-agent", Button)
+        assert launch_button.disabled is False
+
+        await pilot.click("#acp-launch-agent")
+        await _wait_for_mock_call(app.acp_runtime_process_manager.start_session, pilot)
+        await pilot.pause()
+
+    app.acp_runtime_process_manager.start_session.assert_called_once()
+    assert app.acp_runtime_session_state.session_id == "session-1"
+    assert app.acp_runtime_session_state.has_console_session_payload is True
+
+
+@pytest.mark.asyncio
+async def test_acp_failed_runtime_process_surfaces_recovery_and_restart_action():
+    app = _build_test_app()
+    app.acp_runtime_process_manager = Mock()
+    app.acp_runtime_process_manager.snapshot.return_value = {
+        "status": "failed",
+        "runtime_id": "codex-local",
+        "runtime_label": "Codex local ACP",
+        "runtime_version": "0.1",
+        "launch_available": True,
+        "recovery": "ACP runtime exited before it became ready.",
+    }
+    host = DestinationHarness(app, "acp")
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        visible_text = _visible_text(screen)
+        restart_button = screen.query_one("#acp-restart-runtime", Button)
+
+    assert "Runtime state: failed" in visible_text
+    assert "ACP runtime exited before it became ready." in visible_text
+    assert restart_button.disabled is False
+
+
+@pytest.mark.asyncio
 async def test_acp_runtime_and_session_labels_are_markup_escaped():
     app = _build_test_app()
     app.acp_runtime_session_state = {
@@ -1563,7 +1669,12 @@ async def test_acp_runtime_and_session_labels_are_markup_escaped():
         assert len(screen.query("#acp-agent-codex-local")) == 0
         assert len(screen.query("#acp-no-sessions")) == 0
         assert len(screen.query("#acp-runtime-blocked")) == 0
-        assert screen.query_one("#acp-runtime-display", Static).renderable == "> \\[bold]Runtime\\[/bold]"
+        assert screen.query_one("#acp-session-list-row", Static).renderable == (
+            "> \\[red]Session\\[/red] (pending) (console-ready)"
+        )
+        assert screen.query_one("#acp-runtime-display", Static).renderable == (
+            "  Runtime: \\[bold]Runtime\\[/bold]"
+        )
         assert screen.query_one("#acp-session-status", Static).renderable == "  Session: \\[red]Session\\[/red]"
         assert screen.query_one("#acp-runtime-status", Static).renderable == (
             "  Runtime configured: \\[bold]Runtime\\[/bold]"
@@ -1621,6 +1732,65 @@ async def test_acp_session_payload_enables_console_follow_live_work_handoff():
         "thread_id": "thread-1",
         "workspace": "docs",
     }
+
+
+@pytest.mark.asyncio
+async def test_acp_running_runtime_presents_actionable_hierarchy_without_dead_actions():
+    app = _build_test_app()
+    app.acp_runtime_session_state = {
+        "runtime_id": "codex-local",
+        "runtime_label": "Codex local ACP",
+        "runtime_version": "0.1",
+        "session_id": "session-1",
+        "session_title": "Research agent",
+        "session_status": "running",
+        "session_payload": {
+            "pid": 1234,
+            "started_at": "2026-05-22T12:00:00",
+        },
+    }
+    app.acp_runtime_process_manager = Mock()
+    app.acp_runtime_process_manager.snapshot.return_value = {
+        "status": "running",
+        "runtime_id": "codex-local",
+        "runtime_label": "Codex local ACP",
+        "runtime_version": "0.1",
+        "launch_available": False,
+        "stop_available": True,
+        "recovery": "ACP runtime is running.",
+    }
+    host = DestinationHarness(app, "acp")
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        visible_text = _visible_text(screen)
+        follow_button = screen.query_one("#acp-follow-in-console", Button)
+        stop_button = screen.query_one("#acp-stop-runtime", Button)
+        list_pane = screen.query_one("#acp-list-pane")
+        detail_pane = screen.query_one("#acp-detail-pane")
+        inspector_pane = screen.query_one("#acp-inspector-pane")
+        session_row = screen.query_one("#acp-session-list-row")
+
+    assert "State: Running · Console-ready" in visible_text
+    assert "Active Session" in visible_text
+    assert "> Research agent (running) (console-ready)" in visible_text
+    assert "Diffs: not supported by current runtime payload" in visible_text
+    assert "Terminal: no terminal stream attached" in visible_text
+    assert "Primary action" in visible_text
+    assert "Runtime controls" in visible_text
+    assert "Process: pid 1234" in visible_text
+    assert "Started: 2026-05-22T12:00:00" in visible_text
+    assert "Handoff ID: session-1" in visible_text
+    assert "Console target:" not in visible_text
+    assert list_pane.has_class("acp-framed-pane")
+    assert detail_pane.has_class("acp-framed-pane")
+    assert inspector_pane.has_class("acp-framed-pane")
+    assert session_row.has_class("acp-selected-session-row")
+    assert len(screen.query("#acp-launch-agent")) == 0
+    assert len(screen.query("#acp-restart-runtime")) == 0
+    assert follow_button.disabled is False
+    assert stop_button.disabled is False
 
 
 @pytest.mark.parametrize("route", SCREEN_BY_ROUTE)

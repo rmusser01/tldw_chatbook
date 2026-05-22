@@ -140,6 +140,12 @@ def resolve_console_live_work_primary_action(
             target_route="artifacts",
             target_id=target_id,
         )
+    if source == "acp" and ":acp_session:" in target_id:
+        return ConsoleLiveWorkPrimaryAction(
+            label=launch.action_label,
+            target_route="acp",
+            target_id=target_id,
+        )
     return None
 
 
@@ -240,6 +246,33 @@ class ConsoleLiveWorkSourceReadinessState:
         """
         connected = "destination-section console-live-work-source-row console-live-work-source-connected"
         unavailable = "destination-section console-live-work-source-row console-live-work-source-unavailable"
+        return cls.from_acp_runtime_status("not_configured")
+
+    @classmethod
+    def from_acp_runtime_status(
+        cls,
+        status: str,
+    ) -> "ConsoleLiveWorkSourceReadinessState":
+        """Build readiness rows with ACP reflecting the shared runtime state."""
+        connected = "destination-section console-live-work-source-row console-live-work-source-connected"
+        unavailable = "destination-section console-live-work-source-row console-live-work-source-unavailable"
+        acp_status = str(status or "").strip().lower()
+        acp_label = "Blocked"
+        acp_recovery = "Configure ACP runtime."
+        acp_classes = unavailable
+        if acp_status == "starting":
+            acp_label = "Starting"
+            acp_recovery = "Waiting for runtime."
+        elif acp_status == "running":
+            acp_label = "Connected"
+            acp_recovery = "Follow ACP session."
+            acp_classes = connected
+        elif acp_status == "failed":
+            acp_label = "Failed"
+            acp_recovery = "Review ACP runtime."
+        elif acp_status in {"configured", "stopped"}:
+            acp_label = "Ready"
+            acp_recovery = "Launch ACP runtime."
         return cls(
             rows=(
                 ConsoleLiveWorkSourceReadinessRow(
@@ -266,9 +299,9 @@ class ConsoleLiveWorkSourceReadinessState:
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-acp",
                     label="ACP",
-                    status="Connected",
-                    recovery="Stage ACP session payloads.",
-                    classes=connected,
+                    status=acp_label,
+                    recovery=acp_recovery,
+                    classes=acp_classes,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-mcp",
