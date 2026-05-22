@@ -2066,6 +2066,8 @@ git commit -m "Add Console response variants and continue flow"
 - Modify: `Tests/Chat/test_console_chat_store.py`
 - Modify: `Tests/UI/test_console_internals_decomposition.py`
 - Modify: `Tests/UI/test_console_native_chat_flow.py`
+- Modify: `Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py`
+- Modify: `Tests/UI/test_chat_window_enhanced.py`
 
 - [ ] **Step 1: Add guardrail proving `ChatTabContainer` is not mounted in Console**
 
@@ -2105,6 +2107,8 @@ The native tab strip is not optional in the final Console migration. It must rep
 - active tab styling based on `ConsoleChatStore.active_session_id`
 - `ConsoleChatController.new_session()` delegates to `store.create_session(...)`
 - `ConsoleChatController.switch_session(session_id)` delegates to `store.switch_session(...)`
+- `ConsoleSessionSurface.SessionChanged(session_id)` or equivalent typed event replaces `ChatTabContainer.ActiveSessionChanged` for Console
+- `ChatScreen` must keep `on_chat_tab_container_active_session_changed` only for legacy chat surfaces and add a native handler such as `on_console_session_surface_session_changed`
 
 - [ ] **Step 4: Add native tab/session switching tests**
 
@@ -2154,12 +2158,41 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
 
 Where `ChatScreen` currently queries `_get_tab_container()` for Console, add native-store equivalents. Preserve legacy behavior only for direct legacy chat screens.
 
+Add or update tests for the known downstream seams:
+
+```python
+@pytest.mark.asyncio
+async def test_console_native_session_change_updates_shell_status_without_chat_tab_container():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        second = store.create_session(title="Chat 2")
+        console._sync_console_chat_core_state()
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+
+        assert store.active_session_id == first.id
+        assert "Chat 1" in _visible_text(console)
+```
+
+Update existing tests that currently assume `#console-chat-tabs` or `ChatTabContainer` inside Console:
+
+- `Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py`
+- `Tests/UI/test_chat_window_enhanced.py`
+
+Do not weaken legacy chat tests globally. Only update Console-route expectations to the native tab strip/active-session events. Legacy chat screen tests should still cover `ChatTabContainer` where that widget remains the intended implementation.
+
 - [ ] **Step 6: Run focused regressions**
 
 Run:
 
 ```bash
-python -m pytest -q Tests/UI/test_console_internals_decomposition.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_native_transcript.py --tb=short
+python -m pytest -q Tests/UI/test_console_internals_decomposition.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_native_transcript.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_chat_window_enhanced.py --tb=short
 ```
 
 Expected: pass.
@@ -2169,7 +2202,7 @@ Expected: pass.
 Run:
 
 ```bash
-git add tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py tldw_chatbook/Widgets/Console/console_session_surface.py tldw_chatbook/UI/Screens/chat_screen.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_console_native_chat_flow.py
+git add tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py tldw_chatbook/Widgets/Console/console_session_surface.py tldw_chatbook/UI/Screens/chat_screen.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py Tests/UI/test_chat_window_enhanced.py
 git commit -m "Remove legacy chat tab dependency from Console"
 ```
 
