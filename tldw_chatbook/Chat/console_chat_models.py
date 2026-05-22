@@ -30,6 +30,9 @@ class ConsoleRunStatus(str, Enum):
     RETRYING = "retrying"
 
 
+ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "failed"]
+
+
 @dataclass(frozen=True)
 class ConsoleStagedSource:
     """A source currently staged for use by Console."""
@@ -128,7 +131,8 @@ class ConsoleChatMessage:
     content: str
     id: str = field(default_factory=lambda: str(uuid4()))
     turn_id: str | None = None
-    status: Literal["complete", "pending", "streaming", "stopped", "failed"] = "complete"
+    status: ConsoleMessageStatus = "complete"
+    persisted_message_id: str | None = None
 
 
 @dataclass(frozen=True)
