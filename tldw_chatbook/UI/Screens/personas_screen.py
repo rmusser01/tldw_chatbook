@@ -443,7 +443,7 @@ class PersonasScreen(BaseAppScreen):
                 )
             with Horizontal(id="personas-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="personas-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 1: Persona List", classes="destination-pane-title")
+                    yield Static("Persona List", classes="destination-section personas-column-title")
                     yield Static(
                         f"Characters: {self._local_behavior_counts['characters']}",
                         id="personas-list-characters-count",
@@ -459,7 +459,10 @@ class PersonasScreen(BaseAppScreen):
                     )
                 yield self._column_divider("personas-list-detail-divider")
                 with Vertical(id="personas-detail-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 2: Behavior Profile Detail", classes="destination-pane-title")
+                    yield Static(
+                        "Behavior Profile Detail",
+                        classes="destination-section personas-column-title",
+                    )
                     if not self._personas_loaded:
                         yield Static(
                             "Loading local Personas behavior context...",
@@ -516,7 +519,7 @@ class PersonasScreen(BaseAppScreen):
                         attach_tooltip = "Stage local persona context in Console."
                 yield self._column_divider("personas-detail-inspector-divider")
                 with Vertical(id="personas-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Column 3: Attachments", classes="destination-pane-title")
+                    yield Static("Attachments", classes="destination-section personas-column-title")
                     if selected_metadata:
                         with Vertical(id="personas-selected-target-card"):
                             yield Static(

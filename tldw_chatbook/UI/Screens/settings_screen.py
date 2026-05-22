@@ -59,7 +59,7 @@ class SettingsScreen(BaseAppScreen):
                 )
             with Horizontal(id="settings-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="settings-category-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 1: Settings Sections", classes="destination-section settings-column-title")
+                    yield Static("Settings Sections", classes="destination-section settings-column-title")
                     yield Static("Global preferences", classes="destination-section")
                     yield Static("Appearance", classes="destination-section")
                     yield Static("Accounts/Auth", classes="destination-section")
@@ -68,7 +68,7 @@ class SettingsScreen(BaseAppScreen):
                     yield Static("Console behavior", classes="destination-section")
                 yield self._column_divider("settings-category-detail-divider")
                 with Vertical(id="settings-detail-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 2: Preference Detail", classes="destination-section settings-column-title")
+                    yield Static("Preference Detail", classes="destination-section settings-column-title")
                     yield Static("Global preferences", classes="destination-section")
                     yield Static("Appearance controls are available in the customization surface.")
                     yield Static("Accounts/Auth and storage defaults remain global app settings.")
@@ -89,7 +89,7 @@ class SettingsScreen(BaseAppScreen):
                     )
                 yield self._column_divider("settings-detail-impact-divider")
                 with Vertical(id="settings-impact-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Column 3: Scope Inspector", classes="destination-section settings-column-title")
+                    yield Static("Scope Inspector", classes="destination-section settings-column-title")
                     yield Static("Impact and boundaries", classes="destination-section")
                     yield Static(
                         "MCP and tool-control settings live under MCP, not global Settings.",

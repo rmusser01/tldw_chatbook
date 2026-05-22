@@ -734,6 +734,35 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
             assert divider.region.width == 1
 
 
+@pytest.mark.parametrize(
+    ("route", "workbench", "expected_titles"),
+    (
+        ("artifacts", "#artifacts-workbench", ("Artifact List", "Artifact Preview", "Provenance")),
+        ("personas", "#personas-workbench", ("Persona List", "Behavior Profile Detail", "Attachments")),
+        ("schedules", "#schedules-workbench", ("Schedule Queue", "Run Detail", "Status Inspector")),
+        ("workflows", "#workflows-workbench", ("Procedure Library", "Run Detail", "Run Inspector")),
+        ("acp", "#acp-workbench", ("Agents / Sessions", "Session Detail", "Compatibility / Actions")),
+        ("skills", "#skills-workbench", ("Skill Library", "Skill Detail", "Skill Inspector")),
+        ("settings", "#settings-workbench", ("Settings Sections", "Preference Detail", "Scope Inspector")),
+    ),
+)
+@pytest.mark.asyncio
+async def test_destination_pane_titles_are_user_facing_not_ordinal(route, workbench, expected_titles):
+    app = _build_test_app()
+    host = DestinationHarness(app, route)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, workbench)
+        visible_text = _visible_static_text(screen)
+
+        for expected in expected_titles:
+            assert expected in visible_text
+        assert "Column 1:" not in visible_text
+        assert "Column 2:" not in visible_text
+        assert "Column 3:" not in visible_text
+
+
 @pytest.mark.asyncio
 async def test_schedules_screen_matches_approved_control_plane_columns():
     app = _build_test_app()
@@ -747,15 +776,18 @@ async def test_schedules_screen_matches_approved_control_plane_columns():
         for expected in (
             "Schedules | Jobs, digests, timers, retries | Local | Console handoff",
             "Filters: Next run Paused Failed Retry History",
-            "Column 1: Schedule Queue",
-            "Column 2: Run Detail / Output",
-            "Column 3: Status Inspector",
+            "Schedule Queue",
+            "Run Detail",
+            "Status Inspector",
             "State:",
             "Retry/backoff:",
             "Next action:",
             "Console: blocked",
         ):
             assert expected in visible_text
+        assert "Column 1:" not in visible_text
+        assert "Column 2:" not in visible_text
+        assert "Column 3:" not in visible_text
 
         for selector in (
             "#schedules-list-detail-divider",
@@ -779,14 +811,17 @@ async def test_workflows_screen_matches_approved_procedure_columns():
         for expected in (
             "Workflows | Procedures, runs, dry-runs, approvals | Local | Console handoff",
             "Modes: Recipes Inputs Steps Dry run Approvals Outputs",
-            "Column 1: Procedure Library",
-            "Column 2: Run Detail / Output",
-            "Column 3: Run Inspector",
+            "Procedure Library",
+            "Run Detail",
+            "Run Inspector",
             "State: blocked",
             "Console: blocked",
             "Next action: start or select a workflow run",
         ):
             assert expected in visible_text
+        assert "Column 1:" not in visible_text
+        assert "Column 2:" not in visible_text
+        assert "Column 3:" not in visible_text
 
         for selector in (
             "#workflows-list-detail-divider",
@@ -842,15 +877,18 @@ async def test_personas_workbench_exposes_approved_three_column_ia():
         for expected in (
             "Personas | Behavior, characters, prompts, lore | Ready | Local/Server",
             "Modes: Personas | Characters | Prompts | Dictionaries | Lore | Import/Export",
-            "Column 1: Persona List",
-            "Column 2: Behavior Profile Detail",
-            "Column 3: Attachments",
+            "Persona List",
+            "Behavior Profile Detail",
+            "Attachments",
             "Research Analyst",
             "Fiction Character",
             "Console: ready",
             "Workflows: ready",
         ):
             assert expected in visible_text
+        assert "Column 1:" not in visible_text
+        assert "Column 2:" not in visible_text
+        assert "Column 3:" not in visible_text
         assert {"Open Personas", "Attach to Console"}.issubset(buttons)
 
 
@@ -885,11 +923,14 @@ async def test_artifacts_empty_state_labels_three_clear_columns():
         await _wait_for_selector(screen, pilot, "#artifacts-workbench")
         visible_text = _visible_static_text(screen)
         for expected in (
-            "Column 1: Artifact List",
-            "Column 2: Artifact Preview / Detail",
-            "Column 3: Provenance",
+            "Artifact List",
+            "Artifact Preview",
+            "Provenance",
         ):
             assert expected in visible_text
+        assert "Column 1:" not in visible_text
+        assert "Column 2:" not in visible_text
+        assert "Column 3:" not in visible_text
 
 
 @pytest.mark.asyncio
@@ -1337,10 +1378,14 @@ async def test_acp_runtime_blocked_state_uses_setup_and_compatibility_columns():
         )
         visible_text = _visible_static_text(screen)
         assert "Agents / Sessions" in visible_text
-        assert "Session Detail / Runtime Setup" in visible_text
+        assert "Session Detail" in visible_text
+        assert "Session Detail / Runtime Setup" not in visible_text
         assert "Compatibility / Actions" in visible_text
         assert "Runtime owner: ACP" in visible_text
         assert "ACP version: n/a" in visible_text
+        assert "Column 1:" not in visible_text
+        assert "Column 2:" not in visible_text
+        assert "Column 3:" not in visible_text
         runtime_copy = str(screen.query_one("#acp-empty-state").renderable)
         assert "Settings" not in runtime_copy
         assert "Configure ACP runtime setup in ACP" in runtime_copy

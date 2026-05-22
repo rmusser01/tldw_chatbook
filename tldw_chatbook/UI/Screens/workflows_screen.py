@@ -190,8 +190,8 @@ class WorkflowsScreen(BaseAppScreen):
             with Horizontal(id="workflows-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="workflows-list-pane", classes="destination-workbench-pane"):
                     yield Static(
-                        "Column 1: Procedure Library",
-                        classes="destination-pane-title workflows-column-title",
+                        "Procedure Library",
+                        classes="destination-section workflows-column-title",
                     )
                     yield Static("Recipes 0", classes="destination-section")
                     yield Static("Inputs 0", classes="destination-section")
@@ -203,8 +203,8 @@ class WorkflowsScreen(BaseAppScreen):
                 yield self._column_divider("workflows-list-detail-divider")
                 with Vertical(id="workflows-detail-pane", classes="destination-workbench-pane"):
                     yield Static(
-                        "Column 2: Run Detail / Output",
-                        classes="destination-pane-title workflows-column-title",
+                        "Run Detail",
+                        classes="destination-section workflows-column-title",
                     )
                     if not self._latest_console_context_loaded:
                         yield Static(
@@ -237,8 +237,8 @@ class WorkflowsScreen(BaseAppScreen):
                 yield self._column_divider("workflows-detail-inspector-divider")
                 with Vertical(id="workflows-inspector-pane", classes="destination-workbench-pane ds-inspector"):
                     yield Static(
-                        "Column 3: Run Inspector",
-                        classes="destination-pane-title workflows-column-title",
+                        "Run Inspector",
+                        classes="destination-section workflows-column-title",
                     )
                     yield Static(
                         self._inspector_state_summary(latest_console_item),

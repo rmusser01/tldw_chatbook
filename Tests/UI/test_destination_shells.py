@@ -765,7 +765,10 @@ async def test_personas_destination_lists_local_behavior_snapshot_from_service()
         text = _visible_text(screen)
         button = screen.query_one("#personas-attach-to-console", Button)
 
-        assert "Column 2: Behavior Profile Detail" in text
+        assert "Behavior Profile Detail" in text
+        assert "Column 1:" not in text
+        assert "Column 2:" not in text
+        assert "Column 3:" not in text
         assert "Characters: 2" in text
         assert "Persona profiles: 1" in text
         assert "Research Mentor" in text
@@ -2134,9 +2137,12 @@ async def test_skills_destination_uses_three_column_workbench_contract():
 
         assert "Skills | Agent Skills packs, validation, Console attachments | Local" in text
         assert "Mode: Installed / Validate / Attach | Source: local SKILL.md directories" in text
-        assert "Column 1: Skill Library" in text
-        assert "Column 2: Skill Detail / SKILL.md" in text
-        assert "Column 3: Skill Inspector" in text
+        assert "Skill Library" in text
+        assert "Skill Detail" in text
+        assert "Skill Inspector" in text
+        assert "Column 1:" not in text
+        assert "Column 2:" not in text
+        assert "Column 3:" not in text
         assert screen.query_one("#skills-workbench").region.height >= 20
         assert screen.query_one("#skills-list-detail-divider")
         assert screen.query_one("#skills-detail-inspector-divider")
@@ -2359,9 +2365,12 @@ async def test_settings_destination_uses_three_column_workbench_contract():
 
         assert "Settings | Global preferences, appearance, accounts, storage | Local" in text
         assert "Mode: Global / Console behavior / Appearance | Runtime controls stay in MCP and ACP" in text
-        assert "Column 1: Settings Sections" in text
-        assert "Column 2: Preference Detail" in text
-        assert "Column 3: Scope Inspector" in text
+        assert "Settings Sections" in text
+        assert "Preference Detail" in text
+        assert "Scope Inspector" in text
+        assert "Column 1:" not in text
+        assert "Column 2:" not in text
+        assert "Column 3:" not in text
         assert screen.query_one("#settings-workbench").region.height >= 20
         category_pane = screen.query_one("#settings-category-pane")
         detail_pane = screen.query_one("#settings-detail-pane")

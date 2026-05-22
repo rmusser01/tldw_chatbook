@@ -264,7 +264,7 @@ class SchedulesScreen(BaseAppScreen):
                 )
             with Horizontal(id="schedules-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="schedules-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 1: Schedule Queue", classes="destination-pane-title schedules-column-title")
+                    yield Static("Schedule Queue", classes="destination-section schedules-column-title")
                     yield Static("Next Run 0", classes="destination-section")
                     yield Static("Paused 0", classes="destination-section")
                     yield Static("Failed 0", classes="destination-section")
@@ -273,7 +273,7 @@ class SchedulesScreen(BaseAppScreen):
                     yield Static("No scheduled runs are active.", id="schedules-queue-empty")
                 yield self._column_divider("schedules-list-detail-divider")
                 with Vertical(id="schedules-detail-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 2: Run Detail / Output", classes="destination-pane-title schedules-column-title")
+                    yield Static("Run Detail", classes="destination-section schedules-column-title")
                     if not self._latest_console_context_loaded:
                         yield Static(
                             "Loading schedule and Console follow context...",
@@ -314,7 +314,7 @@ class SchedulesScreen(BaseAppScreen):
                         )
                 yield self._column_divider("schedules-detail-inspector-divider")
                 with Vertical(id="schedules-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Column 3: Status Inspector", classes="destination-pane-title schedules-column-title")
+                    yield Static("Status Inspector", classes="destination-section schedules-column-title")
                     yield Static(
                         self._inspector_state_summary(latest_console_item),
                         id="schedules-state-summary",
