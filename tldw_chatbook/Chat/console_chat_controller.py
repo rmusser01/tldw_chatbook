@@ -44,12 +44,14 @@ class ConsoleChatController:
         provider_gateway: ConsoleProviderGatewayProtocol,
         provider: str = "llama_cpp",
         model: str | None = None,
+        configured_model: str | None = None,
         base_url: str | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
         self.provider = provider
         self.model = model
+        self.configured_model = configured_model
         self.base_url = base_url
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
@@ -63,11 +65,10 @@ class ConsoleChatController:
         if active_rejection is not None:
             return active_rejection
 
-        normalized_draft = draft.strip()
         session = self.store.ensure_session(
             workspace_id=self.store.workspace_context.active_workspace_id,
         )
-        if not normalized_draft:
+        if not draft.strip():
             return self._block(session.id, "Type a message before sending.")
         if self.store.workspace_context.has_policy_blocks:
             return self._block(session.id, self.store.workspace_context.recovery_copy)
@@ -81,7 +82,7 @@ class ConsoleChatController:
         self.store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
-            content=normalized_draft,
+            content=draft,
             persist=self.store.persistence is not None,
         )
         provider_messages = self._provider_messages_for_session(session.id)
@@ -148,6 +149,7 @@ class ConsoleChatController:
             provider=self.provider,
             base_url=self.base_url,
             explicit_model=self.model,
+            configured_model=self.configured_model,
             workspace_context=self.store.workspace_context,
         )
 

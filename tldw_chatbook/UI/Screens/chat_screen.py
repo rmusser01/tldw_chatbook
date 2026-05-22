@@ -483,6 +483,7 @@ class ChatScreen(BaseAppScreen):
                 provider_gateway=self._ensure_console_provider_gateway(),
                 provider=selection.provider,
                 model=selection.explicit_model,
+                configured_model=selection.configured_model,
                 base_url=selection.base_url,
             )
         self._sync_console_chat_core_state()
@@ -495,6 +496,7 @@ class ChatScreen(BaseAppScreen):
         if self._console_chat_controller is not None:
             self._console_chat_controller.provider = selection.provider
             self._console_chat_controller.model = selection.explicit_model
+            self._console_chat_controller.configured_model = selection.configured_model
             self._console_chat_controller.base_url = selection.base_url
         return selection
 
@@ -1631,7 +1633,12 @@ class ChatScreen(BaseAppScreen):
         async def _poll_transcript() -> None:
             await self._sync_native_console_chat_ui()
             controller = self._console_chat_controller
-            if controller is None or controller.run_state.status is not ConsoleRunStatus.STREAMING:
+            active_statuses = {
+                ConsoleRunStatus.VALIDATING,
+                ConsoleRunStatus.RETRYING,
+                ConsoleRunStatus.STREAMING,
+            }
+            if controller is None or controller.run_state.status not in active_statuses:
                 self._stop_console_transcript_sync_timer()
 
         self._console_transcript_sync_timer = self.set_interval(0.05, _poll_transcript)
@@ -1705,7 +1712,11 @@ class ChatScreen(BaseAppScreen):
                 await self._append_native_console_system_message(blocked_reason)
                 self._focus_console_composer_if_needed(force=True)
                 return
-        self.run_worker(self._submit_console_native_draft(draft), exclusive=False)
+        controller = self._ensure_console_chat_controller()
+        if not controller.run_state.is_send_allowed:
+            self.app_instance.notify("A Console run is already running.", severity="warning")
+            return
+        self.run_worker(self._submit_console_native_draft(draft), exclusive=True)
 
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
         """Route the Console stop action through native run control."""

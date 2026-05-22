@@ -25,6 +25,20 @@ class _ReadyResolutionGateway:
         )
 
 
+class SelectionCapturingGateway(_ReadyResolutionGateway):
+    def __init__(self) -> None:
+        self.selections = []
+        self.sent_messages = []
+
+    async def resolve_for_send(self, selection):
+        self.selections.append(selection)
+        return await super().resolve_for_send(selection)
+
+    async def stream_chat(self, resolution, messages):
+        self.sent_messages.append(list(messages))
+        yield "accepted"
+
+
 class WaitingGateway(_ReadyResolutionGateway):
     def __init__(self) -> None:
         self.started = asyncio.Event()
@@ -35,6 +49,12 @@ class WaitingGateway(_ReadyResolutionGateway):
         self.started.set()
         await self.release.wait()
         yield " done"
+
+
+class DelayedWaitingGateway(WaitingGateway):
+    async def resolve_for_send(self, selection):
+        await asyncio.sleep(0.15)
+        return await super().resolve_for_send(selection)
 
 
 class BlockedGateway:
@@ -205,6 +225,58 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
 
 
 @pytest.mark.asyncio
+async def test_console_duplicate_send_during_stream_does_not_break_stop_control():
+    gateway = WaitingGateway()
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        console.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await _wait_for_text(console, pilot, "partial")
+
+        composer.load_draft("second send")
+        console.query_one("#console-send-message", Button).press()
+        await pilot.pause(0.1)
+        assert console._ensure_console_chat_controller().run_state.status.value == "streaming"
+
+        console.query_one("#console-stop-generation", Button).press()
+        await _wait_for_text(console, pilot, "stopped")
+
+
+@pytest.mark.asyncio
+async def test_console_streaming_chunks_render_after_slow_provider_validation():
+    gateway = DelayedWaitingGateway()
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        console.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await _wait_for_text(console, pilot, "partial")
+        gateway.release.set()
+        await _wait_for_text(console, pilot, "partial done")
+
+
+@pytest.mark.asyncio
 async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
     long_text = "x" * 80
     gateway = CapturingGateway()
@@ -227,6 +299,59 @@ async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
 
     assert gateway.sent_messages[-1][-1]["content"] == long_text
     assert "Pasted Text: 80 Characters" not in gateway.sent_messages[-1][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_console_native_send_preserves_expanded_payload_whitespace():
+    gateway = CapturingGateway()
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("  padded payload  ")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "accepted")
+
+    assert gateway.sent_messages[-1][-1]["content"] == "  padded payload  "
+
+
+@pytest.mark.asyncio
+async def test_console_configured_model_reaches_gateway_when_ui_model_is_unset():
+    gateway = SelectionCapturingGateway()
+    app = _build_test_app()
+    app.chat_api_provider_value = "local_llamacpp"
+    app.chat_api_model_value = None
+    app.console_provider_gateway_factory = lambda: gateway
+    app.app_config["api_settings"] = {
+        "local_llamacpp": {
+            "api_url": "http://127.0.0.1:9099/v1/chat/completions",
+            "model": "configured-model",
+        }
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console._console_control_provider = "local_llamacpp"
+        console._console_control_model = None
+        console._sync_console_control_bar()
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "accepted")
+
+    assert gateway.selections[-1].explicit_model is None
+    assert gateway.selections[-1].configured_model == "configured-model"
 
 
 @pytest.mark.asyncio
