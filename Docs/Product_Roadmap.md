@@ -23,6 +23,16 @@ Some capabilities remain intentionally source-honest rather than overpromised:
 - Optional dependency groups must be installed before advanced media, RAG, MCP, or web capabilities are available.
 - Missing providers, missing sources, missing runtimes, and unavailable optional features should show the responsible surface and a recovery path.
 
+## Deferred Tranche Gates
+
+These areas are tracked as staged future work after the post-release actual-use audit. They are not counted as shipped behavior until each tranche has its own implementation evidence and actual app QA:
+
+- ACP runtime launch for task/run package handoff.
+- write sync promotion with explicit preview, conflict, rollback, and authority controls.
+- Workspaces and Library depth, including workspace ownership labels, Collections membership, and deeper Import/Export without hiding cross-workspace Library items.
+- citation and snippet carry-through from Library/Search-RAG into Console answers, Artifacts, and exported Chatbooks.
+- optional dependency and package polish for clearer advanced-feature recovery paths.
+
 ## Now: Reliability And Product Confidence
 
 Current focus:
