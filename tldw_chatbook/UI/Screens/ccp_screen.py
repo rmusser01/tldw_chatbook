@@ -729,7 +729,7 @@ class CCPScreen(BaseAppScreen):
                     id="ccp-character-library-pane",
                     classes="destination-workbench-pane ds-inspector",
                 ):
-                    yield Static("Column 1: Character Library", classes="destination-pane-title")
+                    yield Static("Character Library", classes="destination-section ccp-column-title")
                     yield Static(
                         "Select a local character card to inspect, edit, or attach.",
                         id="ccp-character-library-help",
@@ -744,7 +744,7 @@ class CCPScreen(BaseAppScreen):
                     id="ccp-behavior-detail-pane",
                     classes="destination-workbench-pane ds-inspector",
                 ):
-                    yield Static("Column 2: Character Detail / Editor", classes="destination-pane-title")
+                    yield Static("Character Detail", classes="destination-section ccp-column-title")
                     yield Static(
                         "No character selected. Choose a character from the library.",
                         id="ccp-detail-selection-summary",
@@ -770,7 +770,7 @@ class CCPScreen(BaseAppScreen):
                     id="ccp-attachment-inspector-pane",
                     classes="destination-workbench-pane ds-inspector",
                 ):
-                    yield Static("Column 3: Attach / Validate", classes="destination-pane-title")
+                    yield Static("Attach / Validate", classes="destination-section ccp-column-title")
                     yield Static("Selected target", classes="destination-section")
                     yield Static("Selected: none", id="ccp-selected-target-name")
                     yield Static("Type: character", id="ccp-selected-target-kind")

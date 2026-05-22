@@ -319,7 +319,7 @@ class ArtifactsScreen(BaseAppScreen):
             with Horizontal(id="artifacts-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="artifacts-list-pane", classes="destination-workbench-pane"):
                     yield Static(
-                        "Column 1: Artifact List",
+                        "Artifact List",
                         id="artifacts-list-title",
                         classes="destination-section artifacts-column-title",
                     )
@@ -362,7 +362,7 @@ class ArtifactsScreen(BaseAppScreen):
                     )
                 with Vertical(id="artifacts-detail-pane", classes="destination-workbench-pane"):
                     yield Static(
-                        "Column 2: Artifact Preview / Detail",
+                        "Artifact Preview",
                         id="artifacts-preview-title",
                         classes="destination-section artifacts-column-title",
                     )
@@ -397,7 +397,7 @@ class ArtifactsScreen(BaseAppScreen):
                         )
                 with Vertical(id="artifacts-inspector-pane", classes="destination-workbench-pane ds-inspector"):
                     yield Static(
-                        "Column 3: Provenance",
+                        "Provenance",
                         id="artifacts-provenance-title",
                         classes="destination-section artifacts-column-title",
                     )

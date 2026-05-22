@@ -174,9 +174,15 @@
 #artifacts-list-pane,
 #artifacts-detail-pane,
 #artifacts-inspector-pane,
+#personas-list-pane,
+#personas-detail-pane,
+#personas-inspector-pane,
 #watchlists-list-pane,
 #watchlists-detail-pane,
 #watchlists-inspector-pane,
+#schedules-list-pane,
+#schedules-detail-pane,
+#schedules-inspector-pane,
 #workflows-list-pane,
 #workflows-detail-pane,
 #workflows-inspector-pane,
@@ -191,7 +197,10 @@
 #skills-inspector-pane,
 #settings-category-pane,
 #settings-detail-pane,
-#settings-impact-pane {
+#settings-impact-pane,
+#ccp-character-library-pane,
+#ccp-behavior-detail-pane,
+#ccp-attachment-inspector-pane {
     width: 1fr;
     min-width: 0;
     height: 100%;
@@ -760,10 +769,13 @@
 }
 
 .artifacts-column-title,
+.personas-column-title,
 .watchlists-column-title,
 .schedules-column-title,
 .workflows-column-title,
 .acp-column-title,
+.skills-column-title,
+.ccp-column-title,
 .settings-column-title {
     width: 100%;
     height: 1;

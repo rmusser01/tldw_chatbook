@@ -123,7 +123,7 @@ class ACPScreen(BaseAppScreen):
             with Horizontal(id="acp-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="acp-list-pane", classes="destination-workbench-pane"):
                     yield Static(
-                        "Column 1: Agents / Sessions",
+                        "Agents / Sessions",
                         classes="destination-section acp-column-title",
                     )
                     yield Static(f"> {runtime_display_name}", id="acp-runtime-display")
@@ -134,7 +134,7 @@ class ACPScreen(BaseAppScreen):
                 yield self._column_divider("acp-list-detail-divider")
                 with Vertical(id="acp-detail-pane", classes="destination-workbench-pane"):
                     yield Static(
-                        "Column 2: Session Detail / Runtime Setup",
+                        "Session Detail",
                         classes="destination-section acp-column-title",
                     )
                     if runtime_configured:
@@ -174,7 +174,7 @@ class ACPScreen(BaseAppScreen):
                 yield self._column_divider("acp-detail-inspector-divider")
                 with Vertical(id="acp-inspector-pane", classes="destination-workbench-pane ds-inspector"):
                     yield Static(
-                        "Column 3: Compatibility / Actions",
+                        "Compatibility / Actions",
                         classes="destination-section acp-column-title",
                     )
                     version = state.runtime_version or "n/a"

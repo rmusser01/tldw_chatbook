@@ -293,7 +293,7 @@ class SkillsScreen(BaseAppScreen):
                 )
             with Horizontal(id="skills-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="skills-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 1: Skill Library", classes="destination-section skills-column-title")
+                    yield Static("Skill Library", classes="destination-section skills-column-title")
                     yield Static("Installed", classes="destination-section")
                     yield Static("Discover/Import", classes="destination-section")
                     yield Static("Validate", classes="destination-section")
@@ -305,7 +305,7 @@ class SkillsScreen(BaseAppScreen):
                 yield self._column_divider("skills-list-detail-divider")
                 with Vertical(id="skills-detail-pane", classes="destination-workbench-pane"):
                     yield Static(
-                        "Column 2: Skill Detail / SKILL.md",
+                        "Skill Detail",
                         classes="destination-section skills-column-title",
                     )
                     if not self._skills_loaded:
@@ -388,7 +388,7 @@ class SkillsScreen(BaseAppScreen):
                         )
                 yield self._column_divider("skills-detail-inspector-divider")
                 with Vertical(id="skills-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Column 3: Skill Inspector", classes="destination-section skills-column-title")
+                    yield Static("Skill Inspector", classes="destination-section skills-column-title")
                     if selected_metadata:
                         yield Static(
                             "Selected Console target",
