@@ -53,6 +53,12 @@ class ConsoleWorkspaceContextTray(Vertical):
             id="console-workspace-runtime",
             classes="console-workspace-status-row",
         )
+        if self.state.recovery_copy:
+            yield self._static(
+                self.state.recovery_copy,
+                id="console-workspace-recovery",
+                classes="console-workspace-recovery",
+            )
         yield self._static(
             "Conversations",
             id="console-workspace-conversations-title",
@@ -75,37 +81,28 @@ class ConsoleWorkspaceContextTray(Vertical):
                     classes="console-workspace-empty-copy",
                 )
 
-        change_button = Button(
-            "Change workspace",
-            id="console-change-workspace",
-            classes="console-workspace-action",
-        )
-        change_button.disabled = not self.state.change_workspace_enabled
-        yield change_button
-        if self.state.change_workspace_recovery:
-            yield self._static(
-                self.state.change_workspace_recovery,
-                id="console-change-workspace-recovery",
-                classes="console-workspace-recovery",
+        if self.state.change_workspace_enabled:
+            yield Button(
+                "Change workspace",
+                id="console-change-workspace",
+                classes="console-workspace-action",
             )
+            if self.state.change_workspace_recovery:
+                yield self._static(
+                    self.state.change_workspace_recovery,
+                    id="console-change-workspace-recovery",
+                    classes="console-workspace-recovery",
+                )
 
-        new_button = Button(
-            "New conversation",
-            id="console-new-workspace-conversation",
-            classes="console-workspace-action",
-        )
-        new_button.disabled = not self.state.new_conversation_enabled
-        yield new_button
-        if self.state.new_conversation_recovery:
-            yield self._static(
-                self.state.new_conversation_recovery,
-                id="console-new-workspace-conversation-recovery",
-                classes="console-workspace-recovery",
+        if self.state.new_conversation_enabled:
+            yield Button(
+                "New conversation",
+                id="console-new-workspace-conversation",
+                classes="console-workspace-action",
             )
-
-        if self.state.recovery_copy:
-            yield self._static(
-                self.state.recovery_copy,
-                id="console-workspace-recovery",
-                classes="console-workspace-recovery",
-            )
+            if self.state.new_conversation_recovery:
+                yield self._static(
+                    self.state.new_conversation_recovery,
+                    id="console-new-workspace-conversation-recovery",
+                    classes="console-workspace-recovery",
+                )

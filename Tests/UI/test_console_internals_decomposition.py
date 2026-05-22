@@ -13,6 +13,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
@@ -50,6 +51,14 @@ class StaticConsoleLibraryRagSearchService:
             }
         )
         return self.result
+
+
+class _PressedEvent:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
 
 
 async def _wait_for_console_library_rag_button_state(
@@ -820,22 +829,119 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
         await _wait_for_selector(console, pilot, "#console-start-here")
         await _wait_for_selector(console, pilot, "#console-provider-blocker")
 
+        start_here = console.query_one("#console-start-here", Static)
+        provider_strip = console.query_one("#console-provider-recovery-strip")
+        assert provider_strip.region.y < start_here.region.y
+
         text = _visible_text(console)
         for expected in (
+            "Empty transcript",
             "Start here",
             "Ask a question",
             "Attach sources",
-            "Configure provider",
             "Run command",
             "Provider setup needed",
             "OpenAI missing API key",
             "Settings",
+            "No messages yet. Send a prompt or attach context.",
+            "Provider setup required before sending.",
             "Enter send",
             "Ctrl+P commands",
-            "Attach stages context",
+            "Attach context",
             "Ask, command, or paste task...",
         ):
             assert expected in text
+        assert "Provider: OpenAI is not ready" not in text
+        assert "Provider setup is shown in the recovery strip above." not in text
+        assert text.lower().count("missing api key") == 1
+
+
+@pytest.mark.asyncio
+async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-provider-recovery-strip")
+        await _wait_for_selector(console, pilot, "#console-provider-blocker")
+        await _wait_for_selector(console, pilot, "#console-open-provider-settings")
+
+        strip = console.query_one("#console-provider-recovery-strip")
+        blocker = console.query_one("#console-provider-blocker", Static)
+        button = console.query_one("#console-open-provider-settings", Button)
+        assert button.display is True
+        assert button.disabled is False
+        assert button.region.height == 1
+        assert button.region.width >= len("Open Settings")
+        assert str(button.label) == "Open Settings"
+        assert blocker.region.y == button.region.y
+        assert str(strip.styles.height) == "auto"
+        assert str(blocker.styles.height) == "auto"
+        assert button.region.x > blocker.region.x
+        assert blocker.region.x >= strip.region.x
+        assert button.region.x + button.region.width <= strip.region.x + strip.region.width
+        blocker_text = getattr(blocker.render(), "plain", str(blocker.render()))
+        assert blocker_text == "Provider setup needed: OpenAI missing API key"
+        text = _visible_text(console)
+        assert "Open Settings" in text
+        assert text.lower().count("missing api key") == 1
+
+
+@pytest.mark.asyncio
+async def test_console_provider_settings_action_posts_navigation_message(monkeypatch):
+    app = _build_test_app()
+    console = ChatScreen(app)
+    event = _PressedEvent()
+    posted_messages: list[object] = []
+    monkeypatch.setattr(console, "post_message", posted_messages.append)
+
+    await console.handle_console_open_provider_settings(event)  # type: ignore[arg-type]
+
+    assert event.stopped is True
+    assert [
+        message.screen_name
+        for message in posted_messages
+        if isinstance(message, NavigateToScreen)
+    ] == ["settings"]
+
+
+@pytest.mark.asyncio
+async def test_console_provider_settings_action_hidden_when_provider_ready(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.pause(0.1)
+
+        buttons = [
+            button
+            for button in console.query("#console-open-provider-settings")
+            if button.display
+        ]
+        assert buttons == []
 
 
 @pytest.mark.asyncio
@@ -1108,7 +1214,7 @@ async def test_console_empty_staged_context_recovery_fits_tray():
         rendered = recovery.render()
         plain = getattr(rendered, "plain", str(rendered))
 
-        assert len(plain) <= recovery.region.width - 4
+        assert all(len(line) <= recovery.region.width for line in plain.splitlines())
 
 
 @pytest.mark.asyncio

@@ -19,6 +19,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
 from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.console_display_state import (
@@ -45,6 +46,7 @@ from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
 )
+from ...Constants import TAB_SETTINGS
 from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...state.ui_state import UIState
@@ -81,9 +83,9 @@ CONSOLE_FRAME_BORDER = ("solid", "#6f7782")
 CONSOLE_START_HERE_COPY = (
     "Start here\n"
     "Ask a question in Composer. Attach sources from Library, runs, Artifacts, or RAG.\n"
-    "Configure provider in Settings. Run command with Ctrl+P."
+    "Run command with Ctrl+P."
 )
-CONSOLE_ACTION_HINTS_COPY = "Enter send | Ctrl+P commands | Attach stages context"
+CONSOLE_ACTION_HINTS_COPY = "Enter send | Ctrl+P commands | Attach context"
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -554,7 +556,7 @@ class ChatScreen(BaseAppScreen):
         if readiness.ready:
             return ""
         reason = self._lower_first_char(readiness.reason)
-        return f"Provider setup needed: {readiness.provider} {reason} -> Settings"
+        return f"Provider setup needed: {readiness.provider} {reason}"
 
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
@@ -617,15 +619,61 @@ class ChatScreen(BaseAppScreen):
             )
 
         try:
+            provider_strip = self.query_one("#console-provider-recovery-strip", Horizontal)
             provider_blocker = self.query_one("#console-provider-blocker", Static)
         except QueryError:
             return
         blocker_copy = self._console_provider_blocker_copy()
-        self._configure_console_copy_block(
+        self._configure_console_provider_recovery_strip(
+            provider_strip,
             provider_blocker,
             blocker_copy,
             visible=bool(blocker_copy),
         )
+        try:
+            settings_button = self.query_one("#console-open-provider-settings", Button)
+        except QueryError:
+            return
+        self._configure_console_provider_settings_action(
+            settings_button,
+            visible=bool(blocker_copy),
+        )
+
+    @staticmethod
+    def _configure_console_provider_recovery_strip(
+        strip: Horizontal,
+        blocker: Static,
+        copy: str,
+        *,
+        visible: bool,
+    ) -> None:
+        """Show provider recovery as one compact warning/action row."""
+        strip.styles.height = "auto" if visible else 0
+        strip.styles.min_height = 1 if visible else 0
+        strip.styles.display = "block" if visible else "none"
+        blocker.update(copy if visible else "")
+        blocker.styles.display = "block" if visible else "none"
+        blocker.styles.width = "1fr"
+        blocker.styles.height = "auto" if visible else 0
+        blocker.styles.min_height = 1 if visible else 0
+        blocker.styles.margin = 0
+
+    @staticmethod
+    def _configure_console_provider_settings_action(
+        button: Button,
+        *,
+        visible: bool,
+    ) -> None:
+        """Show or hide the provider recovery action with the blocker copy."""
+        button.disabled = not visible
+        if visible:
+            button.styles.display = "block"
+            button.styles.height = 1
+            button.styles.min_height = 1
+            return
+        button.styles.display = "none"
+        button.styles.height = 0
+        button.styles.min_height = 0
 
     @staticmethod
     def _frame_console_region(widget: Any) -> Any:
@@ -845,7 +893,7 @@ class ChatScreen(BaseAppScreen):
                     )
                     workspace_context_tray.styles.width = "100%"
                     workspace_context_tray.styles.min_width = 0
-                    workspace_context_tray.styles.height = "1fr"
+                    workspace_context_tray.styles.height = "2fr"
                     yield self._frame_console_region(workspace_context_tray)
 
                 main_column = Vertical(id="console-main-column")
@@ -857,6 +905,37 @@ class ChatScreen(BaseAppScreen):
                     )
                     with transcript_region:
                         guidance_visible = not self._console_transcript_has_messages()
+                        provider_blocker_copy = self._console_provider_blocker_copy()
+                        provider_recovery_strip = Horizontal(
+                            id="console-provider-recovery-strip",
+                            classes="console-provider-recovery-strip",
+                        )
+                        with provider_recovery_strip:
+                            blocker = Static(
+                                provider_blocker_copy,
+                                id="console-provider-blocker",
+                                classes="console-provider-blocker",
+                            )
+                            self._configure_console_provider_recovery_strip(
+                                provider_recovery_strip,
+                                blocker,
+                                provider_blocker_copy,
+                                visible=bool(provider_blocker_copy),
+                            )
+                            yield blocker
+                            provider_settings_action = Button(
+                                "Open Settings",
+                                id="console-open-provider-settings",
+                                classes="destination-action-button console-provider-settings-action",
+                                disabled=not bool(provider_blocker_copy),
+                                compact=True,
+                                variant="primary",
+                            )
+                            self._configure_console_provider_settings_action(
+                                provider_settings_action,
+                                visible=bool(provider_blocker_copy),
+                            )
+                            yield provider_settings_action
                         start_here = Static(
                             CONSOLE_START_HERE_COPY,
                             id="console-start-here",
@@ -868,18 +947,6 @@ class ChatScreen(BaseAppScreen):
                             visible=guidance_visible,
                         )
                         yield start_here
-                        provider_blocker = self._console_provider_blocker_copy()
-                        blocker = Static(
-                            provider_blocker,
-                            id="console-provider-blocker",
-                            classes="console-provider-blocker",
-                        )
-                        self._configure_console_copy_block(
-                            blocker,
-                            provider_blocker,
-                            visible=bool(provider_blocker),
-                        )
-                        yield blocker
                         action_hints = Static(
                             CONSOLE_ACTION_HINTS_COPY,
                             id="console-action-hints",
@@ -1378,6 +1445,12 @@ class ChatScreen(BaseAppScreen):
             "Save Chatbook is still owned by Artifacts/Chatbooks; this Console button is a compatibility adapter.",
             severity="information",
         )
+
+    @on(Button.Pressed, "#console-open-provider-settings")
+    async def handle_console_open_provider_settings(self, event: Button.Pressed) -> None:
+        """Route provider setup recovery to the Settings destination."""
+        event.stop()
+        self.post_message(NavigateToScreen(TAB_SETTINGS))
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
