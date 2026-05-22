@@ -176,6 +176,17 @@ class ConsoleChatStore:
         self._persist_existing_message(message)
         return self._snapshot(message)
 
+    def prepare_message_retry(self, message_id: str) -> ConsoleChatMessage:
+        """Prepare a failed assistant message to receive replacement stream content."""
+        message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can be retried.")
+        if message.status != "failed":
+            raise ValueError(f"Only failed messages can be retried, not {message.status}.")
+        message.content = ""
+        message.status = "pending"
+        return self._snapshot(message)
+
     def persist_session_if_needed(self, session_id: str) -> str | None:
         """Persist a session once, returning its persisted conversation ID."""
         session = self._session_or_raise(session_id)
