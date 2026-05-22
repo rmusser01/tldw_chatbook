@@ -1,5 +1,9 @@
+import pytest
+
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleWorkspaceContext
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 def test_store_creates_session_and_appends_messages():
@@ -151,7 +155,103 @@ def test_store_updates_persisted_streaming_assistant_content_and_status():
     store.append_stream_chunk(assistant.id, "lo")
     store.mark_message_complete(assistant.id)
 
-    assert persistence.updated_messages[-1]["message_id"] == assistant.persisted_message_id
+    completed = store.get_message(assistant.id)
+    assert persistence.updated_messages[-1]["message_id"] == completed.persisted_message_id
     assert persistence.updated_messages[-1]["content"] == "hello"
     assert persistence.updated_messages[-1]["image_data"] is None
     assert persistence.updated_messages[-1]["image_mime_type"] is None
+
+
+def test_store_persists_workspace_session_with_real_chat_persistence_service(tmp_path):
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.ensure_session(title="Chat 1", workspace_id="workspace-a")
+
+        conversation_id = store.persist_session_if_needed(session.id)
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="hello",
+            persist=True,
+        )
+
+        conversation = db.get_conversation_by_id(conversation_id)
+        persisted_message = db.get_message_by_id(message.persisted_message_id)
+        assert conversation["scope_type"] == "workspace"
+        assert conversation["workspace_id"] == "workspace-a"
+        assert conversation["assistant_kind"] == "generic"
+        assert conversation["assistant_id"] == "console"
+        assert persisted_message["content"] == "hello"
+    finally:
+        db.close()
+
+
+def test_store_delays_empty_assistant_persistence_until_terminal_content_with_real_service(tmp_path):
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.ensure_session(title="Chat 1")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=True,
+        )
+
+        assert store.get_message(assistant.id).persisted_message_id is None
+
+        store.append_stream_chunk(assistant.id, "hel")
+        store.append_stream_chunk(assistant.id, "lo")
+        completed = store.mark_message_complete(assistant.id)
+
+        assert completed.persisted_message_id is not None
+        persisted_message = db.get_message_by_id(completed.persisted_message_id)
+        assert persisted_message["content"] == "hello"
+    finally:
+        db.close()
+
+
+def test_store_rejects_streaming_chunks_for_non_assistant_message():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    user_message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="hello",
+    )
+
+    with pytest.raises(ValueError, match="Only assistant messages"):
+        store.append_stream_chunk(user_message.id, "nope")
+
+
+def test_store_rejects_streaming_chunks_after_terminal_state():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.mark_message_stopped(assistant.id)
+
+    with pytest.raises(ValueError, match="Cannot append stream chunks"):
+        store.append_stream_chunk(assistant.id, "late")
+
+
+def test_store_returns_message_snapshots_not_mutable_internals():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    user_message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="hello",
+    )
+
+    user_message.content = "external mutation"
+    listed = store.messages_for_session(session.id)
+    listed[0].status = "failed"
+
+    stored = store.get_message(user_message.id)
+    assert stored.content == "hello"
+    assert stored.status == "complete"

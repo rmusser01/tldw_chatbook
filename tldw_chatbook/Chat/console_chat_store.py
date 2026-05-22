@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 from uuid import uuid4
 
@@ -74,6 +74,7 @@ class ConsoleChatStore:
         self._sessions: dict[str, ConsoleChatSession] = {}
         self._messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
         self._message_session_index: dict[str, str] = {}
+        self._pending_persistence_message_ids: set[str] = set()
 
     def ensure_session(
         self,
@@ -130,51 +131,50 @@ class ConsoleChatStore:
         self._messages_by_session[session_id].append(message)
         self._message_session_index[message.id] = session_id
         if persist:
-            self._persist_new_message(session_id=session_id, message=message)
-        return message
+            self._persist_new_message_or_defer(session_id=session_id, message=message)
+        return self._snapshot(message)
 
     def messages_for_session(self, session_id: str) -> list[ConsoleChatMessage]:
         """Return messages for a session in transcript order."""
         self._session_or_raise(session_id)
-        return list(self._messages_by_session[session_id])
+        return [self._snapshot(message) for message in self._messages_by_session[session_id]]
 
     def get_message(self, message_id: str) -> ConsoleChatMessage:
         """Return a message by native message ID."""
-        session_id = self._message_session_index.get(message_id)
-        if session_id is None:
-            raise KeyError(f"Unknown Console message: {message_id}")
-        for message in self._messages_by_session[session_id]:
-            if message.id == message_id:
-                return message
-        raise KeyError(f"Unknown Console message: {message_id}")
+        return self._snapshot(self._message_or_raise(message_id))
 
     def append_stream_chunk(self, message_id: str, chunk: str) -> ConsoleChatMessage:
         """Append streamed assistant content to an existing message."""
-        message = self.get_message(message_id)
+        message = self._message_or_raise(message_id)
+        self._validate_can_stream(message)
         message.content += chunk
         message.status = "streaming"
-        return message
+        self._persist_pending_message_if_ready(message)
+        return self._snapshot(message)
 
     def mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
         """Mark a message complete and flush final visible content to persistence."""
-        message = self.get_message(message_id)
+        message = self._message_or_raise(message_id)
+        self._validate_can_mark_terminal(message)
         message.status = "complete"
         self._persist_existing_message(message)
-        return message
+        return self._snapshot(message)
 
     def mark_message_stopped(self, message_id: str) -> ConsoleChatMessage:
         """Mark a message stopped and flush final visible content to persistence."""
-        message = self.get_message(message_id)
+        message = self._message_or_raise(message_id)
+        self._validate_can_mark_terminal(message)
         message.status = "stopped"
         self._persist_existing_message(message)
-        return message
+        return self._snapshot(message)
 
     def mark_message_failed(self, message_id: str) -> ConsoleChatMessage:
         """Mark a message failed and flush final visible content to persistence."""
-        message = self.get_message(message_id)
+        message = self._message_or_raise(message_id)
+        self._validate_can_mark_terminal(message)
         message.status = "failed"
         self._persist_existing_message(message)
-        return message
+        return self._snapshot(message)
 
     def persist_session_if_needed(self, session_id: str) -> str | None:
         """Persist a session once, returning its persisted conversation ID."""
@@ -183,12 +183,24 @@ class ConsoleChatStore:
             return session.persisted_conversation_id
         if self.persistence is None:
             return None
+        scope_type, persisted_workspace_id = self._persistence_scope(session)
         session.persisted_conversation_id = self.persistence.create_conversation(
+            assistant_kind="generic",
+            assistant_id="console",
             conversation_title=session.title,
-            workspace_id=session.workspace_id,
-            scope_type="console",
+            workspace_id=persisted_workspace_id,
+            scope_type=scope_type,
         )
         return session.persisted_conversation_id
+
+    def _persist_new_message_or_defer(self, *, session_id: str, message: ConsoleChatMessage) -> None:
+        if self.persistence is None:
+            return
+        if not message.content:
+            self._pending_persistence_message_ids.add(message.id)
+            self.persist_session_if_needed(session_id)
+            return
+        self._persist_new_message(session_id=session_id, message=message)
 
     def _persist_new_message(self, *, session_id: str, message: ConsoleChatMessage) -> None:
         if self.persistence is None:
@@ -206,9 +218,13 @@ class ConsoleChatStore:
             parent_message_id=None,
             feedback=None,
         )
+        self._pending_persistence_message_ids.discard(message.id)
 
     def _persist_existing_message(self, message: ConsoleChatMessage) -> None:
-        if self.persistence is None or message.persisted_message_id is None:
+        if self.persistence is None:
+            return
+        if message.persisted_message_id is None:
+            self._persist_pending_message_if_ready(message)
             return
         self.persistence.update_message_content(
             message_id=message.persisted_message_id,
@@ -221,11 +237,54 @@ class ConsoleChatStore:
             update_feedback=False,
         )
 
+    def _persist_pending_message_if_ready(self, message: ConsoleChatMessage) -> None:
+        if (
+            self.persistence is None
+            or message.id not in self._pending_persistence_message_ids
+            or not message.content
+        ):
+            return
+        session_id = self._message_session_index[message.id]
+        self._persist_new_message(session_id=session_id, message=message)
+
     def _session_or_raise(self, session_id: str) -> ConsoleChatSession:
         try:
             return self._sessions[session_id]
         except KeyError as exc:
             raise KeyError(f"Unknown Console chat session: {session_id}") from exc
+
+    def _message_or_raise(self, message_id: str) -> ConsoleChatMessage:
+        session_id = self._message_session_index.get(message_id)
+        if session_id is None:
+            raise KeyError(f"Unknown Console message: {message_id}")
+        for message in self._messages_by_session[session_id]:
+            if message.id == message_id:
+                return message
+        raise KeyError(f"Unknown Console message: {message_id}")
+
+    @staticmethod
+    def _snapshot(message: ConsoleChatMessage) -> ConsoleChatMessage:
+        return replace(message)
+
+    @staticmethod
+    def _persistence_scope(session: ConsoleChatSession) -> tuple[str, str | None]:
+        if session.workspace_id and session.workspace_id != "global":
+            return "workspace", session.workspace_id
+        return "global", None
+
+    @staticmethod
+    def _validate_can_stream(message: ConsoleChatMessage) -> None:
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can receive stream chunks.")
+        if message.status not in {"pending", "streaming"}:
+            raise ValueError(f"Cannot append stream chunks to a {message.status} message.")
+
+    @staticmethod
+    def _validate_can_mark_terminal(message: ConsoleChatMessage) -> None:
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can enter terminal stream states.")
+        if message.status not in {"pending", "streaming"}:
+            raise ValueError(f"Cannot mark a {message.status} message terminal.")
 
     @staticmethod
     def _initial_status(
