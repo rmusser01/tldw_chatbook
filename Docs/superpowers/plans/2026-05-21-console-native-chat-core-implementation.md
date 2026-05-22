@@ -414,9 +414,13 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 
 
 @pytest.mark.asyncio
-async def test_llamacpp_prefers_explicit_model_over_models_endpoint():
+async def test_llamacpp_prefers_explicit_model_but_still_probes_reachability():
+    seen_paths = []
+
     async def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("explicit model resolution must not require /v1/models")
+        seen_paths.append(request.url.path)
+        assert request.url.path == "/health"
+        return httpx.Response(200, json={"status": "ok"})
 
     gateway = ConsoleProviderGateway(
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://127.0.0.1:9099")
@@ -428,12 +432,14 @@ async def test_llamacpp_prefers_explicit_model_over_models_endpoint():
 
     assert resolved.ready is True
     assert resolved.model == "explicit-model"
+    assert seen_paths == ["/health"]
 
 
 @pytest.mark.asyncio
-async def test_llamacpp_prefers_configured_model_without_models_endpoint():
+async def test_llamacpp_prefers_configured_model_but_still_probes_reachability():
     async def handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("configured model resolution must not require /v1/models")
+        assert request.url.path == "/health"
+        return httpx.Response(404, text="no health route, but server is reachable")
 
     gateway = ConsoleProviderGateway(
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://127.0.0.1:9099")
@@ -445,6 +451,25 @@ async def test_llamacpp_prefers_configured_model_without_models_endpoint():
 
     assert resolved.ready is True
     assert resolved.model == "configured-model"
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_explicit_model_blocks_when_reachability_probe_cannot_connect():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/health"
+        raise httpx.ConnectError("connection refused", request=request)
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://127.0.0.1:9099")
+    )
+
+    resolved = await gateway.resolve_llamacpp(
+        LlamaCppProviderConfig(base_url="http://127.0.0.1:9099", explicit_model="explicit-model")
+    )
+
+    assert resolved.ready is False
+    assert resolved.model == "explicit-model"
+    assert "not reachable" in resolved.visible_copy
 
 
 @pytest.mark.asyncio
@@ -540,6 +565,13 @@ Resolution order must match the spec:
 4. blocked state
 
 Do not call `/v1/models` when an explicit or configured model is already available. A local llama.cpp server may not expose a usable models endpoint even though an explicit model can stream successfully.
+
+However, explicit/configured model readiness still must prove the server is reachable before accepting Send. Implement a lightweight reachability probe:
+
+- first request `GET /health`
+- any HTTP response from `/health` counts as reachable, including `404`, because it proves the server accepted a connection
+- network exceptions, DNS errors, connection refusal, and timeouts are blocked provider states
+- only use `/v1/models` for model discovery when no explicit/configured model is available
 
 Blocked states must be specific enough for Console recovery:
 
@@ -1042,6 +1074,14 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import Con
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
+async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 20) -> None:
+    for _ in range(attempts):
+        if expected in _visible_text(screen):
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(f"Text not found: {expected!r}")
+
+
 @pytest.mark.asyncio
 async def test_console_native_blocked_send_preserves_composer_text_and_shows_recovery():
     app = _build_test_app()
@@ -1256,11 +1296,36 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
         assert messages[-1].content == "hello"
 ```
 
-- [ ] **Step 9: Implement test injection seam**
+- [ ] **Step 9: Add mounted Tab reachability smoke test**
+
+Make sure keyboard users can move between the main Console areas:
+
+```python
+@pytest.mark.asyncio
+async def test_console_tab_reaches_composer_and_transcript_regions():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        seen_focus_ids = set()
+        for _ in range(12):
+            focused = getattr(console.app, "focused", None)
+            if focused is not None and getattr(focused, "id", None):
+                seen_focus_ids.add(focused.id)
+            await pilot.press("tab")
+
+    assert "console-native-composer" in seen_focus_ids
+    assert "console-native-transcript" in seen_focus_ids
+```
+
+- [ ] **Step 10: Implement test injection seam**
 
 Prefer a narrowly named app attribute such as `console_provider_gateway_factory` only for tests and future dependency injection.
 
-- [ ] **Step 10: Run Console flow tests**
+- [ ] **Step 11: Run Console flow tests**
 
 Run:
 
@@ -1270,7 +1335,7 @@ python -m pytest -q Tests/UI/test_console_native_chat_flow.py Tests/UI/test_cons
 
 Expected: pass.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 Run:
 
@@ -1392,7 +1457,21 @@ async def test_console_transcript_keyboard_selects_messages_and_enter_shows_acti
     assert "Copy | Edit | Save as..." in text
 ```
 
-- [ ] **Step 7: Implement focus and key bindings**
+- [ ] **Step 7: Add mouse click selection test**
+
+```python
+@pytest.mark.asyncio
+async def test_console_transcript_click_selects_message_and_shows_actions():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.click("#console-message-m2")
+        text = _visible_text(app)
+
+    assert "Copy | Edit | Save as..." in text
+```
+
+- [ ] **Step 8: Implement focus and key bindings**
 
 Implement transcript-local handling for:
 
@@ -1402,10 +1481,11 @@ Implement transcript-local handling for:
 - `k`
 - `enter`
 - `escape`
+- pointer click on a message row/card selects that message
 
 Keep handling active only while transcript has focus.
 
-- [ ] **Step 8: Mount transcript through a migration seam**
+- [ ] **Step 9: Mount transcript through a migration seam**
 
 Change `ConsoleSessionSurface` to accept and render `ConsoleTranscript` state through a narrow seam without removing `ChatTabContainer` yet.
 
@@ -1416,7 +1496,7 @@ The intent of this task is to prove native transcript rendering and selection wh
 
 Do not add the “no `ChatTabContainer` mounted” guardrail in this task. That guardrail belongs to Task 9 after the native transcript/action path is complete.
 
-- [ ] **Step 9: Update CSS source and regenerate CSS**
+- [ ] **Step 10: Update CSS source and regenerate CSS**
 
 Edit `tldw_chatbook/css/components/_agentic_terminal.tcss`.
 
@@ -1428,7 +1508,7 @@ python tldw_chatbook/css/build_css.py
 
 Expected: regenerated modular CSS changes only from source TCSS.
 
-- [ ] **Step 10: Run transcript tests**
+- [ ] **Step 11: Run transcript tests**
 
 Run:
 
@@ -1438,7 +1518,7 @@ python -m pytest -q Tests/UI/test_console_native_transcript.py Tests/UI/test_con
 
 Expected: pass.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 Run:
 
