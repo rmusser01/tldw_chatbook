@@ -712,7 +712,8 @@
 }
 
 #schedules-list-pane,
-#workflows-list-pane {
+#workflows-list-pane,
+#acp-list-pane {
     width: 2fr;
     min-width: 30;
     border: solid #6f6f6f;
@@ -720,7 +721,8 @@
 }
 
 #schedules-detail-pane,
-#workflows-detail-pane {
+#workflows-detail-pane,
+#acp-detail-pane {
     width: 4fr;
     min-width: 52;
     border: solid #6f6f6f;
@@ -728,7 +730,8 @@
 }
 
 #schedules-inspector-pane,
-#workflows-inspector-pane {
+#workflows-inspector-pane,
+#acp-inspector-pane {
     width: 2fr;
     min-width: 34;
     border: solid #6f6f6f;
@@ -747,6 +750,27 @@
 
 #personas-selected-target-title,
 #personas-readiness-title {
+    text-style: bold;
+}
+
+.acp-selected-session-row {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    text-style: bold;
+}
+
+.acp-inspector-group-title {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
     text-style: bold;
 }
 

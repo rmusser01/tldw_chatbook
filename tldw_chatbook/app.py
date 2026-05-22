@@ -182,6 +182,8 @@ from .Research_Interop import (
     ResearchScopeService,
     ServerResearchService,
 )
+from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
+from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
@@ -1393,6 +1395,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(self.app_config)
+        self.acp_runtime_session_state = self.acp_runtime_process_manager.session_state()
         self.app_state = AppState()
         self.runtime_policy = load_runtime_policy_for_app(self)
         self.service_policy_enforcer = ServicePolicyEnforcer.from_runtime_policy_context(
@@ -1705,6 +1709,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         )
         self.post_message(NavigateToScreen(TAB_CHAT))
 
+    def get_acp_runtime_session_state(self):
+        """Return current ACP runtime/session state for ACP and Console surfaces."""
+        explicit_state = getattr(self, "acp_runtime_session_state", None)
+        normalized_state = ACPRuntimeSessionState.from_any(explicit_state)
+        if normalized_state.runtime_configured:
+            return normalized_state
+        manager = getattr(self, "acp_runtime_process_manager", None)
+        snapshot = getattr(manager, "snapshot", None)
+        if callable(snapshot):
+            return snapshot()
+        return explicit_state
+
     def open_console_live_work_primary_action(self, launch: Any) -> bool:
         """Follow through on a supported Console live-work status-card action."""
         normalized_launch = ConsoleLiveWorkLaunch.from_pending(launch)
@@ -1725,6 +1741,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if action.target_route == TAB_ARTIFACTS:
             self.pending_artifacts_chatbook_target_id = action.target_id
             self.post_message(NavigateToScreen(TAB_ARTIFACTS))
+            return True
+
+        if action.target_route == TAB_ACP:
+            self.pending_acp_session_target_id = action.target_id
+            self.post_message(NavigateToScreen(TAB_ACP))
             return True
 
         self.notify("Console action route is not available yet.", severity="warning")

@@ -683,7 +683,14 @@ class ChatScreen(BaseAppScreen):
 
     def _render_console_live_work_source_readiness(self) -> ComposeResult:
         """Render Console source readiness when no live-work item is staged."""
-        readiness = ConsoleLiveWorkSourceReadinessState.default()
+        acp_status = "not_configured"
+        manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
+        snapshot = getattr(manager, "snapshot", None)
+        if callable(snapshot):
+            raw_snapshot = snapshot()
+            if isinstance(raw_snapshot, dict):
+                acp_status = str(raw_snapshot.get("status") or acp_status)
+        readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(acp_status)
         container = Container(id=readiness.container_id, classes=readiness.container_classes)
         container.styles.height = "auto"
         container.styles.min_height = 0

@@ -129,6 +129,32 @@ async def test_home_screen_compacts_multi_module_readiness_summary():
 
 
 @pytest.mark.asyncio
+async def test_home_screen_acp_readiness_uses_runtime_process_state():
+    app = _build_test_app()
+    app.home_active_work_adapter = RecordingHomeActiveWorkAdapter(
+        HomeDashboardInput(
+            model_ready=True,
+            rag_ready=True,
+            mcp_ready=True,
+            acp_ready=True,
+        )
+    )
+    app.acp_runtime_process_manager = Mock()
+    app.acp_runtime_process_manager.snapshot.return_value = {"status": "not_configured"}
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        status_text = str(home.query_one("#home-status").renderable)
+        system_text = str(home.query_one("#home-system-status-body").renderable)
+
+        assert "ACP: Blocked" in status_text
+        assert "ACP blocked" in system_text
+
+
+@pytest.mark.asyncio
 async def test_home_system_status_groups_runtime_readiness_and_work_state():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(

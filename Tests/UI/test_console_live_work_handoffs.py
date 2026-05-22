@@ -531,12 +531,62 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
         "Artifacts: Connected - Launch Chatbooks."
     )
     assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-artifacts"].classes
-    for source_id in (
-        "console-live-work-source-acp",
-        "console-live-work-source-mcp",
-    ):
+    assert rows_by_id["console-live-work-source-acp"].text == (
+        "ACP: Blocked - Configure ACP runtime."
+    )
+    assert "console-live-work-source-unavailable" in rows_by_id["console-live-work-source-acp"].classes
+    for source_id in ("console-live-work-source-mcp",):
         assert "Not wired" in rows_by_id[source_id].text
         assert "console-live-work-source-unavailable" in rows_by_id[source_id].classes
+
+
+def test_console_live_work_source_readiness_reflects_acp_runtime_state():
+    ConsoleLiveWorkSourceReadinessState = _load_console_live_work_source_readiness_state()
+
+    blocked = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status("not_configured")
+    starting = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status("starting")
+    running = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status("running")
+    failed = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status("failed")
+
+    blocked_rows = {row.widget_id: row for row in blocked.rows}
+    starting_rows = {row.widget_id: row for row in starting.rows}
+    running_rows = {row.widget_id: row for row in running.rows}
+    failed_rows = {row.widget_id: row for row in failed.rows}
+
+    assert blocked_rows["console-live-work-source-acp"].text == (
+        "ACP: Blocked - Configure ACP runtime."
+    )
+    assert "console-live-work-source-unavailable" in blocked_rows["console-live-work-source-acp"].classes
+    assert starting_rows["console-live-work-source-acp"].text == (
+        "ACP: Starting - Waiting for runtime."
+    )
+    assert running_rows["console-live-work-source-acp"].text == (
+        "ACP: Connected - Follow ACP session."
+    )
+    assert "console-live-work-source-connected" in running_rows["console-live-work-source-acp"].classes
+    assert failed_rows["console-live-work-source-acp"].text == (
+        "ACP: Failed - Review ACP runtime."
+    )
+
+
+def test_console_live_work_primary_action_routes_acp_session_details():
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    ConsoleLiveWorkStatusCardState = _load_console_live_work_status_card_state()
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="ACP",
+        title="Research agent",
+        payload={"target_id": "local:acp_session:session-1", "session_id": "session-1"},
+        status="running",
+        recovery="Console can follow this ACP session payload.",
+        action_label="Open ACP session",
+    )
+
+    card_state = ConsoleLiveWorkStatusCardState.from_launch(launch)
+
+    assert card_state.primary_action is not None
+    assert card_state.primary_action.label == "Open ACP session"
+    assert card_state.primary_action.target_route == "acp"
+    assert card_state.primary_action.target_id == "local:acp_session:session-1"
 
 
 def test_app_console_live_work_primary_action_routes_wc_run_details():
