@@ -721,6 +721,20 @@ def test_store_tracks_active_workspace_context():
     store.set_workspace_context(ConsoleWorkspaceContext(active_workspace_id="workspace-b"))
 
     assert store.workspace_context.active_workspace_id == "workspace-b"
+
+
+def test_store_creates_and_switches_sessions():
+    store = ConsoleChatStore()
+    first = store.ensure_session(title="Chat 1")
+    store.append_message(first.id, role=ConsoleMessageRole.USER, content="first")
+    second = store.create_session(title="Chat 2")
+
+    assert store.active_session_id == second.id
+
+    store.switch_session(first.id)
+
+    assert store.active_session_id == first.id
+    assert store.messages_for_session(first.id)[0].content == "first"
 ```
 
 - [ ] **Step 2: Run tests and verify failure**
@@ -739,6 +753,7 @@ Implement enough to pass:
 
 - session creation
 - active session ID
+- multiple sessions, `create_session(...)`, and `switch_session(session_id)`
 - `workspace_context` storage and `set_workspace_context(...)`
 - message append
 - message lookup
@@ -1296,36 +1311,11 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
         assert messages[-1].content == "hello"
 ```
 
-- [ ] **Step 9: Add mounted Tab reachability smoke test**
-
-Make sure keyboard users can move between the main Console areas:
-
-```python
-@pytest.mark.asyncio
-async def test_console_tab_reaches_composer_and_transcript_regions():
-    app = _build_test_app()
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-
-        seen_focus_ids = set()
-        for _ in range(12):
-            focused = getattr(console.app, "focused", None)
-            if focused is not None and getattr(focused, "id", None):
-                seen_focus_ids.add(focused.id)
-            await pilot.press("tab")
-
-    assert "console-native-composer" in seen_focus_ids
-    assert "console-native-transcript" in seen_focus_ids
-```
-
-- [ ] **Step 10: Implement test injection seam**
+- [ ] **Step 9: Implement test injection seam**
 
 Prefer a narrowly named app attribute such as `console_provider_gateway_factory` only for tests and future dependency injection.
 
-- [ ] **Step 11: Run Console flow tests**
+- [ ] **Step 10: Run Console flow tests**
 
 Run:
 
@@ -1335,7 +1325,7 @@ python -m pytest -q Tests/UI/test_console_native_chat_flow.py Tests/UI/test_cons
 
 Expected: pass.
 
-- [ ] **Step 12: Commit**
+- [ ] **Step 11: Commit**
 
 Run:
 
@@ -1471,7 +1461,33 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
     assert "Copy | Edit | Save as..." in text
 ```
 
-- [ ] **Step 8: Implement focus and key bindings**
+- [ ] **Step 8: Add mounted Tab reachability smoke test**
+
+Make sure keyboard users can move between the main Console areas after the native transcript exists:
+
+```python
+@pytest.mark.asyncio
+async def test_console_tab_reaches_composer_and_transcript_regions():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        seen_focus_ids = set()
+        for _ in range(12):
+            focused = getattr(console.app, "focused", None)
+            if focused is not None and getattr(focused, "id", None):
+                seen_focus_ids.add(focused.id)
+            await pilot.press("tab")
+
+    assert "console-native-composer" in seen_focus_ids
+    assert "console-native-transcript" in seen_focus_ids
+```
+
+- [ ] **Step 9: Implement focus and key bindings**
 
 Implement transcript-local handling for:
 
@@ -1485,7 +1501,7 @@ Implement transcript-local handling for:
 
 Keep handling active only while transcript has focus.
 
-- [ ] **Step 9: Mount transcript through a migration seam**
+- [ ] **Step 10: Mount transcript through a migration seam**
 
 Change `ConsoleSessionSurface` to accept and render `ConsoleTranscript` state through a narrow seam without removing `ChatTabContainer` yet.
 
@@ -1496,7 +1512,7 @@ The intent of this task is to prove native transcript rendering and selection wh
 
 Do not add the “no `ChatTabContainer` mounted” guardrail in this task. That guardrail belongs to Task 9 after the native transcript/action path is complete.
 
-- [ ] **Step 10: Update CSS source and regenerate CSS**
+- [ ] **Step 11: Update CSS source and regenerate CSS**
 
 Edit `tldw_chatbook/css/components/_agentic_terminal.tcss`.
 
@@ -1508,7 +1524,7 @@ python tldw_chatbook/css/build_css.py
 
 Expected: regenerated modular CSS changes only from source TCSS.
 
-- [ ] **Step 11: Run transcript tests**
+- [ ] **Step 12: Run transcript tests**
 
 Run:
 
@@ -1518,7 +1534,7 @@ python -m pytest -q Tests/UI/test_console_native_transcript.py Tests/UI/test_con
 
 Expected: pass.
 
-- [ ] **Step 12: Commit**
+- [ ] **Step 13: Commit**
 
 Run:
 
@@ -1592,7 +1608,7 @@ Implement pure action definitions first. Include textual fallbacks if emoji rend
 
 Test:
 
-- Copy returns `ConsoleActionResult(status="completed")`
+- Copy returns `ConsoleActionResult(status="completed", clipboard_text=<message content>)` so `ChatScreen` can write that content to the clipboard
 - Continue returns selected content/turn target
 - Variant previous/next changes selected variant
 - Unimplemented actions return `status="wip"` with visible reason
@@ -1600,6 +1616,8 @@ Test:
 - [ ] **Step 5: Implement safe action dispatch**
 
 Do not wire destructive DB delete until confirmation behavior is designed. For the first pass, delete may return explicit `WIP: delete confirmation not implemented`.
+
+`ChatScreen` must write `ConsoleActionResult.clipboard_text` to the app clipboard path used elsewhere in the project when Copy succeeds. If the project has no shared clipboard helper, keep the service pure and perform the Textual/app clipboard operation in the screen handler.
 
 - [ ] **Step 6: Write Save-as modal mounted test**
 
@@ -1849,7 +1867,24 @@ Regeneration should:
 
 - [ ] **Step 5: Add transcript `<` / `>` rendering test**
 
-Assert action row includes `<` and `>` when selected message has variants.
+Assert action row includes `<` and `>` when selected message has variants, and add a display test proving variant navigation changes the rendered transcript content:
+
+```python
+def test_console_transcript_variant_navigation_changes_displayed_content():
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
+    message.variants = ConsoleVariantSet.from_contents(turn_id="turn-1", contents=["first", "second"])
+    transcript = ConsoleTranscript()
+    transcript.set_messages([message])
+    transcript.select_message("m1")
+
+    assert "first" in transcript.to_plain_text(width=80)
+
+    transcript.select_next_variant("m1")
+
+    rendered = transcript.to_plain_text(width=80)
+    assert "second" in rendered
+    assert "first" not in rendered
+```
 
 - [ ] **Step 6: Implement variant action row**
 
@@ -1962,8 +1997,12 @@ git commit -m "Add Console response variants and continue flow"
 ## Task 9: Replace Legacy Console Transcript Dependency
 
 **Files:**
+- Modify: `tldw_chatbook/Chat/console_chat_controller.py`
+- Modify: `tldw_chatbook/Chat/console_chat_store.py`
 - Modify: `tldw_chatbook/Widgets/Console/console_session_surface.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `Tests/Chat/test_console_chat_controller.py`
+- Modify: `Tests/Chat/test_console_chat_store.py`
 - Modify: `Tests/UI/test_console_internals_decomposition.py`
 - Modify: `Tests/UI/test_console_native_chat_flow.py`
 
@@ -1993,16 +2032,68 @@ Expected: failure while `ConsoleSessionSurface` still mounts `ChatTabContainer`.
 `ConsoleSessionSurface` should own:
 
 - title row
-- optional native tab strip header
+- native tab strip header
 - `ConsoleTranscript`
 
 It should not create `ChatTabContainer`.
 
-- [ ] **Step 4: Adapt `ChatScreen` state save/restore seams**
+The native tab strip is not optional in the final Console migration. It must replace the existing Console `New tab`/session switching behavior with controller-owned state:
+
+- `#console-session-tab-<session_id>` buttons for existing sessions
+- `#console-new-chat-tab` button for creating a new session
+- active tab styling based on `ConsoleChatStore.active_session_id`
+- `ConsoleChatController.new_session()` delegates to `store.create_session(...)`
+- `ConsoleChatController.switch_session(session_id)` delegates to `store.switch_session(...)`
+
+- [ ] **Step 4: Add native tab/session switching tests**
+
+Add store/controller tests:
+
+```python
+def test_controller_creates_and_switches_sessions():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    first = store.ensure_session(title="Chat 1")
+    second = controller.new_session(title="Chat 2")
+
+    assert store.active_session_id == second.id
+
+    controller.switch_session(first.id)
+
+    assert store.active_session_id == first.id
+```
+
+Add mounted UI coverage:
+
+```python
+@pytest.mark.asyncio
+async def test_console_native_tab_strip_creates_and_switches_sessions():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        console._sync_console_chat_core_state()
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+        assert "Chat 2" in _visible_text(console)
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+
+        assert store.active_session_id == first.id
+```
+
+- [ ] **Step 5: Adapt `ChatScreen` state save/restore seams**
 
 Where `ChatScreen` currently queries `_get_tab_container()` for Console, add native-store equivalents. Preserve legacy behavior only for direct legacy chat screens.
 
-- [ ] **Step 5: Run focused regressions**
+- [ ] **Step 6: Run focused regressions**
 
 Run:
 
@@ -2012,12 +2103,12 @@ python -m pytest -q Tests/UI/test_console_internals_decomposition.py Tests/UI/te
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 Run:
 
 ```bash
-git add tldw_chatbook/Widgets/Console/console_session_surface.py tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_console_native_chat_flow.py
+git add tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py tldw_chatbook/Widgets/Console/console_session_surface.py tldw_chatbook/UI/Screens/chat_screen.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py Tests/UI/test_console_internals_decomposition.py Tests/UI/test_console_native_chat_flow.py
 git commit -m "Remove legacy chat tab dependency from Console"
 ```
 
@@ -2053,10 +2144,12 @@ Expected: no output.
 Run:
 
 ```bash
-curl -sf http://127.0.0.1:9099/v1/models
+curl -sf http://127.0.0.1:9099/health || curl -sf http://127.0.0.1:9099/v1/models
 ```
 
-Expected: JSON response with a non-empty model list. If unavailable, stop the closeout and document the task/PR as blocked. Do not mark the Backlog task Done, do not claim live llama.cpp approval, and do not open/mark the PR ready for review until this gate passes or the user explicitly waives live llama.cpp verification for this slice.
+Expected: either command receives an HTTP response from the local llama.cpp server. `/health` may return a non-2xx response on some builds; if that happens, verify reachability with the app/provider gateway or `curl -i http://127.0.0.1:9099/health` and record the response. `/v1/models` does not need to return a non-empty list when an explicit/configured model is used.
+
+Then run one live Console send through the app against the explicit/configured llama.cpp model and verify a streamed assistant response appears. If the server is unreachable or no explicit/configured model can stream, stop the closeout and document the task/PR as blocked. Do not mark the Backlog task Done, do not claim live llama.cpp approval, and do not open/mark the PR ready for review until this gate passes or the user explicitly waives live llama.cpp verification for this slice.
 
 - [ ] **Step 4: Launch textual-web/CDP QA**
 
