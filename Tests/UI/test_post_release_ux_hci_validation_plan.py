@@ -10,6 +10,9 @@ PLAN = Path("Docs/superpowers/plans/2026-05-17-post-release-ux-hci-functional-va
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 QA_README = Path("Docs/superpowers/qa/product-maturity/post-release-ux-hci/README.md")
 QA_TEMPLATE = Path("Docs/superpowers/qa/product-maturity/post-release-ux-hci/walkthrough-template.md")
+WORKFLOW_EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/post-release-ux-hci/2026-05-22-cross-screen-workflow-validation.md"
+)
 TASK_60 = Path("backlog/tasks/task-60 - Post-release-UX-HCI-and-functionality-validation-tranche.md")
 CHILD_TASKS = {
     "TASK-60.1": Path(
@@ -103,8 +106,8 @@ def test_post_release_qa_harness_requires_real_screenshots_and_approval() -> Non
         )
         columns = matching_rows[0]
         assert len(columns) >= 5, f"{screen} row must include all QA index columns"
-        assert columns[2] == "pending", (
-            f"{screen} row must track pending screenshot approval explicitly"
+        assert columns[2] in {"pending", "approved"}, (
+            f"{screen} row must track screenshot approval explicitly"
         )
 
     for required_field in (
@@ -138,10 +141,10 @@ def test_post_release_backlog_tasks_track_screens_workflows_and_deferred_feature
     expected_statuses = {
         "TASK-60.1": "Done",
         "TASK-60.2": "Done",
-        "TASK-60.3": "To Do",
+        "TASK-60.3": "Done",
         "TASK-60.4": "To Do",
-        "TASK-60.5": "To Do",
-        "TASK-60.6": "To Do",
+        "TASK-60.5": "Done",
+        "TASK-60.6": "Done",
     }
     for task_id, expected_status in expected_statuses.items():
         assert f"status: {expected_status}" in _text(CHILD_TASKS[task_id])
@@ -172,3 +175,24 @@ def test_product_maturity_tracker_lists_post_release_validation_tranche() -> Non
     assert "actual screenshots" in tracker
     assert "actual-use functionality evidence" in tracker
     assert "cross-screen workflow validation" in tracker
+
+
+def test_post_release_cross_screen_workflow_evidence_records_verification() -> None:
+    evidence = _text(WORKFLOW_EVIDENCE)
+    readme = _text(QA_README)
+
+    for required in (
+        "TASK-60.3",
+        "Workflow Matrix",
+        "Home primary action opens target route",
+        "Library Search/RAG mode and source handoff",
+        "Artifacts/Chatbook resume to Console",
+        "Personas and Skills attach to Console",
+        "Watchlists, Schedules, Workflows run follow",
+        "No unresolved P0/P1 findings remain",
+        "Result: 5 passed",
+        "Result: 8 passed",
+    ):
+        assert required in evidence
+
+    assert "2026-05-22-cross-screen-workflow-validation.md" in readme
