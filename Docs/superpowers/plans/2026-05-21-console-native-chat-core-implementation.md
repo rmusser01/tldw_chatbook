@@ -347,6 +347,39 @@ async def test_llamacpp_uses_first_models_endpoint_result_when_no_configured_mod
 
     assert resolved.ready is True
     assert resolved.model == "server-model"
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_unreachable_server_returns_blocked_recovery_copy():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://127.0.0.1:9099")
+    )
+
+    resolved = await gateway.resolve_llamacpp(LlamaCppProviderConfig(base_url="http://127.0.0.1:9099"))
+
+    assert resolved.ready is False
+    assert resolved.model is None
+    assert "Provider blocked" in resolved.visible_copy
+    assert "127.0.0.1:9099" in resolved.visible_copy
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_empty_models_without_configured_model_returns_blocked_recovery_copy():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": []})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://127.0.0.1:9099")
+    )
+
+    resolved = await gateway.resolve_llamacpp(LlamaCppProviderConfig(base_url="http://127.0.0.1:9099"))
+
+    assert resolved.ready is False
+    assert resolved.model is None
+    assert resolved.visible_copy == "Provider blocked: select or configure a llama.cpp model."
 ```
 
 - [ ] **Step 2: Run tests and verify failure**
@@ -373,6 +406,11 @@ Resolution order must match the spec:
 2. configured `api_settings.llama_cpp` model/default
 3. first compatible `/v1/models` result
 4. blocked state
+
+Blocked states must be specific enough for Console recovery:
+
+- unreachable server: `Provider blocked: llama.cpp server is not reachable at http://127.0.0.1:9099. Start llama.cpp or update Console provider settings.`
+- no resolvable model: `Provider blocked: select or configure a llama.cpp model.`
 
 - [ ] **Step 4: Add streaming contract tests**
 
@@ -665,11 +703,63 @@ Implement the minimal loop:
 
 Add a fake gateway that waits on an injected event. Verify `controller.stop_active_run()` marks the assistant message stopped and run state stopped.
 
-- [ ] **Step 7: Implement stop**
+- [ ] **Step 7: Add streaming failure and retry tests**
+
+Add two tests before implementing recovery:
+
+```python
+class FailingStreamingGateway(StreamingGateway):
+    async def stream_chat(self, resolution, messages):
+        yield "partial"
+        raise RuntimeError("llama.cpp stream failed")
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_marks_assistant_failed_when_stream_errors():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
+
+    result = await controller.submit_draft("hello")
+
+    messages = store.messages_for_session(store.active_session_id)
+    assert result.accepted is True
+    assert result.should_clear_draft is True
+    assert messages[-1].content == "partial"
+    assert messages[-1].status == "failed"
+    assert controller.run_state.status is ConsoleRunStatus.FAILED
+    assert "stream failed" in controller.run_state.visible_copy
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_message_streams_replacement_from_original_turn():
+    store = ConsoleChatStore()
+    failing = FailingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=failing)
+    await controller.submit_draft("hello")
+    failed_id = store.messages_for_session(store.active_session_id)[-1].id
+
+    controller.provider_gateway = StreamingGateway()
+    result = await controller.retry_message(failed_id)
+
+    assert result.accepted is True
+    assert store.get_message(failed_id).status == "complete"
+    assert store.get_message(failed_id).content == "hello"
+```
+
+- [ ] **Step 8: Implement stop, failure, and retry**
 
 Use an `asyncio.Event` or cancel handle owned by the controller. Do not rely on Textual widget worker state.
 
-- [ ] **Step 8: Run controller tests**
+For streaming errors:
+
+- mark the assistant message `failed`
+- set run state `FAILED`
+- expose visible recovery copy in `run_state.visible_copy`
+- preserve enough turn context for `retry_message(message_id)` to stream a replacement without duplicating the user message
+
+Fallback from a failed primary provider to a secondary provider is not implemented in this slice. If exposed in UI copy, label it `WIP: fallback provider routing is not implemented yet`.
+
+- [ ] **Step 9: Run controller tests**
 
 Run:
 
@@ -679,7 +769,7 @@ python -m pytest -q Tests/Chat/test_console_chat_controller.py --tb=short
 
 Expected: pass.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 Run:
 
@@ -948,11 +1038,16 @@ Implement transcript-local handling for:
 
 Keep handling active only while transcript has focus.
 
-- [ ] **Step 8: Replace `ConsoleSessionSurface` internals**
+- [ ] **Step 8: Mount transcript through a migration seam**
 
-Change `ConsoleSessionSurface` to render `ConsoleTranscript` instead of `ChatTabContainer`.
+Change `ConsoleSessionSurface` to accept and render `ConsoleTranscript` state through a narrow seam without removing `ChatTabContainer` yet.
 
-Keep the title and tab header affordance if needed, but remove native Console dependency on `ChatTabContainer` for transcript messages.
+The intent of this task is to prove native transcript rendering and selection while preserving the legacy chat tab dependency until Task 9. Acceptable implementations:
+
+- mount `ConsoleTranscript` behind a feature/adapter seam and leave `ChatTabContainer` mounted but visually inactive for this task
+- or keep `ChatTabContainer` as the existing visual fallback while `ConsoleSessionSurface` exposes a `set_native_transcript_state(...)` API used by Task 9
+
+Do not add the “no `ChatTabContainer` mounted” guardrail in this task. That guardrail belongs to Task 9 after the native transcript/action path is complete.
 
 - [ ] **Step 9: Update CSS source and regenerate CSS**
 
@@ -1110,15 +1205,18 @@ git add tldw_chatbook/Chat/console_message_actions.py tldw_chatbook/Widgets/Cons
 git commit -m "Add Console selected-message actions"
 ```
 
-## Task 8: Regeneration And Variant Navigation
+## Task 8: Regeneration, Variant Navigation, And Continue Flow
 
 **Files:**
 - Modify: `tldw_chatbook/Chat/console_chat_controller.py`
 - Modify: `tldw_chatbook/Chat/console_chat_store.py`
 - Modify: `tldw_chatbook/Chat/console_message_actions.py`
 - Modify: `tldw_chatbook/Widgets/Console/console_transcript.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Modify: `Tests/Chat/test_console_chat_controller.py`
 - Modify: `Tests/Chat/test_console_chat_store.py`
+- Modify: `Tests/Chat/test_console_message_actions.py`
+- Modify: `Tests/UI/test_console_native_chat_flow.py`
 - Modify: `Tests/UI/test_console_native_transcript.py`
 
 - [ ] **Step 1: Write failing variant store test**
@@ -1169,23 +1267,90 @@ Copy | Edit | Save as... | < | > | ♻ | ---> | 👍/👎          🗑
 
 Disable `<` or `>` when no previous/next variant exists.
 
-- [ ] **Step 7: Run variant tests**
+- [ ] **Step 7: Add continue action service and controller tests**
+
+Add action-service coverage proving `--->` resolves the selected message or selected variant as the continuation target:
+
+```python
+def test_continue_action_targets_selected_variant_content():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
+    message.variants = ConsoleVariantSet.from_contents(turn_id="turn-1", contents=["first", "second"], selected_index=1)
+
+    result = service.dispatch("continue", message)
+
+    assert result.status == "continue_requested"
+    assert result.target_message_id == "m1"
+    assert result.target_content == "second"
+```
+
+Add controller coverage proving continuation streams a new assistant turn from the selected target without overwriting the original message:
+
+```python
+@pytest.mark.asyncio
+async def test_continue_from_message_streams_new_assistant_turn_after_selected_message():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    source = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="seed")
+
+    result = await controller.continue_from_message(source.id)
+
+    messages = store.messages_for_session(session.id)
+    assert result.accepted is True
+    assert messages[-1].role is ConsoleMessageRole.ASSISTANT
+    assert messages[-1].content == "hello"
+    assert messages[-1].id != source.id
+```
+
+- [ ] **Step 8: Implement continue flow**
+
+Implement:
+
+- `ConsoleMessageActionService.dispatch("continue", message)` returning a typed continue request
+- `ConsoleChatController.continue_from_message(message_id)` that builds provider messages from session history through the selected message/variant and appends a new assistant response
+- visible UI dispatch from the transcript `--->` action to the controller
+- keyboard Enter activation for the selected `--->` action where the transcript action row has focus
+
+The action label remains `--->` and means “continue/extend this message’s thread of thought”.
+
+- [ ] **Step 9: Add mounted UI continue test**
+
+Use a fake streaming gateway and mounted Console:
+
+```python
+@pytest.mark.asyncio
+async def test_console_continue_action_streams_new_message_from_selected_turn():
+    app = _build_test_app()
+    app.console_provider_gateway_factory = lambda: StreamingGateway()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        # Seed native store through the screen seam, select the assistant message,
+        # activate ---> with Enter, and assert a new assistant response appears.
+        ...
+```
+
+- [ ] **Step 10: Run variant and continue tests**
 
 Run:
 
 ```bash
-python -m pytest -q Tests/Chat/test_console_chat_store.py Tests/Chat/test_console_chat_controller.py Tests/UI/test_console_native_transcript.py --tb=short
+python -m pytest -q Tests/Chat/test_console_chat_store.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_message_actions.py Tests/UI/test_console_native_transcript.py Tests/UI/test_console_native_chat_flow.py --tb=short
 ```
 
 Expected: pass.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 11: Commit**
 
 Run:
 
 ```bash
-git add tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py tldw_chatbook/Chat/console_message_actions.py tldw_chatbook/Widgets/Console/console_transcript.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py Tests/UI/test_console_native_transcript.py
-git commit -m "Add Console response variants"
+git add tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py tldw_chatbook/Chat/console_message_actions.py tldw_chatbook/Widgets/Console/console_transcript.py tldw_chatbook/UI/Screens/chat_screen.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py Tests/Chat/test_console_message_actions.py Tests/UI/test_console_native_transcript.py Tests/UI/test_console_native_chat_flow.py
+git commit -m "Add Console response variants and continue flow"
 ```
 
 ## Task 9: Replace Legacy Console Transcript Dependency
@@ -1289,7 +1454,13 @@ Expected: JSON response with a model list. If unavailable, document as blocked a
 
 - [ ] **Step 4: Launch textual-web/CDP QA**
 
-Use the project’s documented CDP/textual-web process. Capture actual rendered screenshots for:
+Use the project’s documented CDP/textual-web process:
+
+```text
+Docs/superpowers/qa/product-maturity/screen-qa/textual-web-cdp-debugging.md
+```
+
+Capture actual rendered screenshots for:
 
 - idle Console
 - typed composer
@@ -1338,17 +1509,24 @@ git commit -m "Record Console native chat core QA"
 
 ## Final Verification Before PR
 
-Run:
+Run focused verification:
 
 ```bash
 python -m pytest -q Tests/Chat/test_console_chat_models.py Tests/Chat/test_console_provider_gateway.py Tests/Chat/test_console_chat_store.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_message_actions.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_native_transcript.py Tests/UI/test_console_internals_decomposition.py --tb=short
 git diff --check
 ```
 
+If the Backlog task is being moved to `Done`, also run the broad repo verification gate or document any inherited baseline failures separately from this slice:
+
+```bash
+python -m pytest -q --tb=short
+```
+
 Expected:
 
 - focused tests pass
 - `git diff --check` has no output
+- full-suite status is recorded before marking the Backlog task Done
 - live llama.cpp/CDP evidence is documented if the local server is available
 - screenshots are user-approved before visual claims are made
 
