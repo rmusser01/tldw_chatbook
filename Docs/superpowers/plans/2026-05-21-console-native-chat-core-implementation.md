@@ -1505,10 +1505,9 @@ Keep handling active only while transcript has focus.
 
 Change `ConsoleSessionSurface` to accept and render `ConsoleTranscript` state through a narrow seam without removing `ChatTabContainer` yet.
 
-The intent of this task is to prove native transcript rendering and selection while preserving the legacy chat tab dependency until Task 9. Acceptable implementations:
+The intent of this task is to prove native transcript rendering and selection while preserving the legacy chat tab dependency until Task 9.
 
-- mount `ConsoleTranscript` behind a feature/adapter seam and leave `ChatTabContainer` mounted but visually inactive for this task
-- or keep `ChatTabContainer` as the existing visual fallback while `ConsoleSessionSurface` exposes a `set_native_transcript_state(...)` API used by Task 9
+Mount `ConsoleTranscript(id="console-native-transcript")` in `ConsoleSessionSurface` in this task. `ChatTabContainer` may remain mounted only as an inactive hidden fallback during the migration, but the native transcript must be the visible/focusable surface used by the tests added in this task.
 
 Do not add the “no `ChatTabContainer` mounted” guardrail in this task. That guardrail belongs to Task 9 after the native transcript/action path is complete.
 
@@ -1552,6 +1551,7 @@ git commit -m "Render Console transcript natively"
 - Modify: `tldw_chatbook/Widgets/Console/console_transcript.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Modify: `Tests/UI/test_console_native_transcript.py`
+- Modify: `Tests/UI/test_console_native_chat_flow.py`
 
 - [ ] **Step 1: Write failing action availability tests**
 
@@ -1579,6 +1579,33 @@ def test_assistant_message_actions_include_required_order():
     ]
 
 
+def test_streaming_assistant_message_only_exposes_stop_safe_actions():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial",
+        status="streaming",
+    )
+
+    actions = service.available_actions(message)
+
+    assert "Copy" not in [action.label for action in actions]
+    assert "Save as..." not in [action.label for action in actions]
+    assert "♻" not in [action.label for action in actions]
+    assert all(action.disabled_reason for action in actions if not action.enabled)
+
+
+def test_pending_assistant_message_does_not_expose_completed_message_actions():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        status="pending",
+    )
+
+    assert service.available_actions(message) == []
+
+
 def test_unavailable_save_destinations_are_explicit_wip():
     service = ConsoleMessageActionService(available_save_destinations={"Chatbook"})
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
@@ -1603,6 +1630,13 @@ Expected: import failure.
 - [ ] **Step 3: Implement action availability**
 
 Implement pure action definitions first. Include textual fallbacks if emoji rendering is unavailable later, but keep canonical order and labels in the pure service.
+
+Action availability must be gated by message/run status:
+
+- completed user/assistant messages may expose completed-message actions
+- failed assistant messages may expose retry plus safe recovery actions
+- streaming/pending assistant messages must not expose Copy, Save as..., Regenerate, Continue, feedback, or Delete as active completed-message actions
+- disabled actions must carry visible disabled/WIP reasons when rendered
 
 - [ ] **Step 4: Add action dispatch tests for safe operations**
 
@@ -1798,7 +1832,34 @@ async def test_console_action_row_enter_matches_click_for_all_actions(action_id,
 
 If the final implementation tracks action results with a different test seam, assert that Enter and click both call the same `ChatScreen` handler/action ID rather than only checking text. `ConsoleTranscript.focus_action(message_id, action_id)` may be a test-visible helper; the production behavior still needs normal Tab/arrow focus movement.
 
-- [ ] **Step 11: Run action tests**
+- [ ] **Step 11: Add mounted Escape collapse test**
+
+```python
+@pytest.mark.asyncio
+async def test_console_transcript_escape_collapses_selected_action_row():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+        console._sync_console_chat_core_state()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        console._sync_console_chat_core_state()
+        assert "Save as..." in _visible_text(console)
+
+        await pilot.press("escape")
+
+        assert "Save as..." not in _visible_text(console)
+        assert transcript.selected_message_id is None
+```
+
+- [ ] **Step 12: Run action tests**
 
 Run:
 
@@ -1808,12 +1869,12 @@ python -m pytest -q Tests/Chat/test_console_message_actions.py Tests/UI/test_con
 
 Expected: pass.
 
-- [ ] **Step 12: Commit**
+- [ ] **Step 13: Commit**
 
 Run:
 
 ```bash
-git add tldw_chatbook/Chat/console_message_actions.py tldw_chatbook/Widgets/Console/console_save_as_modal.py tldw_chatbook/Widgets/Console/console_transcript.py tldw_chatbook/UI/Screens/chat_screen.py Tests/Chat/test_console_message_actions.py Tests/UI/test_console_native_transcript.py
+git add tldw_chatbook/Chat/console_message_actions.py tldw_chatbook/Widgets/Console/console_save_as_modal.py tldw_chatbook/Widgets/Console/console_transcript.py tldw_chatbook/UI/Screens/chat_screen.py Tests/Chat/test_console_message_actions.py Tests/UI/test_console_native_transcript.py Tests/UI/test_console_native_chat_flow.py
 git commit -m "Add Console selected-message actions"
 ```
 
