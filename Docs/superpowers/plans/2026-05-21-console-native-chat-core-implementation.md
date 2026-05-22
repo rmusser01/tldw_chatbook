@@ -771,6 +771,7 @@ class FakePersistence:
     def __init__(self):
         self.created_conversations = []
         self.created_messages = []
+        self.updated_messages = []
 
     def create_conversation(self, **kwargs):
         self.created_conversations.append(kwargs)
@@ -801,6 +802,30 @@ class FakePersistence:
         self.created_messages.append(kwargs)
         return f"msg-{len(self.created_messages)}"
 
+    def update_message_content(
+        self,
+        *,
+        message_id,
+        content,
+        image_data,
+        image_mime_type,
+        parent_message_id=None,
+        feedback=None,
+        update_parent=False,
+        update_feedback=False,
+    ):
+        self.updated_messages.append({
+            "message_id": message_id,
+            "content": content,
+            "image_data": image_data,
+            "image_mime_type": image_mime_type,
+            "parent_message_id": parent_message_id,
+            "feedback": feedback,
+            "update_parent": update_parent,
+            "update_feedback": update_feedback,
+        })
+        return True
+
 
 def test_store_can_persist_user_and_assistant_messages_through_adapter():
     persistence = FakePersistence()
@@ -816,6 +841,28 @@ def test_store_can_persist_user_and_assistant_messages_through_adapter():
     assert persistence.created_messages[0]["content"] == "hello"
     assert persistence.created_messages[0]["image_data"] is None
     assert persistence.created_messages[0]["image_mime_type"] is None
+
+
+def test_store_updates_persisted_streaming_assistant_content_and_status():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    store.persist_session_if_needed(session.id)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+    )
+
+    store.append_stream_chunk(assistant.id, "hel")
+    store.append_stream_chunk(assistant.id, "lo")
+    store.mark_message_complete(assistant.id)
+
+    assert persistence.updated_messages[-1]["message_id"] == assistant.persisted_message_id
+    assert persistence.updated_messages[-1]["content"] == "hello"
+    assert persistence.updated_messages[-1]["image_data"] is None
+    assert persistence.updated_messages[-1]["image_mime_type"] is None
 ```
 
 - [ ] **Step 5: Implement persistence hooks**
@@ -832,6 +879,13 @@ Use `ChatPersistenceService` when provided. Keep the store usable without persis
 - optional `feedback`
 
 Do not pass incomplete message kwargs that only work with the fake.
+
+Persisted assistant messages must be updated as stream state changes:
+
+- append/create the pending assistant message with `persist=True` before streaming starts
+- call `ChatPersistenceService.update_message_content(...)` after chunk updates or at least when marking complete/stopped/failed
+- final persisted content must match the visible assistant content after completion, stop, failure, or retry
+- keep status in native state; if the DB has no message status column, persist content and document status as native-only for this slice
 
 - [ ] **Step 6: Run store tests**
 
@@ -990,10 +1044,12 @@ Implement the minimal loop:
 
 - build `ConsoleProviderSelection` from the current Console provider/model/base URL plus `store.workspace_context`
 - create user message
-- create pending assistant message
+- create pending assistant message with `persist=True` when a persistence adapter is available
 - set run state streaming
 - append chunks to pending assistant message
+- persist updated assistant content after stream chunks or at least before every terminal state transition
 - mark complete
+- call the store terminal-state methods (`mark_message_complete`, `mark_message_stopped`, `mark_message_failed`) instead of mutating message status directly so persistence updates stay centralized
 
 - [ ] **Step 6: Add stop test**
 
@@ -1001,7 +1057,7 @@ Add a fake gateway that waits on an injected event. Verify `controller.stop_acti
 
 - [ ] **Step 7: Add streaming failure and retry tests**
 
-Add two tests before implementing recovery:
+Add tests before implementing recovery. Reuse the `FakePersistence` helper from Task 3 or define the same minimal test double in this controller test module so content persistence is verified through the real store/controller path:
 
 ```python
 class FailingStreamingGateway(StreamingGateway):
@@ -1012,7 +1068,8 @@ class FailingStreamingGateway(StreamingGateway):
 
 @pytest.mark.asyncio
 async def test_submit_draft_marks_assistant_failed_when_stream_errors():
-    store = ConsoleChatStore()
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
 
     result = await controller.submit_draft("hello")
@@ -1024,11 +1081,14 @@ async def test_submit_draft_marks_assistant_failed_when_stream_errors():
     assert messages[-1].status == "failed"
     assert controller.run_state.status is ConsoleRunStatus.FAILED
     assert "stream failed" in controller.run_state.visible_copy
+    assert persistence.updated_messages[-1]["message_id"] == messages[-1].persisted_message_id
+    assert persistence.updated_messages[-1]["content"] == "partial"
 
 
 @pytest.mark.asyncio
 async def test_retry_failed_message_streams_replacement_from_original_turn():
-    store = ConsoleChatStore()
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
     failing = FailingStreamingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=failing)
     await controller.submit_draft("hello")
@@ -1040,6 +1100,8 @@ async def test_retry_failed_message_streams_replacement_from_original_turn():
     assert result.accepted is True
     assert store.get_message(failed_id).status == "complete"
     assert store.get_message(failed_id).content == "hello"
+    assert persistence.updated_messages[-1]["message_id"] == store.get_message(failed_id).persisted_message_id
+    assert persistence.updated_messages[-1]["content"] == "hello"
 
 
 @pytest.mark.asyncio
@@ -1072,6 +1134,7 @@ Use an `asyncio.Event` or cancel handle owned by the controller. Do not rely on 
 For streaming errors:
 
 - mark the assistant message `failed`
+- persist the latest visible assistant content before or during failure marking
 - set run state `FAILED`
 - expose visible recovery copy in `run_state.visible_copy`
 - preserve enough turn context for `retry_message(message_id)` to stream a replacement without duplicating the user message
@@ -1083,6 +1146,7 @@ For retry:
 - set run state `STREAMING` once the replacement stream starts
 - keep the failed message visible while retrying
 - mark the same failed message `complete` if retry succeeds
+- persist the retried message content through the same store update path used by first-run streaming
 
 Fallback from a failed primary provider to a secondary provider is not implemented in this slice. If exposed in UI copy, label it `WIP: fallback provider routing is not implemented yet`.
 
@@ -1217,17 +1281,49 @@ async def test_console_provider_selection_reads_local_llamacpp_config_and_model(
     assert selection.base_url == "http://127.0.0.1:9099"
     assert selection.explicit_model is None
     assert selection.configured_model == "cfg-model"
+
+
+@pytest.mark.asyncio
+async def test_console_provider_selection_live_qa_override_wins_over_configured_url():
+    app = _build_test_app()
+    app.chat_api_provider_value = "local_llamacpp"
+    app.chat_api_model_value = "explicit-model"
+    app.app_config["api_settings"] = {
+        "local_llamacpp": {
+            "api_url": "http://127.0.0.1:8080/v1/chat/completions",
+            "model": "configured-model",
+        }
+    }
+    app.app_config["console"] = {
+        "llama_cpp_base_url_override": "http://127.0.0.1:9099/v1/chat/completions",
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)):
+        console = host.screen_stack[-1]
+        selection = console._build_console_provider_selection()
+
+    assert selection.provider == "local_llamacpp"
+    assert selection.base_url == "http://127.0.0.1:9099"
+    assert selection.explicit_model == "explicit-model"
+    assert selection.configured_model == "configured-model"
 ```
 
 Normalization rules:
 
 - provider names `llama_cpp` and `local_llamacpp` read `app_config["api_settings"][provider]`
-- base URL defaults to `http://127.0.0.1:9099` when config has no usable `api_url`
+- base URL precedence is:
+  1. explicit Console/session provider base URL if the UI exposes one in this slice
+  2. `app_config["console"]["llama_cpp_base_url_override"]` or `TLDW_CONSOLE_LLAMA_CPP_BASE_URL` when present
+  3. configured `app_config["api_settings"][provider]["api_url"]`
+  4. `http://127.0.0.1:9099` when config has no usable `api_url`
 - full OpenAI-compatible endpoints such as `/v1/chat/completions` normalize to origin root because the gateway appends `/v1/...`
 - `/v1`, `/v1/models`, `/chat/completions`, `/completion`, and trailing slashes normalize to the same origin root
 - effective UI model becomes `explicit_model`
 - config section `model` becomes `configured_model` when it is non-empty and not `None`
 - `_console_control_provider/_console_control_model` keep precedence over app reactives, which keep precedence over config defaults
+
+The live QA gate must explicitly run against `http://127.0.0.1:9099`, even if a developer's local config points `local_llamacpp` to another default port. Use `TLDW_CONSOLE_LLAMA_CPP_BASE_URL=http://127.0.0.1:9099` or the matching `app_config["console"]["llama_cpp_base_url_override"]` value in the app launch used for CDP QA. Automated fake-transport tests must assert this override path so a passing fake test cannot mask a live port mismatch.
 
 `_current_console_workspace_context()` must collect the active workspace ID and staged sources known to Console. If the current app state has no workspace model yet, use `ConsoleWorkspaceContext(active_workspace_id="global")` and keep this fallback explicit in code. Every send must update `store.workspace_context` before calling the controller so workspace/source policy checks use current UI state.
 
@@ -1554,31 +1650,41 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
 
 - [ ] **Step 8: Add mounted Tab reachability smoke test**
 
-Make sure keyboard users can move between the main Console areas after the native transcript exists:
+Make sure keyboard users can move between every main Console area after the native transcript exists. The expected focus order is not pixel-perfect, but all major regions must be reachable without a mouse: staged/context rail, transcript, run inspector, composer, and footer/status shortcuts.
 
 ```python
 @pytest.mark.asyncio
-async def test_console_tab_reaches_composer_and_transcript_regions():
+async def test_console_tab_reaches_all_major_console_regions():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-staged-context-tray")
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _wait_for_selector(console, pilot, "#console-run-inspector")
+        await _wait_for_selector(console, pilot, "#app-footer-status")
 
         seen_focus_ids = set()
-        for _ in range(12):
+        for _ in range(20):
             focused = getattr(console.app, "focused", None)
             if focused is not None and getattr(focused, "id", None):
                 seen_focus_ids.add(focused.id)
             await pilot.press("tab")
 
-    assert "console-native-composer" in seen_focus_ids
-    assert "console-native-transcript" in seen_focus_ids
+    assert {
+        "console-staged-context-tray",
+        "console-native-transcript",
+        "console-run-inspector",
+        "console-native-composer",
+        "app-footer-status",
+    } <= seen_focus_ids
 ```
 
 - [ ] **Step 9: Implement focus and key bindings**
+
+Add stable focusable IDs or focus proxies for each major region. If an existing container cannot receive focus directly, add a narrow focus target inside that region and keep its ID aligned with the region contract above. Do not rely on incidental Button/Input focus only; the user must be able to intentionally land on each screen area and understand where keyboard commands apply.
 
 Implement transcript-local handling for:
 
@@ -1670,7 +1776,7 @@ def test_assistant_message_actions_include_required_order():
     ]
 
 
-def test_streaming_assistant_message_only_exposes_stop_safe_actions():
+def test_streaming_assistant_message_shows_completed_actions_disabled_with_reasons():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
@@ -1680,13 +1786,21 @@ def test_streaming_assistant_message_only_exposes_stop_safe_actions():
 
     actions = service.available_actions(message)
 
-    assert "Copy" not in [action.label for action in actions]
-    assert "Save as..." not in [action.label for action in actions]
-    assert "♻" not in [action.label for action in actions]
-    assert all(action.disabled_reason for action in actions if not action.enabled)
+    assert [action.label for action in actions] == [
+        "Copy",
+        "Edit",
+        "Save as...",
+        "♻",
+        "--->",
+        "👍/👎",
+        "🗑",
+    ]
+    assert all(action.enabled is False for action in actions)
+    assert all(action.disabled_reason for action in actions)
+    assert all("finish" in action.disabled_reason.lower() or "WIP" in action.disabled_reason for action in actions)
 
 
-def test_pending_assistant_message_does_not_expose_completed_message_actions():
+def test_pending_assistant_message_shows_completed_actions_disabled_with_reasons():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
@@ -1694,7 +1808,19 @@ def test_pending_assistant_message_does_not_expose_completed_message_actions():
         status="pending",
     )
 
-    assert service.available_actions(message) == []
+    actions = service.available_actions(message)
+
+    assert [action.label for action in actions] == [
+        "Copy",
+        "Edit",
+        "Save as...",
+        "♻",
+        "--->",
+        "👍/👎",
+        "🗑",
+    ]
+    assert all(action.enabled is False for action in actions)
+    assert all(action.disabled_reason for action in actions)
 
 
 def test_unavailable_save_destinations_are_explicit_wip():
@@ -1726,8 +1852,9 @@ Action availability must be gated by message/run status:
 
 - completed user/assistant messages may expose completed-message actions
 - failed assistant messages may expose retry plus safe recovery actions
-- streaming/pending assistant messages must not expose Copy, Save as..., Regenerate, Continue, feedback, or Delete as active completed-message actions
-- disabled actions must carry visible disabled/WIP reasons when rendered
+- streaming/pending assistant messages must keep the canonical completed-message action row visible but disabled, with visible reasons such as `Wait for response to finish before copying.` or explicit `WIP` copy
+- unavailable expected actions must never disappear silently; they are either enabled, disabled with a reason, or return an explicit `WIP` result when activated
+- disabled actions must carry visible disabled/WIP reasons when rendered, including keyboard-focused rendering
 
 - [ ] **Step 4: Add action dispatch tests for safe operations**
 
@@ -2335,6 +2462,14 @@ curl -sf http://127.0.0.1:9099/health || curl -sf http://127.0.0.1:9099/v1/model
 Expected: either command receives an HTTP response from the local llama.cpp server. `/health` may return a non-2xx response on some builds; if that happens, verify reachability with the app/provider gateway or `curl -i http://127.0.0.1:9099/health` and record the response. `/v1/models` does not need to return a non-empty list when an explicit/configured model is used.
 
 Then run one live Console send through the app against the explicit/configured llama.cpp model and verify a streamed assistant response appears. If the server is unreachable or no explicit/configured model can stream, stop the closeout and document the task/PR as blocked. Do not mark the Backlog task Done, do not claim live llama.cpp approval, and do not open/mark the PR ready for review until this gate passes or the user explicitly waives live llama.cpp verification for this slice.
+
+The app launched for this live QA gate must explicitly target the requested local server, regardless of any contributor-specific config defaults:
+
+```bash
+TLDW_CONSOLE_LLAMA_CPP_BASE_URL=http://127.0.0.1:9099 python -m tldw_chatbook.app
+```
+
+If using textual-web or another wrapper, pass the same environment variable through the wrapper process. Record the effective provider/model/base URL visible in Console or logs in the QA evidence so reviewers can confirm the live path used `127.0.0.1:9099` rather than another configured `api_url`.
 
 - [ ] **Step 4: Launch textual-web/CDP QA**
 
