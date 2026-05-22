@@ -78,6 +78,12 @@ def test_public_roadmap_is_directional_and_commitment_free():
     assert "Now: Reliability And Product Confidence" in text
     assert "Next: Complete Workflow Loops" in text
     assert "Later: Server-Backed And Live Capabilities" in text
+    assert "Deferred Tranche Gates" in text
+    assert "ACP runtime launch" in text
+    assert "write sync promotion" in text
+    assert "Workspaces and Library depth" in text
+    assert "citation and snippet carry-through" in text
+    assert "optional dependency and package polish" in text
     assert "Always: Local-First Control" in text
     forbidden_patterns = (
         r"\bETA\b",

@@ -64,7 +64,8 @@ Product Maturity Phase 1 and Phase 2 are not reopened by default. Their existing
 ## Post-Release UX/HCI Functional Validation
 
 Source Plan: `Docs/superpowers/plans/2026-05-17-post-release-ux-hci-functional-validation.md`
-Status: in progress; `TASK-60.3` verified; `TASK-60.4` pending
+Deferred Tranche Plan: `Docs/superpowers/plans/2026-05-22-post-release-deferred-feature-tranches.md`
+Status: verified; `TASK-60.1` through `TASK-60.6` done; deferred tranches tracked under `TASK-60.4`
 
 This tranche reopens validation only where evidence must come from actual app use. It does not invalidate the historical Phase 3-6 closeout evidence, but it treats that evidence as insufficient for current usability certification when the rendered app may still be visually or functionally broken.
 
@@ -75,9 +76,19 @@ Acceptance requires actual screenshots, actual-use functionality evidence, and c
 | Actual-screen UX/HCI audit harness | `TASK-60.1` | Define screenshot, CDP/textual-web, NN/g, severity, and approval evidence before auditing screens. |
 | Top-level screen functionality audit | `TASK-60.2` | Home, Console, Library, Artifacts, Personas, Watchlists, Schedules, Workflows, MCP, ACP, Skills, and Settings require rendered screenshot approval plus actual-use evidence. |
 | Cross-screen workflow validation | `TASK-60.3` | Verified handoffs into Console, Library/RAG to Console, Chatbook save/resume, agent configuration paths, and run-control paths; future service-depth gaps are classified for `TASK-60.4`. |
-| Deferred feature tranche planning | `TASK-60.4` | Plan ACP runtime launch, write sync, Workspaces/Library depth, citation/snippet carry-through, and optional dependency/package polish only after audit findings are known. |
+| Deferred feature tranche planning | `TASK-60.4` | Planned ACP runtime launch, write sync, Workspaces/Library depth, citation/snippet carry-through, and optional dependency/package polish from actual-use evidence without masking P0/P1 defects. |
 | Personas loading recovery | `TASK-60.5` | Resolve indefinite Personas local behavior-context loading before accepting the Personas destination. |
 | Watchlists loading recovery | `TASK-60.6` | Resolve indefinite Watchlists local snapshot loading before accepting the Watchlists destination. |
+
+Deferred follow-up tranches:
+
+| Deferred Tranche | Backlog Owner | Evidence Boundary |
+| --- | --- | --- |
+| Post-release ACP runtime launch tranche | `TASK-60.4.1` | ACP runtime payloads remain recoverably blocked until a real ACP runtime can launch or attach and report status. |
+| Post-release write sync promotion tranche | `TASK-60.4.2` | Write sync remains deferred until preview, conflict, rollback, and mutation authority are visible and testable. |
+| Post-release Workspaces and Library depth tranche | `TASK-60.4.3` | Workspace switching must preserve global Library visibility while limiting Console context manipulation to eligible workspace items. |
+| Post-release citation and snippet carry-through tranche | `TASK-60.4.4` | Library/Search-RAG evidence is verified at the handoff seam, but downstream citation/snippet carry-through into Chat, Artifacts, and exports remains future work. |
+| Post-release optional dependency and packaging polish tranche | `TASK-60.4.5` | Optional dependency recovery remains source-honest, but package metadata and install-path polish need a dedicated follow-up. |
 
 ## Severity Policy
 
@@ -150,6 +161,11 @@ Acceptance requires actual screenshots, actual-use functionality evidence, and c
   - Top-Level Screen Functionality Audit - `TASK-60.2`
   - Cross-Screen Workflow Validation - `TASK-60.3`
   - Deferred Feature Tranche Planning - `TASK-60.4`
+    - ACP Runtime Launch Tranche - `TASK-60.4.1`
+    - Write Sync Promotion Tranche - `TASK-60.4.2`
+    - Workspaces And Library Depth Tranche - `TASK-60.4.3`
+    - Citation And Snippet Carry-Through Tranche - `TASK-60.4.4`
+    - Optional Dependency And Packaging Polish Tranche - `TASK-60.4.5`
   - Personas Loading Recovery - `TASK-60.5`
   - Watchlists Loading Recovery - `TASK-60.6`
 

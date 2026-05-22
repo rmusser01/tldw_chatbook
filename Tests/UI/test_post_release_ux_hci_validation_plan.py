@@ -13,6 +13,9 @@ QA_TEMPLATE = Path("Docs/superpowers/qa/product-maturity/post-release-ux-hci/wal
 WORKFLOW_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/post-release-ux-hci/2026-05-22-cross-screen-workflow-validation.md"
 )
+DEFERRED_TRANCHE_PLAN = Path(
+    "Docs/superpowers/plans/2026-05-22-post-release-deferred-feature-tranches.md"
+)
 TASK_60 = Path("backlog/tasks/task-60 - Post-release-UX-HCI-and-functionality-validation-tranche.md")
 CHILD_TASKS = {
     "TASK-60.1": Path(
@@ -47,6 +50,13 @@ REQUIRED_SCREENS = (
     "ACP",
     "Skills",
     "Settings",
+)
+DEFERRED_TRANCHE_TASK_TITLES = (
+    "Post-release ACP runtime launch tranche",
+    "Post-release write sync promotion tranche",
+    "Post-release Workspaces and Library depth tranche",
+    "Post-release citation and snippet carry-through tranche",
+    "Post-release optional dependency and packaging polish tranche",
 )
 
 
@@ -127,7 +137,7 @@ def test_post_release_qa_harness_requires_real_screenshots_and_approval() -> Non
 def test_post_release_backlog_tasks_track_screens_workflows_and_deferred_features() -> None:
     parent = _text(TASK_60)
 
-    assert "status: To Do" in parent
+    assert "status: Done" in parent
     assert "actual rendered screenshot audit" in parent
     assert "Cross-screen workflows are validated end-to-end" in parent
     assert "No screen is marked accepted without actual screenshot approval" in parent
@@ -142,7 +152,7 @@ def test_post_release_backlog_tasks_track_screens_workflows_and_deferred_feature
         "TASK-60.1": "Done",
         "TASK-60.2": "Done",
         "TASK-60.3": "Done",
-        "TASK-60.4": "To Do",
+        "TASK-60.4": "Done",
         "TASK-60.5": "Done",
         "TASK-60.6": "Done",
     }
@@ -164,6 +174,14 @@ def test_post_release_backlog_tasks_track_screens_workflows_and_deferred_feature
         CHILD_TASKS["TASK-60.6"]
     )
 
+    backlog_text = "\n\n".join(
+        path.read_text(encoding="utf-8") for path in (REPO_ROOT / "backlog/tasks").glob("*.md")
+    )
+    for title in DEFERRED_TRANCHE_TASK_TITLES:
+        assert f"title: {title}" in backlog_text
+    assert "TASK-60.3" in backlog_text
+    assert "actual-use audit evidence" in backlog_text
+
 
 def test_product_maturity_tracker_lists_post_release_validation_tranche() -> None:
     tracker = _text(TRACKER)
@@ -172,9 +190,12 @@ def test_product_maturity_tracker_lists_post_release_validation_tranche() -> Non
     assert "TASK-60" in tracker
     for task_id in CHILD_TASKS:
         assert task_id in tracker
+    for title in DEFERRED_TRANCHE_TASK_TITLES:
+        assert title in tracker
     assert "actual screenshots" in tracker
     assert "actual-use functionality evidence" in tracker
     assert "cross-screen workflow validation" in tracker
+    assert str(DEFERRED_TRANCHE_PLAN) in tracker
 
 
 def test_post_release_cross_screen_workflow_evidence_records_verification() -> None:
@@ -196,3 +217,34 @@ def test_post_release_cross_screen_workflow_evidence_records_verification() -> N
         assert required in evidence
 
     assert "2026-05-22-cross-screen-workflow-validation.md" in readme
+
+
+def test_post_release_deferred_tranche_plan_prioritizes_audited_future_work() -> None:
+    plan = _text(DEFERRED_TRANCHE_PLAN)
+
+    for required in (
+        "TASK-60.4",
+        str(WORKFLOW_EVIDENCE),
+        "No deferred implementation starts before open P0/P1 usability defects are triaged",
+        "Verified shipped behavior stays separate from deferred future work",
+        "actual-use audit evidence",
+    ):
+        assert required in plan
+
+    for required_tranche in (
+        "ACP Runtime Launch",
+        "Write Sync Promotion",
+        "Workspaces And Library Depth",
+        "Citation And Snippet Carry-Through",
+        "Optional Dependency And Package Polish",
+    ):
+        assert required_tranche in plan
+
+    for required_evidence in (
+        "ACP runtime payloads remain recoverably blocked",
+        "write sync remains deferred",
+        "Workspace switching must not hide Library items",
+        "citation/snippet carry-through remains downstream future work",
+        "optional dependency recovery remains source-honest",
+    ):
+        assert required_evidence in plan
