@@ -41,7 +41,7 @@ Ensure the Watchlists destination resolves its local snapshot load into an actio
 - Verified the issue is already resolved on current `origin/dev` after the Watchlists screen QA work.
 - Current Watchlists destination coverage includes empty local snapshots, service failure recovery copy, timeout-to-recovery behavior, distinct initial loading copy, policy-denied recovery selectors, disabled Console attach state, and deterministic polling via `_wait_for_wc_snapshot`.
 - No production code change was needed; the task is closed as verified by the focused Watchlists destination regression slice.
-- Verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_destination_shells.py -k 'watchlists_collections' --tb=short` returned `13 passed, 89 deselected`.
+- Verification: python -m pytest -q Tests/UI/test_destination_shells.py -k 'watchlists_collections' --tb=short returned 13 passed, 89 deselected.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
