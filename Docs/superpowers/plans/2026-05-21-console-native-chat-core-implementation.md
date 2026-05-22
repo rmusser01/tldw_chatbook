@@ -776,7 +776,28 @@ class FakePersistence:
         self.created_conversations.append(kwargs)
         return "conv-1"
 
-    def create_message(self, **kwargs):
+    def create_message(
+        self,
+        *,
+        conversation_id,
+        sender,
+        content,
+        image_data,
+        image_mime_type,
+        message_id=None,
+        parent_message_id=None,
+        feedback=None,
+    ):
+        kwargs = {
+            "conversation_id": conversation_id,
+            "sender": sender,
+            "content": content,
+            "image_data": image_data,
+            "image_mime_type": image_mime_type,
+            "message_id": message_id,
+            "parent_message_id": parent_message_id,
+            "feedback": feedback,
+        }
         self.created_messages.append(kwargs)
         return f"msg-{len(self.created_messages)}"
 
@@ -790,13 +811,27 @@ def test_store_can_persist_user_and_assistant_messages_through_adapter():
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello", persist=True)
 
     assert persistence.created_conversations[0]["conversation_title"] == "Chat 1"
+    assert persistence.created_messages[0]["conversation_id"] == "conv-1"
     assert persistence.created_messages[0]["sender"] == "user"
     assert persistence.created_messages[0]["content"] == "hello"
+    assert persistence.created_messages[0]["image_data"] is None
+    assert persistence.created_messages[0]["image_mime_type"] is None
 ```
 
 - [ ] **Step 5: Implement persistence hooks**
 
-Use `ChatPersistenceService` when provided. Keep the store usable without persistence for mounted tests.
+Use `ChatPersistenceService` when provided. Keep the store usable without persistence for mounted tests. The adapter call must mirror the real `ChatPersistenceService.create_message(...)` signature:
+
+- `conversation_id`
+- `sender`
+- `content`
+- `image_data`
+- `image_mime_type`
+- optional `message_id`
+- optional `parent_message_id`
+- optional `feedback`
+
+Do not pass incomplete message kwargs that only work with the fake.
 
 - [ ] **Step 6: Run store tests**
 
@@ -1086,6 +1121,7 @@ import pytest
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness, _visible_text
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
@@ -1133,10 +1169,65 @@ Add private helpers:
 - `_ensure_console_chat_store()`
 - `_ensure_console_provider_gateway()`
 - `_ensure_console_chat_controller()`
+- `_normalize_llamacpp_base_url(api_url: str | None) -> str`
+- `_build_console_provider_selection() -> ConsoleProviderSelection`
 - `_current_console_workspace_context()`
 - `_sync_console_chat_core_state()`
 
 Use `ChatPersistenceService` only when `app_instance.chachanotes_db` is available.
+
+Add focused tests for provider selection/config normalization:
+
+```python
+@pytest.mark.parametrize(
+    ("api_url", "expected"),
+    [
+        ("http://127.0.0.1:9099/v1/chat/completions", "http://127.0.0.1:9099"),
+        ("http://127.0.0.1:9099/v1", "http://127.0.0.1:9099"),
+        ("http://127.0.0.1:9099/completion", "http://127.0.0.1:9099"),
+        ("http://127.0.0.1:9099/", "http://127.0.0.1:9099"),
+        (None, "http://127.0.0.1:9099"),
+    ],
+)
+def test_console_normalizes_llamacpp_api_urls(api_url, expected):
+    app = _build_test_app()
+    screen = ChatScreen(app)
+
+    assert screen._normalize_llamacpp_base_url(api_url) == expected
+
+
+@pytest.mark.asyncio
+async def test_console_provider_selection_reads_local_llamacpp_config_and_model():
+    app = _build_test_app()
+    app.chat_api_provider_value = "local_llamacpp"
+    app.chat_api_model_value = None
+    app.app_config["api_settings"] = {
+        "local_llamacpp": {
+            "api_url": "http://127.0.0.1:9099/v1/chat/completions",
+            "model": "cfg-model",
+        }
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)):
+        console = host.screen_stack[-1]
+        selection = console._build_console_provider_selection()
+
+    assert selection.provider == "local_llamacpp"
+    assert selection.base_url == "http://127.0.0.1:9099"
+    assert selection.explicit_model is None
+    assert selection.configured_model == "cfg-model"
+```
+
+Normalization rules:
+
+- provider names `llama_cpp` and `local_llamacpp` read `app_config["api_settings"][provider]`
+- base URL defaults to `http://127.0.0.1:9099` when config has no usable `api_url`
+- full OpenAI-compatible endpoints such as `/v1/chat/completions` normalize to origin root because the gateway appends `/v1/...`
+- `/v1`, `/v1/models`, `/chat/completions`, `/completion`, and trailing slashes normalize to the same origin root
+- effective UI model becomes `explicit_model`
+- config section `model` becomes `configured_model` when it is non-empty and not `None`
+- `_console_control_provider/_console_control_model` keep precedence over app reactives, which keep precedence over config defaults
 
 `_current_console_workspace_context()` must collect the active workspace ID and staged sources known to Console. If the current app state has no workspace model yet, use `ConsoleWorkspaceContext(active_workspace_id="global")` and keep this fallback explicit in code. Every send must update `store.workspace_context` before calling the controller so workspace/source policy checks use current UI state.
 
