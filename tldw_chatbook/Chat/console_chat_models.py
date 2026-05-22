@@ -156,6 +156,10 @@ class ConsoleVariantSet:
         selected_index: int = 0,
     ) -> "ConsoleVariantSet":
         """Build a variant set from raw message contents."""
+        if not contents:
+            raise ValueError("ConsoleVariantSet requires at least one variant")
+        if selected_index < 0 or selected_index >= len(contents):
+            raise ValueError("selected_index must reference an existing variant")
         return cls(
             turn_id=turn_id,
             variants=[ConsoleVariant(content) for content in contents],

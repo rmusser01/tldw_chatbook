@@ -1,3 +1,5 @@
+import pytest
+
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -38,6 +40,21 @@ def test_variant_set_selects_current_variant_for_continue():
     assert variants.current.content == "second"
     assert variants.can_go_previous is True
     assert variants.can_go_next is False
+
+
+def test_variant_set_rejects_empty_contents():
+    with pytest.raises(ValueError, match="at least one variant"):
+        ConsoleVariantSet.from_contents(turn_id="turn-1", contents=[])
+
+
+@pytest.mark.parametrize("selected_index", [-1, 2])
+def test_variant_set_rejects_out_of_range_selected_index(selected_index):
+    with pytest.raises(ValueError, match="selected_index"):
+        ConsoleVariantSet.from_contents(
+            turn_id="turn-1",
+            contents=["first", "second"],
+            selected_index=selected_index,
+        )
 
 
 def test_workspace_context_blocks_cross_workspace_sources():
