@@ -135,6 +135,25 @@ async def test_llamacpp_empty_models_without_configured_model_returns_blocked_re
 
 
 @pytest.mark.asyncio
+async def test_llamacpp_non_object_models_payload_returns_blocked_recovery_copy():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="http://127.0.0.1:9099",
+        )
+    )
+
+    resolved = await gateway.resolve_llamacpp(LlamaCppProviderConfig(base_url="http://127.0.0.1:9099"))
+
+    assert resolved.ready is False
+    assert resolved.model is None
+    assert resolved.visible_copy == "Provider blocked: select or configure a llama.cpp model."
+
+
+@pytest.mark.asyncio
 async def test_resolve_for_send_dispatches_llamacpp_selection():
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": [{"id": "server-model"}]})
@@ -200,6 +219,36 @@ async def test_llamacpp_stream_chat_yields_content_chunks():
 
 
 @pytest.mark.asyncio
+async def test_llamacpp_stream_chat_ignores_non_object_json_sse_lines():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = (
+            b"data: []\n\n"
+            b"data: null\n\n"
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"
+            b"data: [DONE]\n\n"
+        )
+        return httpx.Response(200, content=body)
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="http://127.0.0.1:9099",
+        )
+    )
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_llamacpp_chat(
+            base_url="http://127.0.0.1:9099",
+            model="test-model",
+            messages=[{"role": "user", "content": "say hello"}],
+        )
+    ]
+
+    assert chunks == ["ok"]
+
+
+@pytest.mark.asyncio
 async def test_stream_chat_dispatches_llamacpp_resolution():
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/health":
@@ -226,3 +275,25 @@ async def test_stream_chat_dispatches_llamacpp_resolution():
     chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hello"}])]
 
     assert chunks == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_closes_owned_http_client():
+    gateway = ConsoleProviderGateway()
+
+    assert gateway.http_client.is_closed is False
+
+    await gateway.aclose()
+
+    assert gateway.http_client.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_gateway_does_not_close_injected_http_client():
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+    gateway = ConsoleProviderGateway(http_client=client)
+
+    await gateway.aclose()
+
+    assert client.is_closed is False
+    await client.aclose()

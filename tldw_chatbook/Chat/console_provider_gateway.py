@@ -38,7 +38,13 @@ class ConsoleProviderGateway:
     """Resolve Console providers and stream chat responses."""
 
     def __init__(self, *, http_client: httpx.AsyncClient | None = None) -> None:
+        self._owns_http_client = http_client is None
         self.http_client = http_client or httpx.AsyncClient(timeout=30.0)
+
+    async def aclose(self) -> None:
+        """Close the owned HTTP client, leaving injected clients to their owner."""
+        if self._owns_http_client:
+            await self.http_client.aclose()
 
     async def resolve_llamacpp(self, config: LlamaCppProviderConfig) -> ConsoleProviderResolution:
         """Resolve llama.cpp readiness and the effective model."""
@@ -162,6 +168,8 @@ class ConsoleProviderGateway:
             payload = response.json()
         except json.JSONDecodeError:
             return None
+        if not isinstance(payload, dict):
+            return None
         data = payload.get("data")
         if not isinstance(data, list):
             return None
@@ -180,6 +188,8 @@ class ConsoleProviderGateway:
         try:
             payload = json.loads(data)
         except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
             return None
         choices = payload.get("choices")
         if not isinstance(choices, list) or not choices:
