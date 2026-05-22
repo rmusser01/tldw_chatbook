@@ -112,6 +112,7 @@ class ConsoleRunState:
         """Return whether Console can accept a new send from this state."""
         return self.status in {
             ConsoleRunStatus.IDLE,
+            ConsoleRunStatus.BLOCKED,
             ConsoleRunStatus.COMPLETED,
             ConsoleRunStatus.FAILED,
             ConsoleRunStatus.STOPPED,

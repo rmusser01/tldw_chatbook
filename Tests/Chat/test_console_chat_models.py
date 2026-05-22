@@ -17,7 +17,7 @@ def test_run_state_blocks_with_visible_recovery_copy():
 
     assert state.status is ConsoleRunStatus.BLOCKED
     assert state.visible_copy == "Provider blocked: select a model"
-    assert state.is_send_allowed is False
+    assert state.is_send_allowed is True
     assert state.is_stop_allowed is False
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -53,10 +54,15 @@ class ConsoleChatController:
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
         self._active_assistant_message_id: str | None = None
+        self._active_stream_task: asyncio.Task | None = None
         self._stop_requested = False
 
     async def submit_draft(self, draft: str) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution."""
+        active_rejection = self._active_run_rejection()
+        if active_rejection is not None:
+            return active_rejection
+
         normalized_draft = draft.strip()
         session = self.store.ensure_session(
             workspace_id=self.store.workspace_context.active_workspace_id,
@@ -97,14 +103,25 @@ class ConsoleChatController:
         if self._active_assistant_message_id is None:
             return False
         self._stop_requested = True
+        if self._active_stream_task is not None and self._active_stream_task is not asyncio.current_task():
+            self._active_stream_task.cancel()
         return True
 
     async def retry_message(self, message_id: str) -> ConsoleSubmitResult:
         """Retry a failed assistant message using the original turn context."""
+        active_rejection = self._active_run_rejection()
+        if active_rejection is not None:
+            return active_rejection
+
         session_id = self.store.active_session_id
         if session_id is None:
             return ConsoleSubmitResult(False, False, "No active Console session.")
         message = self.store.get_message(message_id)
+        message_session_id = self.store.session_id_for_message(message_id)
+        if message_session_id != session_id:
+            visible_copy = "Open the original session before retrying this message."
+            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            return ConsoleSubmitResult(False, False, visible_copy)
         if message.status != "failed":
             return self._block(session_id, "Only failed messages can be retried.")
 
@@ -155,9 +172,11 @@ class ConsoleChatController:
         prepare_retry: bool = False,
     ) -> ConsoleSubmitResult:
         self._active_assistant_message_id = assistant_message_id
+        self._active_stream_task = asyncio.current_task()
         self._stop_requested = False
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."))
         retry_prepared = False
+        emitted_content = False
         try:
             async for chunk in self.provider_gateway.stream_chat(resolution, provider_messages):
                 if self._stop_requested:
@@ -172,6 +191,8 @@ class ConsoleChatController:
                     self.store.prepare_message_retry(assistant_message_id)
                     retry_prepared = True
                 self.store.append_stream_chunk(assistant_message_id, chunk)
+                if chunk:
+                    emitted_content = True
             if self._stop_requested:
                 stopped = (
                     self.store.mark_message_stopped(assistant_message_id)
@@ -180,18 +201,30 @@ class ConsoleChatController:
                 )
                 self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped."))
                 return ConsoleSubmitResult(True, True, stopped.content)
-            if prepare_retry and not retry_prepared:
+            if not emitted_content:
                 failed = self.store.get_message(assistant_message_id)
                 self._set_run_state(
                     ConsoleRunState(
                         ConsoleRunStatus.FAILED,
-                        "Provider stream ended without replacement content.",
+                        "Provider stream ended without content.",
                     )
                 )
+                if not prepare_retry:
+                    failed = self.store.mark_message_failed(assistant_message_id)
                 return ConsoleSubmitResult(True, True, failed.content)
             completed = self.store.mark_message_complete(assistant_message_id)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
             return ConsoleSubmitResult(True, True, completed.content)
+        except asyncio.CancelledError:
+            if self._stop_requested:
+                stopped = (
+                    self.store.mark_message_stopped(assistant_message_id)
+                    if not prepare_retry or retry_prepared
+                    else self.store.get_message(assistant_message_id)
+                )
+                self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped."))
+                return ConsoleSubmitResult(True, True, stopped.content)
+            raise
         except Exception as exc:
             failed = (
                 self.store.mark_message_failed(assistant_message_id)
@@ -202,8 +235,10 @@ class ConsoleChatController:
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
             return ConsoleSubmitResult(True, True, failed.content)
         finally:
-            self._active_assistant_message_id = None
-            self._stop_requested = False
+            if self._active_stream_task is asyncio.current_task():
+                self._active_assistant_message_id = None
+                self._active_stream_task = None
+                self._stop_requested = False
 
     def _provider_messages_for_session(
         self,
@@ -227,3 +262,12 @@ class ConsoleChatController:
     def _set_run_state(self, run_state: ConsoleRunState) -> None:
         self.run_state = run_state
         self.run_state_history.append(run_state.status)
+
+    def _active_run_rejection(self) -> ConsoleSubmitResult | None:
+        if self.run_state.is_send_allowed:
+            return None
+        return ConsoleSubmitResult(
+            accepted=False,
+            should_clear_draft=False,
+            visible_copy="A Console run is already running.",
+        )

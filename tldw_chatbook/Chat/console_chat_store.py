@@ -143,6 +143,12 @@ class ConsoleChatStore:
         """Return a message by native message ID."""
         return self._snapshot(self._message_or_raise(message_id))
 
+    def session_id_for_message(self, message_id: str) -> str:
+        """Return the owning session ID for a message."""
+        if message_id not in self._message_session_index:
+            raise KeyError(f"Unknown Console message: {message_id}")
+        return self._message_session_index[message_id]
+
     def append_stream_chunk(self, message_id: str, chunk: str) -> ConsoleChatMessage:
         """Append streamed assistant content to an existing message."""
         message = self._message_or_raise(message_id)

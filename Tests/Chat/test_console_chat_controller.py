@@ -241,6 +241,71 @@ async def test_stop_active_run_marks_assistant_message_stopped():
 
 
 @pytest.mark.asyncio
+async def test_submit_draft_rejects_concurrent_send_while_streaming():
+    class WaitingGateway(StreamingGateway):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages):
+            self.started.set()
+            yield "partial"
+            await self.release.wait()
+            yield "done"
+
+    gateway = WaitingGateway()
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    task = asyncio.create_task(controller.submit_draft("first"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+
+    blocked = await asyncio.wait_for(controller.submit_draft("second"), timeout=0.5)
+
+    assert blocked.accepted is False
+    assert blocked.should_clear_draft is False
+    assert "already running" in blocked.visible_copy
+    assert [
+        message.content for message in store.messages_for_session(store.active_session_id)
+        if message.role.value == "user"
+    ] == ["first"]
+
+    gateway.release.set()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk():
+    class StalledGateway(StreamingGateway):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.never_release = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages):
+            self.started.set()
+            yield "partial"
+            await self.never_release.wait()
+            yield "ignored"
+
+    gateway = StalledGateway()
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    task = asyncio.create_task(controller.submit_draft("hello"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert controller.stop_active_run() is True
+    result = await asyncio.wait_for(task, timeout=0.5)
+
+    messages = store.messages_for_session(store.active_session_id)
+    assert result.accepted is True
+    assert messages[-1].content == "partial"
+    assert messages[-1].status == "stopped"
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+
+
+@pytest.mark.asyncio
 async def test_submit_draft_marks_assistant_failed_when_stream_errors():
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
@@ -276,6 +341,25 @@ async def test_retry_failed_message_streams_replacement_from_original_turn():
     assert store.get_message(failed_id).content == "hello"
     assert persistence.updated_messages[-1]["message_id"] == store.get_message(failed_id).persisted_message_id
     assert persistence.updated_messages[-1]["content"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_retry_rejects_failed_message_from_inactive_session():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
+    await controller.submit_draft("hello")
+    first_session_id = store.active_session_id
+    failed_id = store.messages_for_session(first_session_id)[-1].id
+    store.create_session(title="Chat 2")
+
+    controller.provider_gateway = StreamingGateway()
+    result = await controller.retry_message(failed_id)
+
+    assert result.accepted is False
+    assert result.should_clear_draft is False
+    assert "original session" in result.visible_copy
+    assert store.get_message(failed_id).status == "failed"
+    assert store.active_session_id != first_session_id
 
 
 @pytest.mark.asyncio
@@ -316,6 +400,22 @@ async def test_retry_keeps_failed_content_if_replacement_fails_before_first_chun
     assert retried.status == "failed"
     assert retried.content == "partial"
     assert controller.run_state.status is ConsoleRunStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_initial_empty_stream_marks_assistant_failed():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=EmptyStreamingGateway())
+
+    result = await controller.submit_draft("hello")
+
+    messages = store.messages_for_session(store.active_session_id)
+    assert result.accepted is True
+    assert result.should_clear_draft is True
+    assert messages[-1].status == "failed"
+    assert messages[-1].content == ""
+    assert controller.run_state.status is ConsoleRunStatus.FAILED
+    assert "without content" in controller.run_state.visible_copy
 
 
 @pytest.mark.asyncio
