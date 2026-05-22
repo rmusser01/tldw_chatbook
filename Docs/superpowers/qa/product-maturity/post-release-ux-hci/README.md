@@ -16,29 +16,31 @@ This index exists because prior mounted layout checks and phase closeout evidenc
 
 | Screen | Evidence Status | Screenshot Approval | Functionality Status | Follow-Up |
 | --- | --- | --- | --- | --- |
-| Home | recorded | pending | next-best action opens Library | `TASK-60.3` |
-| Console | recorded | pending | visible composer input and blocked-send recovery verified | `TASK-60.3` |
-| Library | recorded | pending | Search/RAG keyboard activation and blocked empty recovery verified | `TASK-60.3` |
-| Artifacts | recorded | pending | empty state and Open Console recovery verified | `TASK-60.3` |
+| Home | recorded | pending | next-best action opens Library; active-work Console payload verified | `TASK-60.3` verified |
+| Console | recorded | pending | visible composer input, blocked-send recovery, and source-readiness summary verified | `TASK-60.3` verified |
+| Library | recorded | pending | Search/RAG mode, blocked empty recovery, and source-to-Console handoff verified | `TASK-60.3` verified |
+| Artifacts | recorded | pending | empty state, Open Console recovery, and Chatbook resume payload verified | `TASK-60.3` verified |
 | Personas | recorded | approved | loading blocker fixed; CCP route approved as destination-native workbench | `TASK-60.5` |
-| Watchlists | recorded | pending | P1 indefinite loading blocks primary run review path | `TASK-60.6` |
-| Schedules | recorded | pending | empty/recovery baseline verified | `TASK-60.3` |
-| Workflows | recorded | pending | empty/recovery baseline verified | `TASK-60.3` |
-| MCP | recorded | pending | local overview and no-server recovery verified | `TASK-60.3` |
-| ACP | recorded | pending | runtime-not-configured recovery verified | `TASK-60.3` |
-| Skills | recorded | pending | empty state and import-not-wired recovery visible | `TASK-60.3` |
+| Watchlists | recorded | pending | deterministic loading recovery and active-run Console follow verified | `TASK-60.6`; `TASK-60.3` verified |
+| Schedules | recorded | pending | empty/recovery baseline and active-run Console follow verified | `TASK-60.3` verified |
+| Workflows | recorded | pending | empty/recovery baseline and active-run Console follow verified | `TASK-60.3` verified |
+| MCP | recorded | pending | local overview and no-server recovery verified; Console source readiness classifies MCP as future service-depth | `TASK-60.3` verified; `TASK-60.4` planning |
+| ACP | recorded | pending | runtime-not-configured recovery and fixture-backed session handoff verified | `TASK-60.3` verified; `TASK-60.4` planning |
+| Skills | recorded | pending | empty state, import-not-wired recovery, and valid-skill Console attach verified | `TASK-60.3` verified |
 | Settings | recorded | pending | preference and scope baseline recorded | `TASK-60.3` |
 
 ## Required Cross-Screen Workflows
 
 | Workflow | Evidence Status | Acceptance Gate |
 | --- | --- | --- |
-| Home active work to details and Console | pending | actual-use handoff or clear blocked recovery |
-| Library Search/RAG to Console context | pending | evidence handoff or clear blocked recovery |
-| Console composer, send/block, Chatbook save/resume | pending | visible input and recoverable send/save path |
-| Artifacts/Chatbooks to Console resume | pending | no dead controls |
-| Personas/Skills/MCP/ACP context to Console | pending | verified handoff or honest blocked future work |
-| Watchlists/Schedules/Workflows runs to Console | pending | verified handoff or honest blocked future work |
+| Home active work to details and Console | verified | actual-use handoff or clear blocked recovery |
+| Library Search/RAG to Console context | verified/recoverable | evidence handoff or clear blocked recovery |
+| Console composer, send/block, Chatbook save/resume | verified/recoverable | visible input and recoverable send/save path |
+| Artifacts/Chatbooks to Console resume | verified | no dead controls |
+| Personas/Skills/MCP/ACP context to Console | verified/recoverable | verified handoff or honest blocked future work |
+| Watchlists/Schedules/Workflows runs to Console | verified | verified handoff or honest blocked future work |
+
+Current workflow evidence: `2026-05-22-cross-screen-workflow-validation.md`.
 
 ## Severity Rules
 
