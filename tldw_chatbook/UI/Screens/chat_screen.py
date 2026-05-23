@@ -52,6 +52,7 @@ from ...Chat.console_display_state import (
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
 from ...Chat.provider_readiness import get_provider_readiness
+from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
 from ...Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     ConsoleLiveWorkSourceReadinessState,
@@ -72,6 +73,7 @@ from ...Widgets.Console import (
     ConsoleComposerBar,
     ConsoleControlBar,
     ConsoleRunInspector,
+    ConsoleSaveAsModal,
     ConsoleSessionSurface,
     ConsoleStagedContextTray,
     ConsoleTranscript,
@@ -276,6 +278,8 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_store: ConsoleChatStore | None = None
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
+        self._console_message_action_service = ConsoleMessageActionService()
+        self._last_console_action: ConsoleActionResult | None = None
         self._console_transcript_sync_timer: Any | None = None
         self.ui_state = UIState()
         self._load_sidebar_state()
@@ -1803,6 +1807,77 @@ class ChatScreen(BaseAppScreen):
         """Route inspector Chatbook action through the existing Console save seam."""
         self.handle_console_save_chatbook(event)
 
+    async def handle_console_message_action(self, event: Button.Pressed) -> bool:
+        """Route selected transcript message actions through the native action service."""
+        button_id = event.button.id or ""
+        action_id, message_id = self._parse_console_message_action_button_id(button_id)
+        if action_id is None or message_id is None:
+            return False
+
+        event.stop()
+        store = self._ensure_console_chat_store()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            self.app_instance.notify("Console message action target no longer exists.", severity="warning")
+            return True
+
+        if action_id == "save-as":
+            await self.app_instance.push_screen(
+                ConsoleSaveAsModal(
+                    destinations=self._console_message_action_service.save_as_destinations(message)
+                )
+            )
+            self._last_console_action = ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Opened Save as destinations.",
+            )
+            return True
+
+        result = self._console_message_action_service.dispatch(action_id, message)
+        self._last_console_action = result
+        if result.clipboard_text is not None:
+            copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
+            if callable(copy_to_clipboard):
+                copy_to_clipboard(result.clipboard_text)
+        if action_id == "retry" and result.status == "completed":
+            controller = self._ensure_console_chat_controller()
+            self.run_worker(self._retry_console_message(controller, message_id), exclusive=True)
+            return True
+        severity = "information" if result.status in {"completed", "wip"} else "warning"
+        self.app_instance.notify(result.visible_copy, severity=severity)
+        return True
+
+    @staticmethod
+    def _parse_console_message_action_button_id(button_id: str) -> tuple[str | None, str | None]:
+        prefixes = (
+            ("console-message-action-feedback-up-", "feedback-up"),
+            ("console-message-action-feedback-down-", "feedback-down"),
+            ("console-message-action-save-as-", "save-as"),
+            ("console-message-action-regenerate-", "regenerate"),
+            ("console-message-action-continue-", "continue"),
+            ("console-message-action-delete-", "delete"),
+            ("console-message-action-retry-", "retry"),
+            ("console-message-action-copy-", "copy"),
+            ("console-message-action-edit-", "edit"),
+        )
+        for prefix, action_id in prefixes:
+            if button_id.startswith(prefix):
+                return action_id, button_id.removeprefix(prefix)
+        return None, None
+
+    async def _retry_console_message(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+    ) -> None:
+        result = await controller.retry_message(message_id)
+        if result.visible_copy:
+            severity = "warning" if not result.accepted else "information"
+            self.app_instance.notify(result.visible_copy, severity=severity)
+        await self._sync_native_console_chat_ui()
+
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar."""
         if not self.chat_window:
@@ -2803,6 +2878,10 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-stop-generation":
             await self.handle_console_stop_generation(event)
             return
+        if button_id and button_id.startswith("console-message-action-"):
+            handled = await self.handle_console_message_action(event)
+            if handled:
+                return
         
         # Sidebar toggle is handled in ChatWindowEnhanced via @on decorator
         

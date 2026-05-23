@@ -576,6 +576,23 @@
     text-style: bold;
 }
 
+.console-transcript-action-button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.console-transcript-action-button:focus {
+    background: $ds-action-focus;
+    color: $ds-text-primary;
+}
+
 .console-transcript-empty-state {
     height: auto;
     min-height: 2;

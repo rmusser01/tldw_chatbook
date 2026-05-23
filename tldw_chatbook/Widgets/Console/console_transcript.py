@@ -6,11 +6,13 @@ import asyncio
 from typing import Iterable
 
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.events import Click, Key
-from textual.widgets import Static
+from textual.widget import Widget
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
 
 
 CONSOLE_TRANSCRIPT_ACTION_ROW = "Copy | Edit | Save as... | ♻ | ---> | 👍/👎                 🗑"
@@ -94,6 +96,12 @@ class ConsoleTranscript(VerticalScroll):
         if self.is_mounted:
             self.call_later(self.refresh_messages)
 
+    def focus_action(self, message_id: str, action_id: str) -> None:
+        """Focus a selected-message action button by message/action ID."""
+        if self.selected_message_id != message_id:
+            self.select_message(message_id)
+        self.call_later(self._focus_action_button, message_id, action_id)
+
     def to_plain_text(self, width: int = 80) -> str:
         """Return a terminal-readable transcript rendering for tests and exports."""
         rule = "─" * max(1, width)
@@ -158,8 +166,8 @@ class ConsoleTranscript(VerticalScroll):
             index = min(max(current + offset, 0), len(self._messages) - 1)
         self.select_message(self._messages[index].id)
 
-    def _message_widgets(self) -> list[Static]:
-        widgets: list[Static] = []
+    def _message_widgets(self) -> list[Widget]:
+        widgets: list[Widget] = []
         for message in self._messages:
             widgets.append(Static("─" * 72, classes="console-transcript-rule"))
             widgets.append(
@@ -169,12 +177,7 @@ class ConsoleTranscript(VerticalScroll):
                 )
             )
             if message.id == self.selected_message_id:
-                widgets.append(
-                    Static(
-                        CONSOLE_TRANSCRIPT_ACTION_ROW,
-                        classes="console-transcript-action-row",
-                    )
-                )
+                widgets.append(self._action_row(message))
         if self._messages:
             widgets.append(Static("─" * 72, classes="console-transcript-rule"))
         else:
@@ -185,3 +188,34 @@ class ConsoleTranscript(VerticalScroll):
                 )
             )
         return widgets
+
+    def _action_row(self, message: ConsoleChatMessage) -> Horizontal:
+        buttons: list[Button] = []
+        for action in ConsoleMessageActionService().available_actions(message):
+            if action.action_id == "feedback":
+                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-up", "👍/")))
+                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-down", "👎 |")))
+                continue
+            buttons.append(self._action_button(message, action))
+        return Horizontal(*buttons, classes="console-transcript-action-row")
+
+    @staticmethod
+    def _action_button(message: ConsoleChatMessage, action: ConsoleMessageAction) -> Button:
+        label = action.label
+        if action.action_id not in {"delete", "feedback-up", "feedback-down"}:
+            label = f"{label} |"
+        button = Button(
+            label,
+            id=f"console-message-action-{action.action_id}-{message.id}",
+            classes="console-transcript-action-button",
+            disabled=not action.enabled,
+        )
+        if action.disabled_reason:
+            button.tooltip = action.disabled_reason
+        return button
+
+    def _focus_action_button(self, message_id: str, action_id: str) -> None:
+        try:
+            self.query_one(f"#console-message-action-{action_id}-{message_id}", Button).focus()
+        except Exception:
+            return

@@ -1,5 +1,6 @@
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -10,7 +11,8 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from textual.widgets import Button
 
-from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -80,6 +82,18 @@ class CapturingGateway(_ReadyResolutionGateway):
         self.sent_messages.append(list(messages))
         for chunk in self.chunks:
             yield chunk
+
+
+class FailThenRecoverGateway(_ReadyResolutionGateway):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def stream_chat(self, resolution, messages):
+        self.calls += 1
+        if self.calls == 1:
+            yield "partial"
+            raise RuntimeError("llama.cpp stream failed")
+        yield "recovered"
 
 
 async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 20) -> None:
@@ -377,3 +391,66 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
         messages = store.messages_for_session(store.active_session_id)
         assert messages[-2].content == "hello"
         assert messages[-1].content == "hello"
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_copy_action_uses_app_clipboard():
+    app = _build_test_app()
+    app.copy_to_clipboard = Mock()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-copy-{message.id}")
+
+        await pilot.click(f"#console-message-action-copy-{message.id}")
+        await pilot.pause()
+
+    app.copy_to_clipboard.assert_called_once_with("answer")
+    assert console._last_console_action.action_id == "copy"
+
+
+@pytest.mark.asyncio
+async def test_console_failed_stream_renders_inline_retry_and_recovers():
+    gateway = FailThenRecoverGateway()
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "llama.cpp stream failed")
+
+        store = console._ensure_console_chat_store()
+        failed = store.messages_for_session(store.active_session_id)[-1]
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(failed.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-retry-{failed.id}")
+        assert "Retry" in _visible_text(console)
+
+        await pilot.click(f"#console-message-action-retry-{failed.id}")
+        await _wait_for_text(console, pilot, "recovered")
+
+    assert store.get_message(failed.id).status == "complete"

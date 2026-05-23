@@ -354,12 +354,13 @@ async def test_submit_draft_marks_assistant_failed_when_stream_errors():
     messages = store.messages_for_session(store.active_session_id)
     assert result.accepted is True
     assert result.should_clear_draft is True
-    assert messages[-1].content == "partial"
+    assert messages[-1].content.startswith("partial")
+    assert "Provider stream failed: llama.cpp stream failed" in messages[-1].content
     assert messages[-1].status == "failed"
     assert controller.run_state.status is ConsoleRunStatus.FAILED
     assert "stream failed" in controller.run_state.visible_copy
     assert persistence.updated_messages[-1]["message_id"] == messages[-1].persisted_message_id
-    assert persistence.updated_messages[-1]["content"] == "partial"
+    assert "Provider stream failed: llama.cpp stream failed" in persistence.updated_messages[-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -436,7 +437,7 @@ async def test_retry_keeps_failed_content_if_replacement_fails_before_first_chun
     retried = store.get_message(failed.id)
     assert result.accepted is True
     assert retried.status == "failed"
-    assert retried.content == "partial"
+    assert retried.content == failed.content
     assert controller.run_state.status is ConsoleRunStatus.FAILED
 
 
@@ -469,7 +470,7 @@ async def test_retry_keeps_failed_content_if_replacement_stream_is_empty():
     retried = store.get_message(failed.id)
     assert result.accepted is True
     assert retried.status == "failed"
-    assert retried.content == "partial"
+    assert retried.content == failed.content
     assert controller.run_state.status is ConsoleRunStatus.FAILED
 
 
@@ -486,5 +487,5 @@ async def test_retry_ignores_empty_heartbeat_before_empty_replacement_stream_end
     retried = store.get_message(failed.id)
     assert result.accepted is True
     assert retried.status == "failed"
-    assert retried.content == "partial"
+    assert retried.content == failed.content
     assert controller.run_state.status is ConsoleRunStatus.FAILED

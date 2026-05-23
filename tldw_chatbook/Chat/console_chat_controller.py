@@ -231,12 +231,17 @@ class ConsoleChatController:
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
         except Exception as exc:
+            visible_copy = f"Provider stream failed: {exc}"
+            if not prepare_retry or retry_prepared:
+                try:
+                    self.store.append_stream_chunk(assistant_message_id, f"\n{visible_copy}")
+                except ValueError:
+                    pass
             failed = (
                 self.store.mark_message_failed(assistant_message_id)
                 if not prepare_retry or retry_prepared
                 else self.store.get_message(assistant_message_id)
             )
-            visible_copy = f"Provider stream failed: {exc}"
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
             return ConsoleSubmitResult(True, True, failed.content)
         finally:
