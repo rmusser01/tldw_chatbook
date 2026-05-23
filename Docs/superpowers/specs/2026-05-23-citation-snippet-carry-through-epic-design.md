@@ -180,6 +180,11 @@ CitationRef(
 )
 ```
 
+The contract accepts `text` as an input alias for both `EvidenceReference.snippet` and
+`CitationRef.quote` so existing RAG citation models can be adapted without lossy field
+renames. Serialized payloads keep `snippet` for source evidence and `quote` for answer
+citations because those two fields have different user-facing meanings downstream.
+
 Status values should include at least:
 
 - `available`
