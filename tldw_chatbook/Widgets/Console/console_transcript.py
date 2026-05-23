@@ -24,9 +24,13 @@ def _message_role_label(message: ConsoleChatMessage) -> str:
 
 
 def _message_body(message: ConsoleChatMessage) -> str:
+    if message.variants is not None:
+        content = message.variants.current.content
+    else:
+        content = message.content
     if message.status in {"streaming", "stopped", "failed"}:
-        return f"{message.content} [{message.status}]".strip()
-    return message.content
+        return f"{content} [{message.status}]".strip()
+    return content
 
 
 class ConsoleTranscriptMessage(Static):
@@ -102,6 +106,24 @@ class ConsoleTranscript(VerticalScroll):
             self.select_message(message_id)
         self.call_later(self._focus_action_button, message_id, action_id)
 
+    def select_next_variant(self, message_id: str) -> None:
+        """Select the next rendered variant for a message when available."""
+        message = self._message_by_id(message_id)
+        if message is None or message.variants is None or not message.variants.can_go_next:
+            return
+        message.variants.selected_index += 1
+        if self.is_mounted:
+            self.call_later(self.refresh_messages)
+
+    def select_previous_variant(self, message_id: str) -> None:
+        """Select the previous rendered variant for a message when available."""
+        message = self._message_by_id(message_id)
+        if message is None or message.variants is None or not message.variants.can_go_previous:
+            return
+        message.variants.selected_index -= 1
+        if self.is_mounted:
+            self.call_later(self.refresh_messages)
+
     def to_plain_text(self, width: int = 80) -> str:
         """Return a terminal-readable transcript rendering for tests and exports."""
         rule = "─" * max(1, width)
@@ -115,7 +137,7 @@ class ConsoleTranscript(VerticalScroll):
                 ]
             )
             if message.id == self.selected_message_id:
-                lines.append(CONSOLE_TRANSCRIPT_ACTION_ROW)
+                lines.append(self._plain_action_row(message))
         if self._messages:
             lines.append(rule)
         return "\n".join(lines)
@@ -166,6 +188,9 @@ class ConsoleTranscript(VerticalScroll):
             index = min(max(current + offset, 0), len(self._messages) - 1)
         self.select_message(self._messages[index].id)
 
+    def _message_by_id(self, message_id: str) -> ConsoleChatMessage | None:
+        return next((message for message in self._messages if message.id == message_id), None)
+
     def _message_widgets(self) -> list[Widget]:
         widgets: list[Widget] = []
         for message in self._messages:
@@ -198,6 +223,12 @@ class ConsoleTranscript(VerticalScroll):
                 continue
             buttons.append(self._action_button(message, action))
         return Horizontal(*buttons, classes="console-transcript-action-row")
+
+    @staticmethod
+    def _plain_action_row(message: ConsoleChatMessage) -> str:
+        if message.variants is not None:
+            return "Copy | Edit | Save as... | < | > | ♻ | ---> | 👍/👎                 🗑"
+        return CONSOLE_TRANSCRIPT_ACTION_ROW
 
     @staticmethod
     def _action_button(message: ConsoleChatMessage, action: ConsoleMessageAction) -> Button:

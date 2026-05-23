@@ -59,6 +59,19 @@ class ConsoleMessageActionService:
     def available_actions(self, message: ConsoleChatMessage) -> list[ConsoleMessageAction]:
         """Return canonical selected-message actions for a transcript message."""
         disabled_reason = self._disabled_reason(message)
+        completed_actions = list(self._COMPLETED_ACTIONS)
+        if message.variants is not None:
+            completed_actions = [
+                ("copy", "Copy"),
+                ("edit", "Edit"),
+                ("save-as", "Save as..."),
+                ("variant-previous", "<"),
+                ("variant-next", ">"),
+                ("regenerate", "♻"),
+                ("continue", "--->"),
+                ("feedback", "👍/👎"),
+                ("delete", "🗑"),
+            ]
         if message.status == "failed":
             return [
                 ConsoleMessageAction("copy", "Copy"),
@@ -74,10 +87,10 @@ class ConsoleMessageActionService:
             ConsoleMessageAction(
                 action_id=action_id,
                 label=label,
-                enabled=disabled_reason == "",
-                disabled_reason=disabled_reason,
+                enabled=disabled_reason == "" and self._variant_action_enabled(action_id, message),
+                disabled_reason=disabled_reason or self._variant_disabled_reason(action_id, message),
             )
-            for action_id, label in self._COMPLETED_ACTIONS
+            for action_id, label in completed_actions
         ]
 
     def save_as_destinations(self, message: ConsoleChatMessage) -> list[ConsoleSaveDestination]:
@@ -114,6 +127,12 @@ class ConsoleMessageActionService:
                 status="completed",
                 visible_copy="Retrying failed response.",
             )
+        if action_id in {"variant-previous", "variant-next"}:
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Selected response variant.",
+            )
         return ConsoleActionResult(
             action_id=action_id,
             status="wip",
@@ -124,4 +143,18 @@ class ConsoleMessageActionService:
     def _disabled_reason(message: ConsoleChatMessage) -> str:
         if message.status in {"pending", "streaming"}:
             return "Wait for response to finish before using message actions."
+        return ""
+
+    @staticmethod
+    def _variant_action_enabled(action_id: str, message: ConsoleChatMessage) -> bool:
+        if action_id == "variant-previous":
+            return message.variants is not None and message.variants.can_go_previous
+        if action_id == "variant-next":
+            return message.variants is not None and message.variants.can_go_next
+        return True
+
+    @staticmethod
+    def _variant_disabled_reason(action_id: str, message: ConsoleChatMessage) -> str:
+        if action_id in {"variant-previous", "variant-next"} and not ConsoleMessageActionService._variant_action_enabled(action_id, message):
+            return "No response variant in that direction."
         return ""

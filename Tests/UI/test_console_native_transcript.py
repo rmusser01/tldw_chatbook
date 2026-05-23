@@ -6,7 +6,11 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+    ConsoleVariantSet,
+)
 from tldw_chatbook.Chat.console_message_actions import ConsoleSaveDestination
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
@@ -70,6 +74,27 @@ def test_console_transcript_selected_message_shows_action_row():
 
     assert "Copy | Edit | Save as..." in plain
     assert "--->" in plain
+
+
+def test_console_transcript_variant_navigation_changes_displayed_content():
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
+    message.variants = ConsoleVariantSet.from_contents(
+        turn_id="turn-1",
+        contents=["first", "second"],
+    )
+    transcript = ConsoleTranscript()
+    transcript.set_messages([message])
+    transcript.select_message("m1")
+
+    assert "first" in transcript.to_plain_text(width=80)
+
+    transcript.select_next_variant("m1")
+
+    rendered = transcript.to_plain_text(width=80)
+    assert "second" in rendered
+    assert "first" not in rendered
+    assert "<" in rendered
+    assert ">" in rendered
 
 
 @pytest.mark.asyncio

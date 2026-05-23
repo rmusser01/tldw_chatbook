@@ -10,6 +10,8 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleMessageStatus,
+    ConsoleVariant,
+    ConsoleVariantSet,
     ConsoleWorkspaceContext,
 )
 
@@ -191,6 +193,36 @@ class ConsoleChatStore:
             raise ValueError(f"Only failed messages can be retried, not {message.status}.")
         message.content = ""
         message.status = "pending"
+        return self._snapshot(message)
+
+    def add_variant(self, message_id: str, content: str) -> ConsoleChatMessage:
+        """Add and select a regenerated variant for an assistant message."""
+        message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages can receive variants.")
+        if message.variants is None:
+            message.variants = ConsoleVariantSet.from_contents(
+                turn_id=message.turn_id or message.id,
+                contents=[message.content, content],
+                selected_index=1,
+            )
+        else:
+            message.variants.variants.append(ConsoleVariant(content=content))
+            message.variants.selected_index = len(message.variants.variants) - 1
+        message.content = message.variants.current.content
+        self._persist_existing_message(message)
+        return self._snapshot(message)
+
+    def select_variant(self, message_id: str, selected_index: int) -> ConsoleChatMessage:
+        """Select one existing variant by index."""
+        message = self._message_or_raise(message_id)
+        if message.variants is None:
+            raise ValueError("Message has no variants.")
+        if selected_index < 0 or selected_index >= len(message.variants.variants):
+            raise ValueError("selected_index must reference an existing variant")
+        message.variants.selected_index = selected_index
+        message.content = message.variants.current.content
+        self._persist_existing_message(message)
         return self._snapshot(message)
 
     def persist_session_if_needed(self, session_id: str) -> str | None:

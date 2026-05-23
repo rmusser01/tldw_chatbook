@@ -134,6 +134,7 @@ class ConsoleChatMessage:
     turn_id: str | None = None
     status: ConsoleMessageStatus = "complete"
     persisted_message_id: str | None = None
+    variants: "ConsoleVariantSet | None" = None
 
 
 @dataclass(frozen=True)

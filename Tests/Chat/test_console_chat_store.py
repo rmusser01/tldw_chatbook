@@ -61,6 +61,22 @@ def test_store_creates_and_switches_sessions():
     assert store.messages_for_session(first.id)[0].content == "first"
 
 
+def test_store_adds_regenerated_variant_and_selects_it():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first",
+    )
+
+    store.add_variant(message.id, "second")
+
+    updated = store.get_message(message.id)
+    assert updated.variants.current.content == "second"
+    assert updated.variants.can_go_previous is True
+
+
 class FakePersistence:
     def __init__(self):
         self.created_conversations = []
