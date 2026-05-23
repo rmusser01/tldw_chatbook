@@ -528,6 +528,65 @@
     min-height: 0;
 }
 
+#console-native-transcript {
+    height: 1fr;
+    min-height: 0;
+    padding: 0 1;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+    scrollbar-size: 1 1;
+}
+
+#console-native-transcript:focus {
+    border: tall $ds-action-focus;
+}
+
+.console-transcript-rule {
+    height: 1;
+    min-height: 1;
+    color: $ds-grid-line;
+}
+
+.console-transcript-message {
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+    margin: 0;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.console-transcript-message-selected {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.console-transcript-action-row {
+    height: 1;
+    min-height: 1;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.console-transcript-empty-state {
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#console-chat-tabs {
+    display: none;
+}
+
 #console-session-surface .chat-empty-state {
     min-height: 5;
     padding: 0 1;

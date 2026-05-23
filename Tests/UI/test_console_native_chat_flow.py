@@ -370,7 +370,7 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "Assistant: hello")
+        await _wait_for_text(console, pilot, "Assistant\nhello")
 
         assert composer.draft_text() == ""
         store = console._ensure_console_chat_store()

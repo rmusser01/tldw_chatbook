@@ -1008,35 +1008,32 @@ async def test_console_start_guidance_hides_after_transcript_has_messages():
 
 
 @pytest.mark.asyncio
-async def test_console_transcript_new_tab_control_is_fully_visible():
+async def test_console_native_transcript_is_visible_transcript_surface():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#new-chat-tab-button")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-        transcript = console.query_one("#console-transcript-region")
-        new_tab_button = console.query_one("#new-chat-tab-button", Button)
-        label = str(new_tab_button.label)
+        transcript = console.query_one("#console-native-transcript")
+        legacy_tabs = console.query_one("#console-chat-tabs")
 
-        assert label == "New tab"
-        assert new_tab_button.region.width >= len(label) + 2
-        assert new_tab_button.region.x >= transcript.region.x
-        assert new_tab_button.region.x + new_tab_button.region.width <= (
-            transcript.region.x + transcript.region.width
-        )
-        assert "New tab" in _visible_text(console)
+        assert transcript.region.width > 0
+        assert transcript.region.height > 0
+        assert transcript.styles.display != "none"
+        assert legacy_tabs.styles.display == "none"
+        assert "Empty transcript" in _visible_text(console)
 
 
 @pytest.mark.asyncio
-async def test_console_chat_tab_close_control_is_compact_x_button():
+async def test_console_legacy_chat_tab_controls_are_hidden_by_native_transcript():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#new-chat-tab-button")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         chat_tab_buttons = [
             button
@@ -1052,12 +1049,12 @@ async def test_console_chat_tab_close_control_is_compact_x_button():
         assert len(chat_tab_buttons) == 1
         assert len(close_buttons) == 1
 
-        chat_tab = chat_tab_buttons[0]
         close_button = close_buttons[0]
 
         assert str(close_button.label) == "x"
-        assert close_button.region.width <= 4
-        assert close_button.region.width < chat_tab.region.width
+        assert console.query_one("#console-chat-tabs").styles.display == "none"
+        assert all(button.region.width == 0 for button in chat_tab_buttons)
+        assert all(button.region.width == 0 for button in close_buttons)
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ from textual.widgets import Static
 
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
 class ConsoleSessionSurface(Vertical):
@@ -28,8 +29,10 @@ class ConsoleSessionSurface(Vertical):
             classes="destination-section",
         )
         yield ChatTaskCards(id="console-task-surface")
+        yield ConsoleTranscript(id="console-native-transcript")
         self.tab_container = ChatTabContainer(self.app_instance, id="console-chat-tabs")
         self.tab_container.enhanced_mode = True
+        self.tab_container.styles.display = "none"
         yield self.tab_container
 
     def get_tab_container(self) -> ChatTabContainer | None:

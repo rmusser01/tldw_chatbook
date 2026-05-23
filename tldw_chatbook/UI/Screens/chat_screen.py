@@ -74,6 +74,7 @@ from ...Widgets.Console import (
     ConsoleRunInspector,
     ConsoleSessionSurface,
     ConsoleStagedContextTray,
+    ConsoleTranscript,
     ConsoleWorkspaceContextTray,
 )
 from ...Workspaces.display_state import (
@@ -744,6 +745,11 @@ class ChatScreen(BaseAppScreen):
 
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
+        if self._console_chat_store is not None:
+            session_id = self._console_chat_store.active_session_id
+            if session_id is not None and self._console_chat_store.messages_for_session(session_id):
+                return True
+
         active_tab = self.chat_state.get_active_tab()
         if active_tab is not None and active_tab.messages:
             return True
@@ -1564,6 +1570,17 @@ class ChatScreen(BaseAppScreen):
 
     async def _sync_native_console_transcript_to_legacy_surface(self) -> None:
         """Temporary bridge: render native Console messages in the existing surface."""
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            transcript = None
+
+        if transcript is not None:
+            transcript.set_messages(self._native_console_messages())
+            await transcript.refresh_messages()
+            self._sync_console_transcript_guidance()
+            return
+
         chat_log = self._get_active_chat_log()
         if chat_log is None:
             return
