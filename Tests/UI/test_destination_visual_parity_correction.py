@@ -328,6 +328,24 @@ async def test_library_mode_strip_keeps_all_mode_chips_visible():
 
 
 @pytest.mark.asyncio
+async def test_library_workbench_prioritizes_middle_column_width():
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+    async with host.run_test(size=(140, 42)) as pilot:
+        library = _active_destination_screen(host)
+        await _wait_for_selector(library, pilot, "#library-contract-grid")
+
+        source_browser = library.query_one("#library-source-browser")
+        source_detail = library.query_one("#library-source-detail")
+        source_inspector = library.query_one("#library-source-inspector")
+
+        assert source_browser.region.width < source_detail.region.width
+        assert source_inspector.region.width < source_detail.region.width
+        assert source_detail.region.width >= source_browser.region.width * 1.35
+        assert source_detail.region.width >= source_inspector.region.width * 1.35
+
+
+@pytest.mark.asyncio
 async def test_library_workbench_renders_terminal_borders():
     app = _build_test_app()
     host = DestinationHarness(app, "library")

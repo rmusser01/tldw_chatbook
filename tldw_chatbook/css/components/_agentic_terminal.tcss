@@ -612,6 +612,13 @@
     border: none;
 }
 
+.library-mode-chip:focus {
+    outline: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
 #library-contract-grid,
 #artifacts-workbench,
 #personas-workbench,
@@ -842,9 +849,19 @@
 }
 
 #library-source-browser,
-#library-source-detail,
 #library-source-inspector {
-    width: 1fr;
+    width: 2fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 20;
+    padding: 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    overflow-y: auto;
+}
+
+#library-source-detail {
+    width: 5fr;
     min-width: 0;
     height: 100%;
     min-height: 20;
@@ -894,8 +911,16 @@
 }
 
 .library-mode-chip.is-active {
-    border: none;
-    background: $ds-surface-raised;
+    border: solid $primary;
+    background: $primary-darken-1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.library-mode-chip.is-active:focus {
+    outline: none;
+    border: solid $primary;
+    background: $primary-darken-1;
     color: $ds-text-primary;
     text-style: bold;
 }

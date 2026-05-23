@@ -213,6 +213,7 @@ Deferred follow-up tranches:
 | Phase 6.5 | `Docs/superpowers/qa/product-maturity/phase-6/2026-05-16-phase-6-5-recovery-setup-docs-alignment.md` | verified; TASK-13.5 done |
 | Phase 6.6 | `Docs/superpowers/qa/product-maturity/phase-6/2026-05-16-phase-6-6-packaging-config-data-safety.md` | verified; TASK-13.6 done |
 | Phase 6.7 | `Docs/superpowers/qa/product-maturity/phase-6/2026-05-16-phase-6-7-release-closeout.md` | verified; TASK-13.7 done |
+| Post-release Workspaces and Library depth | `Docs/superpowers/qa/product-maturity/post-release-ux-hci/2026-05-23-workspaces-library-depth.md` | verified; TASK-60.4.3 done |
 
 ## Phase Overview
 

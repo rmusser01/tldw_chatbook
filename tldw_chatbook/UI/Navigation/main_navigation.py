@@ -59,13 +59,13 @@ class MainNavigationBar(Container):
         width: auto;
         layout: horizontal;
         align: left middle;
-        padding: 0 1;
+        padding: 0;
     }
 
     .nav-button {
-        margin: 0 1 0 0;
-        padding: 0 1;
-        min-width: 6;
+        margin: 0;
+        padding: 0;
+        min-width: 4;
         background: $surface-darken-1;
         border: solid $surface-lighten-2;
         height: 4;
@@ -102,7 +102,7 @@ class MainNavigationBar(Container):
 
     .nav-overflow-hint {
         width: auto;
-        padding: 0 1;
+        padding: 0;
         height: 4;
         content-align: center middle;
         color: $text-muted;
