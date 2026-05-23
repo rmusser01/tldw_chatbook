@@ -17,6 +17,7 @@ from tldw_chatbook.Workspaces import (
 from tldw_chatbook.Workspaces import display_state
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceConversationRow,
+    build_library_workspace_depth_state,
     build_console_workspace_state,
 )
 
@@ -190,3 +191,83 @@ def test_console_workspace_state_logs_registry_failures(monkeypatch) -> None:
     assert state.workspace_label == "No workspace selected"
     assert warnings
     assert warnings[0][1].get("exc_info") is True
+
+
+def test_library_workspace_depth_state_preserves_visibility_but_blocks_cross_workspace_context(
+    tmp_path: Path,
+) -> None:
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        "ws-b",
+        item_type="note",
+        item_id="note-1",
+        title="Research Note",
+    )
+    service.link_membership(
+        "ws-a",
+        item_type="media",
+        item_id="media-1",
+        title="Transcript A",
+    )
+
+    state = build_library_workspace_depth_state(
+        registry_service=service,
+        source_records={
+            "notes": ({"id": "note-1", "title": "Research Note"},),
+            "media": ({"id": "media-1", "title": "Transcript A"},),
+            "conversations": (),
+        },
+    )
+
+    assert state.workspace_label == "Workspace: Workspace A"
+    assert "all Library and Notes items remain visible" in state.visibility_label
+    assert state.context_handoff_enabled is False
+    assert "1 blocked" in state.handoff_label
+    assert "Copy or link" in state.context_handoff_tooltip
+    assert [row.title for row in state.source_rows] == ["Research Note", "Transcript A"]
+    assert [row.workspace_label for row in state.source_rows] == ["Workspace B", "Workspace A"]
+    assert [row.visible for row in state.source_rows] == [True, True]
+    assert state.source_rows[0].active_context_eligible is False
+    assert state.source_rows[0].context_label == "Console/RAG: blocked"
+    assert state.source_rows[1].active_context_eligible is True
+    assert state.source_rows[1].context_label == "Console/RAG: eligible"
+
+
+def test_library_workspace_depth_state_recognizes_media_id_and_ignores_idless_rows(
+    tmp_path: Path,
+) -> None:
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        "ws-a",
+        item_type="note",
+        item_id="note-1",
+        title="Workspace note",
+    )
+    service.link_membership(
+        "ws-a",
+        item_type="media",
+        item_id="media-1",
+        title="Workspace transcript",
+    )
+
+    state = build_library_workspace_depth_state(
+        registry_service=service,
+        source_records={
+            "notes": (
+                {"id": "note-1", "title": "Workspace note"},
+                {"title": "Malformed source without an id"},
+            ),
+            "media": ({"media_id": "media-1", "title": "Workspace transcript"},),
+            "conversations": (),
+        },
+    )
+
+    assert state.context_handoff_enabled is True
+    assert state.handoff_label == "Console/RAG handoff: 2 eligible"
+    assert [row.item_id for row in state.source_rows] == ["note-1", "media-1"]
+    assert all(row.active_context_eligible for row in state.source_rows)

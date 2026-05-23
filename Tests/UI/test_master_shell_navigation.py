@@ -18,6 +18,14 @@ def test_compact_navigation_labels_preserve_full_meaning():
     assert wc.navigation_priority < get_shell_destination("settings").navigation_priority
 
 
+def test_master_shell_navigation_uses_compact_spacing_for_full_destination_rail():
+    css = MainNavigationBar.DEFAULT_CSS
+
+    assert "margin: 0;" in css
+    assert "padding: 0;" in css
+    assert ".nav-overflow-hint" in css
+
+
 @pytest.mark.asyncio
 async def test_master_shell_navigation_order_and_labels():
     class TestApp(App):

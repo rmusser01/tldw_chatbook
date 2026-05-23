@@ -30,6 +30,7 @@ from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Workspaces import LibraryWorkspaceDepthState, build_library_workspace_depth_state
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
     LibrarySearchRagInspectorPanel,
@@ -62,10 +63,27 @@ LIBRARY_FRAME_BORDER = ("solid", "#6f7782")
 LIBRARY_FRAME_PADDING = Spacing(1, 1, 1, 1)
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
-LIBRARY_MODE_BAR_HEIGHT = 2
+LIBRARY_MODE_BAR_HEIGHT = 3
 LIBRARY_MODE_LABEL_WIDTH = 7
 LIBRARY_MODE_CHIP_MIN_WIDTH = 9
-LIBRARY_MODE_CHIP_WIDTH_PADDING = 5
+LIBRARY_MODE_CHIP_WIDTH_PADDING = 7
+LIBRARY_SOURCE_BROWSER_WIDTH = "2fr"
+LIBRARY_SOURCE_DETAIL_WIDTH = "5fr"
+LIBRARY_SOURCE_INSPECTOR_WIDTH = "2fr"
+LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
+LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
+LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
+LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH = 11
+LIBRARY_COLUMN_TITLES = {
+    "sources": ("Source Browser", "Source Detail / Search Results", "Inspector"),
+    "search": ("Source Browser", "Source Detail / Search Results", "Inspector"),
+    "import-export": ("Source Browser", "Source Detail / Search Results", "Inspector"),
+    "workspaces": ("Workspace Sources", "Scope & Eligibility", "Handoff Rules"),
+    "collections": ("Source Browser", "Source Detail / Search Results", "Inspector"),
+    "study": ("Source Browser", "Source Detail / Search Results", "Inspector"),
+    "flashcards": ("Source Browser", "Source Detail / Search Results", "Inspector"),
+    "quizzes": ("Source Browser", "Source Detail / Search Results", "Inspector"),
+}
 LIBRARY_MODES = {
     "sources": {
         "label": "Sources",
@@ -263,6 +281,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_collection_name_input = ""
         self._library_collection_description_input = ""
         self._library_collection_pending_delete_id = ""
+        self._library_workspace_depth_state_cache: LibraryWorkspaceDepthState | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -297,6 +316,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_lookup_error = lookup_error
         self._library_lookup_recovery_state = recovery_state
         self._library_loaded = True
+        self._invalidate_library_workspace_depth_state()
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -540,7 +560,18 @@ class LibraryScreen(BaseAppScreen):
 
     @classmethod
     def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
-        for key in ("id", "uuid", "record_id", "backing_id", "source_id"):
+        for key in (
+            "id",
+            "uuid",
+            "record_id",
+            "backing_id",
+            "source_id",
+            "item_id",
+            "media_id",
+            "note_id",
+            "conversation_id",
+            "backing_media_id",
+        ):
             value = cls._safe_text(record.get(key), max_length=128)
             if value:
                 return value
@@ -586,6 +617,27 @@ class LibraryScreen(BaseAppScreen):
             "conversation_titles": self._source_sample_titles("conversations"),
         }
 
+    def _workspace_source_records(self) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
+        return {
+            source_type: tuple(self._local_source_records[source_type])
+            for source_type in ("notes", "media", "conversations")
+        }
+
+    def _invalidate_library_workspace_depth_state(self) -> None:
+        self._library_workspace_depth_state_cache = None
+
+    def _library_workspace_depth_state(
+        self,
+        *,
+        refresh: bool = False,
+    ) -> LibraryWorkspaceDepthState:
+        if refresh or self._library_workspace_depth_state_cache is None:
+            self._library_workspace_depth_state_cache = build_library_workspace_depth_state(
+                registry_service=getattr(self.app_instance, "workspace_registry_service", None),
+                source_records=self._workspace_source_records(),
+            )
+        return self._library_workspace_depth_state_cache
+
     def _source_study_context(self) -> StudyScopeContext | None:
         if not self._has_local_sources():
             return None
@@ -614,6 +666,9 @@ class LibraryScreen(BaseAppScreen):
 
     def _active_mode_contract(self) -> Mapping[str, str]:
         return LIBRARY_MODES.get(self._active_mode, LIBRARY_MODES["sources"])
+
+    def _active_column_titles(self) -> tuple[str, str, str]:
+        return LIBRARY_COLUMN_TITLES.get(self._active_mode, LIBRARY_COLUMN_TITLES["sources"])
 
     def _library_rag_panel_state(self) -> LibraryRagPanelState:
         return LibraryRagPanelState.from_values(
@@ -687,11 +742,353 @@ class LibraryScreen(BaseAppScreen):
             Static(selected.sync_status_detail, id="library-collection-inspector-sync-detail"),
         )
 
+    def _workspaces_detail_rows(
+        self,
+        state: LibraryWorkspaceDepthState,
+    ) -> tuple[Static, ...]:
+        rows: list[Static] = [
+            Static("Workspace Rules", classes="destination-section"),
+            Static(
+                Text.from_markup(escape_markup(state.workspace_label)),
+                id="library-workspaces-active-workspace",
+            ),
+            Static(state.visibility_label, id="library-workspaces-visibility"),
+            Static(
+                "Workspace selection changes staging, not what you can browse or search.",
+                id="library-workspaces-global-access-rule",
+            ),
+            Static(
+                "Stage only active-workspace sources into Console, RAG, or agents.",
+                id="library-workspaces-context-rule",
+            ),
+        ]
+        if not state.source_rows:
+            rows.extend(
+                (
+                    Static(
+                        "No workspace sources yet.",
+                        id="library-workspaces-empty-title",
+                        classes="destination-section",
+                    ),
+                    Static(
+                        "Browse/search still shows every Library and Notes item.",
+                        id="library-workspaces-empty-browse",
+                    ),
+                    Static(
+                        "Handoff unavailable until sources exist or are assigned here.",
+                        id="library-workspaces-empty-handoff",
+                    ),
+                    Static(state.handoff_label, id="library-workspaces-handoff"),
+                    Static(
+                        state.collections_membership_label,
+                        id="library-workspaces-collections-membership",
+                    ),
+                    Static(state.import_export_label, id="library-workspaces-import-export"),
+                )
+            )
+            return tuple(rows)
+        rows.append(
+            Static(
+                self._workspace_eligibility_header(),
+                id="library-workspaces-eligibility-heading",
+                classes="destination-section",
+            )
+        )
+        for index, row in enumerate(state.source_rows):
+            rows.append(
+                Static(
+                    self._workspace_eligibility_row(state, row),
+                    id=f"library-workspaces-source-row-{index}",
+                )
+            )
+        rows.extend(
+            (
+                Static(state.handoff_label, id="library-workspaces-handoff"),
+                Static(
+                    state.collections_membership_label,
+                    id="library-workspaces-collections-membership",
+                ),
+                Static(state.import_export_label, id="library-workspaces-import-export"),
+            )
+        )
+        return tuple(rows)
+
+    def _workspaces_inspector_rows(
+        self,
+        state: LibraryWorkspaceDepthState,
+    ) -> tuple[Static, ...]:
+        return (
+            Static("Handoff status", id="library-inspector-title", classes="destination-section"),
+            Static(state.handoff_label, id="library-workspaces-inspector-handoff"),
+            Static(
+                self._workspace_handoff_blocked_label(state),
+                id="library-workspaces-inspector-blocked",
+            ),
+            Static(
+                self._workspace_handoff_why_label(state),
+                id="library-workspaces-inspector-why",
+            ),
+            Static(
+                self._workspace_handoff_fix_label(state),
+                id="library-workspaces-inspector-fix",
+            ),
+            Static(
+                self._workspace_handoff_action_label(state),
+                id="library-workspaces-inspector-action",
+            ),
+            Static(
+                "Rule: browse/search stay global; staging is workspace-scoped.",
+                id="library-workspaces-inspector-rule",
+            ),
+        )
+
+    def _workspace_eligibility_header(self) -> str:
+        return (
+            f"{'Source':<{LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH}} "
+            f"{'Workspace':<{LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH}} "
+            f"{'Visible':<{LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH}} "
+            f"{'Console/RAG':<{LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH}} "
+            "Recovery"
+        )
+
+    def _workspace_eligibility_row(
+        self,
+        state: LibraryWorkspaceDepthState,
+        row: Any,
+    ) -> str:
+        return (
+            f"{self._workspace_table_cell(row.title, LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH, escape=True):<{LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH}} "
+            f"{self._workspace_table_cell(row.workspace_label, LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH, escape=True):<{LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH}} "
+            f"{self._workspace_visible_label(row.visible):<{LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH}} "
+            f"{self._workspace_context_status(row):<{LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH}} "
+            f"{escape_markup(self._workspace_recovery_label(state, row))}"
+        )
+
+    @staticmethod
+    def _workspace_table_cell(value: Any, width: int, *, escape: bool = False) -> str:
+        text = str(value or "").strip()
+        if len(text) <= width:
+            return escape_markup(text) if escape else text
+        if width <= 3:
+            truncated = text[:width]
+            return escape_markup(truncated) if escape else truncated
+        truncated = f"{text[: width - 3]}..."
+        return escape_markup(truncated) if escape else truncated
+
+    def _workspace_visible_label(self, visible: bool) -> str:
+        return "Yes" if visible else "No"
+
+    def _workspace_context_status(self, row: Any) -> str:
+        return "Eligible" if row.active_context_eligible else "Blocked"
+
+    def _workspace_recovery_label(
+        self,
+        state: LibraryWorkspaceDepthState,
+        row: Any,
+    ) -> str:
+        if row.active_context_eligible:
+            return "Ready"
+        workspace_name = state.workspace_name.strip()
+        if workspace_name and workspace_name not in {"Local Default", "unavailable"}:
+            return f"Copy/link to {workspace_name}"
+        return "Assign to active workspace"
+
+    def _workspace_handoff_recovery_label(self, state: LibraryWorkspaceDepthState) -> str:
+        if not state.source_rows:
+            workspace_name = state.workspace_name.strip()
+            if workspace_name and workspace_name not in {"unavailable"}:
+                return f"import or assign sources to {workspace_name}"
+            return "import or assign sources to a workspace"
+        workspace_name = state.workspace_name.strip()
+        if workspace_name and workspace_name not in {"Local Default", "unavailable"}:
+            return f"Copy/link blocked sources to {workspace_name}"
+        return "Assign blocked sources to the active workspace"
+
+    def _workspace_handoff_blocked_label(self, state: LibraryWorkspaceDepthState) -> str:
+        if state.context_handoff_enabled:
+            return "Ready: all visible sources can be staged"
+        if not state.source_rows:
+            return "Blocked: no workspace sources"
+        workspace_name = state.workspace_name.strip()
+        if workspace_name and workspace_name not in {"Local Default", "unavailable"}:
+            return f"Blocked: some sources are outside {workspace_name}"
+        return "Blocked: sources need active workspace assignment"
+
+    def _workspace_handoff_fix_label(self, state: LibraryWorkspaceDepthState) -> str:
+        if state.context_handoff_enabled:
+            return "Fix: no action needed"
+        if not state.source_rows:
+            return f"Fix: {self._workspace_handoff_recovery_label(state)}"
+        return f"Fix: {self._workspace_handoff_recovery_label(state)}"
+
+    def _workspace_handoff_why_label(self, state: LibraryWorkspaceDepthState) -> str:
+        if state.context_handoff_enabled:
+            return "Why: all visible sources belong to the active workspace."
+        if not state.source_rows:
+            return "Why: no sources are assigned to this workspace yet."
+        return "Why: at least one visible source belongs to another workspace."
+
+    def _workspace_handoff_action_label(self, state: LibraryWorkspaceDepthState) -> str:
+        if state.context_handoff_enabled:
+            return "Action: Use in Console is available."
+        if not state.source_rows:
+            return "Action: Import sources or assign sources before staging."
+        return "Action: Copy/link blocked sources before staging."
+
+    def _library_action_widgets(
+        self,
+        *,
+        workspace_depth_state: LibraryWorkspaceDepthState,
+        collection_scoped_actions_deferred: bool,
+        handoff_disabled: bool,
+        handoff_tooltip: str,
+    ) -> tuple[Any, ...]:
+        if self._active_mode == "workspaces":
+            widgets: list[Any] = [
+                Static("Workspace actions", classes="destination-section"),
+            ]
+            if workspace_depth_state.context_handoff_enabled:
+                widgets.append(
+                    Static(
+                        "Ready: eligible sources can be staged in Console.",
+                        id="library-workspace-action-ready",
+                        classes="ds-recovery-callout",
+                    )
+                )
+            elif not workspace_depth_state.source_rows:
+                widgets.extend(
+                    (
+                        Button(
+                            "Import sources",
+                            id="library-workspace-import-sources",
+                            classes="library-source-action",
+                            tooltip="Open Library Import/Export to add workspace-eligible sources.",
+                        ),
+                        Static(
+                            (
+                                f"{self._workspace_handoff_blocked_label(workspace_depth_state)}\n"
+                                f"{self._workspace_handoff_fix_label(workspace_depth_state)}"
+                            ),
+                            id="library-workspace-action-blocked",
+                            classes="ds-recovery-callout is-blocked",
+                        ),
+                    )
+                )
+            else:
+                widgets.append(
+                    Static(
+                        (
+                            f"{self._workspace_handoff_blocked_label(workspace_depth_state)}\n"
+                            f"{self._workspace_handoff_fix_label(workspace_depth_state)}"
+                        ),
+                        id="library-workspace-action-blocked",
+                        classes="ds-recovery-callout is-blocked",
+                    )
+                )
+            if workspace_depth_state.source_rows:
+                widgets.append(
+                    Static(
+                        (
+                            "Next: stage eligible sources in Console."
+                            if workspace_depth_state.context_handoff_enabled
+                            else f"Next: {self._workspace_handoff_recovery_label(workspace_depth_state)}."
+                        ),
+                        id="library-workspace-action-next-step",
+                    )
+                )
+            widgets.append(
+                Button(
+                    "Use in Console",
+                    id="library-use-in-console",
+                    disabled=handoff_disabled,
+                    tooltip=handoff_tooltip,
+                )
+            )
+            return tuple(widgets)
+        return (
+            Static("Knowledge workflow", classes="destination-section"),
+            Static(
+                (
+                    "Collection-scoped Study, Flashcards, Quizzes, and Console "
+                    "are later-stage."
+                    if collection_scoped_actions_deferred
+                    else "Turn Library material into study sessions, flashcards, and quizzes."
+                ),
+                id="library-study-purpose",
+            ),
+            Static(
+                (
+                    "Use Collections to organize source groups locally; scoped "
+                    "execution remains deferred."
+                    if collection_scoped_actions_deferred
+                    else "Study generation entry uses the visible Library source snapshot."
+                ),
+                id="library-study-generation-entry",
+            ),
+            Button(
+                "Study Dashboard",
+                id="library-open-study",
+                disabled=collection_scoped_actions_deferred,
+                tooltip=(
+                    "Collection-scoped Study is not available yet."
+                    if collection_scoped_actions_deferred
+                    else "Open the Study dashboard for due cards, decks, quizzes, and resume actions."
+                ),
+            ),
+            Button(
+                "Flashcards",
+                id="library-open-flashcards",
+                disabled=collection_scoped_actions_deferred,
+                tooltip=(
+                    "Collection-scoped Flashcards are not available yet."
+                    if collection_scoped_actions_deferred
+                    else "Open flashcards for selected or imported Library material."
+                ),
+            ),
+            Button(
+                "Quizzes",
+                id="library-open-quizzes",
+                disabled=collection_scoped_actions_deferred,
+                tooltip=(
+                    "Collection-scoped Quizzes are not available yet."
+                    if collection_scoped_actions_deferred
+                    else "Open quizzes for selected or imported Library material."
+                ),
+            ),
+            Button(
+                "Use in Console",
+                id="library-use-in-console",
+                disabled=handoff_disabled or collection_scoped_actions_deferred,
+                tooltip=(
+                    "Collection-scoped Console handoff is not available yet."
+                    if collection_scoped_actions_deferred
+                    else handoff_tooltip
+                ),
+            ),
+        )
+
     def compose_content(self) -> ComposeResult:
         has_sources = self._has_local_sources()
         status_label = self._status_label()
         handoff_disabled = True
         handoff_tooltip = "Stage Library source context after Library finishes loading."
+        workspace_depth_state = self._library_workspace_depth_state(refresh=True)
+        if self._library_lookup_error:
+            recovery_state = self._library_lookup_recovery_state
+            handoff_tooltip = (
+                recovery_state.disabled_tooltip
+                if recovery_state is not None
+                else "Library source services are unavailable; retry Library later."
+            )
+        elif not has_sources:
+            handoff_tooltip = "Stage Library source context after adding notes, media, or conversations."
+        else:
+            handoff_disabled = not workspace_depth_state.context_handoff_enabled
+            handoff_tooltip = (
+                workspace_depth_state.context_handoff_tooltip
+                if handoff_disabled
+                else "Stage Library source context in Console."
+            )
         search_rag_panel_state = (
             self._library_rag_panel_state() if self._active_mode == "search" else None
         )
@@ -701,6 +1098,7 @@ class LibraryScreen(BaseAppScreen):
             else None
         )
         collection_scoped_actions_deferred = self._active_mode == "collections"
+        source_column_title, detail_column_title, inspector_column_title = self._active_column_titles()
 
         with Vertical(id="library-shell"):
             yield Static("Library", id="library-title", classes="ds-destination-header")
@@ -754,8 +1152,13 @@ class LibraryScreen(BaseAppScreen):
                 source_browser = self._frame_library_region(
                     Vertical(id="library-source-browser", classes="library-region destination-workbench-pane")
                 )
+                source_browser.styles.width = LIBRARY_SOURCE_BROWSER_WIDTH
                 with source_browser:
-                    yield Static("Source Browser", classes="destination-section")
+                    yield Static(
+                        source_column_title,
+                        id="library-source-browser-title",
+                        classes="destination-section",
+                    )
                     yield Button(
                         "Open Notes",
                         id="library-open-notes",
@@ -793,29 +1196,48 @@ class LibraryScreen(BaseAppScreen):
                         tooltip="Manage Library-owned reusable source sets.",
                     )
                     yield Static(
-                        "Workspaces: all local sources until workspace scoping is selected.",
+                        Text.from_markup(
+                            "Active workspace: "
+                            f"{escape_markup(workspace_depth_state.workspace_name)}\n"
+                            "Browse/search: all workspaces"
+                        ),
                         id="library-workspace-scope",
                     )
 
                 source_detail = self._frame_library_region(
                     Vertical(id="library-source-detail", classes="library-region destination-workbench-pane")
                 )
+                source_detail.styles.width = LIBRARY_SOURCE_DETAIL_WIDTH
                 with source_detail:
-                    yield Static("Source Detail / Search Results", classes="destination-section")
-                    active_mode = self._active_mode_contract()
                     yield Static(
+                        detail_column_title,
+                        id="library-source-detail-title",
+                        classes="destination-section",
+                    )
+                    if self._active_mode == "workspaces":
+                        with Vertical(id="library-workspaces-depth-panel"):
+                            for row in self._workspaces_detail_rows(workspace_depth_state):
+                                yield row
+                    active_mode = self._active_mode_contract()
+                    active_mode_title = Static(
                         f"{active_mode['label']} mode",
                         id="library-active-mode-title",
                         classes="destination-section",
                     )
-                    yield Static(
+                    active_mode_title.display = self._active_mode != "workspaces"
+                    yield active_mode_title
+                    active_mode_description = Static(
                         active_mode["description"],
                         id="library-active-mode-description",
                     )
-                    yield Static(
+                    active_mode_description.display = self._active_mode != "workspaces"
+                    yield active_mode_description
+                    active_mode_next_action = Static(
                         active_mode["next_action"],
                         id="library-active-mode-next-action",
                     )
+                    active_mode_next_action.display = self._active_mode != "workspaces"
+                    yield active_mode_next_action
                     if search_rag_panel_state is not None:
                         yield LibrarySearchRagPanel(
                             search_rag_panel_state,
@@ -829,61 +1251,62 @@ class LibraryScreen(BaseAppScreen):
                             delete_pending=bool(self._library_collection_pending_delete_id),
                             id="library-collections-panel",
                         )
-                    yield Static("Local Library snapshot", classes="destination-section")
-                    if not self._library_loaded:
-                        yield Static(
-                            "Loading local Library sources...",
-                            id="library-source-loading",
-                        )
-                    elif self._library_lookup_error:
-                        recovery_state = self._library_lookup_recovery_state
-                        yield Static(
-                            self._library_lookup_error,
-                            id=(
-                                recovery_state.stable_selector
-                                if recovery_state is not None
-                                else "library-source-error"
-                            ),
-                        )
-                        handoff_tooltip = (
-                            recovery_state.disabled_tooltip
-                            if recovery_state is not None
-                            else "Library source services are unavailable; retry Library later."
-                        )
-                    elif not has_sources:
-                        yield Static(
-                            LIBRARY_EMPTY_COPY,
-                            id="library-source-empty",
-                        )
-                        yield Static(
-                            LIBRARY_EMPTY_NEXT_ACTION_COPY,
-                            id="library-source-empty-next-action",
-                        )
-                        handoff_tooltip = "Stage Library source context after adding notes, media, or conversations."
-                    else:
-                        for source_type, label, widget_id in (
-                            ("notes", "Notes", "library-notes-summary"),
-                            ("media", "Media", "library-media-summary"),
-                            ("conversations", "Conversations", "library-conversations-summary"),
-                        ):
+                    local_snapshot_region = Vertical(id="library-local-snapshot-region")
+                    local_snapshot_region.display = self._active_mode != "workspaces"
+                    with local_snapshot_region:
+                        yield Static("Local Library snapshot", classes="destination-section")
+                        if not self._library_loaded:
                             yield Static(
-                                self._source_count_label(source_type, label),
-                                id=widget_id,
+                                "Loading local Library sources...",
+                                id="library-source-loading",
                             )
-                            for index, record in enumerate(self._local_source_records[source_type]):
+                        elif self._library_lookup_error:
+                            recovery_state = self._library_lookup_recovery_state
+                            yield Static(
+                                self._library_lookup_error,
+                                id=(
+                                    recovery_state.stable_selector
+                                    if recovery_state is not None
+                                    else "library-source-error"
+                                ),
+                            )
+                        elif not has_sources:
+                            yield Static(
+                                LIBRARY_EMPTY_COPY,
+                                id="library-source-empty",
+                            )
+                            yield Static(
+                                LIBRARY_EMPTY_NEXT_ACTION_COPY,
+                                id="library-source-empty-next-action",
+                            )
+                        else:
+                            for source_type, label, widget_id in (
+                                ("notes", "Notes", "library-notes-summary"),
+                                ("media", "Media", "library-media-summary"),
+                                ("conversations", "Conversations", "library-conversations-summary"),
+                            ):
                                 yield Static(
-                                    Text.from_markup(
-                                        escape_markup(self._source_title(source_type, record))
-                                    ),
-                                    id=f"library-{source_type}-source-{index}",
+                                    self._source_count_label(source_type, label),
+                                    id=widget_id,
                                 )
-                        handoff_disabled = False
-                        handoff_tooltip = "Stage Library source context in Console."
+                                for index, record in enumerate(self._local_source_records[source_type]):
+                                    yield Static(
+                                        Text.from_markup(
+                                            escape_markup(self._source_title(source_type, record))
+                                        ),
+                                        id=f"library-{source_type}-source-{index}",
+                                    )
 
                 source_inspector = self._frame_library_region(
                     Vertical(id="library-source-inspector", classes="library-region destination-workbench-pane")
                 )
+                source_inspector.styles.width = LIBRARY_SOURCE_INSPECTOR_WIDTH
                 with source_inspector:
+                    yield Static(
+                        inspector_column_title,
+                        id="library-source-inspector-title",
+                        classes="destination-section",
+                    )
                     with Vertical(id="library-inspector-mode-region"):
                         if search_rag_panel_state is not None:
                             yield LibrarySearchRagInspectorPanel(
@@ -893,6 +1316,8 @@ class LibraryScreen(BaseAppScreen):
                             )
                         elif collections_panel_state is not None:
                             yield from self._collections_inspector_rows(collections_panel_state)
+                        elif self._active_mode == "workspaces":
+                            yield from self._workspaces_inspector_rows(workspace_depth_state)
                         else:
                             yield Static("Inspector", id="library-inspector-title", classes="destination-section")
                             yield Static(LIBRARY_INSPECTOR_EMPTY_COPY, id="library-inspector-empty")
@@ -900,65 +1325,13 @@ class LibraryScreen(BaseAppScreen):
                                 LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY,
                                 id="library-inspector-empty-next-action",
                             )
-                    yield Static("Knowledge workflow", classes="destination-section")
-                    yield Static(
-                        (
-                            "Collection-scoped Study, Flashcards, Quizzes, and Console "
-                            "are later-stage."
-                            if collection_scoped_actions_deferred
-                            else "Turn Library material into study sessions, flashcards, and quizzes."
-                        ),
-                        id="library-study-purpose",
-                    )
-                    yield Static(
-                        (
-                            "Use Collections to organize source groups locally; scoped "
-                            "execution remains deferred."
-                            if collection_scoped_actions_deferred
-                            else "Study generation entry uses the visible Library source snapshot."
-                        ),
-                        id="library-study-generation-entry",
-                    )
-                    yield Button(
-                        "Study Dashboard",
-                        id="library-open-study",
-                        disabled=collection_scoped_actions_deferred,
-                        tooltip=(
-                            "Collection-scoped Study is not available yet."
-                            if collection_scoped_actions_deferred
-                            else "Open the Study dashboard for due cards, decks, quizzes, and resume actions."
-                        ),
-                    )
-                    yield Button(
-                        "Flashcards",
-                        id="library-open-flashcards",
-                        disabled=collection_scoped_actions_deferred,
-                        tooltip=(
-                            "Collection-scoped Flashcards are not available yet."
-                            if collection_scoped_actions_deferred
-                            else "Open flashcards for selected or imported Library material."
-                        ),
-                    )
-                    yield Button(
-                        "Quizzes",
-                        id="library-open-quizzes",
-                        disabled=collection_scoped_actions_deferred,
-                        tooltip=(
-                            "Collection-scoped Quizzes are not available yet."
-                            if collection_scoped_actions_deferred
-                            else "Open quizzes for selected or imported Library material."
-                        ),
-                    )
-                    yield Button(
-                        "Use in Console",
-                        id="library-use-in-console",
-                        disabled=handoff_disabled or collection_scoped_actions_deferred,
-                        tooltip=(
-                            "Collection-scoped Console handoff is not available yet."
-                            if collection_scoped_actions_deferred
-                            else handoff_tooltip
-                        ),
-                    )
+                    with Vertical(id="library-action-region"):
+                        yield from self._library_action_widgets(
+                            workspace_depth_state=workspace_depth_state,
+                            collection_scoped_actions_deferred=collection_scoped_actions_deferred,
+                            handoff_disabled=handoff_disabled,
+                            handoff_tooltip=handoff_tooltip,
+                        )
 
     @on(Button.Pressed, ".library-mode-chip")
     async def switch_library_mode(self, event: Button.Pressed) -> None:
@@ -972,28 +1345,49 @@ class LibraryScreen(BaseAppScreen):
         if mode_id == self._active_mode:
             return
         self._active_mode = mode_id
+        self._invalidate_library_workspace_depth_state()
         await self._refresh_active_mode_widgets()
 
     async def _refresh_active_mode_widgets(self) -> None:
         active_mode = self._active_mode_contract()
+        source_column_title, detail_column_title, inspector_column_title = self._active_column_titles()
+        self.query_one("#library-source-browser-title", Static).update(source_column_title)
+        self.query_one("#library-source-detail-title", Static).update(detail_column_title)
+        self.query_one("#library-source-inspector-title", Static).update(inspector_column_title)
         self.query_one("#library-active-mode-title", Static).update(f"{active_mode['label']} mode")
         self.query_one("#library-active-mode-description", Static).update(active_mode["description"])
         self.query_one("#library-active-mode-next-action", Static).update(active_mode["next_action"])
+        active_mode_copy_visible = self._active_mode != "workspaces"
+        self.query_one("#library-active-mode-title", Static).display = active_mode_copy_visible
+        self.query_one("#library-active-mode-description", Static).display = active_mode_copy_visible
+        self.query_one("#library-active-mode-next-action", Static).display = active_mode_copy_visible
+        local_snapshot_regions = list(self.query("#library-local-snapshot-region"))
+        if local_snapshot_regions:
+            local_snapshot_regions[0].display = active_mode_copy_visible
         for mode_id, mode in LIBRARY_MODES.items():
             self.query_one(f"#{mode['button_id']}", Button).set_class(
                 mode_id == self._active_mode,
                 "is-active",
             )
-        await self._sync_search_rag_panel()
+        workspace_depth_state = self._library_workspace_depth_state(refresh=True)
+        await self._sync_search_rag_panel(workspace_depth_state=workspace_depth_state)
         await self._sync_collections_panel(refresh_snapshot=True)
-        self._sync_collection_scoped_action_buttons()
+        await self._sync_workspaces_panel(workspace_depth_state)
+        await self._sync_action_region(workspace_depth_state)
 
-    async def _sync_search_rag_panel(self) -> None:
+    async def _sync_search_rag_panel(
+        self,
+        *,
+        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
+    ) -> None:
         mounted_widgets = list(self.query("#library-search-rag-panel"))
         for widget in mounted_widgets:
             await widget.remove()
         if self._active_mode != "search":
-            await self._sync_inspector_mode_region(None)
+            await self._sync_inspector_mode_region(
+                None,
+                workspace_depth_state=workspace_depth_state,
+            )
             return
         panel_state = self._library_rag_panel_state()
         detail = self.query_one("#library-source-detail", Vertical)
@@ -1006,6 +1400,8 @@ class LibraryScreen(BaseAppScreen):
     async def _sync_inspector_mode_region(
         self,
         panel_state: LibraryRagPanelState | None,
+        *,
+        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
     ) -> None:
         regions = list(self.query("#library-inspector-mode-region"))
         if not regions:
@@ -1023,6 +1419,11 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._active_mode == "collections":
             for row in self._collections_inspector_rows(self._library_collections_panel_state()):
+                await region.mount(row)
+            return
+        if self._active_mode == "workspaces":
+            state = workspace_depth_state or self._library_workspace_depth_state()
+            for row in self._workspaces_inspector_rows(state):
                 await region.mount(row)
             return
         await region.mount(
@@ -1057,6 +1458,58 @@ class LibraryScreen(BaseAppScreen):
             after="#library-active-mode-next-action",
         )
         await self._sync_inspector_mode_region(None)
+
+    async def _sync_workspaces_panel(
+        self,
+        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
+    ) -> None:
+        for widget in list(self.query("#library-workspaces-depth-panel")):
+            await widget.remove()
+        if self._active_mode != "workspaces":
+            return
+        state = workspace_depth_state or self._library_workspace_depth_state()
+        detail = self.query_one("#library-source-detail", Vertical)
+        panel = Vertical(id="library-workspaces-depth-panel")
+        await detail.mount(panel, after="#library-source-detail-title")
+        for row in self._workspaces_detail_rows(state):
+            await panel.mount(row)
+        await self._sync_inspector_mode_region(None)
+
+    async def _sync_action_region(
+        self,
+        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
+    ) -> None:
+        regions = list(self.query("#library-action-region"))
+        if not regions:
+            return
+        region = regions[0]
+        await region.remove_children()
+        workspace_depth_state = workspace_depth_state or self._library_workspace_depth_state()
+        handoff_disabled = True
+        handoff_tooltip = "Stage Library source context after Library finishes loading."
+        if self._library_lookup_error:
+            recovery_state = self._library_lookup_recovery_state
+            handoff_tooltip = (
+                recovery_state.disabled_tooltip
+                if recovery_state is not None
+                else "Library source services are unavailable; retry Library later."
+            )
+        elif not self._has_local_sources():
+            handoff_tooltip = "Stage Library source context after adding notes, media, or conversations."
+        else:
+            handoff_disabled = not workspace_depth_state.context_handoff_enabled
+            handoff_tooltip = (
+                workspace_depth_state.context_handoff_tooltip
+                if handoff_disabled
+                else "Stage Library source context in Console."
+            )
+        for widget in self._library_action_widgets(
+            workspace_depth_state=workspace_depth_state,
+            collection_scoped_actions_deferred=self._active_mode == "collections",
+            handoff_disabled=handoff_disabled,
+            handoff_tooltip=handoff_tooltip,
+        ):
+            await region.mount(widget)
 
     async def _refresh_collections_panel_action_state_widgets(self) -> None:
         if self._active_mode != "collections" or not list(self.query("#library-collections-panel")):
@@ -1264,52 +1717,6 @@ class LibraryScreen(BaseAppScreen):
             logger.warning("Failed to load Sync v2 profile summary.", exc_info=True)
             return None
         return summary if isinstance(summary, Mapping) else None
-
-    def _sync_collection_scoped_action_buttons(self) -> None:
-        deferred = self._active_mode == "collections"
-        for selector, deferred_tooltip, normal_tooltip in (
-            (
-                "#library-open-study",
-                "Collection-scoped Study is not available yet.",
-                "Open the Study dashboard for due cards, decks, quizzes, and resume actions.",
-            ),
-            (
-                "#library-open-flashcards",
-                "Collection-scoped Flashcards are not available yet.",
-                "Open flashcards for selected or imported Library material.",
-            ),
-            (
-                "#library-open-quizzes",
-                "Collection-scoped Quizzes are not available yet.",
-                "Open quizzes for selected or imported Library material.",
-            ),
-            (
-                "#library-use-in-console",
-                "Collection-scoped Console handoff is not available yet.",
-                "Stage Library source context in Console.",
-            ),
-        ):
-            buttons = list(self.query(selector))
-            if buttons:
-                if selector == "#library-use-in-console" and not deferred:
-                    buttons[0].disabled = not self._has_local_sources()
-                else:
-                    buttons[0].disabled = deferred
-                buttons[0].tooltip = deferred_tooltip if deferred else normal_tooltip
-        purpose_widgets = list(self.query("#library-study-purpose"))
-        if purpose_widgets:
-            purpose_widgets[0].update(
-                "Collection-scoped Study, Flashcards, Quizzes, and Console are later-stage."
-                if deferred
-                else "Turn Library material into study sessions, flashcards, and quizzes."
-            )
-        entry_widgets = list(self.query("#library-study-generation-entry"))
-        if entry_widgets:
-            entry_widgets[0].update(
-                "Use Collections to organize source groups locally; scoped execution remains deferred."
-                if deferred
-                else "Study generation entry uses the visible Library source snapshot."
-            )
 
     @on(Input.Changed, "#library-rag-query-input")
     async def update_library_rag_query(self, event: Input.Changed) -> None:
@@ -1645,6 +2052,10 @@ class LibraryScreen(BaseAppScreen):
     def open_import_export(self) -> None:
         self.post_message(NavigateToScreen("ingest"))
 
+    @on(Button.Pressed, "#library-workspace-import-sources")
+    def open_workspace_import_sources(self) -> None:
+        self.post_message(NavigateToScreen("ingest"))
+
     @on(Button.Pressed, "#library-open-search")
     async def open_search_mode(self, event: Button.Pressed) -> None:
         event.stop()
@@ -1688,6 +2099,12 @@ class LibraryScreen(BaseAppScreen):
                     self._library_lookup_error or LIBRARY_EMPTY_COPY,
                     severity="warning",
                 )
+            return
+        workspace_state = self._library_workspace_depth_state()
+        if not workspace_state.context_handoff_enabled:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(workspace_state.context_handoff_tooltip, severity="warning")
             return
         open_chat_with_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
         if not callable(open_chat_with_handoff):

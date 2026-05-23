@@ -63,6 +63,7 @@ LOADED_TCSS = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
 BUILD_CSS_PY = Path("tldw_chatbook/css/build_css.py")
 APP_PY = Path("tldw_chatbook/app.py")
 THEMES_PY = Path("tldw_chatbook/css/Themes/themes.py")
+LIBRARY_SCREEN_PY = Path("tldw_chatbook/UI/Screens/library_screen.py")
 CONTRACT_DOC = Path("Docs/Design/master-shell-design-system-contract.md")
 
 
@@ -153,3 +154,26 @@ def test_status_contract_requires_readable_labels():
     text = DESIGN_SYSTEM_TCSS.read_text(encoding="utf-8")
     for label in READABLE_STATUS_LABELS:
         assert label in text
+
+
+def test_library_mode_chip_focus_keeps_active_label_readable():
+    text = DESIGN_SYSTEM_TCSS.read_text(encoding="utf-8")
+    variables = CORE_VARIABLES_TCSS.read_text(encoding="utf-8")
+    library_screen = LIBRARY_SCREEN_PY.read_text(encoding="utf-8")
+
+    assert ".library-mode-chip:focus" in text
+    assert ".library-mode-chip.is-active" in text
+    assert ".library-mode-chip.is-active:focus" in text
+    focus_block = text.split(".library-mode-chip:focus", 1)[1].split("}", 1)[0]
+    active_block = text.split(".library-mode-chip.is-active", 1)[1].split("}", 1)[0]
+    active_focus_block = text.split(".library-mode-chip.is-active:focus", 1)[1].split("}", 1)[0]
+
+    assert "color: $ds-text-primary;" in focus_block
+    assert "background: $primary-darken-1;" in active_block
+    assert "border: solid $primary;" in active_block
+    assert "color: $ds-text-primary;" in active_focus_block
+    assert "text-style: bold;" in active_focus_block
+    assert "$ds-library-mode-bar-height: 3;" in variables
+    assert "$ds-library-mode-chip-height: 3;" in variables
+    assert "LIBRARY_MODE_BAR_HEIGHT = 3" in library_screen
+    assert "LIBRARY_MODE_CHIP_WIDTH_PADDING = 7" in library_screen
