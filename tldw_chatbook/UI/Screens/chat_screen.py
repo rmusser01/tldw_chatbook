@@ -1845,6 +1845,18 @@ class ChatScreen(BaseAppScreen):
             controller = self._ensure_console_chat_controller()
             self.run_worker(self._retry_console_message(controller, message_id), exclusive=True)
             return True
+        if action_id == "regenerate" and result.status == "wip":
+            controller = self._ensure_console_chat_controller()
+            self.run_worker(self._regenerate_console_message(controller, message_id), exclusive=True)
+            return True
+        if action_id in {"variant-previous", "variant-next"} and result.status == "completed":
+            self._select_console_message_variant(message_id, direction=action_id)
+            await self._sync_native_console_chat_ui()
+            return True
+        if action_id == "continue" and result.status == "continue_requested":
+            controller = self._ensure_console_chat_controller()
+            self.run_worker(self._continue_console_message(controller, message_id), exclusive=True)
+            return True
         severity = "information" if result.status in {"completed", "wip"} else "warning"
         self.app_instance.notify(result.visible_copy, severity=severity)
         return True
@@ -1854,6 +1866,8 @@ class ChatScreen(BaseAppScreen):
         prefixes = (
             ("console-message-action-feedback-up-", "feedback-up"),
             ("console-message-action-feedback-down-", "feedback-down"),
+            ("console-message-action-variant-previous-", "variant-previous"),
+            ("console-message-action-variant-next-", "variant-next"),
             ("console-message-action-save-as-", "save-as"),
             ("console-message-action-regenerate-", "regenerate"),
             ("console-message-action-continue-", "continue"),
@@ -1877,6 +1891,38 @@ class ChatScreen(BaseAppScreen):
             severity = "warning" if not result.accepted else "information"
             self.app_instance.notify(result.visible_copy, severity=severity)
         await self._sync_native_console_chat_ui()
+
+    async def _continue_console_message(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+    ) -> None:
+        result = await controller.continue_from_message(message_id)
+        if result.visible_copy and not result.accepted:
+            self.app_instance.notify(result.visible_copy, severity="warning")
+        await self._sync_native_console_chat_ui()
+
+    async def _regenerate_console_message(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+    ) -> None:
+        result = await controller.regenerate_message(message_id)
+        if result.visible_copy and not result.accepted:
+            self.app_instance.notify(result.visible_copy, severity="warning")
+        await self._sync_native_console_chat_ui()
+
+    def _select_console_message_variant(self, message_id: str, *, direction: str) -> None:
+        store = self._ensure_console_chat_store()
+        message = store.get_message(message_id)
+        if message.variants is None:
+            return
+        selected_index = message.variants.selected_index
+        if direction == "variant-previous":
+            selected_index -= 1
+        elif direction == "variant-next":
+            selected_index += 1
+        store.select_variant(message_id, selected_index)
 
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar."""

@@ -8,7 +8,7 @@ from typing import Literal
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
 
 
-ConsoleActionStatus = Literal["completed", "wip", "blocked"]
+ConsoleActionStatus = Literal["completed", "wip", "blocked", "continue_requested"]
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,8 @@ class ConsoleActionResult:
     status: ConsoleActionStatus
     visible_copy: str
     clipboard_text: str | None = None
+    target_message_id: str | None = None
+    target_content: str | None = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +134,19 @@ class ConsoleMessageActionService:
                 action_id=action_id,
                 status="completed",
                 visible_copy="Selected response variant.",
+            )
+        if action_id == "continue":
+            target_content = (
+                message.variants.current.content
+                if message.variants is not None
+                else message.content
+            )
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="continue_requested",
+                visible_copy="Continuing from selected message.",
+                target_message_id=message.id,
+                target_content=target_content,
             )
         return ConsoleActionResult(
             action_id=action_id,

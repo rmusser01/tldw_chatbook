@@ -1,4 +1,8 @@
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+    ConsoleVariantSet,
+)
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 
 
@@ -98,3 +102,19 @@ def test_unimplemented_actions_return_wip_reason():
 
     assert result.status == "wip"
     assert "WIP" in result.visible_copy
+
+
+def test_continue_action_targets_selected_variant_content():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
+    message.variants = ConsoleVariantSet.from_contents(
+        turn_id="turn-1",
+        contents=["first", "second"],
+        selected_index=1,
+    )
+
+    result = service.dispatch("continue", message)
+
+    assert result.status == "continue_requested"
+    assert result.target_message_id == "m1"
+    assert result.target_content == "second"

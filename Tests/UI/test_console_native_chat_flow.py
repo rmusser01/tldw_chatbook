@@ -454,3 +454,72 @@ async def test_console_failed_stream_renders_inline_retry_and_recovers():
         await _wait_for_text(console, pilot, "recovered")
 
     assert store.get_message(failed.id).status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_console_continue_action_streams_new_message_from_selected_turn():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("hel", "lo"))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        _select_llamacpp_console(console)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        source = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="seed",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(source.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-continue-{source.id}")
+
+        await pilot.click(f"#console-message-action-continue-{source.id}")
+        await _wait_for_text(console, pilot, "hello")
+
+        messages = store.messages_for_session(session.id)
+        assert messages[-1].role is ConsoleMessageRole.ASSISTANT
+        assert messages[-1].content == "hello"
+        assert messages[-1].id != source.id
+
+
+@pytest.mark.asyncio
+async def test_console_regenerate_action_streams_selected_variant():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("hel", "lo"))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        _select_llamacpp_console(console)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        source = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="seed",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(source.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-regenerate-{source.id}")
+
+        await pilot.click(f"#console-message-action-regenerate-{source.id}")
+        await _wait_for_text(console, pilot, "hello")
+
+        updated = store.get_message(source.id)
+        assert updated.variants.current.content == "hello"
+        assert updated.variants.can_go_previous is True

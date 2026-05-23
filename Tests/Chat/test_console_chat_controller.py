@@ -4,6 +4,7 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
     ConsoleRunStatus,
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
@@ -489,3 +490,42 @@ async def test_retry_ignores_empty_heartbeat_before_empty_replacement_stream_end
     assert retried.status == "failed"
     assert retried.content == failed.content
     assert controller.run_state.status is ConsoleRunStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_continue_from_message_streams_new_assistant_turn_after_selected_message():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    source = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="seed",
+    )
+
+    result = await controller.continue_from_message(source.id)
+
+    messages = store.messages_for_session(session.id)
+    assert result.accepted is True
+    assert messages[-1].role is ConsoleMessageRole.ASSISTANT
+    assert messages[-1].content == "hello"
+    assert messages[-1].id != source.id
+
+
+@pytest.mark.asyncio
+async def test_regenerate_message_streams_new_selected_variant():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    source = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="seed",
+    )
+
+    result = await controller.regenerate_message(source.id)
+
+    updated = store.get_message(source.id)
+    assert result.accepted is True
+    assert updated.variants.current.content == "hello"
+    assert updated.variants.can_go_previous is True

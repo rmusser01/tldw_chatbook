@@ -144,6 +144,88 @@ class ConsoleChatController:
             prepare_retry=True,
         )
 
+    async def continue_from_message(self, message_id: str) -> ConsoleSubmitResult:
+        """Continue from a selected message by streaming a new assistant turn."""
+        active_rejection = self._active_run_rejection()
+        if active_rejection is not None:
+            return active_rejection
+
+        session_id = self.store.active_session_id
+        if session_id is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
+        message_session_id = self.store.session_id_for_message(message_id)
+        if message_session_id != session_id:
+            visible_copy = "Open the original session before continuing from this message."
+            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            return ConsoleSubmitResult(False, False, visible_copy)
+
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
+        resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
+        if not getattr(resolution, "ready", False):
+            visible_copy = getattr(resolution, "visible_copy", "") or "Provider blocked."
+            return self._block(session_id, visible_copy)
+
+        provider_messages = self._provider_messages_through_message(session_id, message_id)
+        assistant = self.store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=self.store.persistence is not None,
+        )
+        return await self._stream_assistant_response(
+            resolution=resolution,
+            provider_messages=provider_messages,
+            assistant_message_id=assistant.id,
+        )
+
+    async def regenerate_message(self, message_id: str) -> ConsoleSubmitResult:
+        """Regenerate a selected assistant message into a newly selected variant."""
+        active_rejection = self._active_run_rejection()
+        if active_rejection is not None:
+            return active_rejection
+
+        session_id = self.store.active_session_id
+        if session_id is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
+        message = self.store.get_message(message_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            return self._block(session_id, "Only assistant messages can be regenerated.")
+        if self.store.session_id_for_message(message_id) != session_id:
+            visible_copy = "Open the original session before regenerating this message."
+            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            return ConsoleSubmitResult(False, False, visible_copy)
+
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
+        resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
+        if not getattr(resolution, "ready", False):
+            visible_copy = getattr(resolution, "visible_copy", "") or "Provider blocked."
+            return self._block(session_id, visible_copy)
+
+        provider_messages = self._provider_messages_for_session(
+            session_id,
+            before_message_id=message_id,
+        )
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Regenerating response."))
+        chunks: list[str] = []
+        try:
+            async for chunk in self.provider_gateway.stream_chat(resolution, provider_messages):
+                if chunk:
+                    chunks.append(chunk)
+        except Exception as exc:
+            visible_copy = f"Provider stream failed: {exc}"
+            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            return ConsoleSubmitResult(True, True, visible_copy)
+
+        content = "".join(chunks)
+        if not content:
+            visible_copy = "Provider stream ended without content."
+            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            return ConsoleSubmitResult(True, True, visible_copy)
+
+        updated = self.store.add_variant(message_id, content)
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response regenerated."))
+        return ConsoleSubmitResult(True, True, updated.content)
+
     def _provider_selection(self) -> ConsoleProviderSelection:
         return ConsoleProviderSelection(
             provider=self.provider,
@@ -267,6 +349,24 @@ class ConsoleChatController:
             if message.status == "failed":
                 continue
             messages.append({"role": message.role.value, "content": message.content})
+        return messages
+
+    def _provider_messages_through_message(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> list[dict[str, str]]:
+        messages: list[dict[str, str]] = []
+        for message in self.store.messages_for_session(session_id):
+            content = (
+                message.variants.current.content
+                if message.variants is not None
+                else message.content
+            )
+            if content and message.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}:
+                messages.append({"role": message.role.value, "content": content})
+            if message.id == message_id:
+                break
         return messages
 
     def _set_run_state(self, run_state: ConsoleRunState) -> None:
