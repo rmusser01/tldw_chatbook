@@ -98,6 +98,30 @@ def test_conflict_reports_override_dry_run_ready_state() -> None:
     assert state.mutation_allowed is False
 
 
+def test_conflict_count_can_be_supplied_without_materializing_reports() -> None:
+    registry = SyncEligibilityRegistry(
+        [SyncDomainEligibility(domain="library_collections", sync_eligible=True)]
+    )
+    readiness = build_sync_readiness_report(
+        domain="library_collections",
+        server_profile_id="server-a",
+        workspace_id="workspace-a",
+        registry=registry,
+    )
+
+    state = build_sync_promotion_state(
+        domain="library_collections",
+        surface_label="Collections",
+        readiness=readiness,
+        conflict_count=1,
+        source_authority="local",
+        workspace_id="workspace-a",
+    )
+
+    assert state.status == "conflict"
+    assert state.conflict_label == "Conflict: 1 requires review"
+
+
 def test_rollback_required_profile_blocks_writes_after_error() -> None:
     registry = SyncEligibilityRegistry([SyncDomainEligibility(domain="notes", sync_eligible=True)])
     readiness = build_sync_readiness_report(
@@ -125,6 +149,30 @@ def test_rollback_required_profile_blocks_writes_after_error() -> None:
     assert state.mutation_allowed is False
 
 
+def test_last_error_without_rollback_flag_requires_attention_not_rollback() -> None:
+    registry = SyncEligibilityRegistry([SyncDomainEligibility(domain="notes", sync_eligible=True)])
+    readiness = build_sync_readiness_report(
+        domain="notes",
+        server_profile_id="server-a",
+        workspace_id="workspace-a",
+        registry=registry,
+    )
+
+    state = build_sync_promotion_state(
+        domain="notes",
+        surface_label="Library",
+        readiness=readiness,
+        profile_state={"last_error": "push_partial_failure"},
+        source_authority="local",
+        workspace_id="workspace-a",
+    )
+
+    assert state.sync_label == "Sync: attention required"
+    assert state.rollback_label == "Rollback: not required"
+    assert state.status == "attention-required"
+    assert state.mutation_allowed is False
+
+
 def test_write_enabled_readiness_is_clamped_until_review_gates_exist() -> None:
     readiness = SyncReadinessReport(
         domain="notes",
@@ -149,3 +197,15 @@ def test_write_enabled_readiness_is_clamped_until_review_gates_exist() -> None:
     assert state.review_label == "Review: required before writes"
     assert state.mutation_allowed is False
     assert state.primary_recovery == "Writes stay blocked until review, conflict, and rollback gates are ready."
+
+
+def test_none_readiness_falls_back_to_unavailable() -> None:
+    state = build_sync_promotion_state(
+        domain="notes",
+        surface_label="Library",
+        readiness=None,
+        source_authority="local",
+    )
+
+    assert state.status == "unavailable"
+    assert state.reason_codes == ()

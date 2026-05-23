@@ -49,6 +49,7 @@ def build_sync_promotion_state(
     readiness: SyncReadinessReport | None = None,
     latest_mirror_report: Mapping[str, Any] | None = None,
     conflict_reports: Sequence[Mapping[str, Any]] | None = None,
+    conflict_count: int | None = None,
     profile_state: Mapping[str, Any] | None = None,
     source_authority: SourceAuthority = "local",
     workspace_id: str | None = None,
@@ -61,6 +62,7 @@ def build_sync_promotion_state(
         readiness: Existing dry-run readiness report, when available.
         latest_mirror_report: Existing mirror report row or report payload.
         conflict_reports: Existing conflict rows scoped to this domain.
+        conflict_count: Existing conflict count scoped to this domain.
         profile_state: Existing sync profile state row.
         source_authority: Source authority used for user-facing copy.
         workspace_id: Optional workspace scope.
@@ -69,13 +71,14 @@ def build_sync_promotion_state(
         A display state. `mutation_allowed` is always False in this tranche.
     """
 
-    reason_codes = tuple(getattr(readiness, "reason_codes", ()) or ())
-    conflicts_count = len(tuple(conflict_reports or ()))
+    reason_codes = tuple(getattr(readiness, "reason_codes", ()) or ()) if readiness else ()
+    conflicts_count = max(0, int(conflict_count)) if conflict_count is not None else len(tuple(conflict_reports or ()))
     profile = dict(profile_state or {})
     report = _mirror_report_payload(latest_mirror_report)
-    readiness_sync_eligible = bool(getattr(readiness, "sync_eligible", False))
-    readiness_write_enabled = bool(getattr(readiness, "write_enabled", False))
+    readiness_sync_eligible = bool(getattr(readiness, "sync_eligible", False)) if readiness else False
+    readiness_write_enabled = bool(getattr(readiness, "write_enabled", False)) if readiness else False
     rollback_required = _rollback_required(profile)
+    attention_required = _attention_required(profile)
 
     authority_label = _authority_label(source_authority)
     mirror_label = _mirror_label(report)
@@ -94,6 +97,13 @@ def build_sync_promotion_state(
         conflict_label = _conflict_label(conflicts_count)
         rollback_label = "Rollback: not required"
         primary_recovery = "Resolve sync conflicts before any write replay is available."
+    elif attention_required:
+        status = "attention-required"
+        sync_label = "Sync: attention required"
+        review_label = "Review: required before writes"
+        conflict_label = "Conflicts: none reported"
+        rollback_label = "Rollback: not required"
+        primary_recovery = "Review the latest sync error before any write replay is available."
     elif readiness_write_enabled:
         status = "review-gated"
         sync_label = "Sync: review gated"
@@ -145,7 +155,7 @@ def build_sync_promotion_summary(
         (
             state
             for state in state_tuple
-            if state.status in {"rollback-required", "conflict", "review-gated"}
+            if state.status in {"rollback-required", "conflict", "attention-required", "review-gated"}
         ),
         None,
     )
@@ -192,7 +202,8 @@ def _conflict_label(count: int) -> str:
     if count <= 0:
         return "Conflicts: none reported"
     noun = "conflict" if count == 1 else "conflicts"
-    return f"Conflicts: {count} require review" if count != 1 else f"Conflicts: {count} requires review"
+    verb = "requires" if count == 1 else "require"
+    return f"{noun.title()}: {count} {verb} review"
 
 
 def _rollback_required(profile_state: Mapping[str, Any]) -> bool:
@@ -201,4 +212,8 @@ def _rollback_required(profile_state: Mapping[str, Any]) -> bool:
         return True
     if profile_state.get("rollback_required"):
         return True
+    return False
+
+
+def _attention_required(profile_state: Mapping[str, Any]) -> bool:
     return bool(profile_state.get("last_error"))

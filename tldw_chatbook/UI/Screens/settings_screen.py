@@ -1,5 +1,7 @@
 """Settings destination shell for global app preferences."""
 
+import logging
+
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -11,6 +13,9 @@ from ...Widgets.destination_workbench import DestinationModeStrip
 from ...config import coerce_bool_setting, save_setting_to_cli_config
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsScreen(BaseAppScreen):
@@ -55,8 +60,11 @@ class SettingsScreen(BaseAppScreen):
                         surface_labels=labels,
                     )
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "Failed to load Settings sync safety states; using local fallback. error_type=%s",
+                    type(exc).__name__,
+                )
         return tuple(
             build_sync_promotion_state(
                 domain=domain,

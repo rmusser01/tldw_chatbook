@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import logging
 import time
 from pathlib import Path
 from unittest.mock import Mock
@@ -2559,6 +2560,24 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         assert category_pane.region.width < impact_pane.region.width
         assert screen.query_one("#settings-category-detail-divider")
         assert screen.query_one("#settings-detail-impact-divider")
+
+
+def test_settings_sync_safety_state_failure_logs_context(caplog):
+    class BrokenSyncScopeService:
+        def list_write_sync_promotion_states(self, **_kwargs):
+            raise RuntimeError("secret-token-123")
+
+    app = _build_test_app()
+    app.sync_scope_service = BrokenSyncScopeService()
+    screen = SettingsScreen(app)
+
+    with caplog.at_level(logging.WARNING, logger=settings_screen_module.__name__):
+        states = screen._sync_safety_states()
+
+    assert [state.domain for state in states] == ["library_collections", "workspaces"]
+    assert "Failed to load Settings sync safety states" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "secret-token-123" not in caplog.text
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ from .models import (
     WorkspaceAuthority,
     WorkspaceRecord,
     WorkspaceRuntimeBinding,
+    WorkspaceSyncStatus,
 )
 
 logger = logger.bind(module="WorkspaceDisplayState")
@@ -217,6 +218,16 @@ def _runtime_label(bindings: tuple[WorkspaceRuntimeBinding, ...]) -> str:
 
 
 def _workspace_sync_label(active_workspace: WorkspaceRecord) -> str:
+    sync_status = active_workspace.sync_status
+    if sync_status == WorkspaceSyncStatus.NOT_CONFIGURED:
+        return "Sync: not configured"
+    if sync_status == WorkspaceSyncStatus.SYNCING:
+        return "Sync: syncing"
+    if sync_status == WorkspaceSyncStatus.BLOCKED:
+        return "Sync: blocked"
+    if sync_status == WorkspaceSyncStatus.CONFLICT:
+        return "Sync: conflict review required"
+
     readiness = build_sync_readiness_report(
         domain="workspaces",
         server_profile_id=None,

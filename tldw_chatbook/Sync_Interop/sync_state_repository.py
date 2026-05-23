@@ -30,6 +30,7 @@ _REMOTE_NULL_ALLOWED = {"candidate", "orphaned_local", "unsupported"}
 _SYNC_V2_PROFILE_MODES = {"local_only", "local_first", "local_first_sync", "server_frontend"}
 _SYNC_V2_OUTBOX_STATUSES = {"pending", "dispatched"}
 SYNC_STATE_SCHEMA_VERSION = 2
+_FILTER_UNSET = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,25 +392,63 @@ class SyncStateRepository(BaseDB):
     def list_conflict_reports(
         self,
         *,
+        source_authority: SourceAuthority | None | object = _FILTER_UNSET,
+        server_profile_id: str | None | object = _FILTER_UNSET,
+        authenticated_principal_id: str | None | object = _FILTER_UNSET,
+        workspace_scope: str | None | object = _FILTER_UNSET,
         domain: str | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         limit = _normalize_optional_limit(limit)
+        where_clause, params = _conflict_report_filters(
+            source_authority=source_authority,
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            domain=domain,
+        )
         with self._get_connection() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT *
                 FROM sync_conflict_reports
-                WHERE (? IS NULL OR domain = ?)
+                {where_clause}
                 ORDER BY conflict_id ASC
                 LIMIT COALESCE(?, -1)
                 """,
-                (domain, domain, limit),
+                (*params, limit),
             ).fetchall()
         reports = [dict(row) for row in rows]
         for report in reports:
             report["details"] = json.loads(report["details"])
         return reports
+
+    def count_conflict_reports(
+        self,
+        *,
+        source_authority: SourceAuthority | None | object = _FILTER_UNSET,
+        server_profile_id: str | None | object = _FILTER_UNSET,
+        authenticated_principal_id: str | None | object = _FILTER_UNSET,
+        workspace_scope: str | None | object = _FILTER_UNSET,
+        domain: str | None = None,
+    ) -> int:
+        where_clause, params = _conflict_report_filters(
+            source_authority=source_authority,
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            domain=domain,
+        )
+        with self._get_connection() as conn:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS count
+                FROM sync_conflict_reports
+                {where_clause}
+                """,
+                params,
+            ).fetchone()
+        return int(row["count"] if row is not None else 0)
 
     def set_remote_pull_cursor(
         self,
@@ -592,19 +631,34 @@ class SyncStateRepository(BaseDB):
             report["report"] = json.loads(report["report"])
         return reports
 
-    def get_latest_mirror_report(self, *, domain: str | None = None) -> dict[str, Any] | None:
+    def get_latest_mirror_report(
+        self,
+        *,
+        source_authority: SourceAuthority | None | object = _FILTER_UNSET,
+        server_profile_id: str | None | object = _FILTER_UNSET,
+        authenticated_principal_id: str | None | object = _FILTER_UNSET,
+        workspace_scope: str | None | object = _FILTER_UNSET,
+        domain: str | None = None,
+    ) -> dict[str, Any] | None:
         """Return the newest mirror report for a domain without loading full history."""
 
+        where_clause, params = _scoped_column_filters(
+            source_authority=source_authority,
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            domain=domain,
+        )
         with self._get_connection() as conn:
             row = conn.execute(
-                """
+                f"""
                 SELECT *
                 FROM mirror_reports
-                WHERE (? IS NULL OR domain = ?)
+                {where_clause}
                 ORDER BY report_id DESC
                 LIMIT 1
                 """,
-                (domain, domain),
+                params,
             ).fetchone()
         if row is None:
             return None
@@ -1425,6 +1479,109 @@ def _optional_filters(
     if not clauses:
         return "", ()
     return "WHERE " + " AND ".join(clauses), tuple(params)
+
+
+def _scoped_column_filters(
+    *,
+    source_authority: SourceAuthority | None | object,
+    server_profile_id: str | None | object,
+    authenticated_principal_id: str | None | object,
+    workspace_scope: str | None | object,
+    domain: str | None,
+) -> tuple[str, tuple[str, ...]]:
+    clauses: list[str] = []
+    params: list[str] = []
+    for field_name, value in (
+        ("source_authority", source_authority),
+        ("server_profile_id", server_profile_id),
+        ("authenticated_principal_id", authenticated_principal_id),
+        ("workspace_scope", workspace_scope),
+    ):
+        if value is _FILTER_UNSET:
+            continue
+        if value is None:
+            clauses.append(f"{field_name} IS NULL")
+        else:
+            clauses.append(f"{field_name} = ?")
+            params.append(str(value))
+    if domain is not None:
+        clauses.append("domain = ?")
+        params.append(domain)
+    if not clauses:
+        return "", ()
+    return "WHERE " + " AND ".join(clauses), tuple(params)
+
+
+def _conflict_report_filters(
+    *,
+    source_authority: SourceAuthority | None | object,
+    server_profile_id: str | None | object,
+    authenticated_principal_id: str | None | object,
+    workspace_scope: str | None | object,
+    domain: str | None,
+) -> tuple[str, tuple[str, ...]]:
+    clauses: list[str] = []
+    params: list[str] = []
+    if domain is not None:
+        clauses.append("domain = ?")
+        params.append(domain)
+
+    if any(
+        value is not _FILTER_UNSET
+        for value in (
+            source_authority,
+            server_profile_id,
+            authenticated_principal_id,
+            workspace_scope,
+        )
+    ):
+        if source_authority is _FILTER_UNSET:
+            raise ValueError("source_authority is required for scoped conflict report reads")
+        if domain is None:
+            raise ValueError("domain is required for scoped conflict report reads")
+        prefix = _source_scope_prefix(
+            source_authority=source_authority,
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            domain=domain,
+        )
+        clauses.append("source_scope_key LIKE ?")
+        params.append(f"{prefix}%")
+
+    if not clauses:
+        return "", ()
+    return "WHERE " + " AND ".join(clauses), tuple(params)
+
+
+def _source_scope_prefix(
+    *,
+    source_authority: SourceAuthority | None | object,
+    server_profile_id: str | None | object,
+    authenticated_principal_id: str | None | object,
+    workspace_scope: str | None | object,
+    domain: str,
+) -> str:
+    if source_authority not in {"local", "server"}:
+        raise ValueError("source_authority must be one of: local, server")
+    if source_authority == "server" and (server_profile_id is _FILTER_UNSET or not server_profile_id):
+        raise ValueError("server_profile_id is required for server sync state")
+    return ":".join(
+        [
+            str(source_authority),
+            _scope_component(server_profile_id),
+            _scope_component(authenticated_principal_id),
+            _scope_component(workspace_scope),
+            domain,
+            "",
+        ]
+    )
+
+
+def _scope_component(value: str | None | object) -> str:
+    if value is _FILTER_UNSET or value is None:
+        return "none"
+    return str(value)
 
 
 def _normalize_optional_limit(limit: int | None) -> int | None:

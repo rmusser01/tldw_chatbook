@@ -25,6 +25,7 @@ from ...Library.library_rag_service import (
     run_library_rag_search,
 )
 from ...Library.library_rag_state import LibraryRagPanelState
+from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
@@ -121,6 +122,37 @@ LIBRARY_MODES = {
         "next_action": "Open Quizzes to test recall against the current source snapshot.",
     },
 }
+
+
+def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
+    runtime_state = getattr(getattr(app_instance, "runtime_policy", None), "state", None)
+    active_source = str(getattr(runtime_state, "active_source", "local") or "local").lower()
+    server_profile_id = getattr(runtime_state, "active_server_id", None)
+    source_authority = "server" if active_source == "server" and server_profile_id else "local"
+    authenticated_principal_id = None
+    if source_authority == "server":
+        server_context_provider = getattr(app_instance, "server_context_provider", None)
+        get_active_context = getattr(server_context_provider, "get_active_context", None)
+        if callable(get_active_context):
+            try:
+                authenticated_principal_id = event_principal_id_from_active_context(get_active_context())
+            except Exception:
+                authenticated_principal_id = None
+    workspace_scope = None
+    workspace_service = getattr(app_instance, "workspace_registry_service", None)
+    get_active_workspace = getattr(workspace_service, "get_active_workspace", None)
+    if callable(get_active_workspace):
+        try:
+            active_workspace = get_active_workspace()
+            workspace_scope = getattr(active_workspace, "workspace_id", None)
+        except Exception:
+            workspace_scope = None
+    return {
+        "source_authority": source_authority,
+        "server_profile_id": str(server_profile_id) if server_profile_id else None,
+        "authenticated_principal_id": authenticated_principal_id,
+        "workspace_scope": workspace_scope,
+    }
 LIBRARY_MODE_BY_BUTTON_ID = {
     mode["button_id"]: mode_id for mode_id, mode in LIBRARY_MODES.items()
 }
@@ -1090,15 +1122,24 @@ class LibraryScreen(BaseAppScreen):
         if not callable(get_latest_mirror_report) or not callable(list_conflict_reports):
             return tuple(records)
 
+        sync_scope = _active_library_sync_scope(self.app_instance)
         try:
             latest_mirror_record, conflict_reports = await asyncio.gather(
                 self._run_library_service_call(
                     get_latest_mirror_report,
+                    source_authority=sync_scope["source_authority"],
+                    server_profile_id=sync_scope["server_profile_id"],
+                    authenticated_principal_id=sync_scope["authenticated_principal_id"],
+                    workspace_scope=sync_scope["workspace_scope"],
                     domain="library_collections",
                     isolate_in_worker=True,
                 ),
                 self._run_library_service_call(
                     list_conflict_reports,
+                    source_authority=sync_scope["source_authority"],
+                    server_profile_id=sync_scope["server_profile_id"],
+                    authenticated_principal_id=sync_scope["authenticated_principal_id"],
+                    workspace_scope=sync_scope["workspace_scope"],
                     domain="library_collections",
                     limit=LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT,
                     isolate_in_worker=True,
@@ -1111,8 +1152,8 @@ class LibraryScreen(BaseAppScreen):
         latest_report = latest_mirror_record["report"] if latest_mirror_record else None
         readiness = build_sync_readiness_report(
             domain="library_collections",
-            server_profile_id=None,
-            workspace_id=None,
+            server_profile_id=sync_scope["server_profile_id"],
+            workspace_id=sync_scope["workspace_scope"],
             registry=DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
         )
         readiness_record = {
@@ -1139,7 +1180,8 @@ class LibraryScreen(BaseAppScreen):
                     readiness=readiness,
                     latest_mirror_report=collection_report,
                     conflict_reports=collection_conflicts,
-                    source_authority=_record_value(record, "source_authority", "local"),
+                    source_authority=sync_scope["source_authority"],
+                    workspace_id=sync_scope["workspace_scope"],
                 )
                 record_data["sync_promotion_state"] = {
                     "authority_label": promotion_state.authority_label,

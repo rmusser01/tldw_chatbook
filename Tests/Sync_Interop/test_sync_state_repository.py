@@ -187,6 +187,38 @@ def test_latest_mirror_report_fetches_newest_without_full_history(tmp_path):
     assert report["report"]["mapped_count"] == 2
 
 
+def test_latest_mirror_report_can_be_scoped_to_active_profile(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    active = repo.record_mirror_report(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="library_collections",
+        report={"dry_run": True, "write_enabled": False, "mapped_count": 1},
+    )
+    repo.record_mirror_report(
+        source_authority="server",
+        server_profile_id="server-b",
+        authenticated_principal_id="user-b",
+        workspace_scope="workspace-2",
+        domain="library_collections",
+        report={"dry_run": True, "write_enabled": False, "mapped_count": 99},
+    )
+
+    report = repo.get_latest_mirror_report(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="library_collections",
+    )
+
+    assert report is not None
+    assert report["report_id"] == active["report_id"]
+    assert report["report"]["mapped_count"] == 1
+
+
 def test_conflict_report_listing_supports_bounded_reads(tmp_path):
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     for index in range(3):
@@ -208,6 +240,55 @@ def test_conflict_report_listing_supports_bounded_reads(tmp_path):
     assert conflicts[0]["local_side_key"].endswith(":local:collection-1")
     with pytest.raises(ValueError, match="limit must be a positive integer"):
         repo.list_conflict_reports(domain="library_collections", limit=0)
+
+
+def test_conflict_report_listing_and_count_can_be_scoped_to_active_profile(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    for server_profile_id, user_id, workspace_id, collection_id in (
+        ("server-a", "user-a", "workspace-1", "collection-active"),
+        ("server-b", "user-b", "workspace-2", "collection-other"),
+    ):
+        repo.record_identity_mapping(
+            source_authority="server",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=user_id,
+            workspace_scope=workspace_id,
+            domain="library_collections",
+            entity_type="collection",
+            local_entity_id=collection_id,
+            remote_entity_id="remote-a",
+            mapping_status="confirmed",
+        )
+        repo.record_identity_mapping(
+            source_authority="server",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=user_id,
+            workspace_scope=workspace_id,
+            domain="library_collections",
+            entity_type="collection",
+            local_entity_id=collection_id,
+            remote_entity_id="remote-b",
+            mapping_status="confirmed",
+        )
+
+    conflicts = repo.list_conflict_reports(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="library_collections",
+    )
+    conflict_count = repo.count_conflict_reports(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="library_collections",
+    )
+
+    assert len(conflicts) == 1
+    assert conflicts[0]["local_side_key"].endswith(":local:collection-active")
+    assert conflict_count == 1
 
 
 def test_sync_profile_state_persists_last_report_and_error_by_principal(tmp_path):

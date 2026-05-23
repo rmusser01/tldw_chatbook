@@ -224,6 +224,7 @@ class SyncScopeService:
             )
 
         states: list[SyncPromotionState] = []
+        source_authority = "server" if server_profile_id else "local"
         for domain in domains:
             readiness = build_sync_readiness_report(
                 domain=domain,
@@ -232,19 +233,46 @@ class SyncScopeService:
                 registry=eligibility_registry,
             )
             latest_mirror_report = None
-            conflict_reports = ()
+            conflict_count = 0
             if repo is not None:
-                latest_mirror_report = repo.get_latest_mirror_report(domain=domain)
-                conflict_reports = tuple(repo.list_conflict_reports(domain=domain))
+                latest_mirror_report = repo.get_latest_mirror_report(
+                    source_authority=source_authority,
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    domain=domain,
+                )
+                count_conflict_reports = getattr(repo, "count_conflict_reports", None)
+                if callable(count_conflict_reports):
+                    conflict_count = count_conflict_reports(
+                        source_authority=source_authority,
+                        server_profile_id=server_profile_id,
+                        authenticated_principal_id=authenticated_principal_id,
+                        workspace_scope=workspace_scope,
+                        domain=domain,
+                    )
+                else:
+                    conflict_count = len(
+                        tuple(
+                            repo.list_conflict_reports(
+                                source_authority=source_authority,
+                                server_profile_id=server_profile_id,
+                                authenticated_principal_id=authenticated_principal_id,
+                                workspace_scope=workspace_scope,
+                                domain=domain,
+                                limit=200,
+                            )
+                        )
+                    )
             states.append(
                 build_sync_promotion_state(
                     domain=domain,
                     surface_label=(surface_labels or {}).get(domain, domain.replace("_", " ").title()),
                     readiness=readiness,
                     latest_mirror_report=latest_mirror_report,
-                    conflict_reports=conflict_reports,
+                    conflict_count=conflict_count,
                     profile_state=profile_state,
-                    source_authority="server" if server_profile_id else "local",
+                    source_authority=source_authority,
                     workspace_id=workspace_scope,
                 )
             )

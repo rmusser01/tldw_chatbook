@@ -248,6 +248,74 @@ def test_sync_scope_service_lists_write_sync_promotion_states_without_dispatch(t
     assert server.calls == []
 
 
+def test_sync_scope_service_scopes_promotion_state_and_uses_conflict_count(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    active = repo.record_mirror_report(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="library_collections",
+        report={"dry_run": True, "write_enabled": False, "mapped_count": 2, "actions": []},
+    )
+    repo.record_mirror_report(
+        source_authority="server",
+        server_profile_id="server-b",
+        authenticated_principal_id="user-b",
+        workspace_scope="workspace-2",
+        domain="library_collections",
+        report={"dry_run": True, "write_enabled": False, "mapped_count": 99, "actions": []},
+    )
+    for collection_id, server_profile_id, user_id, workspace_id in (
+        ("collection-active", "server-a", "user-a", "workspace-1"),
+        ("collection-other", "server-b", "user-b", "workspace-2"),
+    ):
+        repo.record_identity_mapping(
+            source_authority="server",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=user_id,
+            workspace_scope=workspace_id,
+            domain="library_collections",
+            entity_type="collection",
+            local_entity_id=collection_id,
+            remote_entity_id="remote-a",
+            mapping_status="confirmed",
+        )
+        repo.record_identity_mapping(
+            source_authority="server",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=user_id,
+            workspace_scope=workspace_id,
+            domain="library_collections",
+            entity_type="collection",
+            local_entity_id=collection_id,
+            remote_entity_id="remote-b",
+            mapping_status="confirmed",
+        )
+    server = FakeSyncService()
+    scope = SyncScopeService(server_service=server, state_repository=repo)
+
+    states = scope.list_write_sync_promotion_states(
+        domains=["library_collections"],
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert len(states) == 1
+    assert states[0].status == "conflict"
+    assert states[0].mirror_label == "Mirror: 2 mapped records"
+    assert states[0].conflict_label == "Conflict: 1 requires review"
+    assert repo.get_latest_mirror_report(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="library_collections",
+    )["report_id"] == active["report_id"]
+    assert server.calls == []
+
+
 def test_sync_scope_service_write_sync_promotion_state_reports_profile_rollback_without_dispatch(tmp_path):
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     repo.set_sync_v2_profile_state(
@@ -257,6 +325,7 @@ def test_sync_scope_service_write_sync_promotion_state_reports_profile_rollback_
         profile_mode="local_first_sync",
         device_id="device-1",
         dataset_id="dataset-1",
+        dry_run_metadata={"rollback_required": True},
         last_error="rollback required before promotion can continue",
     )
     server = FakeSyncService()

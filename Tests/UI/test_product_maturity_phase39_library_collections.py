@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_collections_service import LibraryCollectionRecord
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -97,6 +99,24 @@ class DeleteFailsLibraryCollectionsService(FakeLibraryCollectionsService):
         return False
 
 
+def _activate_server_sync_scope(app) -> None:
+    app.runtime_policy.state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="server-a",
+        server_configured=True,
+    )
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-1",
+        name="Workspace 1",
+    )
+    app.workspace_registry_service.set_active_workspace("workspace-1")
+    app.server_context_provider = SimpleNamespace(
+        get_active_context=lambda: SimpleNamespace(
+            auth_token="header.eyJzdWIiOiJ1c2VyLWEifQ.signature"
+        )
+    )
+
+
 def _seed_library_sources(app) -> None:
     app.notes_scope_service = StaticLibraryNotesScopeService(
         [{"title": "Research Note", "id": "note-1"}]
@@ -164,6 +184,7 @@ async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions()
 @pytest.mark.asyncio
 async def test_library_collections_surfaces_sync_dry_run_report_without_write_sync(tmp_path) -> None:
     app = _build_test_app()
+    _activate_server_sync_scope(app)
     _seed_library_sources(app)
     app.library_collections_service = FakeLibraryCollectionsService(
         (
@@ -183,7 +204,7 @@ async def test_library_collections_surfaces_sync_dry_run_report_without_write_sy
     repo.record_mirror_report(
         source_authority="server",
         server_profile_id="server-a",
-        authenticated_principal_id="user-a",
+        authenticated_principal_id="jwt-sub:user-a",
         workspace_scope="workspace-1",
         domain="library_collections",
         report={
@@ -231,6 +252,7 @@ async def test_library_collections_surfaces_sync_dry_run_report_without_write_sy
 @pytest.mark.asyncio
 async def test_library_collections_scopes_sync_conflicts_to_selected_collection(tmp_path) -> None:
     app = _build_test_app()
+    _activate_server_sync_scope(app)
     _seed_library_sources(app)
     app.library_collections_service = FakeLibraryCollectionsService(
         (
@@ -260,7 +282,7 @@ async def test_library_collections_scopes_sync_conflicts_to_selected_collection(
     repo.record_mirror_report(
         source_authority="server",
         server_profile_id="server-a",
-        authenticated_principal_id="user-a",
+        authenticated_principal_id="jwt-sub:user-a",
         workspace_scope="workspace-1",
         domain="library_collections",
         report={
@@ -279,7 +301,7 @@ async def test_library_collections_scopes_sync_conflicts_to_selected_collection(
     repo.record_identity_mapping(
         source_authority="server",
         server_profile_id="server-a",
-        authenticated_principal_id="user-a",
+        authenticated_principal_id="jwt-sub:user-a",
         workspace_scope="workspace-1",
         domain="library_collections",
         entity_type="collection",
@@ -290,7 +312,7 @@ async def test_library_collections_scopes_sync_conflicts_to_selected_collection(
     repo.record_identity_mapping(
         source_authority="server",
         server_profile_id="server-a",
-        authenticated_principal_id="user-a",
+        authenticated_principal_id="jwt-sub:user-a",
         workspace_scope="workspace-1",
         domain="library_collections",
         entity_type="collection",
@@ -311,6 +333,60 @@ async def test_library_collections_scopes_sync_conflicts_to_selected_collection(
         visible = _visible_text(screen)
         assert "Sync: dry-run only" in visible
         assert "Sync: conflict review required" not in visible
+
+
+@pytest.mark.asyncio
+async def test_library_collections_ignores_sync_state_from_other_scope(tmp_path) -> None:
+    app = _build_test_app()
+    _activate_server_sync_scope(app)
+    _seed_library_sources(app)
+    app.library_collections_service = FakeLibraryCollectionsService(
+        (
+            LibraryCollectionRecord(
+                collection_id="collection-1",
+                name="Research",
+                description="Policy sources",
+                item_count=2,
+                source_authority="local",
+                sync_status="local-only",
+                created_at="2026-05-08T04:00:00Z",
+                updated_at="2026-05-08T04:05:00Z",
+            ),
+        )
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    repo.record_mirror_report(
+        source_authority="server",
+        server_profile_id="server-b",
+        authenticated_principal_id="user-b",
+        workspace_scope="workspace-2",
+        domain="library_collections",
+        report={
+            "dry_run": True,
+            "write_enabled": False,
+            "mapped_count": 1,
+            "actions": [
+                {
+                    "identity": {"local_entity_id": "collection-1"},
+                    "local_present": True,
+                    "remote_present": True,
+                }
+            ],
+        },
+    )
+    app.sync_state_repository = repo
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+
+        visible = _visible_text(screen)
+        assert "Mirror: 1 mapped record" not in visible
+        assert "Sync: dry-run only" in visible
 
 
 @pytest.mark.asyncio
