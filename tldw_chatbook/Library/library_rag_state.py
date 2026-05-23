@@ -37,6 +37,20 @@ LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 LIBRARY_RAG_DISPLAY_MAX_LENGTH = 1_000
 LIBRARY_RAG_SNIPPET_MAX_LENGTH = 4_000
 LIBRARY_RAG_TOP_K_MAX = 50
+LIBRARY_RAG_PROVENANCE_KEYS = frozenset(
+    {
+        "active_context_eligible",
+        "active_workspace_id",
+        "authority_label",
+        "evidence_status",
+        "eligibility_reason",
+        "item_type",
+        "source_type",
+        "type",
+        "workspace_id",
+        "workspace_ids",
+    }
+)
 _SCRIPT_BLOCK_PATTERN = re.compile(
     r"<script\b[^>]*>.*?</script\s*>",
     re.IGNORECASE | re.DOTALL,
@@ -488,6 +502,9 @@ class LibraryRagResultRow:
         provenance = (
             dict(provenance_value) if isinstance(provenance_value, Mapping) else {}
         )
+        for key in LIBRARY_RAG_PROVENANCE_KEYS:
+            if key in values and key not in provenance:
+                provenance[key] = values[key]
         result_id = _result_id(source_id, chunk_id, title)
         return cls(
             result_id=result_id,

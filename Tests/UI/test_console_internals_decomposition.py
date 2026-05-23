@@ -6,7 +6,11 @@ from rich.text import Text
 from textual.events import Paste
 from textual.widgets import Button, Footer, Input, Select, Static
 
-from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_destination_shells import (
+    _build_test_app,
+    _wait_for_selector,
+    _wait_for_visible_text,
+)
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
@@ -1532,6 +1536,116 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
         assert "source_id: note-42" in text
         assert "chunk_id: chunk-7" in text
         assert "Review citations before sending." in text
+
+
+@pytest.mark.asyncio
+async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet():
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "citations": [{"label": "Incident Review p.2"}],
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        console.query_one("#console-library-rag-query-input", Input).value = (
+            "Why did the incident happen?"
+        )
+        await _wait_for_console_library_rag_button_state(
+            console,
+            pilot,
+            disabled=False,
+        )
+        console.query_one("#console-run-library-rag", Button).press()
+        await _wait_for_selector(console, pilot, "#console-inspector-evidence")
+
+        text = _visible_text(console)
+        assert "Evidence: 1/1 available (available)" in text
+        assert "Authority: Source authority: local" in text
+        assert "Evidence source: [S1] Incident Review" in text
+        assert "Evidence authority: Source authority: local" in text
+        assert "Evidence status: available" in text
+        assert "Expired credential caused the incident." in text
+        assert "evidence_bundle:" not in text
+
+
+@pytest.mark.asyncio
+async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligible():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "sk-test"}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    service = StaticConsoleLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Other Workspace Note",
+                    "snippet": "This source belongs to another workspace.",
+                    "source_id": "note-other",
+                    "chunk_id": "chunk-other",
+                    "workspace_ids": ["workspace-b"],
+                    "active_workspace_id": "workspace-a",
+                    "runtime_backend": "local-fts",
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        console.query_one("#console-library-rag-query-input", Input).value = (
+            "Summarize this source"
+        )
+        await _wait_for_console_library_rag_button_state(
+            console,
+            pilot,
+            disabled=False,
+        )
+        console.query_one("#console-run-library-rag", Button).press()
+        await _wait_for_selector(console, pilot, "#console-inspector-evidence")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("Answer using the staged RAG evidence")
+        send_button = console.query_one("#console-send-message", Button)
+        await console.handle_console_send_message(Button.Pressed(send_button))
+        await _wait_for_visible_text(
+            console,
+            pilot,
+            "Console send blocked: Library Search/RAG has no available evidence",
+        )
+
+        text = _visible_text(console)
+        assert "Evidence: 0/1 available (blocked)" in text
+        assert "Console send blocked: Library Search/RAG has no available evidence" in text
+        assert "Review source authority before sending." in text
+        assert composer.draft_text() == "Answer using the staged RAG evidence"
 
 
 @pytest.mark.asyncio

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
+from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
@@ -58,6 +59,108 @@ class ConsoleDisplayRow:
     def text(self) -> str:
         suffix = f" - {self.recovery}" if self.recovery else ""
         return f"{self.label}: {self.value}{suffix}"
+
+
+@dataclass(frozen=True)
+class ConsoleEvidenceDisplayState:
+    """Readable Console summary for one staged evidence bundle."""
+
+    summary: str
+    authority: str
+    status: str
+    recovery: str
+    available_count: int
+    total_count: int
+    reference_rows: tuple[ConsoleDisplayRow, ...] = ()
+
+
+def evidence_bundle_from_launch(launch: ConsoleLiveWorkLaunch | None) -> EvidenceBundle | None:
+    """Parse a staged live-work evidence bundle without exposing raw payload text."""
+    if launch is None:
+        return None
+    evidence_payload = launch.payload.get("evidence_bundle")
+    if isinstance(evidence_payload, EvidenceBundle):
+        return evidence_payload
+    if not isinstance(evidence_payload, Mapping):
+        return None
+    try:
+        return EvidenceBundle.from_payload(evidence_payload)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_console_evidence_display_state(
+    launch: ConsoleLiveWorkLaunch | None,
+) -> ConsoleEvidenceDisplayState | None:
+    """Build the user-visible evidence summary for Console staged state."""
+    bundle = evidence_bundle_from_launch(launch)
+    if bundle is None:
+        return None
+
+    total_count = len(bundle.references)
+    available_count = len(bundle.available_references())
+    blocked_count = sum(reference.status == "blocked" for reference in bundle.references)
+    stale_count = sum(reference.status == "stale" for reference in bundle.references)
+    missing_count = sum(reference.status == "missing" for reference in bundle.references)
+    authority = ", ".join(
+        dict.fromkeys(
+            reference.authority_label
+            for reference in bundle.references
+            if reference.authority_label
+        )
+    ) or "unknown"
+    summary = f"{available_count}/{total_count} available ({bundle.status})"
+    recovery = ""
+    if total_count == 0:
+        recovery = "No evidence references are attached."
+    elif available_count == 0:
+        recovery = "No available evidence. Review source authority before sending."
+    elif blocked_count or stale_count or missing_count:
+        warning_parts = []
+        if blocked_count:
+            warning_parts.append(f"{blocked_count} blocked")
+        if stale_count:
+            warning_parts.append(f"{stale_count} stale")
+        if missing_count:
+            warning_parts.append(f"{missing_count} missing")
+        recovery = f"Some evidence needs review: {', '.join(warning_parts)}."
+
+    row_status = "blocked" if available_count == 0 else "ready"
+    reference_rows = []
+    for reference in bundle.references:
+        reference_status = "blocked" if reference.status != "available" else "ready"
+        reference_rows.extend(
+            (
+                ConsoleDisplayRow(
+                    "Evidence source",
+                    f"[{reference.evidence_id}] {reference.title}",
+                    status=reference_status,
+                ),
+                ConsoleDisplayRow(
+                    "Evidence authority",
+                    reference.authority_label,
+                    status=reference_status,
+                ),
+                ConsoleDisplayRow(
+                    "Evidence status",
+                    reference.status,
+                    status=reference_status,
+                ),
+            )
+        )
+        if reference.snippet:
+            reference_rows.append(
+                ConsoleDisplayRow("Snippet", reference.snippet, status=reference_status)
+            )
+    return ConsoleEvidenceDisplayState(
+        summary=summary,
+        authority=authority,
+        status=row_status,
+        recovery=recovery,
+        available_count=available_count,
+        total_count=total_count,
+        reference_rows=tuple(reference_rows),
+    )
 
 
 @dataclass(frozen=True)
@@ -128,14 +231,27 @@ class ConsoleStagedContextState:
         cls,
         launch: ConsoleLiveWorkLaunch,
     ) -> "ConsoleStagedContextState":
-        rows = tuple(
+        rows = []
+        evidence_state = build_console_evidence_display_state(launch)
+        if evidence_state is not None:
+            rows.append(
+                ConsoleDisplayRow(
+                    "Evidence",
+                    evidence_state.summary,
+                    status=evidence_state.status,
+                    recovery=evidence_state.recovery,
+                )
+            )
+            rows.append(ConsoleDisplayRow("Authority", evidence_state.authority))
+            rows.extend(evidence_state.reference_rows)
+        rows.extend(
             ConsoleDisplayRow(label=key, value=value)
             for key, value in launch.payload_display_items()
         )
         return cls(
             heading="Staged Context",
             summary=f"{launch.title} ({launch.source}, {launch.status})",
-            rows=rows,
+            rows=tuple(rows),
             recovery=launch.recovery,
         )
 
@@ -165,6 +281,10 @@ class ConsoleInspectorState:
         provider_ready: bool = True,
         provider_recovery: Any = None,
         rag_status: Any = None,
+        evidence_summary: Any = None,
+        evidence_status: Any = None,
+        evidence_recovery: Any = None,
+        evidence_authority: Any = None,
         artifact_status: Any = None,
         tool_count: int = 0,
         approval_count: int = 0,
@@ -188,13 +308,24 @@ class ConsoleInspectorState:
                 rag_value,
                 status="blocked" if _is_blocked_rag_status(rag_value) else "ready",
             ),
-            ConsoleDisplayRow("Artifacts", _clean(artifact_status, "unavailable")),
             ConsoleDisplayRow(
                 "Approvals",
                 f"{normalized_approval_count} pending",
                 status="blocked" if normalized_approval_count > 0 else "ready",
             ),
         ]
+        if _clean(evidence_summary, ""):
+            rows.append(
+                ConsoleDisplayRow(
+                    "Evidence",
+                    _clean(evidence_summary, ""),
+                    status=_clean(evidence_status, "ready"),
+                    recovery=_clean(evidence_recovery, ""),
+                )
+            )
+        if _clean(evidence_authority, ""):
+            rows.append(ConsoleDisplayRow("Authority", _clean(evidence_authority, "")))
+        rows.append(ConsoleDisplayRow("Artifacts", _clean(artifact_status, "unavailable")))
         actions = [
             ConsoleInspectorAction(
                 widget_id=CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
