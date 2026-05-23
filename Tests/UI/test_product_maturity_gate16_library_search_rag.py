@@ -291,6 +291,11 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
                     "chunk_id": "chunk-7",
                     "runtime_backend": "local-fts",
                     "citations": [{"label": "Incident Review p.2"}],
+                    "provenance": {
+                        "source_type": "note",
+                        "workspace_ids": ("workspace-a",),
+                        "active_workspace_id": "workspace-a",
+                    },
                 }
             ],
             "runtime_backend": "local-fts",
@@ -344,6 +349,11 @@ async def test_library_search_rag_selected_result_launches_console_live_work() -
                     "chunk_id": "chunk-7",
                     "runtime_backend": "local-fts",
                     "citations": [{"label": "Incident Review p.2"}],
+                    "provenance": {
+                        "source_type": "note",
+                        "workspace_ids": ("workspace-a",),
+                        "active_workspace_id": "workspace-a",
+                    },
                 }
             ],
             "runtime_backend": "local-fts",
@@ -376,27 +386,27 @@ async def test_library_search_rag_selected_result_launches_console_live_work() -
         screen.query_one("#library-rag-use-in-console", Button).press()
         await pilot.pause(0.1)
 
-    app.open_console_for_live_work.assert_called_once_with(
-        source="Library Search/RAG",
-        title="Incident Review",
-        payload={
-            "target_id": "local:library-rag:note-42:chunk-7",
-            "result_id": "note-42:chunk-7",
-            "query": query,
-            "title": "Incident Review",
-            "source_id": "note-42",
-            "chunk_id": "chunk-7",
-            "snippet": "Expired credential caused the incident.",
-            "citations": ["Incident Review p.2"],
-            "score": 0.93,
-            "runtime_backend": "local-fts",
-            "source_authority": "local",
-            "source_selector_state": "local",
-        },
-        status="staged",
-        recovery="Review citations before sending.",
-        action_label="Review evidence in Console",
-    )
+    app.open_console_for_live_work.assert_called_once()
+    launch_kwargs = app.open_console_for_live_work.call_args.kwargs
+    assert launch_kwargs["source"] == "Library Search/RAG"
+    assert launch_kwargs["title"] == "Incident Review"
+    assert launch_kwargs["status"] == "staged"
+    assert launch_kwargs["recovery"] == "Review citations before sending."
+    assert launch_kwargs["action_label"] == "Review evidence in Console"
+    payload = launch_kwargs["payload"]
+    assert payload["target_id"] == "local:library-rag:note-42:chunk-7"
+    assert payload["snippet"] == "Expired credential caused the incident."
+    evidence_bundle = payload["evidence_bundle"]
+    evidence_reference = evidence_bundle["references"][0]
+    assert evidence_bundle["query"] == query
+    assert evidence_bundle["status"] == "available"
+    assert evidence_reference["evidence_id"] == "S1"
+    assert evidence_reference["source_id"] == "note-42"
+    assert evidence_reference["source_type"] == "note"
+    assert evidence_reference["snippet"] == "Expired credential caused the incident."
+    assert evidence_reference["authority_label"] == "Workspace: workspace-a"
+    assert evidence_reference["metadata"]["active_context_eligible"] is True
+    assert evidence_reference["metadata"]["global_browse_visible"] is True
     app.open_chat_with_handoff.assert_not_called()
 
 
@@ -442,26 +452,31 @@ async def test_library_search_rag_server_result_launches_server_console_live_wor
         screen.query_one("#library-rag-use-in-console", Button).press()
         await pilot.pause(0.1)
 
-    app.open_console_for_live_work.assert_called_once_with(
-        source="Library Search/RAG",
-        title="Server Incident Review",
-        payload={
-            "target_id": "server:library-rag:server-note-42:chunk-9",
-            "result_id": "server-note-42:chunk-9",
-            "query": query,
-            "title": "Server Incident Review",
-            "source_id": "server-note-42",
-            "chunk_id": "chunk-9",
-            "snippet": "Server retrieval found the authoritative incident record.",
-            "citations": ["Server Incident Review p.4"],
-            "score": 0.88,
-            "runtime_backend": "server-rag",
-            "source_authority": "server",
-            "source_selector_state": "server",
-        },
-        status="staged",
-        recovery="Review citations before sending.",
-        action_label="Review evidence in Console",
+    app.open_console_for_live_work.assert_called_once()
+    launch_kwargs = app.open_console_for_live_work.call_args.kwargs
+    assert launch_kwargs["source"] == "Library Search/RAG"
+    assert launch_kwargs["title"] == "Server Incident Review"
+    assert launch_kwargs["status"] == "staged"
+    assert launch_kwargs["recovery"] == "Review citations before sending."
+    assert launch_kwargs["action_label"] == "Review evidence in Console"
+    payload = launch_kwargs["payload"]
+    assert payload["target_id"] == "server:library-rag:server-note-42:chunk-9"
+    assert payload["result_id"] == "server-note-42:chunk-9"
+    assert payload["query"] == query
+    assert payload["title"] == "Server Incident Review"
+    assert payload["source_id"] == "server-note-42"
+    assert payload["chunk_id"] == "chunk-9"
+    assert payload["snippet"] == "Server retrieval found the authoritative incident record."
+    assert payload["citations"] == ["Server Incident Review p.4"]
+    assert payload["score"] == 0.88
+    assert payload["runtime_backend"] == "server-rag"
+    assert payload["source_authority"] == "server"
+    assert payload["source_selector_state"] == "server"
+    evidence_reference = payload["evidence_bundle"]["references"][0]
+    assert evidence_reference["source_owner"] == "server"
+    assert evidence_reference["authority_label"] == "Source authority: server"
+    assert evidence_reference["snippet"] == (
+        "Server retrieval found the authoritative incident record."
     )
     app.open_chat_with_handoff.assert_not_called()
 
