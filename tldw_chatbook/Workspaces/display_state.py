@@ -86,6 +86,7 @@ class LibraryWorkspaceDepthState:
 
     heading: str
     workspace_label: str
+    workspace_name: str
     visibility_label: str
     handoff_label: str
     context_handoff_enabled: bool
@@ -205,6 +206,17 @@ def build_library_workspace_depth_state(
     The Library remains a global browse/search/edit surface. Workspace context
     only changes whether a source can be staged into active Console/RAG/agent
     context.
+
+    Args:
+        registry_service: Workspace registry service used to read the active
+            workspace, item memberships, and workspace labels. A missing or
+            failing service produces a safe degraded state.
+        source_records: Visible Library records grouped by source type. Records
+            without a stable identifier remain globally visible elsewhere, but
+            are omitted from workspace staging calculations.
+
+    Returns:
+        Renderable Library workspace-depth snapshot for the Library workbench.
     """
 
     if registry_service is None:
@@ -212,6 +224,7 @@ def build_library_workspace_depth_state(
         return LibraryWorkspaceDepthState(
             heading="Workspaces",
             workspace_label="Workspace: unavailable",
+            workspace_name="unavailable",
             visibility_label=LIBRARY_WORKSPACE_VISIBILITY_COPY,
             handoff_label="Console/RAG handoff: blocked until workspace registry is ready",
             context_handoff_enabled=False,
@@ -234,6 +247,7 @@ def build_library_workspace_depth_state(
         return LibraryWorkspaceDepthState(
             heading="Workspaces",
             workspace_label="Workspace: unavailable",
+            workspace_name="unavailable",
             visibility_label=LIBRARY_WORKSPACE_VISIBILITY_COPY,
             handoff_label="Console/RAG handoff: blocked until workspace registry can be read",
             context_handoff_enabled=False,
@@ -250,6 +264,7 @@ def build_library_workspace_depth_state(
         return LibraryWorkspaceDepthState(
             heading="Workspaces",
             workspace_label="Workspace: Local Default",
+            workspace_name="Local Default",
             visibility_label=LIBRARY_WORKSPACE_VISIBILITY_COPY,
             handoff_label=(
                 "Console/RAG handoff: local default source snapshot"
@@ -269,11 +284,19 @@ def build_library_workspace_depth_state(
             recovery_copy="Select a workspace to preview workspace-specific context eligibility.",
         )
 
-    rows = tuple(
-        _library_workspace_source_row(registry_service, active_workspace, source_type, record)
-        for source_type, records in source_records.items()
-        for record in records
-    )
+    workspace_name_cache: dict[str, str] = {}
+    rows: list[LibraryWorkspaceSourceRow] = []
+    for source_type, records in source_records.items():
+        for record in records:
+            row = _library_workspace_source_row(
+                registry_service,
+                active_workspace,
+                source_type,
+                record,
+                workspace_name_cache,
+            )
+            if row is not None:
+                rows.append(row)
     eligible_count = sum(row.active_context_eligible for row in rows)
     blocked_count = len(rows) - eligible_count
     handoff_enabled = bool(rows) and blocked_count == 0
@@ -288,6 +311,7 @@ def build_library_workspace_depth_state(
     return LibraryWorkspaceDepthState(
         heading="Workspaces",
         workspace_label=f"Workspace: {active_workspace.name}",
+        workspace_name=active_workspace.name,
         visibility_label=LIBRARY_WORKSPACE_VISIBILITY_COPY,
         handoff_label=(
             f"Console/RAG handoff: {eligible_count} eligible"
@@ -298,7 +322,7 @@ def build_library_workspace_depth_state(
         source_authority_label=f"Source authority: active workspace {active_workspace.workspace_id}",
         collections_membership_label=LIBRARY_WORKSPACE_COLLECTIONS_COPY,
         import_export_label=LIBRARY_WORKSPACE_IMPORT_EXPORT_COPY,
-        source_rows=rows,
+        source_rows=tuple(rows),
         recovery_copy=(
             "Workspace switching changes context eligibility, not Library visibility."
         ),
@@ -381,10 +405,13 @@ def _library_workspace_source_row(
     active_workspace: WorkspaceRecord,
     source_type: str,
     record: Mapping[str, Any],
-) -> LibraryWorkspaceSourceRow:
+    workspace_name_cache: dict[str, str],
+) -> LibraryWorkspaceSourceRow | None:
     item_type = _library_workspace_item_type(source_type)
     item_id = _library_source_record_id(record)
-    title = _library_source_record_title(record, item_id or "source")
+    if not item_id:
+        return None
+    title = _library_source_record_title(record, item_id)
     memberships = _safe_item_memberships(registry_service, item_type, item_id)
     workspace_ids = tuple(membership.workspace_id for membership in memberships)
     decision = evaluate_workspace_eligibility(
@@ -395,10 +422,14 @@ def _library_workspace_source_row(
     )
     return LibraryWorkspaceSourceRow(
         item_type=item_type,
-        item_id=item_id or "",
+        item_id=item_id,
         title=title,
         workspace_ids=workspace_ids,
-        workspace_label=_library_source_workspace_label(registry_service, workspace_ids),
+        workspace_label=_library_source_workspace_label(
+            registry_service,
+            workspace_ids,
+            workspace_name_cache,
+        ),
         visible=decision.visible,
         active_context_eligible=decision.active_context_eligible,
         authority_label=_library_source_authority_label(workspace_ids),
@@ -443,7 +474,18 @@ def _library_workspace_item_type(source_type: str) -> str:
 
 
 def _library_source_record_id(record: Mapping[str, Any]) -> str | None:
-    for key in ("id", "uuid", "record_id", "backing_id", "source_id"):
+    for key in (
+        "id",
+        "uuid",
+        "record_id",
+        "backing_id",
+        "source_id",
+        "item_id",
+        "media_id",
+        "note_id",
+        "conversation_id",
+        "backing_media_id",
+    ):
         value = record.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -469,6 +511,7 @@ def _library_source_authority_label(workspace_ids: tuple[str, ...]) -> str:
 def _library_source_workspace_label(
     registry_service: Any,
     workspace_ids: tuple[str, ...],
+    workspace_name_cache: dict[str, str],
 ) -> str:
     if not workspace_ids:
         return "Unassigned"
@@ -477,12 +520,18 @@ def _library_source_workspace_label(
         return ", ".join(workspace_ids)
     labels: list[str] = []
     for workspace_id in workspace_ids:
+        cached_label = workspace_name_cache.get(workspace_id)
+        if cached_label is not None:
+            labels.append(cached_label)
+            continue
         try:
             workspace = get_workspace(workspace_id)
         except Exception:
             workspace = None
         workspace_name = getattr(workspace, "name", None)
-        labels.append(workspace_name if workspace_name else workspace_id)
+        label = workspace_name if workspace_name else workspace_id
+        workspace_name_cache[workspace_id] = label
+        labels.append(label)
     return ", ".join(labels)
 
 

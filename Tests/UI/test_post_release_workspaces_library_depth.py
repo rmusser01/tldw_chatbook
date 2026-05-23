@@ -6,6 +6,8 @@ import pytest
 from textual.widgets import Button
 from textual.widgets import Static
 
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     StaticLibraryConversationScopeService,
@@ -130,7 +132,8 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         assert "Blocked: some sources are outside Workspace A" in visible
         assert "Fix: Copy/link blocked sources to Workspace A" in visible
         assert "Study Dashboard" not in visible
-        assert "Local Library snapshot" not in visible
+        snapshot_region = screen.query_one("#library-local-snapshot-region")
+        assert snapshot_region.display is False
         assert screen.query_one("#library-use-in-console", Button).disabled is True
 
         screen.query_one("#library-mode-search", Button).press()
@@ -169,3 +172,69 @@ async def test_library_workspaces_empty_state_keeps_recovery_copy_compact() -> N
         assert "Fix: add Library sources or assign sources to Local Default" not in visible
         import_sources_button = screen.query_one("#library-workspace-import-sources", Button)
         assert import_sources_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_workspaces_rows_escape_markup_text() -> None:
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService(
+        [{"title": "[red]Injected[/red]", "id": "note-markup"}]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-a",
+        name="[bold]Workspace A[/bold]",
+    )
+    app.workspace_registry_service.set_active_workspace("workspace-a")
+    app.workspace_registry_service.link_membership(
+        "workspace-a",
+        item_type="note",
+        item_id="note-markup",
+        title="[red]Injected[/red]",
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-workspaces", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-workspaces-depth-panel")
+
+        row = screen.query_one("#library-workspaces-source-row-0", Static)
+        rendered = str(row.renderable)
+        assert "\\[red]Injected\\[/red]" in rendered
+        assert "\\[bold]Workspace" in rendered
+        assert "[red]Injected[/red]" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_library_workspaces_refresh_reuses_depth_state_for_panel_and_actions(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    _seed_cross_workspace_library(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        original_builder = library_screen_module.build_library_workspace_depth_state
+        calls = 0
+
+        def counting_builder(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original_builder(*args, **kwargs)
+
+        monkeypatch.setattr(
+            library_screen_module,
+            "build_library_workspace_depth_state",
+            counting_builder,
+        )
+        screen.query_one("#library-mode-workspaces", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-workspaces-depth-panel")
+
+        assert calls == 1
