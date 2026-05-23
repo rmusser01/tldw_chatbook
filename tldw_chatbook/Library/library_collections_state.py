@@ -8,6 +8,7 @@ import re
 from typing import Any, Mapping, Sequence
 
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+from tldw_chatbook.Sync_Interop.sync_profile_status_state import SyncProfileStatusDisplay
 
 
 LIBRARY_COLLECTIONS_EMPTY_COPY = "Group saved Library items for Search/RAG, Study, and Console."
@@ -356,6 +357,7 @@ class LibraryCollectionsPanelState:
     create_action: LibraryCollectionActionState
     rename_action: LibraryCollectionActionState
     delete_action: LibraryCollectionActionState
+    sync_profile_status: SyncProfileStatusDisplay | None = None
     error_message: str = ""
     recovery_copy: str = ""
 
@@ -369,6 +371,7 @@ class LibraryCollectionsPanelState:
         error_message: Any = "",
         create_name: Any = "",
         rename_name: Any = None,
+        sync_profile_summary: Mapping[str, Any] | None = None,
     ) -> "LibraryCollectionsPanelState":
         records = tuple(
             LibraryCollectionSummary.from_record(record)
@@ -425,6 +428,11 @@ class LibraryCollectionsPanelState:
         create_action = _create_action(create_name, summary_rows)
         rename_action = _rename_action(rename_name, selected_detail, summary_rows)
         delete_action = _delete_action(selected_detail)
+        sync_profile_status = (
+            SyncProfileStatusDisplay.from_summary(sync_profile_summary)
+            if sync_profile_summary is not None
+            else None
+        )
 
         return cls(
             status=requested_status,
@@ -435,6 +443,7 @@ class LibraryCollectionsPanelState:
             create_action=create_action,
             rename_action=rename_action,
             delete_action=delete_action,
+            sync_profile_status=sync_profile_status,
             error_message=error_copy,
             recovery_copy=recovery_copy,
         )
