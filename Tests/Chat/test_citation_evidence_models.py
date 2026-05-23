@@ -64,6 +64,19 @@ def test_evidence_reference_truncates_large_snippets_without_losing_original_cou
     assert payload["original_snippet_char_count"] == len(long_snippet)
 
 
+def test_evidence_reference_rejects_out_of_range_scores() -> None:
+    with pytest.raises(ValueError, match="less than or equal to 1"):
+        EvidenceReference(
+            evidence_id="S1",
+            source_id="note-1",
+            source_type="note",
+            title="Bad score",
+            snippet="snippet",
+            authority_label="Local Library",
+            score=1.25,
+        )
+
+
 def test_evidence_contract_rejects_unsupported_metadata_payloads() -> None:
     with pytest.raises(TypeError, match="unsupported metadata value"):
         EvidenceReference(
@@ -105,3 +118,91 @@ def test_citation_ref_validates_against_bundle_and_rejects_unknown_status() -> N
 
     with pytest.raises(ValueError, match="Unsupported citation status"):
         CitationRef(evidence_id="S1", source_id="note-1", status="trusted")
+
+
+def test_evidence_payload_round_trip_preserves_falsy_json_identifiers() -> None:
+    restored = EvidenceReference.from_payload(
+        {
+            "evidence_id": 0,
+            "source_id": 0,
+            "source_type": "note",
+            "title": "Zero identifiers",
+            "snippet": "snippet",
+            "authority_label": "Local Library",
+        }
+    )
+    citation = CitationRef.from_payload({"evidence_id": 0, "source_id": 0, "status": "validated"})
+
+    assert restored.evidence_id == "0"
+    assert restored.source_id == "0"
+    assert citation.evidence_id == "0"
+    assert citation.source_id == "0"
+
+
+def test_metadata_payload_omits_nulls_preserves_token_metrics_and_serializes_sets() -> None:
+    reference = EvidenceReference(
+        evidence_id="S1",
+        source_id="note-1",
+        source_type="note",
+        title="Token metrics",
+        snippet="snippet",
+        authority_label="Local Library",
+        metadata={
+            "token": "secret-token",
+            "access_token": "secret-access-token",
+            "total_tokens": 42,
+            "prompt_tokens": 7,
+            "tags": {"beta", "alpha"},
+        },
+    )
+    bundle = EvidenceBundle(bundle_id="bundle-1", query="query", references=(reference,), metadata=None)
+    citation = CitationRef(evidence_id="S1", source_id="note-1", metadata=None)
+
+    metadata = bundle.to_payload()["references"][0]["metadata"]
+
+    assert metadata["total_tokens"] == 42
+    assert metadata["prompt_tokens"] == 7
+    assert sorted(metadata["tags"]) == ["alpha", "beta"]
+    assert "token" not in metadata
+    assert "access_token" not in metadata
+    assert bundle.to_payload()["metadata"] == {}
+    assert citation.to_payload()["metadata"] == {}
+
+
+def test_blocked_evidence_status_remains_visible_when_validating_citation() -> None:
+    bundle = EvidenceBundle(
+        bundle_id="bundle-1",
+        query="query",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="note-1",
+                source_type="note",
+                title="Blocked source",
+                snippet="snippet",
+                authority_label="Workspace: Other",
+                status="blocked",
+            ),
+        ),
+    )
+
+    citation = CitationRef(evidence_id="S1", source_id="note-1", status="validated")
+
+    assert citation.validate_against(bundle).status == "blocked"
+
+
+def test_text_aliases_are_accepted_for_rag_citation_compatibility() -> None:
+    reference = EvidenceReference(
+        evidence_id="S1",
+        source_id="note-1",
+        source_type="note",
+        title="Release notes",
+        text="The feature is enabled.",
+        authority_label="Local Library",
+    )
+    citation = CitationRef(evidence_id="S1", source_id="note-1", text="The feature is enabled.")
+
+    assert reference.snippet == "The feature is enabled."
+    assert EvidenceReference.from_payload({**reference.to_payload(), "text": "ignored"}).snippet == "The feature is enabled."
+    assert citation.quote == "The feature is enabled."
+    assert CitationRef.from_payload({"evidence_id": "S1", "source_id": "note-1", "text": "Alias"}).quote == "Alias"
