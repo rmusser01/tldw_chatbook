@@ -84,7 +84,7 @@ def test_pending_summary_includes_outbox_count_without_implying_write_action() -
     assert display.label == "Sync profile: pending local changes"
     assert display.pending_count == 2
     assert display.detail == (
-        "2 pending local changes are waiting for the next sync pass. No writes start from this view."
+        "2 pending local changes are waiting for the next sync pass."
     )
 
 
@@ -102,5 +102,11 @@ def test_attention_required_summary_prioritizes_conflicts_and_safe_error_copy() 
     assert display.label == "Sync profile: needs attention"
     assert display.conflict_count == 1
     assert display.detail == (
-        "1 sync conflict needs review. Last error is unavailable. No writes start from this view."
+        "1 sync conflict needs review. Last error is unavailable."
     )
+
+
+def test_public_display_adapter_has_google_style_docstrings() -> None:
+    assert "Attributes:" in (SyncProfileStatusDisplay.__doc__ or "")
+    assert "Args:" in (SyncProfileStatusDisplay.from_summary.__doc__ or "")
+    assert "Returns:" in (SyncProfileStatusDisplay.from_summary.__doc__ or "")

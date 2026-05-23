@@ -47,14 +47,17 @@ class LibraryCollectionsPanel(Vertical):
                 yield Static(
                     self.state.sync_profile_status.label,
                     id="library-sync-profile-status",
+                    markup=False,
                 )
                 yield Static(
                     self.state.sync_profile_status.detail,
                     id="library-sync-profile-detail",
+                    markup=False,
                 )
                 yield Static(
                     self.state.sync_profile_status.read_only_notice,
                     id="library-sync-profile-read-only",
+                    markup=False,
                 )
 
         with Horizontal(id="library-collections-workbench"):

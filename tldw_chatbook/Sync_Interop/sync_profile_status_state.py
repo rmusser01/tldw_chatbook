@@ -8,9 +8,6 @@ from typing import Any, Mapping
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
 
-_DANGEROUS_DISPLAY_FRAGMENTS = ("<script", "javascript:", "onerror=", "onclick=")
-
-
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
@@ -19,9 +16,6 @@ def _safe_text(value: Any, fallback: str = "", *, max_length: int = 200) -> str:
     text = sanitize_string(str(value or ""), max_length=max_length).strip()
     text = " ".join(text.split())
     if not text:
-        return fallback
-    lowered = text.lower()
-    if any(fragment in lowered for fragment in _DANGEROUS_DISPLAY_FRAGMENTS):
         return fallback
     if not validate_text_input(text, max_length=max_length, allow_html=False):
         return fallback
@@ -50,7 +44,20 @@ def _status(value: Any) -> str:
 
 @dataclass(frozen=True)
 class SyncProfileStatusDisplay:
-    """Presentation-safe status derived from a Sync v2 profile summary."""
+    """Presentation-safe status derived from a Sync v2 profile summary.
+
+    Attributes:
+        status: Normalized Sync v2 profile status.
+        severity: UI severity token used by the Library status banner.
+        label: Short human-readable banner title.
+        detail: Sanitized status detail copy.
+        pending_count: Count of local outbox changes waiting to sync.
+        dispatched_count: Count of dispatched outbox changes.
+        conflict_count: Count of conflicts that need review.
+        dataset_label: Sanitized dataset label for the active profile.
+        device_label: Sanitized device label for the active profile.
+        read_only_notice: Stable copy explaining the banner does not start sync.
+    """
 
     status: str
     severity: str
@@ -65,7 +72,17 @@ class SyncProfileStatusDisplay:
 
     @classmethod
     def from_summary(cls, summary: Mapping[str, Any] | None) -> "SyncProfileStatusDisplay":
-        """Build display state from repository/service summary data."""
+        """Build display state from repository/service summary data.
+
+        Args:
+            summary: Raw Sync v2 profile summary mapping returned by the repository
+                or service layer. Missing or malformed mappings are treated as not
+                configured.
+
+        Returns:
+            SyncProfileStatusDisplay with normalized counts and sanitized display
+            strings.
+        """
 
         record = _mapping(summary)
         status = _status(record.get("status"))
@@ -134,19 +151,13 @@ def _detail(
     if status == "attention_required":
         if conflict_count:
             suffix = "conflict needs" if conflict_count == 1 else "conflicts need"
-            return (
-                f"{conflict_count} sync {suffix} review. "
-                f"Last error is {last_error}. No writes start from this view."
-            )
-        return f"Sync needs attention. Last error is {last_error}. No writes start from this view."
+            return f"{conflict_count} sync {suffix} review. Last error is {last_error}."
+        return f"Sync needs attention. Last error is {last_error}."
     if status == "pending":
         suffix = "change is" if pending_count == 1 else "changes are"
-        return (
-            f"{pending_count} pending local {suffix} waiting for the next sync pass. "
-            "No writes start from this view."
-        )
+        return f"{pending_count} pending local {suffix} waiting for the next sync pass."
     if status == "ready":
-        return "Local-first sync is ready. No writes start from this view."
+        return "Local-first sync is ready."
     if status == "server_frontend":
         return (
             f"Using {server_profile_id} as a live server front-end. "

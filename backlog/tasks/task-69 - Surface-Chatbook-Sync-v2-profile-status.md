@@ -7,6 +7,16 @@ labels:
 - sync-v2
 - ui-status
 priority: medium
+modified_files:
+- tldw_chatbook/Sync_Interop/sync_profile_status_state.py
+- tldw_chatbook/Sync_Interop/sync_state_repository.py
+- tldw_chatbook/Library/library_collections_state.py
+- tldw_chatbook/Widgets/Library/library_collections_panel.py
+- tldw_chatbook/UI/Screens/library_screen.py
+- Tests/Sync_Interop/test_sync_profile_status_state.py
+- Tests/Library/test_library_collections_state.py
+- Tests/Widgets/test_library_collections_panel.py
+- Tests/UI/test_product_maturity_phase39_library_collections.py
 ---
 
 ## Description
@@ -41,12 +51,39 @@ Verification:
 - `/usr/bin/env PYTHONPYCACHEPREFIX=/tmp/tldw_chatbook_sync_profile_status_pycache ../../.venv/bin/python -m compileall tldw_chatbook/Sync_Interop/sync_profile_status_state.py tldw_chatbook/Library/library_collections_state.py tldw_chatbook/Widgets/Library/library_collections_panel.py tldw_chatbook/UI/Screens/library_screen.py` passed.
 - `/Users/macbook-dev/Documents/GitHub/tldw_server2/.venv/bin/python -m bandit -q -r tldw_chatbook/Sync_Interop/sync_profile_status_state.py tldw_chatbook/Library/library_collections_state.py tldw_chatbook/Widgets/Library/library_collections_panel.py tldw_chatbook/UI/Screens/library_screen.py -f json -o /tmp/bandit_chatbook_sync_profile_status.json` passed.
 - `git diff --check` passed.
+
+PR review follow-up:
+- Validated Sync profile scope values before summary-service calls and gated Library summary loading to server-authoritative runtime state.
+- Disabled Rich markup for Sync profile banner text.
+- Removed duplicated read-only copy from status detail strings because the banner already renders a dedicated read-only notice.
+- Added Google-style docstrings for the public `SyncProfileStatusDisplay` adapter.
+- Removed the duplicate manual dangerous-fragment blacklist and relies on shared input validation with `allow_html=False`.
+
+Review verification:
+- `../../.venv/bin/python -m pytest Tests/Sync_Interop/test_sync_profile_status_state.py Tests/Widgets/test_library_collections_panel.py Tests/UI/test_product_maturity_phase39_library_collections.py::test_library_collections_surfaces_sync_profile_summary_without_write_sync Tests/UI/test_product_maturity_phase39_library_collections.py::test_library_collections_does_not_load_sync_profile_summary_in_local_mode Tests/UI/test_product_maturity_phase39_library_collections.py::test_library_collections_validates_sync_profile_scope_before_summary_load -q` passed with 10 tests.
+- `../../.venv/bin/python -m pytest Tests/Sync_Interop Tests/Library Tests/Widgets/test_library_collections_panel.py Tests/UI/test_product_maturity_phase39_library_collections.py -q` passed with 190 tests.
+- `/usr/bin/env PYTHONPYCACHEPREFIX=/tmp/tldw_chatbook_sync_profile_status_pycache ../../.venv/bin/python -m compileall tldw_chatbook/Sync_Interop/sync_profile_status_state.py tldw_chatbook/Library/library_collections_state.py tldw_chatbook/Widgets/Library/library_collections_panel.py tldw_chatbook/UI/Screens/library_screen.py` passed.
+- `/Users/macbook-dev/Documents/GitHub/tldw_server2/.venv/bin/python -m bandit -q -r tldw_chatbook/Sync_Interop/sync_profile_status_state.py tldw_chatbook/Library/library_collections_state.py tldw_chatbook/Widgets/Library/library_collections_panel.py tldw_chatbook/UI/Screens/library_screen.py -f json -o /tmp/bandit_chatbook_sync_profile_status_review.json` passed.
+- `git diff --check` passed.
+
+Rebase follow-up:
+- Rebased `codex/sync-profile-status` onto latest `origin/dev`.
+- Preserved newer write-sync promotion labels/tests from `dev` while keeping Sync profile status tests.
+- Updated Sync v2 profile summary identity/conflict aggregation for the domain-qualified `source_scope_key` shape now present on `dev`.
+
+Rebase verification:
+- `../../.venv/bin/python -m pytest Tests/Sync_Interop/test_sync_profile_status_state.py Tests/Widgets/test_library_collections_panel.py Tests/UI/test_product_maturity_phase39_library_collections.py::test_library_collections_surfaces_sync_profile_summary_without_write_sync Tests/UI/test_product_maturity_phase39_library_collections.py::test_library_collections_does_not_load_sync_profile_summary_in_local_mode Tests/UI/test_product_maturity_phase39_library_collections.py::test_library_collections_validates_sync_profile_scope_before_summary_load -q` passed with 11 tests.
+- `../../.venv/bin/python -m pytest Tests/Sync_Interop/test_sync_scope_service.py::test_sync_scope_service_returns_sync_v2_profile_summary Tests/Sync_Interop/test_sync_state_repository.py::test_sync_v2_profile_summary_aggregates_state_counts_and_status Tests/Sync_Interop/test_sync_state_repository.py::test_sync_v2_profile_summary_scopes_none_principal_and_workspace_exactly -q` passed with 3 tests.
+- `../../.venv/bin/python -m pytest Tests/Sync_Interop Tests/Library Tests/Widgets/test_library_collections_panel.py Tests/UI/test_product_maturity_phase39_library_collections.py -q` passed with 205 tests.
+- `/usr/bin/env PYTHONPYCACHEPREFIX=/tmp/tldw_chatbook_sync_profile_status_pycache ../../.venv/bin/python -m compileall tldw_chatbook/Sync_Interop/sync_profile_status_state.py tldw_chatbook/Sync_Interop/sync_state_repository.py tldw_chatbook/Library/library_collections_state.py tldw_chatbook/Widgets/Library/library_collections_panel.py tldw_chatbook/UI/Screens/library_screen.py` passed.
+- `/Users/macbook-dev/Documents/GitHub/tldw_server2/.venv/bin/python -m bandit -q -r tldw_chatbook/Sync_Interop/sync_profile_status_state.py tldw_chatbook/Sync_Interop/sync_state_repository.py tldw_chatbook/Library/library_collections_state.py tldw_chatbook/Widgets/Library/library_collections_panel.py tldw_chatbook/UI/Screens/library_screen.py -f json -o /tmp/bandit_chatbook_sync_profile_status_rebase.json` reported three pre-existing B608 findings in `sync_state_repository.py` outside this branch's diff; no new Bandit finding is on changed lines.
+- `git diff --check` passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Surfaced Sync v2 profile summary status in the Library Collections running-app workflow. Users can now see read-only profile state, pending work, conflict/error attention, and dataset/device identity context without triggering sync writes.
+Surfaced Sync v2 profile summary status in the Library Collections running-app workflow and addressed PR review feedback. Users can see read-only profile state, pending work, conflict/error attention, and dataset/device identity context without triggering sync writes. Review follow-up validates sync scope inputs before summary loads, gates status loading to server runtime state, disables Rich markup for banner text, removes duplicated read-only detail copy, and documents the public display adapter. Rebase follow-up preserved newer write-sync promotion coverage from dev and updated Sync v2 profile summary aggregation to remain compatible with domain-qualified sync scope keys.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done

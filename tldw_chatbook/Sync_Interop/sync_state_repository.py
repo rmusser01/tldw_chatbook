@@ -1337,22 +1337,31 @@ class SyncStateRepository(BaseDB):
         authenticated_principal_id: str | None,
         workspace_scope: str | None,
     ) -> dict[str, Any]:
-        scope_prefix = _source_scope_prefix(
-            source_authority="server",
-            server_profile_id=server_profile_id,
-            authenticated_principal_id=authenticated_principal_id,
-            workspace_scope=workspace_scope,
-        )
         summary: dict[str, Any] = {"total": 0, "by_domain": {}}
         with self._get_connection() as conn:
             rows = conn.execute(
                 """
                 SELECT mapping_status, domain, COUNT(*) AS count
                 FROM sync_identity_mappings
-                WHERE source_scope_key LIKE ?
+                WHERE source_authority = 'server'
+                  AND server_profile_id = ?
+                  AND (
+                    authenticated_principal_id = ?
+                    OR (authenticated_principal_id IS NULL AND ? IS NULL)
+                  )
+                  AND (
+                    workspace_scope = ?
+                    OR (workspace_scope IS NULL AND ? IS NULL)
+                  )
                 GROUP BY mapping_status, domain
                 """,
-                (f"{scope_prefix}:%",),
+                (
+                    server_profile_id,
+                    authenticated_principal_id,
+                    authenticated_principal_id,
+                    workspace_scope,
+                    workspace_scope,
+                ),
             ).fetchall()
         for row in rows:
             status = row["mapping_status"]
@@ -1371,11 +1380,14 @@ class SyncStateRepository(BaseDB):
         authenticated_principal_id: str | None,
         workspace_scope: str | None,
     ) -> dict[str, Any]:
-        scope_prefix = _source_scope_prefix(
-            source_authority="server",
-            server_profile_id=server_profile_id,
-            authenticated_principal_id=authenticated_principal_id,
-            workspace_scope=workspace_scope,
+        scope_prefix = ":".join(
+            (
+                "server",
+                server_profile_id,
+                _scope_component(authenticated_principal_id),
+                _scope_component(workspace_scope),
+                "",
+            )
         )
         with self._get_connection() as conn:
             rows = conn.execute(
@@ -1386,7 +1398,7 @@ class SyncStateRepository(BaseDB):
                 ORDER BY conflict_id DESC
                 LIMIT 5
                 """,
-                (f"{scope_prefix}:%",),
+                (f"{scope_prefix}%",),
             ).fetchall()
             count_row = conn.execute(
                 """
@@ -1394,7 +1406,7 @@ class SyncStateRepository(BaseDB):
                 FROM sync_conflict_reports
                 WHERE source_scope_key LIKE ?
                 """,
-                (f"{scope_prefix}:%",),
+                (f"{scope_prefix}%",),
             ).fetchone()
         latest = [dict(row) for row in rows]
         for report in latest:

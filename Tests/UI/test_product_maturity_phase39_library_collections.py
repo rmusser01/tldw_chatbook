@@ -351,6 +351,90 @@ async def test_library_collections_surfaces_sync_profile_summary_without_write_s
 
 
 @pytest.mark.asyncio
+async def test_library_collections_does_not_load_sync_profile_summary_in_local_mode() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.runtime_policy = SimpleNamespace(
+        state=RuntimeSourceState(
+            active_source="local",
+            server_configured=True,
+            active_server_id="server-a",
+        )
+    )
+    app.library_collections_service = FakeLibraryCollectionsService(
+        (
+            LibraryCollectionRecord(
+                collection_id="collection-1",
+                name="Research",
+                description="Policy sources",
+                item_count=2,
+                source_authority="local",
+                sync_status="local-only",
+                created_at="2026-05-08T04:00:00Z",
+                updated_at="2026-05-08T04:05:00Z",
+            ),
+        )
+    )
+    sync_scope = FakeSyncProfileSummaryService({"status": "pending"})
+    app.sync_scope_service = sync_scope
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+
+        assert len(screen.query("#library-sync-profile-status")) == 0
+        assert sync_scope.summary_calls == []
+        assert sync_scope.push_calls == []
+        assert sync_scope.pull_calls == []
+
+
+@pytest.mark.asyncio
+async def test_library_collections_validates_sync_profile_scope_before_summary_load() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.runtime_policy = SimpleNamespace(
+        state=RuntimeSourceState(
+            active_source="server",
+            server_configured=True,
+            active_server_id="server-a<script>",
+        )
+    )
+    app.library_collections_service = FakeLibraryCollectionsService(
+        (
+            LibraryCollectionRecord(
+                collection_id="collection-1",
+                name="Research",
+                description="Policy sources",
+                item_count=2,
+                source_authority="local",
+                sync_status="local-only",
+                created_at="2026-05-08T04:00:00Z",
+                updated_at="2026-05-08T04:05:00Z",
+            ),
+        )
+    )
+    sync_scope = FakeSyncProfileSummaryService({"status": "pending"})
+    app.sync_scope_service = sync_scope
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+
+        assert len(screen.query("#library-sync-profile-status")) == 0
+        assert sync_scope.summary_calls == []
+        assert sync_scope.push_calls == []
+        assert sync_scope.pull_calls == []
+
+
+@pytest.mark.asyncio
 async def test_library_collections_scopes_sync_conflicts_to_selected_collection(tmp_path) -> None:
     app = _build_test_app()
     _activate_server_sync_scope(app)
