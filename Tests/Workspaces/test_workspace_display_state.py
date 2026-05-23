@@ -89,13 +89,38 @@ def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: 
 
     assert state.workspace_label == "Workspace: Research Sprint"
     assert state.authority_label == "Authority: local-only"
-    assert state.sync_label == "Sync: ready"
+    assert state.sync_label == "Sync: dry-run only"
     assert state.runtime_label == "Runtime: 1 binding, 0 ready"
     assert state.conversation_rows[0].title == "Planning thread"
     assert state.conversation_rows[0].selected is True
     assert state.change_workspace_enabled is False
     assert state.new_conversation_enabled is False
     assert "later slice" in state.new_conversation_recovery.lower()
+
+
+def test_console_workspace_state_maps_workspace_sync_status_before_promotion(tmp_path: Path) -> None:
+    expected_labels = {
+        WorkspaceSyncStatus.NOT_CONFIGURED: "Sync: not configured",
+        WorkspaceSyncStatus.SYNCING: "Sync: syncing",
+        WorkspaceSyncStatus.BLOCKED: "Sync: blocked",
+        WorkspaceSyncStatus.CONFLICT: "Sync: conflict review required",
+    }
+
+    for sync_status, expected_label in expected_labels.items():
+        service = _registry(tmp_path / sync_status.value)
+        service.create_workspace(
+            workspace_id=f"ws-{sync_status.value}",
+            name=f"Workspace {sync_status.value}",
+            sync_status=sync_status,
+        )
+        service.set_active_workspace(f"ws-{sync_status.value}")
+
+        state = build_console_workspace_state(
+            registry_service=service,
+            current_conversation=None,
+        )
+
+        assert state.sync_label == expected_label
 
 
 def test_console_workspace_state_derives_conversation_rows_from_memberships(

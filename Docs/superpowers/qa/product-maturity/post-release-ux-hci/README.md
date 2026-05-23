@@ -42,6 +42,16 @@ This index exists because prior mounted layout checks and phase closeout evidenc
 
 Current workflow evidence: `2026-05-22-cross-screen-workflow-validation.md`.
 
+Current write-sync safety evidence: `2026-05-22-write-sync-safety.md`.
+
+## Write Sync Safety Evidence
+
+| Surface | Evidence Status | Screenshot Approval | Functionality Status | Follow-Up |
+| --- | --- | --- | --- | --- |
+| Settings Sync Safety | recorded | approved | visibility-only contract; no write controls exposed | `TASK-60.4.2` verified |
+| Library Collections Sync Safety | recorded | approved | selected Collection inspector explains dry-run authority, review, conflict, and rollback labels | `TASK-60.4.2` verified |
+| Console Workspace Sync Safety | recorded | approved | workspace rail exposes shared sync safety label while mutation remains blocked | `TASK-60.4.2` verified |
+
 ## Severity Rules
 
 | Severity | Meaning | Close Rule |

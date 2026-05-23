@@ -77,7 +77,7 @@ async def test_console_workspace_context_renders_active_workspace() -> None:
 
         text = _visible_text(console)
         assert "Workspace: Research Sprint" in text
-        assert "Sync: ready" in text
+        assert "Sync: dry-run only" in text
         assert "Planning thread" in text
 
 

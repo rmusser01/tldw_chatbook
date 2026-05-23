@@ -811,6 +811,36 @@
     text-style: bold;
 }
 
+.settings-active-section {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.settings-focus-card {
+    width: 100%;
+    min-height: 10;
+    padding: 1;
+    margin: 0 0 1 0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+.settings-secondary-card {
+    width: 100%;
+    min-height: 6;
+    padding: 1;
+    margin: 0 0 1 0;
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+}
+
+.settings-sync-safety-row {
+    width: 100%;
+    padding: 0 1;
+    background: $ds-surface-raised;
+}
+
 #library-source-browser,
 #library-source-detail,
 #library-source-inspector {

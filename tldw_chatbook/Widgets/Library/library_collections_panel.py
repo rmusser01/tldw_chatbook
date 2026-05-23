@@ -66,8 +66,17 @@ class LibraryCollectionsPanel(Vertical):
                         selected.description or "No description.",
                         id="library-collection-description",
                     )
+                    yield Static(
+                        "Write Sync Safety",
+                        id="library-collection-sync-safety-heading",
+                        classes="destination-section",
+                    )
+                    yield Static(
+                        "Review these labels before any future server write promotion.",
+                        id="library-collection-sync-safety-help",
+                    )
                     yield Static(selected.sync_status_label, id="library-collection-sync-status")
-                    if selected.sync_status != "local-only":
+                    if selected.sync_status != "local-only" or selected.sync_status_label != "Sync: local-only":
                         yield Static(
                             selected.sync_status_detail,
                             id="library-collection-sync-detail",
