@@ -155,6 +155,38 @@ def _sync_status_detail(record: Any, sync_status: str) -> str:
     return "This Collection is local-only. No sync writes will be queued."
 
 
+def _sync_promotion_state(record: Any) -> Mapping[str, Any]:
+    return _as_mapping(_value(record, "sync_promotion_state"))
+
+
+def _sync_promotion_label(record: Any) -> str:
+    promotion_state = _sync_promotion_state(record)
+    return _safe_display_text(
+        promotion_state.get("sync_label"),
+        "",
+        max_length=120,
+    )
+
+
+def _sync_promotion_detail(record: Any) -> str:
+    promotion_state = _sync_promotion_state(record)
+    if not promotion_state:
+        return ""
+    labels = (
+        promotion_state.get("authority_label"),
+        promotion_state.get("mirror_label"),
+        promotion_state.get("review_label"),
+        promotion_state.get("conflict_label"),
+        promotion_state.get("rollback_label"),
+        promotion_state.get("primary_recovery"),
+    )
+    visible = tuple(
+        _safe_display_text(label, "", max_length=180)
+        for label in labels
+    )
+    return " | ".join(label for label in visible if label)
+
+
 def _updated_at_label(value: Any) -> str:
     text = _collapse(value)
     if not text:
@@ -212,12 +244,15 @@ class LibraryCollectionSummary:
     source_authority: str
     sync_status: str
     sync_status_detail: str
+    sync_status_label_override: str
     created_at: str
     updated_at: str
     selected: bool = False
 
     @property
     def sync_status_label(self) -> str:
+        if self.sync_status_label_override:
+            return self.sync_status_label_override
         return _sync_status_label(self.sync_status)
 
     @property
@@ -238,6 +273,8 @@ class LibraryCollectionSummary:
             max_length=LIBRARY_COLLECTIONS_NAME_MAX_LENGTH,
         )
         sync_status = _sync_status_from_record(record)
+        sync_promotion_label = _sync_promotion_label(record)
+        sync_promotion_detail = _sync_promotion_detail(record)
         return cls(
             collection_id=collection_id,
             name=name,
@@ -253,7 +290,8 @@ class LibraryCollectionSummary:
                 max_length=64,
             ),
             sync_status=sync_status,
-            sync_status_detail=_sync_status_detail(record, sync_status),
+            sync_status_detail=sync_promotion_detail or _sync_status_detail(record, sync_status),
+            sync_status_label_override=sync_promotion_label,
             created_at=_collapse(_value(record, "created_at")),
             updated_at=_collapse(_value(record, "updated_at")),
             selected=selected,
@@ -271,11 +309,14 @@ class LibraryCollectionDetail:
     source_authority: str
     sync_status: str
     sync_status_detail: str
+    sync_status_label_override: str
     created_at: str
     updated_at: str
 
     @property
     def sync_status_label(self) -> str:
+        if self.sync_status_label_override:
+            return self.sync_status_label_override
         return _sync_status_label(self.sync_status)
 
     @property
@@ -297,6 +338,7 @@ class LibraryCollectionDetail:
             source_authority=summary.source_authority,
             sync_status=summary.sync_status,
             sync_status_detail=summary.sync_status_detail,
+            sync_status_label_override=summary.sync_status_label_override,
             created_at=summary.created_at,
             updated_at=summary.updated_at,
         )
@@ -359,6 +401,7 @@ class LibraryCollectionsPanelState:
                 source_authority=record.source_authority,
                 sync_status=record.sync_status,
                 sync_status_detail=record.sync_status_detail,
+                sync_status_label_override=record.sync_status_label_override,
                 created_at=record.created_at,
                 updated_at=record.updated_at,
                 selected=record.collection_id == selected_id,

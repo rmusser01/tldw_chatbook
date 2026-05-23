@@ -2540,10 +2540,18 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         assert "Settings Sections" in text
         assert "Preference Detail" in text
         assert "Scope Inspector" in text
+        assert "Sync Safety" in text
+        assert "Write Sync Safety" in text
+        assert "This screen is a visibility contract, not an enablement panel." in text
+        assert "Collections: Sync: dry-run only" in text
+        assert "Workspaces: Sync: dry-run only" in text
+        assert "Mutation replay: disabled" in text
+        assert "No write-sync controls are available here." in text
         assert "Column 1:" not in text
         assert "Column 2:" not in text
         assert "Column 3:" not in text
         assert screen.query_one("#settings-workbench").region.height >= 20
+        assert screen.query_one("#settings-sync-safety-card").region.height >= 6
         category_pane = screen.query_one("#settings-category-pane")
         detail_pane = screen.query_one("#settings-detail-pane")
         impact_pane = screen.query_one("#settings-impact-pane")

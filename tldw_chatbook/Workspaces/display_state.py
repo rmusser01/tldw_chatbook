@@ -7,8 +7,15 @@ from typing import Any, Iterable
 
 from loguru import logger
 
+from tldw_chatbook.Sync_Interop.sync_promotion_state import build_sync_promotion_state
+from tldw_chatbook.Sync_Interop.sync_readiness import (
+    DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
+    build_sync_readiness_report,
+)
+
 from .models import (
     RuntimeBindingStatus,
+    WorkspaceAuthority,
     WorkspaceRecord,
     WorkspaceRuntimeBinding,
 )
@@ -130,7 +137,7 @@ def build_console_workspace_state(
         heading="Convos & Workspaces",
         workspace_label=f"Workspace: {active_workspace.name}",
         authority_label=f"Authority: {active_workspace.authority.value}",
-        sync_label=f"Sync: {active_workspace.sync_status.value}",
+        sync_label=_workspace_sync_label(active_workspace),
         runtime_label=_runtime_label(runtime_bindings),
         conversation_rows=rows,
         conversation_empty_copy="No conversations in this workspace yet.",
@@ -207,6 +214,32 @@ def _runtime_label(bindings: tuple[WorkspaceRuntimeBinding, ...]) -> str:
         f"Runtime: {len(bindings)} {_plural('binding', len(bindings))}, "
         f"{ready_count} ready"
     )
+
+
+def _workspace_sync_label(active_workspace: WorkspaceRecord) -> str:
+    readiness = build_sync_readiness_report(
+        domain="workspaces",
+        server_profile_id=None,
+        workspace_id=active_workspace.workspace_id,
+        registry=DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
+    )
+    source_authority = (
+        "server"
+        if active_workspace.authority
+        in {
+            WorkspaceAuthority.SERVER_BACKED,
+            WorkspaceAuthority.SYNCING_FROM_SERVER,
+            WorkspaceAuthority.REMOTE_ONLY,
+        }
+        else "local"
+    )
+    return build_sync_promotion_state(
+        domain="workspaces",
+        surface_label="Workspaces",
+        readiness=readiness,
+        source_authority=source_authority,
+        workspace_id=active_workspace.workspace_id,
+    ).sync_label
 
 
 def _plural(label: str, count: int) -> str:

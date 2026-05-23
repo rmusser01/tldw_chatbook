@@ -210,9 +210,22 @@ async def test_library_collections_surfaces_sync_dry_run_report_without_write_sy
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
         visible = _visible_text(screen)
-        assert "Sync dry-run: ready" in visible
-        assert "Read-only mirror check: 1 mapped record. No writes will be queued." in visible
-        assert "write sync" not in visible.lower()
+        assert "Sync: dry-run only" in visible
+        assert "Mirror: 1 mapped record" in visible
+        assert "Review: required before writes" in visible
+        assert "Review dry-run results before enabling writes." in visible
+        assert "write sync enabled" not in visible.lower()
+        inspector_text = " ".join(
+            str(widget.renderable)
+            for widget in screen.query("#library-source-inspector Static")
+        )
+        assert "Selected Collection" in inspector_text
+        assert "Research" in inspector_text
+        assert "What this means" in inspector_text
+        assert "This is a read-only sync dry run. No server writes can run from this screen." in (
+            inspector_text
+        )
+        assert "No source selected." not in inspector_text
 
 
 @pytest.mark.asyncio
@@ -296,8 +309,8 @@ async def test_library_collections_scopes_sync_conflicts_to_selected_collection(
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
         visible = _visible_text(screen)
-        assert "Sync dry-run: ready" in visible
-        assert "Sync dry-run: conflicts" not in visible
+        assert "Sync: dry-run only" in visible
+        assert "Sync: conflict review required" not in visible
 
 
 @pytest.mark.asyncio
@@ -326,7 +339,7 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
 
         assert service.created == [("Research", "Policy sources")]
         assert "0 items" in _visible_text(screen)
-        assert "Sync dry-run: unsupported" in _visible_text(screen)
+        assert "Sync: dry-run only" in _visible_text(screen)
         assert "Updated 2026-05-08 04:01 UTC" in _visible_text(screen)
 
         screen.query_one("#library-collection-name-input", Input).value = "Briefing Queue"

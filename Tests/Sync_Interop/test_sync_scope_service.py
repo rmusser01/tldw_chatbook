@@ -212,6 +212,71 @@ def test_sync_scope_service_requires_repository_for_dry_run_mirror_reports():
         )
 
 
+def test_sync_scope_service_lists_write_sync_promotion_states_without_dispatch(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    repo.record_mirror_report(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="notes",
+        report={
+            "dry_run": True,
+            "write_enabled": False,
+            "mapped_count": 2,
+            "actions": [],
+        },
+    )
+    server = FakeSyncService()
+    scope = SyncScopeService(server_service=server, state_repository=repo)
+
+    states = scope.list_write_sync_promotion_states(
+        domains=["notes", "unknown"],
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert [state.domain for state in states] == ["notes", "unknown"]
+    assert states[0].status == "dry-run"
+    assert states[0].sync_label == "Sync: dry-run only"
+    assert states[0].mirror_label == "Mirror: 2 mapped records"
+    assert states[0].mutation_allowed is False
+    assert states[1].status == "unavailable"
+    assert states[1].sync_label == "Sync: unavailable"
+    assert states[1].mutation_allowed is False
+    assert server.calls == []
+
+
+def test_sync_scope_service_write_sync_promotion_state_reports_profile_rollback_without_dispatch(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        last_error="rollback required before promotion can continue",
+    )
+    server = FakeSyncService()
+    scope = SyncScopeService(server_service=server, state_repository=repo)
+
+    states = scope.list_write_sync_promotion_states(
+        domains=["notes"],
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert len(states) == 1
+    assert states[0].status == "rollback-required"
+    assert states[0].sync_label == "Sync: rollback required"
+    assert states[0].rollback_label == "Rollback: required before writes"
+    assert states[0].mutation_allowed is False
+    assert server.calls == []
+
+
 @pytest.mark.asyncio
 async def test_sync_scope_service_prepares_local_only_mode_without_sync_side_effects(tmp_path):
     repo = SyncStateRepository(tmp_path / "sync_state.db")

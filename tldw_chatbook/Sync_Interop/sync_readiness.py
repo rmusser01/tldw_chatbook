@@ -112,6 +112,20 @@ DEFAULT_SYNC_ELIGIBILITY_REGISTRY = SyncEligibilityRegistry(
                 "mode": "read_only_mirror_report",
                 "write_gate": "chat_server_identity_not_ready",
             },
-        )
+        ),
+        SyncDomainEligibility(
+            domain="library_collections",
+            sync_eligible=True,
+            write_enabled=False,
+            reason_codes=("dry_run_only",),
+            details={"mode": "read_only_mirror_report"},
+        ),
+        SyncDomainEligibility(
+            domain="workspaces",
+            sync_eligible=True,
+            write_enabled=False,
+            reason_codes=("dry_run_only",),
+            details={"mode": "read_only_mirror_report"},
+        ),
     ]
 )

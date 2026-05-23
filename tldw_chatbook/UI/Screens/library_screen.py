@@ -26,7 +26,8 @@ from ...Library.library_rag_service import (
 )
 from ...Library.library_rag_state import LibraryRagPanelState
 from ...runtime_policy.types import PolicyDeniedError
-from ...Sync_Interop.sync_readiness import build_sync_readiness_report
+from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
+from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
@@ -613,6 +614,33 @@ class LibraryScreen(BaseAppScreen):
             rename_name=self._library_collection_name_input,
         )
 
+    def _collections_inspector_rows(
+        self,
+        panel_state: LibraryCollectionsPanelState,
+    ) -> tuple[Static, ...]:
+        selected = panel_state.selected_collection
+        if selected is None:
+            return (
+                Static("Collections Inspector", id="library-inspector-title", classes="destination-section"),
+                Static("No Collection selected.", id="library-collection-inspector-empty"),
+                Static(
+                    "Select a Collection to inspect its source scope and read-only sync-safety labels.",
+                    id="library-collection-inspector-empty-next-action",
+                ),
+            )
+        return (
+            Static("Selected Collection", id="library-inspector-title", classes="destination-section"),
+            Static(selected.name, id="library-collection-inspector-name"),
+            Static(selected.item_count_label, id="library-collection-inspector-item-count"),
+            Static("What this means", classes="destination-section"),
+            Static(
+                "This is a read-only sync dry run. No server writes can run from this screen.",
+                id="library-collection-inspector-sync-meaning",
+            ),
+            Static(selected.sync_status_label, id="library-collection-inspector-sync-status"),
+            Static(selected.sync_status_detail, id="library-collection-inspector-sync-detail"),
+        )
+
     def compose_content(self) -> ComposeResult:
         has_sources = self._has_local_sources()
         status_label = self._status_label()
@@ -817,6 +845,8 @@ class LibraryScreen(BaseAppScreen):
                                 id="library-rag-inspector",
                                 classes="library-rag-region",
                             )
+                        elif collections_panel_state is not None:
+                            yield from self._collections_inspector_rows(collections_panel_state)
                         else:
                             yield Static("Inspector", id="library-inspector-title", classes="destination-section")
                             yield Static(LIBRARY_INSPECTOR_EMPTY_COPY, id="library-inspector-empty")
@@ -945,6 +975,10 @@ class LibraryScreen(BaseAppScreen):
                 )
             )
             return
+        if self._active_mode == "collections":
+            for row in self._collections_inspector_rows(self._library_collections_panel_state()):
+                await region.mount(row)
+            return
         await region.mount(
             Static("Inspector", id="library-inspector-title", classes="destination-section")
         )
@@ -976,6 +1010,7 @@ class LibraryScreen(BaseAppScreen):
             ),
             after="#library-active-mode-next-action",
         )
+        await self._sync_inspector_mode_region(None)
 
     async def _refresh_collections_panel_action_state_widgets(self) -> None:
         if self._active_mode != "collections" or not list(self.query("#library-collections-panel")):
@@ -1078,6 +1113,7 @@ class LibraryScreen(BaseAppScreen):
             domain="library_collections",
             server_profile_id=None,
             workspace_id=None,
+            registry=DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
         )
         readiness_record = {
             "sync_eligible": readiness.sync_eligible,
@@ -1091,9 +1127,30 @@ class LibraryScreen(BaseAppScreen):
             collection_id = str(_record_value(record, "collection_id", ""))
             record_data = _library_collection_record_data(record)
             collection_report = _collection_scoped_mirror_report(latest_report, collection_id)
+            collection_conflicts = _collection_scoped_conflicts(conflict_reports, collection_id)
             record_data["sync_mirror_report"] = collection_report or {}
             record_data["sync_readiness_report"] = readiness_record
-            record_data["sync_conflicts"] = _collection_scoped_conflicts(conflict_reports, collection_id)
+            record_data["sync_conflicts"] = collection_conflicts
+            explicit_status = str(_record_value(record, "sync_status", "local-only") or "").lower()
+            if explicit_status in {"", "local-only"} or collection_report or collection_conflicts:
+                promotion_state = build_sync_promotion_state(
+                    domain="library_collections",
+                    surface_label="Collections",
+                    readiness=readiness,
+                    latest_mirror_report=collection_report,
+                    conflict_reports=collection_conflicts,
+                    source_authority=_record_value(record, "source_authority", "local"),
+                )
+                record_data["sync_promotion_state"] = {
+                    "authority_label": promotion_state.authority_label,
+                    "sync_label": promotion_state.sync_label,
+                    "review_label": promotion_state.review_label,
+                    "conflict_label": promotion_state.conflict_label,
+                    "rollback_label": promotion_state.rollback_label,
+                    "mirror_label": promotion_state.mirror_label,
+                    "primary_recovery": promotion_state.primary_recovery,
+                    "mutation_allowed": promotion_state.mutation_allowed,
+                }
             if collection_report:
                 record_data["sync_status"] = ""
             elif (

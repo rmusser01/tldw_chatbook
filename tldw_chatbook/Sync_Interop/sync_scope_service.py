@@ -10,6 +10,7 @@ from tldw_chatbook.runtime_policy.server_parity_models import SyncIdentityMapEnt
 
 from .sync_state import SyncV2ProfileMode, is_local_first_sync_profile_mode
 from .sync_mirror_report import build_sync_mirror_report
+from .sync_promotion_state import SyncPromotionState, build_sync_promotion_state
 from .sync_readiness import (
     DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
     SyncEligibilityRegistry,
@@ -194,6 +195,60 @@ class SyncScopeService:
                 }
             )
         return unsupported
+
+    def list_write_sync_promotion_states(
+        self,
+        *,
+        domains: list[str],
+        server_profile_id: str | None = None,
+        authenticated_principal_id: str | None = None,
+        workspace_scope: str | None = None,
+        registry: SyncEligibilityRegistry | None = None,
+        surface_labels: dict[str, str] | None = None,
+    ) -> list[SyncPromotionState]:
+        """Return read-only write-sync promotion labels for UI surfaces.
+
+        This helper intentionally does not dispatch transport calls or drain local
+        outbox entries. It only summarizes readiness, mirror, conflict, and
+        profile rollback signals that are already persisted locally.
+        """
+
+        eligibility_registry = registry or DEFAULT_SYNC_ELIGIBILITY_REGISTRY
+        repo = self.state_repository
+        profile_state = None
+        if repo is not None and server_profile_id:
+            profile_state = repo.get_sync_v2_profile_state(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+            )
+
+        states: list[SyncPromotionState] = []
+        for domain in domains:
+            readiness = build_sync_readiness_report(
+                domain=domain,
+                server_profile_id=server_profile_id,
+                workspace_id=workspace_scope,
+                registry=eligibility_registry,
+            )
+            latest_mirror_report = None
+            conflict_reports = ()
+            if repo is not None:
+                latest_mirror_report = repo.get_latest_mirror_report(domain=domain)
+                conflict_reports = tuple(repo.list_conflict_reports(domain=domain))
+            states.append(
+                build_sync_promotion_state(
+                    domain=domain,
+                    surface_label=(surface_labels or {}).get(domain, domain.replace("_", " ").title()),
+                    readiness=readiness,
+                    latest_mirror_report=latest_mirror_report,
+                    conflict_reports=conflict_reports,
+                    profile_state=profile_state,
+                    source_authority="server" if server_profile_id else "local",
+                    workspace_id=workspace_scope,
+                )
+            )
+        return states
 
     async def send_changes(
         self,
