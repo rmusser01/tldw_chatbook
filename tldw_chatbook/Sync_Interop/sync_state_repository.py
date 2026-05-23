@@ -135,6 +135,9 @@ class SyncStateRepository(BaseDB):
                     created_at TEXT NOT NULL
                 );
 
+                CREATE INDEX IF NOT EXISTS idx_sync_conflict_scope
+                    ON sync_conflict_reports(source_scope_key, conflict_id);
+
                 CREATE TABLE IF NOT EXISTS sync_profile_state (
                     source_authority TEXT NOT NULL,
                     server_profile_id TEXT NOT NULL,
@@ -1147,7 +1150,26 @@ class SyncStateRepository(BaseDB):
         authenticated_principal_id: str | None,
         workspace_scope: str | None,
     ) -> dict[str, Any]:
-        """Return a user-facing Sync v2 status summary for one profile scope."""
+        """Return a user-facing Sync v2 status summary for one profile scope.
+
+        Args:
+            server_profile_id: Stable configured server profile identifier.
+            authenticated_principal_id: Authenticated user or account identity for the
+                profile scope. A value of None means the profile explicitly stored under
+                the unscoped principal bucket, not a wildcard over all principals.
+            workspace_scope: Optional workspace identifier. A value of None means the
+                profile explicitly stored outside a workspace, not a wildcard over all
+                workspaces.
+
+        Returns:
+            Summary dictionary containing profile metadata, cursor state, outbox counts,
+            identity-map status counts, conflict counts, the last mirror report, and a
+            presentation-oriented status. Missing profiles return a stable
+            ``not_configured`` summary.
+
+        Raises:
+            ValueError: If required server profile scope data is invalid.
+        """
 
         profile = self.get_sync_v2_profile_state(
             server_profile_id=server_profile_id,
@@ -1223,24 +1245,35 @@ class SyncStateRepository(BaseDB):
         workspace_scope: str | None,
         dataset_id: str,
     ) -> dict[str, Any]:
-        entries = self.list_sync_v2_outbox_entries(
+        source_scope_key = _sync_v2_outbox_scope_key(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
-            dataset_id=dataset_id,
         )
         summary = _empty_outbox_summary()
-        for entry in entries:
-            status = entry["status"]
-            if status in ("pending", "dispatched", "failed"):
-                summary[status] += 1
-            domain = entry["domain"]
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT status, domain, COUNT(*) AS count
+                FROM sync_v2_local_outbox
+                WHERE source_scope_key = ?
+                  AND dataset_id = ?
+                GROUP BY status, domain
+                """,
+                (source_scope_key, dataset_id),
+            ).fetchall()
+        for row in rows:
+            status = row["status"]
+            count = int(row["count"])
+            if status in ("pending", "dispatched"):
+                summary[status] += count
+            domain = row["domain"]
             domain_summary = summary["by_domain"].setdefault(
                 domain,
-                {"pending": 0, "dispatched": 0, "failed": 0},
+                {"pending": 0, "dispatched": 0},
             )
             if status in domain_summary:
-                domain_summary[status] += 1
+                domain_summary[status] += count
         return summary
 
     def _sync_v2_identity_summary(
@@ -1250,17 +1283,31 @@ class SyncStateRepository(BaseDB):
         authenticated_principal_id: str | None,
         workspace_scope: str | None,
     ) -> dict[str, Any]:
-        mappings = self.list_identity_mappings(
+        scope_prefix = _source_scope_prefix(
             source_authority="server",
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
         )
-        summary: dict[str, Any] = {"total": len(mappings), "by_domain": {}}
-        for mapping in mappings:
-            summary[mapping.mapping_status] = summary.get(mapping.mapping_status, 0) + 1
-            domain_summary = summary["by_domain"].setdefault(mapping.domain, {})
-            domain_summary[mapping.mapping_status] = domain_summary.get(mapping.mapping_status, 0) + 1
+        summary: dict[str, Any] = {"total": 0, "by_domain": {}}
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT mapping_status, domain, COUNT(*) AS count
+                FROM sync_identity_mappings
+                WHERE source_scope_key LIKE ?
+                GROUP BY mapping_status, domain
+                """,
+                (f"{scope_prefix}:%",),
+            ).fetchall()
+        for row in rows:
+            status = row["mapping_status"]
+            domain = row["domain"]
+            count = int(row["count"])
+            summary["total"] += count
+            summary[status] = summary.get(status, 0) + count
+            domain_summary = summary["by_domain"].setdefault(domain, {})
+            domain_summary[status] = domain_summary.get(status, 0) + count
         return summary
 
     def _sync_v2_conflict_summary(
@@ -1298,7 +1345,6 @@ class SyncStateRepository(BaseDB):
         latest = [dict(row) for row in rows]
         for report in latest:
             report["details"] = json.loads(report["details"])
-        latest.reverse()
         return {"count": int(count_row["count"] if count_row else 0), "latest": latest}
 
     def _get_mirror_report_by_id(self, report_id: int | None) -> dict[str, Any] | None:
@@ -1599,7 +1645,7 @@ def _source_scope_prefix(
 
 
 def _empty_outbox_summary() -> dict[str, Any]:
-    return {"pending": 0, "dispatched": 0, "failed": 0, "by_domain": {}}
+    return {"pending": 0, "dispatched": 0, "by_domain": {}}
 
 
 def _empty_sync_v2_profile_summary() -> dict[str, Any]:
@@ -1624,7 +1670,7 @@ def _sync_v2_profile_status(
         return "attention_required"
     if int(conflicts.get("count") or 0) > 0:
         return "attention_required"
-    if int(outbox.get("pending") or 0) > 0 or int(outbox.get("failed") or 0) > 0:
+    if int(outbox.get("pending") or 0) > 0:
         return "pending"
     profile_mode = profile.get("profile_mode")
     if profile_mode == "server_frontend":

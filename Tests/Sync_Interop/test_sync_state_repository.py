@@ -629,8 +629,7 @@ def test_sync_v2_profile_summary_aggregates_state_counts_and_status(tmp_path):
     assert summary["outbox"] == {
         "pending": 2,
         "dispatched": 1,
-        "failed": 0,
-        "by_domain": {"notes": {"pending": 2, "dispatched": 1, "failed": 0}},
+        "by_domain": {"notes": {"pending": 2, "dispatched": 1}},
     }
     assert summary["identity_map"] == {
         "total": 2,
@@ -656,10 +655,56 @@ def test_sync_v2_profile_summary_reports_missing_profile(tmp_path):
         "status": "not_configured",
         "profile": None,
         "cursor": None,
-        "outbox": {"pending": 0, "dispatched": 0, "failed": 0, "by_domain": {}},
+        "outbox": {"pending": 0, "dispatched": 0, "by_domain": {}},
         "identity_map": {"total": 0, "by_domain": {}},
         "conflicts": {"count": 0, "latest": []},
         "last_mirror_report": None,
+    }
+
+
+def test_sync_v2_profile_summary_scopes_none_principal_and_workspace_exactly(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+    )
+    repo.record_identity_mapping(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        domain="notes",
+        entity_type="note",
+        local_entity_id="local-note-1",
+        remote_entity_id="remote-note-1",
+        mapping_status="confirmed",
+    )
+    repo.record_identity_mapping(
+        source_authority="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-b",
+        workspace_scope="workspace-1",
+        domain="notes",
+        entity_type="note",
+        local_entity_id="local-note-2",
+        remote_entity_id="remote-note-2",
+        mapping_status="confirmed",
+    )
+
+    summary = repo.get_sync_v2_profile_summary(
+        server_profile_id="server-a",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+    )
+
+    assert summary["identity_map"] == {
+        "total": 1,
+        "confirmed": 1,
+        "by_domain": {"notes": {"confirmed": 1}},
     }
 
 

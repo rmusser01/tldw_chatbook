@@ -32,12 +32,19 @@ The summary status is intentionally presentation-oriented: missing profiles repo
 
 Added `SyncScopeService.get_sync_v2_profile_summary` as the public service seam for app callers that already receive a scope service.
 
+PR review follow-up tightened the profile summary implementation so outbox and identity-map counts are aggregated in SQL instead of loading full rows and JSON envelopes. Identity-map aggregation now treats `None` principal/workspace scopes as exact stored buckets instead of wildcard filters, conflict reports have a scope index for summary lookup, the latest conflict list remains newest-first, and the outbox summary only reports supported `pending` and `dispatched` states.
+
 Verification:
 - `../../.venv/bin/python -m pytest Tests/Sync_Interop/test_sync_state_repository.py::test_sync_v2_profile_summary_aggregates_state_counts_and_status Tests/Sync_Interop/test_sync_state_repository.py::test_sync_v2_profile_summary_reports_missing_profile Tests/Sync_Interop/test_sync_scope_service.py::test_sync_scope_service_returns_sync_v2_profile_summary Tests/Sync_Interop/test_sync_scope_service.py::test_sync_scope_service_requires_repository_for_sync_v2_profile_summary -q` passed with 4 tests.
 - `../../.venv/bin/python -m pytest Tests/Sync_Interop Tests/tldw_api/test_sync_client.py -q` passed with 143 tests.
 - `../../.venv/bin/python -m compileall tldw_chatbook/Sync_Interop` passed.
 - `git diff --check` passed.
 - `/Users/macbook-dev/Documents/GitHub/tldw_server2/.venv/bin/python -m bandit -q -r tldw_chatbook/Sync_Interop/sync_state_repository.py tldw_chatbook/Sync_Interop/sync_scope_service.py -f json -o /tmp/bandit_chatbook_sync_profile_summary.json` passed.
+- Review follow-up: `../../.venv/bin/python -m pytest Tests/Sync_Interop/test_sync_state_repository.py::test_sync_v2_profile_summary_aggregates_state_counts_and_status Tests/Sync_Interop/test_sync_state_repository.py::test_sync_v2_profile_summary_reports_missing_profile Tests/Sync_Interop/test_sync_state_repository.py::test_sync_v2_profile_summary_scopes_none_principal_and_workspace_exactly Tests/Sync_Interop/test_sync_scope_service.py::test_sync_scope_service_returns_sync_v2_profile_summary Tests/Sync_Interop/test_sync_scope_service.py::test_sync_scope_service_requires_repository_for_sync_v2_profile_summary -q` passed with 5 tests.
+- Review follow-up: `../../.venv/bin/python -m pytest Tests/Sync_Interop Tests/tldw_api/test_sync_client.py -q` passed with 144 tests.
+- Review follow-up: `/usr/bin/env PYTHONPYCACHEPREFIX=/tmp/tldw_chatbook_pycache ../../.venv/bin/python -m compileall tldw_chatbook/Sync_Interop` passed.
+- Review follow-up: `git diff --check` passed.
+- Review follow-up: `/Users/macbook-dev/Documents/GitHub/tldw_server2/.venv/bin/python -m bandit -q -r tldw_chatbook/Sync_Interop/sync_state_repository.py tldw_chatbook/Sync_Interop/sync_scope_service.py -f json -o /tmp/bandit_chatbook_sync_profile_summary_review.json` passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

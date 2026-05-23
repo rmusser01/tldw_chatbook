@@ -295,6 +295,24 @@ class SyncScopeService:
         authenticated_principal_id: str | None = None,
         workspace_scope: str | None = None,
     ) -> dict[str, Any]:
+        """Return the Sync v2 status summary for a configured server profile.
+
+        Args:
+            server_profile_id: Stable configured server profile identifier.
+            authenticated_principal_id: Optional authenticated user or account identity
+                for the profile scope. None is treated as an explicit unscoped
+                principal bucket by the repository.
+            workspace_scope: Optional workspace identifier. None is treated as the
+                explicit non-workspace profile scope by the repository.
+
+        Returns:
+            Summary dictionary from ``SyncStateRepository.get_sync_v2_profile_summary``.
+
+        Raises:
+            ValueError: If the sync state repository is unavailable or the profile scope
+                is invalid.
+        """
+
         repository = self._require_state_repository()
         return repository.get_sync_v2_profile_summary(
             server_profile_id=server_profile_id,
