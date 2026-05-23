@@ -327,3 +327,37 @@ async def test_sync_scope_service_delegates_canonical_local_first_sync_mode_to_d
     assert result["device_id"] == "device-1"
     assert server.calls[0][0] == "run_v2_dry_run"
     assert server.calls[0][1]["profile_mode"] == "local_first_sync"
+
+
+def test_sync_scope_service_returns_sync_v2_profile_summary(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="server_frontend",
+        device_id=None,
+        dataset_id=None,
+    )
+    scope = SyncScopeService(server_service=FakeSyncService(), state_repository=repo)
+
+    summary = scope.get_sync_v2_profile_summary(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert summary["status"] == "server_frontend"
+    assert summary["profile"]["profile_mode"] == "server_frontend"
+    assert summary["outbox"]["pending"] == 0
+
+
+def test_sync_scope_service_requires_repository_for_sync_v2_profile_summary():
+    scope = SyncScopeService(server_service=FakeSyncService())
+
+    with pytest.raises(ValueError, match="Sync state repository is unavailable"):
+        scope.get_sync_v2_profile_summary(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+        )

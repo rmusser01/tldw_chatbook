@@ -135,6 +135,9 @@ class SyncStateRepository(BaseDB):
                     created_at TEXT NOT NULL
                 );
 
+                CREATE INDEX IF NOT EXISTS idx_sync_conflict_scope
+                    ON sync_conflict_reports(source_scope_key, conflict_id);
+
                 CREATE TABLE IF NOT EXISTS sync_profile_state (
                     source_authority TEXT NOT NULL,
                     server_profile_id TEXT NOT NULL,
@@ -1140,6 +1143,234 @@ class SyncStateRepository(BaseDB):
             "updated_at": row["updated_at"],
         }
 
+    def get_sync_v2_profile_summary(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+    ) -> dict[str, Any]:
+        """Return a user-facing Sync v2 status summary for one profile scope.
+
+        Args:
+            server_profile_id: Stable configured server profile identifier.
+            authenticated_principal_id: Authenticated user or account identity for the
+                profile scope. A value of None means the profile explicitly stored under
+                the unscoped principal bucket, not a wildcard over all principals.
+            workspace_scope: Optional workspace identifier. A value of None means the
+                profile explicitly stored outside a workspace, not a wildcard over all
+                workspaces.
+
+        Returns:
+            Summary dictionary containing profile metadata, cursor state, outbox counts,
+            identity-map status counts, conflict counts, the last mirror report, and a
+            presentation-oriented status. Missing profiles return a stable
+            ``not_configured`` summary.
+
+        Raises:
+            ValueError: If required server profile scope data is invalid.
+        """
+
+        profile = self.get_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        if profile is None:
+            return _empty_sync_v2_profile_summary()
+
+        dataset_id = profile.get("dataset_id")
+        cursor = None
+        outbox = _empty_outbox_summary()
+        if dataset_id:
+            cursor_record = self.get_remote_pull_cursor(
+                source_authority="server",
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                domain="sync_v2",
+                remote_collection=str(dataset_id),
+            )
+            cursor = {
+                "remote_collection": str(dataset_id),
+                "remote_cursor": cursor_record.cursor,
+                "profile_cursor": dict(profile.get("dataset_cursors") or {}).get("sync_v2"),
+            }
+            outbox = self._sync_v2_outbox_summary(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                dataset_id=str(dataset_id),
+            )
+
+        identity_map = self._sync_v2_identity_summary(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        conflicts = self._sync_v2_conflict_summary(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        last_mirror_report = self._get_mirror_report_by_id(profile.get("last_mirror_report_id"))
+
+        return {
+            "status": _sync_v2_profile_status(profile, outbox=outbox, conflicts=conflicts),
+            "profile": {
+                "source_authority": profile["source_authority"],
+                "server_profile_id": profile["server_profile_id"],
+                "authenticated_principal_id": profile["authenticated_principal_id"],
+                "workspace_scope": profile["workspace_scope"],
+                "profile_mode": profile["profile_mode"],
+                "device_id": profile["device_id"],
+                "dataset_id": profile["dataset_id"],
+                "capabilities": profile["capabilities"],
+                "dry_run_metadata": profile["dry_run_metadata"],
+                "last_error": profile["last_error"],
+                "updated_at": profile["updated_at"],
+            },
+            "cursor": cursor,
+            "outbox": outbox,
+            "identity_map": identity_map,
+            "conflicts": conflicts,
+            "last_mirror_report": last_mirror_report,
+        }
+
+    def _sync_v2_outbox_summary(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+    ) -> dict[str, Any]:
+        source_scope_key = _sync_v2_outbox_scope_key(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        summary = _empty_outbox_summary()
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT status, domain, COUNT(*) AS count
+                FROM sync_v2_local_outbox
+                WHERE source_scope_key = ?
+                  AND dataset_id = ?
+                GROUP BY status, domain
+                """,
+                (source_scope_key, dataset_id),
+            ).fetchall()
+        for row in rows:
+            status = row["status"]
+            count = int(row["count"])
+            if status in ("pending", "dispatched"):
+                summary[status] += count
+            domain = row["domain"]
+            domain_summary = summary["by_domain"].setdefault(
+                domain,
+                {"pending": 0, "dispatched": 0},
+            )
+            if status in domain_summary:
+                domain_summary[status] += count
+        return summary
+
+    def _sync_v2_identity_summary(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+    ) -> dict[str, Any]:
+        scope_prefix = _source_scope_prefix(
+            source_authority="server",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        summary: dict[str, Any] = {"total": 0, "by_domain": {}}
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT mapping_status, domain, COUNT(*) AS count
+                FROM sync_identity_mappings
+                WHERE source_scope_key LIKE ?
+                GROUP BY mapping_status, domain
+                """,
+                (f"{scope_prefix}:%",),
+            ).fetchall()
+        for row in rows:
+            status = row["mapping_status"]
+            domain = row["domain"]
+            count = int(row["count"])
+            summary["total"] += count
+            summary[status] = summary.get(status, 0) + count
+            domain_summary = summary["by_domain"].setdefault(domain, {})
+            domain_summary[status] = domain_summary.get(status, 0) + count
+        return summary
+
+    def _sync_v2_conflict_summary(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+    ) -> dict[str, Any]:
+        scope_prefix = _source_scope_prefix(
+            source_authority="server",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM sync_conflict_reports
+                WHERE source_scope_key LIKE ?
+                ORDER BY conflict_id DESC
+                LIMIT 5
+                """,
+                (f"{scope_prefix}:%",),
+            ).fetchall()
+            count_row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM sync_conflict_reports
+                WHERE source_scope_key LIKE ?
+                """,
+                (f"{scope_prefix}:%",),
+            ).fetchone()
+        latest = [dict(row) for row in rows]
+        for report in latest:
+            report["details"] = json.loads(report["details"])
+        return {"count": int(count_row["count"] if count_row else 0), "latest": latest}
+
+    def _get_mirror_report_by_id(self, report_id: int | None) -> dict[str, Any] | None:
+        if report_id is None:
+            return None
+        with self._get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM mirror_reports
+                WHERE report_id = ?
+                """,
+                (report_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "report_id": int(row["report_id"]),
+            "source_scope_key": row["source_scope_key"],
+            "domain": row["domain"],
+            "dry_run": bool(row["dry_run"]),
+            "write_enabled": bool(row["write_enabled"]),
+            "report": json.loads(row["report"]),
+            "created_at": row["created_at"],
+        }
+
     def set_domain_eligibility(
         self,
         *,
@@ -1390,6 +1621,63 @@ def _sync_v2_outbox_scope_key(
         domain="sync_v2",
         entity_type="outbox",
     )
+
+
+def _source_scope_prefix(
+    *,
+    source_authority: SourceAuthority,
+    server_profile_id: str | None,
+    authenticated_principal_id: str | None,
+    workspace_scope: str | None,
+) -> str:
+    if source_authority not in {"local", "server"}:
+        raise ValueError("source_authority must be one of: local, server")
+    if source_authority == "server" and not server_profile_id:
+        raise ValueError("server_profile_id is required for server sync state")
+    return ":".join(
+        [
+            source_authority,
+            server_profile_id or "none",
+            authenticated_principal_id or "none",
+            workspace_scope or "none",
+        ]
+    )
+
+
+def _empty_outbox_summary() -> dict[str, Any]:
+    return {"pending": 0, "dispatched": 0, "by_domain": {}}
+
+
+def _empty_sync_v2_profile_summary() -> dict[str, Any]:
+    return {
+        "status": "not_configured",
+        "profile": None,
+        "cursor": None,
+        "outbox": _empty_outbox_summary(),
+        "identity_map": {"total": 0, "by_domain": {}},
+        "conflicts": {"count": 0, "latest": []},
+        "last_mirror_report": None,
+    }
+
+
+def _sync_v2_profile_status(
+    profile: Mapping[str, Any],
+    *,
+    outbox: Mapping[str, Any],
+    conflicts: Mapping[str, Any],
+) -> str:
+    if profile.get("last_error"):
+        return "attention_required"
+    if int(conflicts.get("count") or 0) > 0:
+        return "attention_required"
+    if int(outbox.get("pending") or 0) > 0:
+        return "pending"
+    profile_mode = profile.get("profile_mode")
+    if profile_mode == "server_frontend":
+        return "server_frontend"
+    if profile_mode == "local_only":
+        return "local_only"
+    return "ready"
 
 
 def _scope_value(value: str | None) -> str:
