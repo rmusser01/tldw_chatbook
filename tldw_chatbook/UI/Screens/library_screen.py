@@ -26,7 +26,7 @@ from ...Library.library_rag_service import (
 )
 from ...Library.library_rag_state import LibraryRagPanelState
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
-from ...runtime_policy.types import PolicyDeniedError
+from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Utils.input_validation import sanitize_string, validate_text_input
@@ -259,6 +259,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_collections_records = ()
         self._library_collections_selected_id = ""
         self._library_collections_error = ""
+        self._library_sync_profile_summary: Mapping[str, Any] | None = None
         self._library_collection_name_input = ""
         self._library_collection_description_input = ""
         self._library_collection_pending_delete_id = ""
@@ -356,6 +357,18 @@ class LibraryScreen(BaseAppScreen):
         if validate_text_input(text, max_length=max_length, allow_html=False):
             return text
         return fallback
+
+    @staticmethod
+    def _safe_sync_scope_text(value: Any, *, max_length: int = 200) -> str | None:
+        """Return a validated Sync scope value or None when unsafe/empty."""
+
+        text = sanitize_string(str(value or ""), max_length=max_length).strip()
+        text = " ".join(text.split())
+        if not text:
+            return None
+        if validate_text_input(text, max_length=max_length, allow_html=False):
+            return text
+        return None
 
     @classmethod
     def _source_title(cls, source_type: str, record: Mapping[str, Any]) -> str:
@@ -644,6 +657,7 @@ class LibraryScreen(BaseAppScreen):
             error_message=self._library_collections_error,
             create_name=self._library_collection_name_input,
             rename_name=self._library_collection_name_input,
+            sync_profile_summary=self._library_sync_profile_summary,
         )
 
     def _collections_inspector_rows(
@@ -1080,6 +1094,7 @@ class LibraryScreen(BaseAppScreen):
         list_collections = getattr(service, "list_collections", None)
         if not callable(list_collections):
             self._library_collections_records = ()
+            self._library_sync_profile_summary = None
             self._library_collections_loaded = True
             self._library_collections_error = "Library Collections are unavailable in this runtime."
             return
@@ -1088,12 +1103,14 @@ class LibraryScreen(BaseAppScreen):
         except Exception:
             logger.warning("Failed to load Library Collections.", exc_info=True)
             self._library_collections_records = ()
+            self._library_sync_profile_summary = None
             self._library_collections_loaded = True
             self._library_collections_error = "Library Collections are unavailable."
             return
         self._library_collections_records = await self._decorate_library_collection_sync_records(
             tuple(records or ())
         )
+        self._library_sync_profile_summary = await self._load_library_sync_profile_summary()
         self._library_collections_loaded = True
         self._library_collections_error = ""
         if (
@@ -1202,6 +1219,51 @@ class LibraryScreen(BaseAppScreen):
                 record_data["sync_status"] = ""
             decorated.append(record_data)
         return tuple(decorated)
+
+    async def _load_library_sync_profile_summary(self) -> Mapping[str, Any] | None:
+        sync_scope_service = getattr(self.app_instance, "sync_scope_service", None)
+        get_summary = getattr(sync_scope_service, "get_sync_v2_profile_summary", None)
+        if not callable(get_summary):
+            return None
+
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        runtime_state = getattr(runtime_policy, "state", None)
+        if (
+            not isinstance(runtime_state, RuntimeSourceState)
+            or runtime_state.active_source != "server"
+            or not runtime_state.server_configured
+            or not runtime_state.active_server_id
+        ):
+            return None
+
+        scope_provider = getattr(self.app_instance, "_server_notification_event_scope", None)
+        scope = scope_provider() if callable(scope_provider) else {}
+        scope_mapping = scope if isinstance(scope, Mapping) else {}
+        raw_server_profile_id = scope_mapping.get("server_profile_id", runtime_state.active_server_id)
+        server_profile_id = self._safe_sync_scope_text(raw_server_profile_id)
+        if not server_profile_id:
+            return None
+        authenticated_principal_id = self._safe_sync_scope_text(
+            scope_mapping.get("authenticated_principal_id")
+        )
+        if scope_mapping.get("authenticated_principal_id") is not None and authenticated_principal_id is None:
+            return None
+        workspace_scope = self._safe_sync_scope_text(scope_mapping.get("workspace_scope"))
+        if scope_mapping.get("workspace_scope") is not None and workspace_scope is None:
+            return None
+
+        try:
+            summary = await self._run_library_service_call(
+                get_summary,
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning("Failed to load Sync v2 profile summary.", exc_info=True)
+            return None
+        return summary if isinstance(summary, Mapping) else None
 
     def _sync_collection_scoped_action_buttons(self) -> None:
         deferred = self._active_mode == "collections"

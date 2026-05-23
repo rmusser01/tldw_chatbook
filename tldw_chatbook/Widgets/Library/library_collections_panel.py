@@ -39,6 +39,27 @@ class LibraryCollectionsPanel(Vertical):
         if self.state.status == "empty":
             yield Static(self.state.empty_copy, id="library-collections-empty")
 
+        if self.state.sync_profile_status is not None:
+            with Vertical(
+                id="library-sync-profile-status-banner",
+                classes=f"sync-profile-status {self.state.sync_profile_status.severity}",
+            ):
+                yield Static(
+                    self.state.sync_profile_status.label,
+                    id="library-sync-profile-status",
+                    markup=False,
+                )
+                yield Static(
+                    self.state.sync_profile_status.detail,
+                    id="library-sync-profile-detail",
+                    markup=False,
+                )
+                yield Static(
+                    self.state.sync_profile_status.read_only_notice,
+                    id="library-sync-profile-read-only",
+                    markup=False,
+                )
+
         with Horizontal(id="library-collections-workbench"):
             with Vertical(id="library-collections-list"):
                 yield Static("Collections", classes="destination-section")

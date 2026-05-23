@@ -91,3 +91,53 @@ async def test_library_collections_panel_renders_write_sync_promotion_labels(wid
             "Conflicts: none | Rollback: not required | "
             "Writes stay blocked until review, conflict, and rollback gates are ready."
         )
+
+
+async def test_library_collections_panel_renders_sync_profile_status_banner(widget_pilot):
+    state = LibraryCollectionsPanelState.from_values(
+        collections=(
+            {
+                "collection_id": "collection-1",
+                "name": "Research",
+                "description": "Selected sources",
+                "item_count": 2,
+                "source_authority": "local",
+                "sync_status": "local-only",
+                "created_at": "2026-05-08T03:00:00Z",
+                "updated_at": "2026-05-08T04:00:00Z",
+            },
+        ),
+        selected_collection_id="collection-1",
+        sync_profile_summary={
+            "status": "pending",
+            "profile": {
+                "server_profile_id": "server-a",
+                "authenticated_principal_id": "user-a",
+                "workspace_scope": None,
+                "profile_mode": "local_first_sync",
+                "device_id": "device-1",
+                "dataset_id": "dataset-1",
+                "last_error": None,
+            },
+            "cursor": None,
+            "outbox": {"pending": 2, "dispatched": 1, "by_domain": {}},
+            "identity_map": {"total": 0, "by_domain": {}},
+            "conflicts": {"count": 0, "latest": []},
+            "last_mirror_report": None,
+        },
+    )
+
+    async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
+        await pilot.pause()
+        assert str(pilot.app.query_one("#library-sync-profile-status", Static).renderable) == (
+            "Sync profile: pending local changes"
+        )
+        assert str(pilot.app.query_one("#library-sync-profile-detail", Static).renderable) == (
+            "2 pending local changes are waiting for the next sync pass."
+        )
+        assert str(pilot.app.query_one("#library-sync-profile-read-only", Static).renderable) == (
+            "This view only reads sync state; it does not start sync."
+        )
+        assert pilot.app.query_one("#library-sync-profile-status", Static)._render_markup is False
+        assert pilot.app.query_one("#library-sync-profile-detail", Static)._render_markup is False
+        assert pilot.app.query_one("#library-sync-profile-read-only", Static)._render_markup is False
