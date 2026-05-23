@@ -238,6 +238,40 @@ def test_library_rag_evidence_bundle_marks_empty_results_missing():
     assert payload["metadata"]["blocked_reference_count"] == 0
 
 
+@pytest.mark.parametrize("status", ("stale", "unknown"))
+def test_library_rag_evidence_bundle_preserves_non_missing_reference_status(status):
+    bundle = build_library_rag_evidence_bundle(
+        {
+            "title": "Indexed source",
+            "snippet": "Existing evidence has a non-ready state.",
+            "source_id": f"{status}-source",
+            "evidence_status": status,
+        },
+        query=f"Show {status} evidence",
+    )
+
+    payload = bundle.to_payload()
+    reference = payload["references"][0]
+    assert payload["status"] == status
+    assert reference["status"] == status
+
+
+def test_library_rag_evidence_bundle_drops_out_of_range_scores():
+    payload = build_library_rag_console_live_work_payload(
+        {
+            "title": "Out of range score",
+            "snippet": "Score should not prevent staging evidence.",
+            "source_id": "note-99",
+            "score": 1.5,
+        },
+        query="Can this evidence stage?",
+    )
+
+    reference = payload["evidence_bundle"]["references"][0]
+    assert payload["score"] is None
+    assert "score" not in reference
+
+
 def test_library_rag_console_payload_uses_shared_validation_for_unsafe_text():
     result = {
         "result_id": "note-42:chunk-7",

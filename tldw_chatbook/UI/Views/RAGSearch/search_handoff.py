@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import math
 from typing import Any
 from urllib.parse import quote
 
@@ -138,6 +139,42 @@ def _library_rag_source_authority(runtime_backend: Any) -> str:
     return "server" if backend.startswith("server") or "server" in backend else "local"
 
 
+def _library_rag_runtime_backend(result: Any) -> str:
+    return (
+        _validated_payload_text(
+            _result_or_provenance_value(result, "runtime_backend")
+        )
+        or "local"
+    )
+
+
+def _library_rag_target_id(*, source_authority: str, result_id: str) -> str:
+    return f"{source_authority}:library-rag:{_safe_target_part(result_id)}"
+
+
+def _library_rag_title(result: Any) -> str:
+    return _validated_payload_text(
+        _result_or_provenance_value(result, "title")
+        or _result_or_provenance_value(result, "document_title")
+        or _result_or_provenance_value(result, "source_title")
+        or "",
+        fallback="Untitled source",
+    )
+
+
+def _library_rag_score(result: Any) -> float | None:
+    value = _result_or_provenance_value(result, "score")
+    if value in (None, ""):
+        return None
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(score) or score < 0 or score > 1:
+        return None
+    return score
+
+
 def _text_tuple(value: Any) -> tuple[str, ...]:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         raw_values = value
@@ -268,6 +305,14 @@ def _library_rag_result_sequence(results: Any) -> tuple[Any, ...]:
     return (results,)
 
 
+def _library_rag_bundle_status(references: Sequence[EvidenceReference]) -> str:
+    statuses = {reference.status for reference in references}
+    for status in ("available", "blocked", "stale", "unknown", "missing"):
+        if status in statuses:
+            return status
+    return "missing"
+
+
 def build_library_rag_evidence_bundle(
     results: Any,
     *,
@@ -291,12 +336,7 @@ def build_library_rag_evidence_bundle(
     references: list[EvidenceReference] = []
     for index, result in enumerate(_library_rag_result_sequence(results), start=1):
         result_id = _library_rag_result_id(result)
-        runtime_backend = (
-            _validated_payload_text(
-                _result_or_provenance_value(result, "runtime_backend")
-            )
-            or "local"
-        )
+        runtime_backend = _library_rag_runtime_backend(result)
         source_authority = _library_rag_source_authority(runtime_backend)
         source_id = _validated_payload_text(
             _result_or_provenance_value(result, "source_id"),
@@ -317,7 +357,10 @@ def build_library_rag_evidence_bundle(
             result,
             active_context_eligible=active_context_eligible,
         )
-        target_id = f"{source_authority}:library-rag:{_safe_target_part(result_id)}"
+        target_id = _library_rag_target_id(
+            source_authority=source_authority,
+            result_id=result_id,
+        )
         metadata = {
             **_result_provenance(result),
             "result_id": result_id,
@@ -337,12 +380,7 @@ def build_library_rag_evidence_bundle(
                 evidence_id=f"S{index}",
                 source_id=source_id,
                 source_type=_library_rag_source_type(result),
-                title=_validated_payload_text(
-                    _result_value(result, "title")
-                    or _result_value(result, "document_title")
-                    or "",
-                    fallback="Untitled source",
-                ),
+                title=_library_rag_title(result),
                 snippet=_validated_payload_text(
                     _result_value(result, "snippet"),
                     max_length=LIBRARY_RAG_PAYLOAD_SNIPPET_MAX_LENGTH,
@@ -358,16 +396,14 @@ def build_library_rag_evidence_bundle(
                 source_owner=source_authority,
                 content_ref=target_id,
                 status=status,
-                score=_result_value(result, "score"),
+                score=_library_rag_score(result),
                 metadata=metadata,
             )
         )
 
     available_count = sum(reference.status == "available" for reference in references)
     blocked_count = sum(reference.status == "blocked" for reference in references)
-    bundle_status = (
-        "available" if available_count else ("blocked" if blocked_count else "missing")
-    )
+    bundle_status = _library_rag_bundle_status(references)
     first_runtime_backend = (
         str(references[0].metadata.get("runtime_backend") or "")
         if references
@@ -408,24 +444,19 @@ def build_library_rag_console_live_work_payload(
         so downstream Console flows can preserve snippets and authority labels.
     """
     result_id = _library_rag_result_id(result)
-    runtime_backend = (
-        _validated_payload_text(_result_or_provenance_value(result, "runtime_backend"))
-        or "local"
-    )
+    runtime_backend = _library_rag_runtime_backend(result)
     source_authority = _library_rag_source_authority(runtime_backend)
     return {
-        "target_id": f"{source_authority}:library-rag:{_safe_target_part(result_id)}",
+        "target_id": _library_rag_target_id(
+            source_authority=source_authority,
+            result_id=result_id,
+        ),
         "result_id": result_id,
         "query": _validated_payload_text(
             query,
             max_length=LIBRARY_RAG_PAYLOAD_QUERY_MAX_LENGTH,
         ),
-        "title": _validated_payload_text(
-            _result_value(result, "title")
-            or _result_value(result, "document_title")
-            or "",
-            fallback="Untitled source",
-        ),
+        "title": _library_rag_title(result),
         "source_id": _validated_payload_text(
             _result_or_provenance_value(result, "source_id"),
             max_length=LIBRARY_RAG_PAYLOAD_ID_MAX_LENGTH,
@@ -439,7 +470,7 @@ def build_library_rag_console_live_work_payload(
             max_length=LIBRARY_RAG_PAYLOAD_SNIPPET_MAX_LENGTH,
         ),
         "citations": _library_rag_citation_labels(result),
-        "score": _result_value(result, "score"),
+        "score": _library_rag_score(result),
         "runtime_backend": runtime_backend,
         "source_authority": source_authority,
         "source_selector_state": source_authority,
