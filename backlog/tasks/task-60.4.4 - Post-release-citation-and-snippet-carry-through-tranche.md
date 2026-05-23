@@ -1,7 +1,7 @@
 ---
 id: TASK-60.4.4
 title: Post-release citation and snippet carry-through tranche
-status: To Do
+status: In Progress
 labels:
 - post-release
 - rag
@@ -25,10 +25,23 @@ Carry retrieved snippets and citations from Library/Search/RAG into Console answ
 - [ ] #4 QA verifies source-to-answer-to-artifact carry-through with actual app use before completion.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Open an epic tracking PR from `codex/citations-snippets-epic` to `dev` with the approved stacked-PR design.
+2. Land the evidence/citation contract in a sub-PR targeting the epic branch.
+3. Land Library/Search-RAG evidence bundle generation in a sub-PR targeting the epic branch.
+4. Land Console evidence staging and blocked-state feedback in a sub-PR targeting the epic branch.
+5. Land answer-level citation injection, response parsing, and validation in a sub-PR targeting the epic branch.
+6. Land message persistence for evidence bundles and citation refs in a sub-PR targeting the epic branch.
+7. Land Chatbook artifact/export evidence preservation in a sub-PR targeting the epic branch.
+8. Close the epic with actual CDP/textual-web QA evidence, user-approved screenshots, focused automated tests, roadmap updates, and completed Definition of Done.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Epic setup started. Added `Docs/superpowers/specs/2026-05-23-citation-snippet-carry-through-epic-design.md` to define the stacked PR model, evidence/citation contracts, answer-level citation injection scope, persistence/export requirements, and QA gates. The implementation remains split across sub-PRs so each seam can be tested and reviewed independently.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

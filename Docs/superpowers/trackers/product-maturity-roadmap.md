@@ -87,7 +87,7 @@ Deferred follow-up tranches:
 | Post-release ACP runtime launch tranche | `TASK-60.4.1` | ACP runtime payloads remain recoverably blocked until a real ACP runtime can launch or attach and report status. |
 | Post-release write sync promotion tranche | `TASK-60.4.2` | Write sync remains deferred until preview, conflict, rollback, and mutation authority are visible and testable. |
 | Post-release Workspaces and Library depth tranche | `TASK-60.4.3` | Workspace switching must preserve global Library visibility while limiting Console context manipulation to eligible workspace items. |
-| Post-release citation and snippet carry-through tranche | `TASK-60.4.4` | Library/Search-RAG evidence is verified at the handoff seam, but downstream citation/snippet carry-through into Chat, Artifacts, and exports remains future work. |
+| Post-release citation and snippet carry-through tranche | `TASK-60.4.4` | In progress as a stacked epic: Library/Search-RAG evidence must carry through answer-level citations, Console persistence, Artifacts, and exports. |
 | Post-release optional dependency and packaging polish tranche | `TASK-60.4.5` | Optional dependency recovery remains source-honest, but package metadata and install-path polish need a dedicated follow-up. |
 
 ## Severity Policy
