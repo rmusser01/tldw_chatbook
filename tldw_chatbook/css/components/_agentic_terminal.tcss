@@ -541,6 +541,30 @@
     scrollbar-size: 1 1;
 }
 
+#console-native-tab-strip {
+    height: 1;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.console-session-tab,
+#console-new-chat-tab {
+    width: auto;
+    min-width: 8;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.console-session-tab-active {
+    background: $ds-action-focus;
+    color: $ds-text-primary;
+}
+
 #console-native-transcript:focus {
     border: tall $ds-action-focus;
 }

@@ -523,3 +523,27 @@ async def test_console_regenerate_action_streams_selected_variant():
         updated = store.get_message(source.id)
         assert updated.variants.current.content == "hello"
         assert updated.variants.can_go_previous is True
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_strip_creates_and_switches_sessions():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+        assert "Chat 2" in _visible_text(console)
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+
+        assert store.active_session_id == first.id
+        assert "Chat 1" in _visible_text(console)

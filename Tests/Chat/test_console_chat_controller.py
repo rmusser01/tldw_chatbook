@@ -138,6 +138,19 @@ class FakePersistence:
         return True
 
 
+def test_controller_creates_and_switches_sessions():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    first = store.ensure_session(title="Chat 1")
+    second = controller.new_session(title="Chat 2")
+
+    assert store.active_session_id == second.id
+
+    controller.switch_session(first.id)
+
+    assert store.active_session_id == first.id
+
+
 @pytest.mark.asyncio
 async def test_blocked_send_preserves_draft_and_adds_recovery_message():
     store = ConsoleChatStore()

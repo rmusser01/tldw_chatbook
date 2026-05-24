@@ -12,6 +12,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text,
 )
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -997,9 +998,10 @@ async def test_console_start_guidance_hides_after_transcript_has_messages():
         assert start_here.styles.display != "none"
         assert action_hints.styles.display != "none"
 
-        session = console._get_active_chat_session()
-        assert session is not None
-        session.session_data.message_count = 1
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello Console")
+        await console._sync_native_console_chat_ui()
         console._sync_console_control_bar()
         await pilot.pause()
 
@@ -1017,17 +1019,15 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         transcript = console.query_one("#console-native-transcript")
-        legacy_tabs = console.query_one("#console-chat-tabs")
 
         assert transcript.region.width > 0
         assert transcript.region.height > 0
         assert transcript.styles.display != "none"
-        assert legacy_tabs.styles.display == "none"
         assert "Empty transcript" in _visible_text(console)
 
 
 @pytest.mark.asyncio
-async def test_console_legacy_chat_tab_controls_are_hidden_by_native_transcript():
+async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1035,26 +1035,12 @@ async def test_console_legacy_chat_tab_controls_are_hidden_by_native_transcript(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-        chat_tab_buttons = [
-            button
+        assert len(console.query("#console-chat-tabs")) == 0
+        assert [
+            button.id
             for button in console.query(Button)
-            if button.id and button.id.startswith("chat-tab-")
-        ]
-        close_buttons = [
-            button
-            for button in console.query(Button)
-            if button.id and button.id.startswith("close-tab-")
-        ]
-
-        assert len(chat_tab_buttons) == 1
-        assert len(close_buttons) == 1
-
-        close_button = close_buttons[0]
-
-        assert str(close_button.label) == "x"
-        assert console.query_one("#console-chat-tabs").styles.display == "none"
-        assert all(button.region.width == 0 for button in chat_tab_buttons)
-        assert all(button.region.width == 0 for button in close_buttons)
+            if button.id and button.id.startswith(("chat-tab-", "close-tab-"))
+        ] == []
 
 
 @pytest.mark.asyncio

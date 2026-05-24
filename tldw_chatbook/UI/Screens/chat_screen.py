@@ -102,6 +102,7 @@ CONSOLE_FRAME_BORDER = ("solid", "#6f7782")
 CONSOLE_START_HERE_COPY = (
     "Start here\n"
     "Ask a question in Composer. Attach sources from Library, runs, Artifacts, or RAG.\n"
+    "Provider setup required before sending.\n"
     "Run command with Ctrl+P."
 )
 CONSOLE_ACTION_HINTS_COPY = "Enter send | Ctrl+P commands | Attach context"
@@ -1207,6 +1208,7 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.05, self.sync_task_resume_state)
         self.set_timer(0.15, self._consume_pending_chat_handoff)
         self._focus_console_composer_if_needed(force=True)
+        self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(lambda: self._focus_console_composer_if_needed(force=True))
         self.set_timer(0.2, lambda: self._focus_console_composer_if_needed(force=True))
 
@@ -1632,7 +1634,21 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_chat_core_state()
         self._sync_console_control_bar()
         self._sync_console_mode_bar()
+        await self._sync_console_native_session_tabs()
         await self._sync_native_console_transcript_to_legacy_surface()
+
+    async def _sync_console_native_session_tabs(self) -> None:
+        """Refresh native Console session tabs from store state."""
+        try:
+            surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
+        except QueryError:
+            return
+        store = self._ensure_console_chat_store()
+        store.ensure_session(workspace_id=store.workspace_context.active_workspace_id)
+        await surface.sync_sessions(
+            sessions=store.sessions(),
+            active_session_id=store.active_session_id,
+        )
 
     async def _append_native_console_system_message(self, message: str) -> None:
         """Append a system message to native Console state and refresh the bridge."""
@@ -2923,6 +2939,17 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-stop-generation":
             await self.handle_console_stop_generation(event)
+            return
+        if button_id == "console-new-chat-tab":
+            event.stop()
+            self._ensure_console_chat_controller().new_session()
+            await self._sync_native_console_chat_ui()
+            return
+        if button_id and button_id.startswith("console-session-tab-"):
+            event.stop()
+            session_id = button_id.removeprefix("console-session-tab-")
+            self._ensure_console_chat_controller().switch_session(session_id)
+            await self._sync_native_console_chat_ui()
             return
         if button_id and button_id.startswith("console-message-action-"):
             handled = await self.handle_console_message_action(event)

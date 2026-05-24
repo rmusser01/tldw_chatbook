@@ -111,6 +111,10 @@ class ConsoleChatStore:
         self.active_session_id = session.id
         return session
 
+    def sessions(self) -> list[ConsoleChatSession]:
+        """Return native Console sessions in creation order."""
+        return list(self._sessions.values())
+
     def set_workspace_context(self, workspace_context: ConsoleWorkspaceContext) -> None:
         """Replace the active workspace context."""
         self.workspace_context = workspace_context

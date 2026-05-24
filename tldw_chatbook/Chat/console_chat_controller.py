@@ -12,7 +12,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunState,
     ConsoleRunStatus,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 
 
 class ConsoleProviderGatewayProtocol(Protocol):
@@ -97,6 +97,15 @@ class ConsoleChatController:
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
         )
+
+    def new_session(self, *, title: str | None = None) -> ConsoleChatSession:
+        """Create and activate a new native Console session."""
+        next_number = len(self.store.sessions()) + 1
+        return self.store.create_session(title=title or f"Chat {next_number}")
+
+    def switch_session(self, session_id: str) -> ConsoleChatSession:
+        """Activate an existing native Console session."""
+        return self.store.switch_session(session_id)
 
     def stop_active_run(self) -> bool:
         """Request the active stream to stop at the next safe boundary."""
