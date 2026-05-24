@@ -2626,6 +2626,8 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
 
     async with host.run_test(size=(180, 40)) as pilot:
         await pilot.pause(0.1)
+        await pilot.click("#settings-category-console-behavior")
+        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
         toggle = screen.query_one(
             "#settings-console-collapse-large-pastes-toggle",
@@ -2635,6 +2637,12 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
         assert expected_label in str(toggle.label)
 
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        await pilot.pause(0.1)
+
+        assert app.app_config["console"]["collapse_large_pastes"] == initial_value
+        assert saved_settings == []
+
+        await pilot.click("#settings-save-category")
         await pilot.pause(0.1)
 
     assert app.app_config["console"]["collapse_large_pastes"] is expected_saved_value

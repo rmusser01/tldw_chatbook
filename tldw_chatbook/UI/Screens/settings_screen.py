@@ -18,7 +18,7 @@ from ...Widgets.destination_workbench import DestinationModeStrip
 from ...config import DEFAULT_CONFIG_PATH, coerce_bool_setting, save_setting_to_cli_config
 from ..Navigation.base_app_screen import BaseAppScreen
 from .provider_model_resolution import resolve_effective_provider_model
-from .settings_config_models import SettingsCategoryId, SettingsCategorySummary
+from .settings_config_models import SettingsCategoryId, SettingsCategorySummary, SettingsDraft
 from ..Navigation.main_navigation import NavigateToScreen
 
 
@@ -28,10 +28,17 @@ logger = logging.getLogger(__name__)
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, accounts, storage, and app behavior."""
 
+    BINDINGS = [
+        ("s", "settings_save_category", "Save Settings category"),
+        ("r", "settings_revert_category", "Revert Settings category"),
+        ("t", "settings_test_category", "Test Settings category"),
+    ]
+
     active_category = reactive(SettingsCategoryId.OVERVIEW.value, recompose=True)
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
+        self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
 
     def _category_summaries(self) -> tuple[SettingsCategorySummary, ...]:
         return (
@@ -102,7 +109,19 @@ class SettingsScreen(BaseAppScreen):
             app_config["console"] = console_settings
         return console_settings
 
+    def _loaded_collapse_large_pastes_enabled(self) -> bool:
+        return coerce_bool_setting(
+            self._console_settings().get("collapse_large_pastes", True),
+            True,
+        )
+
     def _collapse_large_pastes_enabled(self) -> bool:
+        draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        if draft is not None and "collapse_large_pastes" in draft.values:
+            return coerce_bool_setting(
+                draft.values.get("collapse_large_pastes"),
+                True,
+            )
         return coerce_bool_setting(
             self._console_settings().get("collapse_large_pastes", True),
             True,
@@ -118,6 +137,50 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         summary.update(f"Console paste collapse: {self._collapse_large_pastes_label()}")
+
+    def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
+        draft = self._settings_drafts.get(category)
+        return bool(draft and draft.is_dirty)
+
+    def _category_status(self, summary: SettingsCategorySummary) -> str:
+        if self._category_has_unsaved_changes(summary.category):
+            return "Unsaved"
+        return summary.status
+
+    def _active_category_id(self) -> SettingsCategoryId:
+        return SettingsCategoryId(self.active_category)
+
+    def _update_draft_status_widgets(self, category: SettingsCategoryId) -> None:
+        has_unsaved_changes = self._category_has_unsaved_changes(category)
+        status = "Unsaved changes" if has_unsaved_changes else "No unsaved changes"
+        try:
+            self.query_one("#settings-selected-category-draft-status", Static).update(status)
+        except QueryError:
+            pass
+        try:
+            category_status = "Unsaved" if has_unsaved_changes else self._category_summary_by_id(category).status
+            self.query_one(f"#settings-category-{category.value}-status", Static).update(
+                f"Status: {category_status}"
+            )
+        except QueryError:
+            pass
+
+    def _category_summary_by_id(self, category: SettingsCategoryId) -> SettingsCategorySummary:
+        for summary in self._category_summaries():
+            if summary.category is category:
+                return summary
+        return self._category_summaries()[0]
+
+    def _stage_console_large_paste_value(self, value: bool) -> None:
+        category = SettingsCategoryId.CONSOLE_BEHAVIOR
+        draft = self._settings_drafts.setdefault(category, SettingsDraft(category=category))
+        draft.set_value(
+            "collapse_large_pastes",
+            self._loaded_collapse_large_pastes_enabled(),
+            value,
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
 
     def _sync_safety_states(self) -> tuple[SyncPromotionState, ...]:
         labels = {
@@ -190,7 +253,11 @@ class SettingsScreen(BaseAppScreen):
             yield button
             yield Static(summary.description, classes="destination-section")
             if summary.status:
-                yield Static(f"Status: {summary.status}", classes="destination-section")
+                yield Static(
+                    f"Status: {self._category_status(summary)}",
+                    id=f"settings-category-{summary.category.value}-status",
+                    classes="destination-section",
+                )
 
     def _render_overview_detail(self) -> ComposeResult:
         yield Static("Overview", classes="destination-section settings-column-title")
@@ -212,7 +279,6 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-overview-console-paste-collapse",
             )
             yield Static("Diagnostics: validate config before saving raw TOML changes.")
-        yield from self._render_console_behavior_card(compact=True)
 
     def _render_provider_detail(self) -> ComposeResult:
         resolved = resolve_effective_provider_model(self.app_instance)
@@ -289,6 +355,11 @@ class SettingsScreen(BaseAppScreen):
         summary = self._active_summary()
         yield Static("Scope Inspector", classes="destination-section settings-column-title")
         yield Static(f"Selected category: {summary.title}", classes="destination-section")
+        yield Static(
+            "Unsaved changes" if self._category_has_unsaved_changes(summary.category) else "No unsaved changes",
+            id="settings-selected-category-draft-status",
+            classes="destination-section",
+        )
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Affects Console", classes="destination-section")
             yield Static("Composer paste display, chat-flow defaults, and user input feedback.")
@@ -320,6 +391,16 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-open-appearance",
                 tooltip="Open appearance customization settings.",
             )
+        yield Button(
+            "Save",
+            id="settings-save-category",
+            tooltip="Save changes for the selected Settings category.",
+        )
+        yield Button(
+            "Revert",
+            id="settings-revert-category",
+            tooltip="Discard unsaved changes for the selected Settings category.",
+        )
 
     def compose_content(self) -> ComposeResult:
         active_summary = self._active_summary()
@@ -400,13 +481,66 @@ class SettingsScreen(BaseAppScreen):
     def handle_console_collapse_large_pastes_changed(self, event: Button.Pressed) -> None:
         event.stop()
         next_value = not self._collapse_large_pastes_enabled()
-        self._console_settings()["collapse_large_pastes"] = next_value
+        self._stage_console_large_paste_value(next_value)
         event.button.label = self._collapse_large_pastes_label()
         self._update_console_paste_summary()
-        if save_setting_to_cli_config("console", "collapse_large_pastes", next_value):
-            self.app.notify("Console paste display setting saved.", severity="information")
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Button.Pressed, "#settings-save-category")
+    def handle_save_category(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_settings_save_category()
+
+    @on(Button.Pressed, "#settings-revert-category")
+    def handle_revert_category(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_settings_revert_category()
+
+    def action_settings_save_category(self) -> None:
+        category = self._active_category_id()
+        draft = self._settings_drafts.get(category)
+        if not draft or not draft.is_dirty:
+            self.app.notify("No Settings changes to save.", severity="information")
+            return
+
+        if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+            dirty_values = {key: draft.values[key] for key in draft.dirty_keys}
+            saved = True
+            for key, value in dirty_values.items():
+                if not save_setting_to_cli_config("console", key, value):
+                    saved = False
+            if saved:
+                self._console_settings().update(dirty_values)
+                self._settings_drafts.pop(category, None)
+                self._sync_console_behavior_widgets()
+                self.app.notify("Console behavior settings saved.", severity="information")
+            else:
+                self.app.notify("Failed to save Console behavior settings.", severity="error")
+            return
+
+        self.app.notify("This Settings category has no save action yet.", severity="warning")
+
+    def action_settings_revert_category(self) -> None:
+        category = self._active_category_id()
+        self._settings_drafts.pop(category, None)
+        if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+            self._sync_console_behavior_widgets()
         else:
-            self.app.notify("Failed to save Console paste display setting.", severity="error")
+            self._update_draft_status_widgets(category)
+        self.app.notify("Settings category changes reverted.", severity="information")
+
+    def action_settings_test_category(self) -> None:
+        self.app.notify("No test action is available for this Settings category yet.", severity="warning")
+
+    def _sync_console_behavior_widgets(self) -> None:
+        try:
+            self.query_one("#settings-console-collapse-large-pastes-toggle", Button).label = (
+                self._collapse_large_pastes_label()
+            )
+        except QueryError:
+            pass
+        self._update_console_paste_summary()
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     def on_key(self, event: Key) -> None:
         if event.key == "tab":

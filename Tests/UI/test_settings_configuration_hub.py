@@ -289,7 +289,9 @@ async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        await pilot.click("#settings-category-overview")
         screen = _active_destination_screen(host)
 
         assert "Console paste collapse: Disabled: collapse large pastes" in _visible_text(screen)
@@ -306,6 +308,7 @@ async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypa
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         toggle = screen.query_one("#settings-console-collapse-large-pastes-toggle")
         toggle.focus()
@@ -313,10 +316,64 @@ async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypa
         await pilot.press("enter")
         await pilot.pause()
         assert host.focused is toggle
-        assert "Console paste collapse: Disabled: collapse large pastes" in _visible_text(screen)
+        assert "Disabled: collapse large pastes" in str(toggle.label)
+        assert "Unsaved" in _visible_text(screen)
 
         await pilot.press("enter")
         await pilot.pause()
 
         assert host.focused is toggle
-        assert "Console paste collapse: Enabled: collapse large pastes" in _visible_text(screen)
+        assert "Enabled: collapse large pastes" in str(toggle.label)
+        assert "No unsaved changes" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        screen = _active_destination_screen(host)
+
+        assert "Unsaved" in _visible_text(screen)
+        assert app.app_config["console"]["collapse_large_pastes"] is True
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [("console", "collapse_large_pastes", False)]
+    assert app.app_config["console"]["collapse_large_pastes"] is False
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        screen = _active_destination_screen(host)
+
+        assert "Unsaved" in _visible_text(screen)
+
+        await pilot.click("#settings-revert-category")
+        assert "No unsaved changes" in _visible_text(screen)
+
+    assert saved == []
+    assert app.app_config["console"]["collapse_large_pastes"] is True
