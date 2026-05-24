@@ -1,7 +1,14 @@
 from types import SimpleNamespace
 
+import pytest
 from textual.widgets import Select
 
+from Tests.UI.test_destination_shells import (
+    DestinationHarness,
+    _active_destination_screen,
+    _build_test_app,
+    _visible_text,
+)
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
 )
@@ -208,3 +215,48 @@ def test_adapter_save_values_attempts_all_keys_when_one_save_fails(monkeypatch):
         ("chat_defaults", "provider", "bad"),
         ("chat_defaults", "model", "still-attempted"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_settings_defaults_to_overview_category():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Overview" in text
+        assert "Provider readiness" in text
+        assert "Storage" in text
+        assert "Privacy" in text
+        assert "Console paste collapse" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_category_selection_updates_detail_and_inspector():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Console Behavior" in text
+        assert "Collapse large pasted chunks" in text
+        assert "Affects Console" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_tab_focus_and_enter_select_categories():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.press("tab")
+        await pilot.press("down")
+        await pilot.press("enter")
+        screen = _active_destination_screen(host)
+
+        assert "Providers & Models" in _visible_text(screen)
