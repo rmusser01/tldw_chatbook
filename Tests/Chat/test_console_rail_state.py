@@ -241,6 +241,16 @@ def test_console_inspector_rail_badge_ignores_idle_inspector_rows():
     assert build_console_inspector_rail_badge(inspector_rows=state.rows) == ""
 
 
+def test_console_inspector_rail_badge_ignores_not_requested_source_rows():
+    state = ConsoleInspectorState.from_values(
+        provider_ready=True,
+        rag_status="not requested",
+        artifact_status="not available for this item",
+    )
+
+    assert build_console_inspector_rail_badge(inspector_rows=state.rows) == ""
+
+
 def test_console_inspector_rail_badge_detects_positive_artifact_and_source_readiness():
     assert build_console_inspector_rail_badge(can_save_chatbook=True) == "artifact"
     assert (

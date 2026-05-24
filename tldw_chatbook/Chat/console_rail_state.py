@@ -30,6 +30,7 @@ _NEGATIVE_READINESS_TERMS = {
     "missing source",
     "no results",
     "not available",
+    "not requested",
     "not staged",
     "unavailable",
 }
