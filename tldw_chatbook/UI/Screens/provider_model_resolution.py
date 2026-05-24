@@ -61,7 +61,7 @@ def resolve_effective_provider_model(
     ):
         provider = configured_provider
         provider_source = "chat_defaults"
-    elif reactive_provider is not None:
+    elif _selected_text(reactive_provider):
         provider = reactive_provider
         provider_source = "app_reactive"
     else:

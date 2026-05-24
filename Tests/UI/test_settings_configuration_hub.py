@@ -91,3 +91,18 @@ def test_effective_provider_model_ignores_blank_provider_overrides_for_default_f
 
     assert result.provider == "llama_cpp"
     assert result.provider_source == "chat_defaults"
+
+
+def test_effective_provider_model_ignores_blank_reactive_provider_for_default_fallback():
+    for reactive_provider in ("", " ", "None"):
+        app = _app(
+            provider=reactive_provider,
+            api_model=None,
+            model=None,
+            defaults={"provider": "llama_cpp", "model": "qwen"},
+        )
+
+        result = resolve_effective_provider_model(app)
+
+        assert result.provider == "llama_cpp"
+        assert result.provider_source == "chat_defaults"
