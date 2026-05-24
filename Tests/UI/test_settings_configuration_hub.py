@@ -73,3 +73,21 @@ def test_effective_provider_model_prefers_settings_draft_values():
     assert result.model == "llama3.1"
     assert result.provider_source == "settings_draft"
     assert result.model_source == "settings_draft"
+
+
+def test_effective_provider_model_ignores_blank_provider_overrides_for_default_fallback():
+    app = _app(
+        provider="OpenAI",
+        api_model=None,
+        model=None,
+        defaults={"provider": "llama_cpp", "model": "qwen"},
+    )
+
+    result = resolve_effective_provider_model(
+        app,
+        settings_provider=" ",
+        console_provider="None",
+    )
+
+    assert result.provider == "llama_cpp"
+    assert result.provider_source == "chat_defaults"

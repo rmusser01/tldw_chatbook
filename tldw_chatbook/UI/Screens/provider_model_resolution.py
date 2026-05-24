@@ -48,10 +48,10 @@ def resolve_effective_provider_model(
     configured_provider = _chat_default(app_instance, "provider")
     reactive_provider = getattr(app_instance, "chat_api_provider_value", None)
 
-    if settings_provider is not None:
+    if _selected_text(settings_provider):
         provider = settings_provider
         provider_source = "settings_draft"
-    elif console_provider is not None:
+    elif _selected_text(console_provider):
         provider = console_provider
         provider_source = "console_control"
     elif (
