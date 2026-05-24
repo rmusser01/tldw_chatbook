@@ -40,6 +40,7 @@ Routing constraints:
 Settings is the global configuration hub for:
 
 - Providers and models.
+- Overview/status.
 - Appearance.
 - Storage.
 - Privacy and security.
@@ -88,17 +89,18 @@ Use the existing destination-native terminal workbench style.
 | Settings | Application configuration hub | Local profile | Unsaved: no          |
 | Scope: Global app prefs | Runtime ops stay in MCP / ACP / Workflows            |
 +----------------------+--------------------------------------+------------------+
-| Categories           | Providers & Models                   | Impact / Status  |
-| > Providers & Models | Default provider   [llama.cpp     v] | Affects Console  |
-|   Appearance         | Default model      [qwen2.5       v] | Provider: ready  |
-|   Storage            | API/base URL       [127.0.0.1...]    | Last test: pass  |
-|   Privacy/Security   | Streaming          [enabled       ]  | Source: config   |
-|   Console Behavior   | Temperature        [0.7           ]  | Restart: no      |
-|   Diagnostics        |                                      | Config path ...  |
-|   Advanced Config    | [Test] [Save] [Revert]              |                  |
+| Categories           | Overview                             | Impact / Status  |
+| > Overview           | Provider readiness: ready            | Affects Console  |
+|   Providers & Models | Storage: writable                    | Provider: ready  |
+|   Appearance         | Privacy: encryption off              | Last test: pass  |
+|   Storage            | Console paste collapse: enabled      | Source: config   |
+|   Privacy/Security   |                                      | Restart: no      |
+|   Console Behavior   | [Open blocked provider] [Diagnostics]| Config path ...  |
+|   Diagnostics        |                                      |                  |
+|   Advanced Config    |                                      |                  |
 +----------------------+--------------------------------------+------------------+
 | Help: Save writes to config.toml. Revert restores last loaded values.            |
-| Footer: S save | R revert | T test selected | / search settings                |
+| Footer: S save | R revert | T test selected                                |
 +--------------------------------------------------------------------------------+
 ```
 
@@ -123,9 +125,48 @@ Sub-screen rules:
 - A sub-screen should not be used for simple toggles or short forms that fit in the main workbench.
 - Sub-screen routes must remain explicit and testable; hidden modal-only workflows are not sufficient for core configuration.
 
+### Overview
+
+Purpose: make Settings understandable on arrival and show the user what needs attention.
+
+Overview is the default selected category. It should summarize the most important configuration state without forcing users into a specific setup path.
+
+Initial fields/status cards:
+
+- Provider/model readiness.
+- Storage/config writability.
+- Privacy/security status.
+- Console behavior summary.
+- Diagnostics summary.
+
+Actions:
+
+- Open blocked provider setup.
+- Open Diagnostics.
+- Open Privacy/Security if unencrypted secrets are detected.
+- Open Storage if paths are unavailable or unwritable.
+
+Inspector should show:
+
+- Overall app configuration health.
+- Current profile/config source.
+- Highest-severity blocked or degraded state.
+- Next-best settings action.
+
 ### Providers & Models
 
 Purpose: make model readiness and default provider setup discoverable and testable.
+
+Provider/model values must use the same canonical effective provider/model logic as Console readiness. Settings must not write or display values that contradict what Console will use.
+
+Implementation should introduce or reuse a shared resolver for:
+
+1. Explicit draft value in Settings.
+2. Current app reactive/UI selection where applicable.
+3. `app_config` loaded defaults.
+4. `config.toml` defaults.
+
+The Settings inspector should state which source currently wins.
 
 Initial fields:
 
@@ -255,6 +296,11 @@ Initial behavior:
 - Show explicit warning that raw TOML editing bypasses guided validation.
 - Provide raw TOML editor only after entering Advanced Config.
 - Provide save/reload/validate actions with clear error feedback.
+- Validate TOML before writing.
+- Save atomically.
+- Create or preserve a recoverable backup before overwriting existing config.
+- Redact secret values from validation errors, logs, and notifications.
+- Refuse to save if parsing succeeds but the top-level structure is not a mapping.
 
 This can reuse selected logic from `Tools_Settings_Window.py`, but should not mount the full old window into Settings.
 
@@ -270,9 +316,12 @@ Editing:
 
 - Field edits mark the screen as dirty.
 - Dirty state appears in the header and/or footer.
-- Save writes staged changes.
-- Revert restores last loaded values.
+- Save is per selected category by default.
+- A future global `Save all` action may appear only after multi-category draft state is implemented.
+- Revert restores last loaded values for the selected category.
+- Switching categories with unsaved changes must preserve that category draft and show an unsaved marker in the category list.
 - Reload discards staged changes only after confirmation if unsaved changes exist.
+- Navigating away from Settings with unsaved changes must warn or preserve drafts, not silently discard edits.
 
 Validation:
 
@@ -287,7 +336,7 @@ Keyboard:
 - `S` saves when valid.
 - `R` reverts.
 - `T` tests the selected category if supported.
-- `/` searches settings after search exists.
+- `/` is reserved for settings search, but should not appear in the footer until search is implemented.
 
 ## Data Model Direction
 
@@ -321,16 +370,19 @@ Phase 1 should not rewrite all settings at once.
 Recommended first implementation slice:
 
 1. Make the category list interactive.
-2. Implement `Providers & Models` with testable read/write defaults.
-3. Keep existing `Console Behavior` large-paste toggle, but move it into the category system.
-4. Implement `Appearance` as a clean route/action to the existing customization surface.
-5. Implement `Diagnostics` with config path, reload, and validate.
-6. Preserve current sync-safety copy as a status card in Diagnostics or Privacy/Security, not as the only active section.
+2. Add `Overview` as the default category with provider, storage, privacy, Console behavior, and diagnostics summaries.
+3. Implement `Providers & Models` with testable read/write defaults using shared effective provider/model resolution.
+4. Keep existing `Console Behavior` large-paste toggle, but move it into the category system.
+5. Implement `Appearance` as a clean route/action to the existing customization surface.
+6. Implement `Storage` as a read-only first-slice status category showing config/database path availability.
+7. Implement `Privacy/Security` as a read-only first-slice status category showing encryption and secret-storage state.
+8. Implement `Diagnostics` with config path, reload, and validate.
+9. Preserve current sync-safety copy as a status card in Diagnostics or Privacy/Security, not as the only active section.
 
 Later slices:
 
-- Storage summaries and safe backup/integrity checks.
-- Privacy/security encryption setup.
+- Storage safe backup/integrity checks and editable path defaults.
+- Privacy/security encryption setup and recovery workflows.
 - Advanced raw TOML editor.
 - Settings search.
 - Full provider coverage and per-provider advanced fields.
@@ -340,21 +392,28 @@ Later slices:
 Automated tests:
 
 - Settings mounts with the three-column workbench.
+- Overview is the default selected category.
 - Category selection changes visible detail and inspector content.
 - Console large-paste setting persists through the category system.
 - Provider default edits stage, save, and revert correctly.
+- Provider values use the same effective provider/model source as Console readiness.
 - Provider test reports success/failure without exposing secrets.
 - Appearance action still routes to `customize`.
 - `tools_settings` still resolves to MCP, not Settings.
 - Dirty state appears after edit and clears after save/revert.
+- Switching categories preserves dirty category drafts and displays an unsaved marker.
 - Validation errors show field-specific recovery copy.
+- Invalid typed provider/model fields block save with recoverable error copy.
+- Advanced raw TOML validates before save, writes atomically, and redacts secrets from errors.
 
 Manual/CDP QA:
 
 - Capture actual rendered screenshots before approval.
+- Capture screenshots for Overview and each first-slice category before implementation PR completion.
 - Verify keyboard focus order.
 - Verify mouse category switching.
 - Verify save/revert/test flows.
+- Verify category switching with unsaved changes.
 - Verify long labels and small terminal sizes do not break layout.
 - Verify no secret values are visible in screenshots or logs.
 
