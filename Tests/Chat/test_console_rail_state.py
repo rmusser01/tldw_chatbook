@@ -163,6 +163,36 @@ def test_console_inspector_rail_badge_prioritizes_run_and_review_state():
     assert build_console_inspector_rail_badge() == ""
 
 
+def test_console_inspector_rail_badge_detects_blocked_from_row_fields():
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("Policy blocked"),),
+        )
+        == "blocked"
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("Policy", value="BLOCKED by workspace"),),
+        )
+        == "blocked"
+    )
+
+
+def test_console_inspector_rail_badge_detects_failed_from_row_fields():
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("Run", text="failed"),),
+        )
+        == "failed"
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("FAILED run"),),
+        )
+        == "failed"
+    )
+
+
 def test_console_rail_badges_do_not_mutate_open_booleans():
     key = build_console_rail_preference_key(
         workspace_id="workspace-1",

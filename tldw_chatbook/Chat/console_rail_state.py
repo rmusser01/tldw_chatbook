@@ -216,11 +216,6 @@ def _has_row_match(rows: tuple[Any, ...], candidates: set[str]) -> bool:
     return False
 
 
-def _has_row_status(rows: tuple[Any, ...], status: str) -> bool:
-    target = status.lower()
-    return any(_row_text_parts(row)[1].lower() == target for row in rows)
-
-
 def build_console_inspector_rail_badge(
     *,
     run_status: Any = None,
@@ -231,10 +226,13 @@ def build_console_inspector_rail_badge(
 ) -> str:
     """Build the right rail badge from run, review, tool, and artifact state."""
     normalized_run_status = _normalized_status(run_status)
-    if normalized_run_status == "failed" or _has_row_status(inspector_rows, "failed"):
+    if normalized_run_status == "failed" or _has_row_match(inspector_rows, {"failed"}):
         return "failed"
 
-    if normalized_run_status == "blocked" or _has_row_status(inspector_rows, "blocked"):
+    if normalized_run_status == "blocked" or _has_row_match(
+        inspector_rows,
+        {"blocked"},
+    ):
         return "blocked"
 
     approvals = _coerce_non_negative_int(approval_count)
