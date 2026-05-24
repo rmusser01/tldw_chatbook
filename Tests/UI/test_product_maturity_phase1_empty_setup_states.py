@@ -231,12 +231,14 @@ async def test_optional_dependency_missing_state_exposes_owner_and_setup_action(
         assert "Dependency missing" in recovery_text
         assert "Unavailable: Search/RAG queries." in recovery_text
         assert "Why: Missing optional dependencies: embeddings_rag." in recovery_text
-        assert 'Next: Install with pip install -e ".[embeddings_rag]" and restart.' in recovery_text
+        assert 'pip install -e ".[embeddings_rag]"' in recovery_text
+        assert 'pip install "tldw_chatbook[embeddings_rag]"' in recovery_text
         assert "Recovery: Settings > RAG." in recovery_text
-        assert "Owner: optional dependency." in recovery_text
+        assert "Owner: Library Search/RAG." in recovery_text
         assert search_input.disabled is True
         assert search_button.disabled is True
         assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
+        assert 'pip install "tldw_chatbook[embeddings_rag]"' in str(search_button.tooltip)
 
 
 @pytest.mark.parametrize(

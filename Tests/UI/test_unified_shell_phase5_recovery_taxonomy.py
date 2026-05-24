@@ -431,7 +431,10 @@ def test_phase_five_optional_dependency_recovery_helper_builds_required_fields()
     recovery_state = optional_dependency_recovery_state(
         unavailable_what="Search/RAG queries",
         missing_dependencies=("torch", "sentence-transformers"),
-        install_target='pip install -e ".[embeddings_rag]"',
+        install_targets=(
+            'pip install -e ".[embeddings_rag]"',
+            'pip install "tldw_chatbook[embeddings_rag]"',
+        ),
         stable_selector="search-rag-dependency-missing",
         recovery_action="Settings > RAG",
     )
@@ -439,13 +442,17 @@ def test_phase_five_optional_dependency_recovery_helper_builds_required_fields()
     assert recovery_state.status_label == "Dependency missing"
     assert recovery_state.unavailable_what == "Search/RAG queries"
     assert recovery_state.why == "Missing optional dependencies: torch, sentence-transformers."
-    assert recovery_state.next_action == 'Install with pip install -e ".[embeddings_rag]" and restart.'
+    assert recovery_state.next_action == (
+        'Install with pip install -e ".[embeddings_rag]" for source checkouts or '
+        'pip install "tldw_chatbook[embeddings_rag]" for packaged installs, then restart.'
+    )
     assert recovery_state.recovery_action == "Settings > RAG"
     assert recovery_state.authority_owner == "optional dependency"
     assert recovery_state.stable_selector == "search-rag-dependency-missing"
     assert "Unavailable: Search/RAG queries." in recovery_state.visible_copy
     assert "Why: Missing optional dependencies: torch, sentence-transformers." in recovery_state.visible_copy
-    assert 'Install with pip install -e ".[embeddings_rag]" and restart.' in recovery_state.disabled_tooltip
+    assert 'pip install -e ".[embeddings_rag]"' in recovery_state.disabled_tooltip
+    assert 'pip install "tldw_chatbook[embeddings_rag]"' in recovery_state.disabled_tooltip
 
 
 def test_search_rag_window_imports_without_screens_recovery_cycle():
