@@ -18,7 +18,7 @@ class EffectiveProviderModel:
 
 def _selected_text(value: Any) -> bool:
     """Return whether a provider/model-like value is meaningfully selected."""
-    if value is None:
+    if value is None or value is False:
         return False
     text = str(value).strip()
     return bool(text) and text != "None" and not text.startswith("Select.")

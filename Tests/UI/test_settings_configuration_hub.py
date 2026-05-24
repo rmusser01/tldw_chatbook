@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+from textual.widgets import Select
+
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
 )
@@ -106,3 +108,17 @@ def test_effective_provider_model_ignores_blank_reactive_provider_for_default_fa
 
         assert result.provider == "llama_cpp"
         assert result.provider_source == "chat_defaults"
+
+
+def test_effective_provider_model_ignores_textual_blank_select_provider_for_default_fallback():
+    app = _app(
+        provider="OpenAI",
+        api_model=None,
+        model=None,
+        defaults={"provider": "llama_cpp", "model": "qwen"},
+    )
+
+    result = resolve_effective_provider_model(app, settings_provider=Select.BLANK)
+
+    assert result.provider == "llama_cpp"
+    assert result.provider_source == "chat_defaults"

@@ -350,6 +350,12 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.pending_console_launch = None
         return self._pending_console_launch_context
 
+    def _chat_default_value(self, key: str) -> Any:
+        """Return a chat default value from app config for legacy call sites."""
+        config = getattr(self.app_instance, "app_config", {}) or {}
+        defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
+        return defaults.get(key) if isinstance(defaults, dict) else None
+
     def _effective_console_provider_model(self) -> tuple[Any, Any]:
         """Return the canonical Console provider/model selection.
 
