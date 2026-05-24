@@ -14,6 +14,10 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
+CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
+CONSOLE_CLOSE_TAB_BUTTON_HEIGHT = 1
+
+
 class ConsoleSessionSurface(Vertical):
     """Host Console transcript/event stream sessions without legacy chat chrome."""
 
@@ -42,7 +46,14 @@ class ConsoleSessionSurface(Vertical):
         """Render native Console session tabs from controller-owned state."""
         async with self._session_sync_lock:
             tab_strip = self.query_one("#console-native-tab-strip", Horizontal)
-            desired_ids = [f"console-session-tab-{session.id}" for session in sessions]
+            desired_ids = []
+            for session in sessions:
+                desired_ids.extend(
+                    (
+                        f"console-session-tab-{session.id}",
+                        f"console-close-session-tab-{session.id}",
+                    )
+                )
             desired_ids.append("console-new-chat-tab")
             existing_ids = [child.id for child in tab_strip.children]
             if existing_ids == desired_ids:
@@ -67,4 +78,15 @@ class ConsoleSessionSurface(Vertical):
                         classes=classes,
                     )
                 )
+                close_button = Button(
+                    "x",
+                    id=f"console-close-session-tab-{session.id}",
+                    classes="console-session-close-button",
+                )
+                close_button.styles.width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
+                close_button.styles.min_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
+                close_button.styles.max_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
+                close_button.styles.height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
+                close_button.styles.min_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
+                await tab_strip.mount(close_button)
             await tab_strip.mount(Button("New tab", id="console-new-chat-tab"))

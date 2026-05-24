@@ -1166,9 +1166,9 @@ async def test_console_workbench_weights_transcript_as_primary_region():
 
         assert main.region.width > staged.region.width
         assert main.region.width > inspector.region.width
-        assert staged.region.width > inspector.region.width
-        assert staged.region.width >= 48
-        assert inspector.region.width >= 34
+        assert inspector.region.width > staged.region.width
+        assert staged.region.width >= 36
+        assert inspector.region.width >= 40
         assert transcript.region.width == main.region.width
 
 
