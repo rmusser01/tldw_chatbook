@@ -1,7 +1,7 @@
 # Console Persistent Rails Design
 
 Date: 2026-05-24
-Status: Approved design direction, pending written-spec review
+Status: Approved by user and spec review, pending user review before implementation planning
 Primary Repo: `tldw_chatbook`
 Scope: Console screen UX, layout state, rail affordances, persistence, and QA
 
@@ -60,8 +60,8 @@ For a new workspace/session:
 
 - Left rail: open.
 - Right rail: collapsed.
-- Center lane: primary, wider than today because the inspector is collapsed.
-- Composer: still full-width under the workbench.
+- Center lane: transcript/event stream primary, wider than today because the inspector is collapsed.
+- Composer: full-width under the entire workbench, aligned with the outer Console grid rather than scoped to the center lane.
 
 The left rail remains open by default because it explains staged context, workspace authority, sync state, runtime state, and conversation scope.
 
@@ -89,13 +89,21 @@ Example badges:
 - `Inspector - 1 approval`
 - `Inspector - tools`
 
-Badge copy should prefer one short status over multiple simultaneous labels. When several states compete, use a simple priority order:
+Badge copy should prefer one short status over multiple simultaneous labels. Badge priority is rail-specific.
+
+Left `Context` badge priority:
+
+1. Staged evidence/context.
+2. Workspace/session status.
+3. Empty or no badge.
+
+Right `Inspector` badge priority:
 
 1. Failed or blocked run/provider state.
 2. Pending approval.
 3. Ready tool call.
-4. Staged evidence/context.
-5. Workspace/session status.
+4. Source/artifact readiness.
+5. Empty or no badge.
 
 ## Layout And Visual Hierarchy
 
@@ -104,14 +112,14 @@ The central transcript/composer lane owns the screen.
 When the right rail is collapsed:
 
 - The transcript region expands horizontally.
-- The composer remains aligned with the workbench width.
+- The composer remains full-width under the complete workbench and does not become a center-lane-only composer.
 - The right handle stays visible at the edge.
 
 When the left rail is collapsed:
 
 - Staged context and workspace context are hidden.
 - The `Context` handle stays visible at the edge.
-- The center lane gains horizontal room.
+- The center transcript lane gains horizontal room.
 
 When both rails are open:
 
@@ -257,7 +265,7 @@ Required pure tests:
 - Invalid stored state falls back to defaults.
 - Left badge summarizes staged context.
 - Right badge prioritizes blocked or failed state over lower-priority readiness.
-- No badge state causes auto-open.
+- Badge-relevant state changes do not auto-open rails.
 
 Required mounted Console tests:
 
@@ -268,7 +276,8 @@ Required mounted Console tests:
 - Pending approval updates the collapsed right handle badge without opening the inspector.
 - Staged context updates the collapsed left handle badge without opening the context rail.
 - Rail state persists per workspace/session and changes when workspace/session changes.
-- Central transcript width increases when right rail is collapsed.
+- Central transcript width increases when either rail is collapsed.
+- Composer remains full-width under the outer Console workbench across rail states.
 - Collapsed handles are reachable through keyboard focus.
 - Existing provider recovery `Open Settings`, composer send/blocked draft preservation, transcript selection, and tab controls still pass.
 
@@ -305,7 +314,7 @@ Mitigation: keep central provider recovery visible, add concise collapsed badges
 - [ ] Users can collapse and reopen both rails through visible in-layout handles.
 - [ ] Rail state persists per workspace/session.
 - [ ] Collapsed rails show concise state badges without auto-opening.
-- [ ] Central transcript/composer lane gains horizontal room when either rail is collapsed.
+- [ ] Central transcript lane gains horizontal room when either rail is collapsed while the composer remains full-width under the outer Console workbench.
 - [ ] Existing native chat, provider recovery, transcript, tab, staged context, workspace context, and inspector behaviors continue to pass.
 - [ ] Focused unit and mounted tests cover defaults, toggles, persistence, badges, and no-auto-open behavior.
 - [ ] Actual textual-web screenshot QA verifies the approved rail states.
