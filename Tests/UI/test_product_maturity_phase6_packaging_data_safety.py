@@ -111,15 +111,27 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
     assert "tldw_chatbook.Config_Files" in package_data
 
     for required_copy in (
+        "Local-first baseline",
+        "Advanced optional capability groups",
         "python3 -m venv .venv",
         "pip install -e .",
         "pip install -e \".[dev]\"",
+        "pip install \"tldw_chatbook[embeddings_rag]\"",
         "tldw-cli",
         "tldw-serve",
         "Configuration File",
         "Environment Variables",
     ):
         assert required_copy in readme
+
+    for optional_area in (
+        "RAG and retrieval",
+        "Media ingestion and transcription",
+        "MCP integration",
+        "Local inference",
+        "Web access",
+    ):
+        assert optional_area in readme
 
     assert "TLDW_CONFIG_PATH" in config
     assert "_get_effective_config_path" in config
@@ -201,10 +213,10 @@ def test_phase6_packaging_config_data_safety_evidence_and_tracking_are_current()
 
     assert EVIDENCE.name in readme
     assert "Phase 6.6 Packaging/configuration/data-safety validation" in readme
-    assert "Status: TASK-13.1 through TASK-13.6 done; TASK-13.7 not started" in readme
+    assert "Status: TASK-13.1 through TASK-13.7 done; Phase 6 verified" in readme
 
     phase6_row = _markdown_table_row(tracker, "Phase 6: Release Hardening And Documentation")
-    assert "in-progress; TASK-13.1 through TASK-13.6 done" in phase6_row[2]
+    assert "verified; TASK-13.1 through TASK-13.7 done" in phase6_row[2]
     assert "TASK-13.6" in phase6_row[3]
     assert EVIDENCE.name in phase6_row[4]
     assert "packaging/configuration/migration/data-safety verified" in phase6_row[5].lower()

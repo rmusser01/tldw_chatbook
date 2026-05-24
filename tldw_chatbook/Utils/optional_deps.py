@@ -3,6 +3,7 @@
 #
 import sys
 import importlib.util
+from dataclasses import dataclass
 from typing import Dict, Any, Optional, Callable
 from loguru import logger
 
@@ -98,6 +99,188 @@ MODULES = {}
 
 # Store placeholder functions for unavailable features
 PLACEHOLDERS = {}
+
+LOCAL_FIRST_BASELINE_INSTALL_COMMAND = "pip install -e ."
+LOCAL_FIRST_PACKAGE_INSTALL_COMMAND = "pip install tldw_chatbook"
+
+
+@dataclass(frozen=True)
+class OptionalFeatureInfo:
+    """User-facing metadata for an optional feature group.
+
+    Args:
+        extra: pyproject optional dependency group.
+        label: Human-readable capability label.
+        feature_area: Product area used for release docs and grouping.
+        capability_tier: `baseline` or `advanced` capability tier.
+        package_dependencies: Representative packages installed by the extra.
+        recovery_action: Destination or setup area that owns recovery.
+        unavailable_what: Specific workflow blocked when the extra is missing.
+        owner: User-facing authority owner for recovery copy.
+    """
+
+    extra: str
+    label: str
+    feature_area: str
+    capability_tier: str
+    package_dependencies: tuple[str, ...]
+    recovery_action: str
+    unavailable_what: str
+    owner: str = "optional dependency"
+
+    @property
+    def source_install_command(self) -> str:
+        """Editable/source checkout install command."""
+
+        return f'pip install -e ".[{self.extra}]"'
+
+    @property
+    def package_install_command(self) -> str:
+        """Installed-package recovery command."""
+
+        return f'pip install "tldw_chatbook[{self.extra}]"'
+
+
+OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
+    "embeddings_rag": OptionalFeatureInfo(
+        extra="embeddings_rag",
+        label="Library/Search-RAG",
+        feature_area="rag",
+        capability_tier="advanced",
+        package_dependencies=("torch", "transformers", "sentence-transformers", "chromadb"),
+        recovery_action="Settings > RAG",
+        unavailable_what="Search/RAG queries",
+    ),
+    "chunker": OptionalFeatureInfo(
+        extra="chunker",
+        label="Advanced chunking",
+        feature_area="rag",
+        capability_tier="advanced",
+        package_dependencies=("nltk", "langdetect", "scikit-learn", "jieba", "fugashi"),
+        recovery_action="Library > Import/Export",
+        unavailable_what="Advanced chunking",
+    ),
+    "websearch": OptionalFeatureInfo(
+        extra="websearch",
+        label="Web search and scraping",
+        feature_area="server",
+        capability_tier="advanced",
+        package_dependencies=("beautifulsoup4", "playwright", "trafilatura"),
+        recovery_action="Search/RAG or server research settings",
+        unavailable_what="Web search",
+    ),
+    "audio": OptionalFeatureInfo(
+        extra="audio",
+        label="Audio ingestion and transcription",
+        feature_area="media",
+        capability_tier="advanced",
+        package_dependencies=("soundfile", "scipy", "yt-dlp", "faster-whisper"),
+        recovery_action="Library > Import/Export",
+        unavailable_what="Audio processing",
+    ),
+    "video": OptionalFeatureInfo(
+        extra="video",
+        label="Video ingestion and transcription",
+        feature_area="media",
+        capability_tier="advanced",
+        package_dependencies=("soundfile", "scipy", "yt-dlp", "faster-whisper"),
+        recovery_action="Library > Import/Export",
+        unavailable_what="Video processing",
+    ),
+    "pdf": OptionalFeatureInfo(
+        extra="pdf",
+        label="PDF processing",
+        feature_area="media",
+        capability_tier="advanced",
+        package_dependencies=("pymupdf", "pymupdf4llm", "docling"),
+        recovery_action="Library > Import/Export",
+        unavailable_what="PDF ingestion",
+    ),
+    "ebook": OptionalFeatureInfo(
+        extra="ebook",
+        label="E-book processing",
+        feature_area="media",
+        capability_tier="advanced",
+        package_dependencies=("ebooklib", "beautifulsoup4", "defusedxml"),
+        recovery_action="Library > Import/Export",
+        unavailable_what="E-book ingestion",
+    ),
+    "mcp": OptionalFeatureInfo(
+        extra="mcp",
+        label="MCP server and client support",
+        feature_area="mcp",
+        capability_tier="advanced",
+        package_dependencies=("mcp[cli]",),
+        recovery_action="MCP",
+        unavailable_what="MCP server/client tools",
+    ),
+    "web": OptionalFeatureInfo(
+        extra="web",
+        label="Web server",
+        feature_area="web",
+        capability_tier="advanced",
+        package_dependencies=("textual-serve",),
+        recovery_action="Web server setup",
+        unavailable_what="Browser access",
+    ),
+    "local_vllm": OptionalFeatureInfo(
+        extra="local_vllm",
+        label="Local vLLM inference",
+        feature_area="server",
+        capability_tier="advanced",
+        package_dependencies=("vllm",),
+        recovery_action="Settings > Models",
+        unavailable_what="Local vLLM inference",
+    ),
+    "local_mlx": OptionalFeatureInfo(
+        extra="local_mlx",
+        label="Local MLX inference",
+        feature_area="server",
+        capability_tier="advanced",
+        package_dependencies=("mlx-lm",),
+        recovery_action="Settings > Models",
+        unavailable_what="Local MLX inference",
+    ),
+    "local_tts": OptionalFeatureInfo(
+        extra="local_tts",
+        label="Local text-to-speech",
+        feature_area="media",
+        capability_tier="advanced",
+        package_dependencies=("kokoro-onnx", "onnxruntime", "pyaudio"),
+        recovery_action="STTS",
+        unavailable_what="Local TTS",
+    ),
+    "ocr_docext": OptionalFeatureInfo(
+        extra="ocr_docext",
+        label="OCR and document extraction",
+        feature_area="media",
+        capability_tier="advanced",
+        package_dependencies=("docext", "gradio_client", "openai"),
+        recovery_action="Library > Import/Export",
+        unavailable_what="OCR/document extraction",
+    ),
+}
+
+
+def get_optional_feature_info(extra: str) -> OptionalFeatureInfo:
+    """Return recovery metadata for a pyproject optional dependency group."""
+
+    try:
+        return OPTIONAL_FEATURES[extra]
+    except KeyError as exc:
+        raise KeyError(f"Unknown optional feature extra: {extra}") from exc
+
+
+def optional_feature_groups_by_area() -> dict[str, tuple[str, ...]]:
+    """Group optional dependency extras by release-facing capability area."""
+
+    grouped: dict[str, list[str]] = {}
+    for extra, info in OPTIONAL_FEATURES.items():
+        grouped.setdefault(info.feature_area, []).append(extra)
+    return {
+        area: tuple(sorted(extras))
+        for area, extras in sorted(grouped.items())
+    }
 
 def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bool:
     """

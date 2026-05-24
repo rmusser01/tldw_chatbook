@@ -254,23 +254,28 @@ def test_phase6_recovery_docs_evidence_and_tracking_are_current() -> None:
         "ACP runtime setup",
         "MCP server management",
         "Optional dependency recovery",
+        "Local-first baseline",
+        "Advanced optional capability groups",
+        "Missing optional features do not mean Chatbook is broken",
         "Missing-source recovery",
         "OPENAI_API_KEY",
         "pip install -e \".[embeddings_rag]\"",
         "pip install -e \".[mcp]\"",
+        "pip install \"tldw_chatbook[embeddings_rag]\"",
     ):
         assert required_phrase in recovery_doc
 
     assert EVIDENCE.name in readme
     assert RECOVERY_DOC.as_posix() in readme
     assert "Phase 6.5 Recovery/setup/documentation alignment" in readme
-    assert "Status: TASK-13.1 through TASK-13.5 done; TASK-13.6 through TASK-13.7 not started" in readme
+    assert "Status: TASK-13.1 through TASK-13.7 done; Phase 6 verified" in readme
 
     phase6_row = _markdown_table_row(tracker, "Phase 6: Release Hardening And Documentation")
-    assert "in-progress; TASK-13.1 through TASK-13.5 done" in phase6_row[2]
+    assert "verified; TASK-13.1 through TASK-13.7 done" in phase6_row[2]
     assert "TASK-13.5" in phase6_row[3]
     assert EVIDENCE.name in phase6_row[4]
-    assert "recovery/setup/documentation alignment verified" in phase6_row[5].lower()
+    assert "recovery/setup/documentation alignment" in phase6_row[5].lower()
+    assert "release hardening complete" in phase6_row[5].lower()
 
     qa_row = _markdown_table_row(tracker, "Phase 6.5")
     assert EVIDENCE.as_posix() in qa_row[1]

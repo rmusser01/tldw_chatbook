@@ -20,6 +20,45 @@ def test_optional_deps_import():
     assert callable(create_unavailable_feature_handler)
 
 
+def test_optional_feature_metadata_exposes_recovery_commands_and_capability_tiers():
+    """Optional extras expose source-honest recovery metadata for blocked features."""
+    from tldw_chatbook.Utils.optional_deps import get_optional_feature_info
+
+    rag = get_optional_feature_info("embeddings_rag")
+    assert rag.extra == "embeddings_rag"
+    assert rag.label == "Library/Search-RAG"
+    assert rag.capability_tier == "advanced"
+    assert rag.feature_area == "rag"
+    assert rag.source_install_command == 'pip install -e ".[embeddings_rag]"'
+    assert rag.package_install_command == 'pip install "tldw_chatbook[embeddings_rag]"'
+    assert rag.recovery_action == "Settings > RAG"
+    assert rag.unavailable_what == "Search/RAG queries"
+
+    web = get_optional_feature_info("web")
+    assert web.label == "Web server"
+    assert web.feature_area == "web"
+    assert web.source_install_command == 'pip install -e ".[web]"'
+
+
+def test_optional_feature_metadata_groups_release_capabilities_without_core_install():
+    """The optional matrix separates baseline install from advanced feature groups."""
+    from tldw_chatbook.Utils.optional_deps import (
+        LOCAL_FIRST_BASELINE_INSTALL_COMMAND,
+        optional_feature_groups_by_area,
+    )
+
+    groups = optional_feature_groups_by_area()
+    assert LOCAL_FIRST_BASELINE_INSTALL_COMMAND == "pip install -e ."
+    assert "rag" in groups
+    assert "media" in groups
+    assert "mcp" in groups
+    assert "server" in groups
+    assert "web" in groups
+    assert "embeddings_rag" in groups["rag"]
+    assert "mcp" in groups["mcp"]
+    assert "web" in groups["web"]
+
+
 def test_unavailable_feature_handler():
     """Test that unavailable feature handlers work correctly."""
     from tldw_chatbook.Utils.optional_deps import create_unavailable_feature_handler
