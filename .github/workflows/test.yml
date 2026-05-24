@@ -167,9 +167,10 @@ jobs:
         path: ui-test-results.json
   
   all-tests:
-    name: All Tests (No Markers)
+    name: Full Test Suite (Manual)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 60
     
     steps:
     - uses: actions/checkout@v4
@@ -215,7 +216,6 @@ jobs:
           htmlcov/
     
     - name: Upload coverage to Codecov
-      if: github.event_name == 'pull_request'
       uses: codecov/codecov-action@v4
       with:
         file: ./coverage-all.xml

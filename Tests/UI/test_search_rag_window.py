@@ -220,9 +220,12 @@ class TestSearchRAGWindow:
                 assert search_input.disabled is True
                 assert "Embeddings not available" in search_input.placeholder
                 assert search_button.disabled is True
-                assert "Search/RAG queries" in str(search_button.tooltip)
-                assert "Missing optional dependencies: embeddings_rag" in str(search_button.tooltip)
-                assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
+                tooltip = str(search_button.tooltip)
+                assert "Search/RAG queries" in tooltip
+                assert "Missing optional dependencies: embeddings_rag" in tooltip
+                assert 'pip install -e ".[embeddings_rag]"' in tooltip
+                assert 'pip install "tldw_chatbook[embeddings_rag]"' in tooltip
+                assert "then restart" in tooltip
                 assert window.is_searching is False
 
     @pytest.mark.asyncio

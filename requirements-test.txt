@@ -2,6 +2,7 @@
 pytest
 pytest-asyncio
 pytest-mock
+pytest-timeout
 hypothesis
 aiohttp
 
