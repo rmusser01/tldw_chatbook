@@ -48,10 +48,11 @@ class SettingsConfigAdapter:
 
     def save_values(self, section: str, values: Mapping[str, Any]) -> bool:
         """Persist a group of values to one config section."""
-        return all(
-            save_setting_to_cli_config(section, key, value)
-            for key, value in values.items()
-        )
+        all_saved = True
+        for key, value in values.items():
+            if not save_setting_to_cli_config(section, key, value):
+                all_saved = False
+        return all_saved
 
     def validate_raw_toml(self, text: str) -> SettingsValidationResult:
         """Validate TOML text and require a top-level table/mapping."""

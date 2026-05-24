@@ -184,3 +184,27 @@ def test_adapter_accepts_table_headers_before_scalar_fallback():
         result = adapter.validate_raw_toml(value)
 
         assert result.valid
+
+
+def test_adapter_save_values_attempts_all_keys_when_one_save_fails(monkeypatch):
+    calls = []
+
+    def fake_save(section, key, value):
+        calls.append((section, key, value))
+        return key != "provider"
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        fake_save,
+    )
+
+    result = SettingsConfigAdapter().save_values(
+        "chat_defaults",
+        {"provider": "bad", "model": "still-attempted"},
+    )
+
+    assert not result
+    assert calls == [
+        ("chat_defaults", "provider", "bad"),
+        ("chat_defaults", "model", "still-attempted"),
+    ]
