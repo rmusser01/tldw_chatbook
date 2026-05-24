@@ -19,16 +19,6 @@ _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?P<value>[^\s,;]+)",
     re.IGNORECASE,
 )
-_SCALAR_LIKE_TOML_PATTERN = re.compile(
-    r"""(?x)
-    (?:
-        true|false|
-        [+-]?\d+(?:\.\d+)?|
-        \[.*\]|
-        \{.*\}
-    )
-    """
-)
 
 
 def redact_secret_text(text: str) -> str:
@@ -38,6 +28,15 @@ def redact_secret_text(text: str) -> str:
         return f"{match.group('key')}{match.group('sep')}<redacted>"
 
     return _SECRET_ASSIGNMENT_PATTERN.sub(_replace, str(text))
+
+
+def _is_toml_scalar_value(text: str) -> bool:
+    """Return whether text parses as a TOML value rather than a table."""
+    try:
+        toml.loads(f"__value__ = {text}")
+    except toml.TomlDecodeError:
+        return False
+    return True
 
 
 class SettingsConfigAdapter:
@@ -61,11 +60,7 @@ class SettingsConfigAdapter:
         try:
             parsed = toml.loads(text)
         except toml.TomlDecodeError as exc:
-            if (
-                len(stripped_text) >= 2
-                and stripped_text[0] == stripped_text[-1]
-                and stripped_text[0] in {"'", '"'}
-            ) or _SCALAR_LIKE_TOML_PATTERN.fullmatch(stripped_text):
+            if _is_toml_scalar_value(stripped_text):
                 return SettingsValidationResult(
                     False,
                     "top-level TOML value must be a table",

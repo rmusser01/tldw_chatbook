@@ -161,7 +161,16 @@ def test_adapter_rejects_non_mapping_toml():
 def test_adapter_rejects_scalar_like_toml_with_table_message():
     adapter = SettingsConfigAdapter()
 
-    for value in ("42", "true", "[1, 2]"):
+    for value in (
+        "42",
+        "true",
+        "[1, 2]",
+        "nan",
+        "inf",
+        "0xDEADBEEF",
+        "1979-05-27",
+        "1979-05-27T07:32:00Z",
+    ):
         result = adapter.validate_raw_toml(value)
 
         assert not result.valid
