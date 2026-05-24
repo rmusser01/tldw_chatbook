@@ -15,6 +15,9 @@ from tldw_chatbook.Chat.citation_evidence_models import (
 
 CITATION_MARKER_PATTERN = re.compile(r"\[(S[0-9][A-Za-z0-9_-]*)\]")
 QUOTE_BOUNDARY_CHARS = (".", "?", "!", "\n")
+MAX_CITATION_ARTIFACT_SUMMARY_TEXT_CHARS = 256
+MAX_CITATION_ARTIFACT_SUMMARY_IDS = 20
+MAX_CITATION_ARTIFACT_SUMMARY_REFERENCES = 200
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,92 @@ def evidence_bundle_from_value(value: Any) -> EvidenceBundle | None:
         except (TypeError, ValueError):
             return None
     return None
+
+
+def summarize_citation_artifact_metadata(metadata: Any) -> dict[str, Any]:
+    """Return compact citation/evidence fields for artifact resume payloads.
+
+    Args:
+        metadata: Chatbook artifact metadata that may contain ``citation_validation``
+            and ``evidence_bundle`` payloads.
+
+    Returns:
+        Bounded summary fields suitable for Home/Artifacts Console launch
+        payloads. Nested citation payloads stay in artifact metadata. Callers
+        still validate/escape returned text at their UI or payload boundary.
+    """
+    if not isinstance(metadata, Mapping):
+        return {}
+
+    payload: dict[str, Any] = {}
+    validation = metadata.get("citation_validation")
+    if isinstance(validation, Mapping):
+        if status := _citation_summary_text(validation.get("status")):
+            payload["citation_status"] = status
+
+        cited_ids = _citation_summary_items(validation.get("cited_evidence_ids"))
+        if cited_ids:
+            payload["citation_cited_evidence_ids"] = ", ".join(cited_ids)
+            payload["citation_count"] = len(cited_ids)
+        else:
+            citations = validation.get("citations")
+            payload["citation_count"] = len(citations) if isinstance(citations, list) else 0
+
+        unknown_ids = _citation_summary_items(validation.get("unknown_citation_ids"))
+        if unknown_ids:
+            payload["citation_unknown_evidence_ids"] = ", ".join(unknown_ids)
+        uncited_ids = _citation_summary_items(validation.get("uncited_evidence_ids"))
+        if uncited_ids:
+            payload["citation_uncited_evidence_ids"] = ", ".join(uncited_ids)
+
+    evidence_bundle = metadata.get("evidence_bundle")
+    if isinstance(evidence_bundle, Mapping):
+        if bundle_id := _citation_summary_text(evidence_bundle.get("bundle_id")):
+            payload["evidence_bundle_id"] = bundle_id
+        if query := _citation_summary_text(evidence_bundle.get("query")):
+            payload["evidence_query"] = query
+
+        references = evidence_bundle.get("references")
+        if isinstance(references, list):
+            bounded_references = references[:MAX_CITATION_ARTIFACT_SUMMARY_REFERENCES]
+            payload["evidence_source_count"] = len(bounded_references)
+            payload["evidence_snippet_count"] = sum(
+                1
+                for reference in bounded_references
+                if isinstance(reference, Mapping)
+                and _citation_summary_text(reference.get("snippet"))
+            )
+            if len(references) > MAX_CITATION_ARTIFACT_SUMMARY_REFERENCES:
+                payload["evidence_counts_truncated"] = True
+        else:
+            payload["evidence_source_count"] = 0
+            payload["evidence_snippet_count"] = 0
+
+    return payload
+
+
+def _citation_summary_text(
+    value: Any,
+    *,
+    max_length: int = MAX_CITATION_ARTIFACT_SUMMARY_TEXT_CHARS,
+) -> str:
+    raw = "" if value is None else str(value)
+    text = " ".join(raw.split())
+    if len(text) > max_length:
+        return text[: max_length - 3].rstrip() + "..."
+    return text
+
+
+def _citation_summary_items(value: Any) -> list[str]:
+    if value is None:
+        return []
+    raw_items = value if isinstance(value, (list, tuple)) else [value]
+    items: list[str] = []
+    for item in raw_items[:MAX_CITATION_ARTIFACT_SUMMARY_IDS]:
+        text = _citation_summary_text(item)
+        if text:
+            items.append(text)
+    return items
 
 
 def format_evidence_for_cited_answer(value: Any) -> str:

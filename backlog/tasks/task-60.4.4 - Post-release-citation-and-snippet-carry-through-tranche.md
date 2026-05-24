@@ -48,6 +48,10 @@ Library/Search-RAG evidence bundle slice added. `build_library_rag_console_live_
 Console evidence staging slice added. Console staged context and the Run Inspector now summarize staged Library/Search-RAG evidence count, source authority, reference status, and snippets without exposing raw `evidence_bundle` metadata. Send recovery now blocks RAG-grounded Console sends when no eligible evidence is available, preserving the composer draft and showing native Console feedback. `ChatHandoffPayload.model_context_block()` formats staged evidence in a readable model-context section. Actual textual-web/CDP screenshot evidence was captured at `Docs/superpowers/qa/product-maturity/post-release-ux-hci/actual-screenshots/2026-05-23-console-evidence-staging.png` and approved by the user.
 
 Answer-level citation injection slice added. Staged evidence context now includes explicit citation instructions, available/blocked evidence state, and stable `[S#]` source labels. Assistant responses are parsed for citation markers and validated against the staged evidence bundle on both streaming and non-streaming completion paths, attaching validated, unknown, uncited, blocked, stale, missing, or insufficient-evidence metadata to the generated message widget for the later persistence and export slices.
+
+Console-saved Chatbook artifact preservation slice added. Saved assistant response metadata now carries bounded JSON-safe `citation_validation` and staged `evidence_bundle` payloads when present. Artifacts and Home resume paths expose compact citation/evidence summary fields for Console launch payloads so grounded saved answers retain validation status, cited labels, bundle identity, source count, and snippet count. Full exported Chatbook ZIP preservation and actual app QA remain follow-up work for this task.
+
+PR review hardening added for the artifact preservation slice. Citation summary text now preserves falsy-but-valid values, caps evidence reference counting on resume paths, and is sanitized at Home/Artifacts payload boundaries before reaching Console live-work rendering.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

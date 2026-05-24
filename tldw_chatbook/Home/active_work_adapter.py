@@ -13,6 +13,7 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 from loguru import logger
 from rich.markup import escape
 
+from tldw_chatbook.Chat.answer_citations import summarize_citation_artifact_metadata
 from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
@@ -684,4 +685,17 @@ def _console_metadata_payload(metadata: Any) -> dict[str, Any]:
             bool(metadata.get("content_truncated"))
             or len(str(metadata.get("content"))) > _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS
         )
+    payload.update(_console_metadata_summary_payload(metadata))
+    return payload
+
+
+def _console_metadata_summary_payload(metadata: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in summarize_citation_artifact_metadata(metadata).items():
+        if isinstance(value, bool) or isinstance(value, int):
+            payload[key] = value
+            continue
+        safe_value = _safe_metadata_value(value)
+        if safe_value is not None:
+            payload[key] = safe_value
     return payload

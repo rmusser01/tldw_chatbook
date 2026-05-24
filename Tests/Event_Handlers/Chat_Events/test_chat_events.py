@@ -500,6 +500,56 @@ async def test_console_chatbook_artifact_metadata_preserves_falsey_simple_values
     assert "model" not in metadata
 
 
+async def test_console_chatbook_artifact_metadata_preserves_citation_payloads(mock_app):
+    """Console-saved Chatbook artifacts keep answer citation and evidence metadata."""
+    mock_action_widget = MagicMock(spec=ChatMessage)
+    mock_action_widget.message_id_internal = "msg-456"
+    mock_action_widget.citation_validation_payload = {
+        "status": "validated",
+        "citations": [
+            {
+                "evidence_id": "S1",
+                "source_id": "note-1",
+                "status": "validated",
+                "quote": "The credential expired [S1].",
+            }
+        ],
+        "cited_evidence_ids": ["S1"],
+        "unknown_citation_ids": [],
+        "uncited_evidence_ids": [],
+        "recovery": "",
+    }
+    mock_action_widget.citation_evidence_bundle = {
+        "bundle_id": "library-rag:incident",
+        "query": "Why did the incident happen?",
+        "status": "available",
+        "references": [
+            {
+                "evidence_id": "S1",
+                "source_id": "note-1",
+                "source_type": "note",
+                "title": "Incident Review",
+                "snippet": "Expired credential caused the incident.",
+                "authority_label": "Source authority: local",
+                "status": "available",
+            }
+        ],
+    }
+
+    metadata = _console_chatbook_artifact_metadata(
+        mock_app,
+        mock_action_widget,
+        "The credential expired [S1].",
+        "Assistant",
+    )
+
+    assert metadata["citation_validation"]["status"] == "validated"
+    assert metadata["citation_validation"]["cited_evidence_ids"] == ["S1"]
+    assert metadata["citation_validation"]["citations"][0]["source_id"] == "note-1"
+    assert metadata["evidence_bundle"]["bundle_id"] == "library-rag:incident"
+    assert metadata["evidence_bundle"]["references"][0]["snippet"] == "Expired credential caused the incident."
+
+
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.load_character_and_image')
 async def test_handle_chat_load_character_with_greeting(mock_load_char, mock_app):
     """Test that loading a character into an empty, ephemeral chat posts a greeting."""
