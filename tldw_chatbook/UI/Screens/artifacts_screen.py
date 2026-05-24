@@ -18,6 +18,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
+from ...Chat.answer_citations import summarize_citation_artifact_metadata
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -185,6 +186,7 @@ class ArtifactsScreen(BaseAppScreen):
             payload["content_truncated"] = content_truncated
         elif "content_preview" in payload:
             payload["content_truncated"] = False
+        payload.update(summarize_citation_artifact_metadata(metadata))
         return payload
 
     @staticmethod

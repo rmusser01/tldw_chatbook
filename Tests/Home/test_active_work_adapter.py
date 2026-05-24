@@ -500,6 +500,74 @@ def test_local_notification_adapter_opens_console_saved_chatbook_details_and_con
     }
 
 
+def test_local_notification_adapter_preserves_console_saved_chatbook_citation_metadata():
+    class FakeChatbookService:
+        def list_home_artifact_snapshot(self, *, limit=20):
+            return [
+                {
+                    "chatbook_id": 77,
+                    "id": "77",
+                    "name": "Grounded Answer",
+                    "metadata": {
+                        "artifact_source": "console",
+                        "artifact_kind": "assistant-response",
+                        "content": "The credential expired [S1].",
+                        "citation_validation": {
+                            "status": "validated",
+                            "citations": [
+                                {
+                                    "evidence_id": "S1",
+                                    "source_id": "note-1",
+                                    "status": "validated",
+                                    "quote": "The credential expired [S1].",
+                                }
+                            ],
+                            "cited_evidence_ids": ["S1"],
+                            "unknown_citation_ids": [],
+                            "uncited_evidence_ids": [],
+                            "recovery": "",
+                        },
+                        "evidence_bundle": {
+                            "bundle_id": "library-rag:incident",
+                            "query": "Why did the incident happen?",
+                            "status": "available",
+                            "references": [
+                                {
+                                    "evidence_id": "S1",
+                                    "source_id": "note-1",
+                                    "source_type": "note",
+                                    "title": "Incident Review",
+                                    "snippet": "Expired credential caused the incident.",
+                                    "authority_label": "Source authority: local",
+                                    "status": "available",
+                                }
+                            ],
+                        },
+                    },
+                },
+            ]
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        chatbook_service=FakeChatbookService()
+    )
+    adapter.refresh_chatbook_artifact_snapshot()
+
+    console_result = adapter.handle_control(
+        HomeControlAction.OPEN_IN_CONSOLE,
+        target_id="local:chatbook:77",
+        target_route="chat",
+    )
+
+    assert console_result.status is HomeControlResultStatus.HANDLED
+    payload = console_result.console_launch.payload
+    assert payload["citation_status"] == "validated"
+    assert payload["citation_cited_evidence_ids"] == "S1"
+    assert payload["citation_count"] == 1
+    assert payload["evidence_bundle_id"] == "library-rag:incident"
+    assert payload["evidence_source_count"] == 1
+    assert payload["evidence_snippet_count"] == 1
+
+
 def test_local_notification_adapter_bounds_console_saved_chatbook_preview():
     long_content = "x" * 1500
 

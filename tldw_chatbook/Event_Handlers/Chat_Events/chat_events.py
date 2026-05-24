@@ -6,6 +6,7 @@ import logging
 import asyncio
 import inspect
 import json
+import math
 import os
 import time
 from datetime import datetime
@@ -65,6 +66,11 @@ if TYPE_CHECKING:
 MAX_CONSOLE_CHATBOOK_ARTIFACT_CONTENT_CHARS = 20_000
 MAX_CONSOLE_CHATBOOK_ARTIFACT_TITLE_CHARS = 80
 MAX_CONSOLE_CHATBOOK_ARTIFACT_DESCRIPTION_CHARS = 280
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_STRING_CHARS = 4_000
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_LIST_ITEMS = 50
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DICT_ITEMS = 80
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DEPTH = 6
+_UNSAFE_STRUCTURED_METADATA = object()
 
 def safe_json_loads(json_str: str, max_size: int = 1024 * 1024) -> Optional[Union[dict, list]]:
     """
@@ -98,6 +104,51 @@ def safe_json_loads(json_str: str, max_size: int = 1024 * 1024) -> Optional[Unio
 def _simple_metadata_value(value: Any) -> Optional[Union[str, int, float, bool]]:
     if isinstance(value, (str, int, float, bool)):
         return value
+    return None
+
+
+def _json_safe_structured_metadata_value(value: Any, *, depth: int = 0) -> Any:
+    """Copy only bounded JSON-safe metadata for saved Console artifacts."""
+    if depth > MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DEPTH:
+        return _UNSAFE_STRUCTURED_METADATA
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value[:MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_STRING_CHARS]
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else _UNSAFE_STRUCTURED_METADATA
+    if isinstance(value, Mapping):
+        safe_mapping: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DICT_ITEMS:
+                break
+            safe_key = _json_safe_structured_metadata_value(key, depth=depth + 1)
+            if safe_key is _UNSAFE_STRUCTURED_METADATA:
+                continue
+            safe_item = _json_safe_structured_metadata_value(item, depth=depth + 1)
+            if safe_item is _UNSAFE_STRUCTURED_METADATA:
+                continue
+            safe_mapping[str(safe_key)[:MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_STRING_CHARS]] = safe_item
+        return safe_mapping
+    if isinstance(value, (list, tuple)):
+        safe_items = []
+        for item in value[:MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_LIST_ITEMS]:
+            safe_item = _json_safe_structured_metadata_value(item, depth=depth + 1)
+            if safe_item is not _UNSAFE_STRUCTURED_METADATA:
+                safe_items.append(safe_item)
+        return safe_items
+    return _UNSAFE_STRUCTURED_METADATA
+
+
+def _structured_metadata_from_sources(*values: Any) -> Any | None:
+    for value in values:
+        safe_value = _json_safe_structured_metadata_value(value)
+        if isinstance(safe_value, (dict, list)) and safe_value:
+            return safe_value
     return None
 
 
@@ -157,6 +208,18 @@ def _console_chatbook_artifact_metadata(
         if isinstance(simple_value, str) and not simple_value.strip():
             continue
         metadata[key] = simple_value
+    citation_validation = _structured_metadata_from_sources(
+        getattr(action_widget, "citation_validation_payload", None),
+        getattr(app, "_current_chat_answer_citation_validation", None),
+    )
+    if citation_validation is not None:
+        metadata["citation_validation"] = citation_validation
+    evidence_bundle = _structured_metadata_from_sources(
+        getattr(action_widget, "citation_evidence_bundle", None),
+        getattr(app, "_current_chat_pending_evidence_bundle", None),
+    )
+    if evidence_bundle is not None:
+        metadata["evidence_bundle"] = evidence_bundle
     return metadata
 
 
