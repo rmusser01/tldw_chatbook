@@ -89,6 +89,18 @@ def test_store_closes_session_and_activates_neighbor():
         store.messages_for_session(second.id)
 
 
+def test_store_closes_last_session_returns_none():
+    store = ConsoleChatStore()
+    only = store.ensure_session(title="Solo")
+    store.append_message(only.id, role=ConsoleMessageRole.USER, content="msg")
+
+    activated = store.close_session(only.id)
+
+    assert activated is None
+    assert store.active_session_id is None
+    assert store.sessions() == []
+
+
 def test_store_adds_regenerated_variant_and_selects_it():
     store = ConsoleChatStore()
     session = store.ensure_session()

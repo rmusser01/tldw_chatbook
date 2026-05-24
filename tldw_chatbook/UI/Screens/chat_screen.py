@@ -2933,8 +2933,29 @@ class ChatScreen(BaseAppScreen):
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()
             session_id = button_id.removeprefix("console-close-session-tab-")
-            self._ensure_console_chat_controller().close_session(session_id)
-            await self._sync_native_console_chat_ui()
+            store = self._ensure_console_chat_store()
+            try:
+                messages = store.messages_for_session(session_id)
+            except KeyError:
+                messages = []
+            if messages:
+                from ...Widgets.confirmation_dialog import ConfirmationDialog
+
+                async def _do_close() -> None:
+                    self._ensure_console_chat_controller().close_session(session_id)
+                    await self._sync_native_console_chat_ui()
+
+                dialog = ConfirmationDialog(
+                    title="Close Tab",
+                    message="This tab has messages that will be lost.\n\nClose it anyway?",
+                    confirm_label="Close",
+                    cancel_label="Keep",
+                    confirm_callback=_do_close,
+                )
+                self.app.push_screen(dialog)
+            else:
+                self._ensure_console_chat_controller().close_session(session_id)
+                await self._sync_native_console_chat_ui()
             return
         if button_id and button_id.startswith("console-session-tab-"):
             event.stop()
