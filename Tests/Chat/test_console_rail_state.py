@@ -211,9 +211,21 @@ def test_console_inspector_rail_badge_detects_positive_artifact_and_source_readi
     assert build_console_inspector_rail_badge(can_save_chatbook=True) == "artifact"
     assert (
         build_console_inspector_rail_badge(
+            inspector_rows=(Row("Artifacts", value="available"),),
+        )
+        == "artifact"
+    )
+    assert (
+        build_console_inspector_rail_badge(
             inspector_rows=(Row("Artifacts", value="Chatbook artifact available"),),
         )
         == "artifact"
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("RAG/source", value="available"),),
+        )
+        == "source"
     )
     assert (
         build_console_inspector_rail_badge(

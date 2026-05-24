@@ -33,6 +33,11 @@ _NEGATIVE_READINESS_TERMS = {
     "not staged",
     "unavailable",
 }
+_POSITIVE_READINESS_TERMS = {
+    "available",
+    "ready",
+    "staged",
+}
 
 
 @dataclass(frozen=True)
@@ -226,15 +231,21 @@ def _has_row_match(rows: tuple[Any, ...], candidates: set[str]) -> bool:
 
 def _has_row_readiness_match(rows: tuple[Any, ...], candidates: set[str]) -> bool:
     for row in rows:
-        _, status, value, text = _row_text_parts(row)
-        combined = " ".join(
+        label, status, value, text = _row_text_parts(row)
+        category = label.lower()
+        readiness = " ".join(
             part.lower()
             for part in (status, value, text)
             if part
         )
-        if not combined or any(term in combined for term in _NEGATIVE_READINESS_TERMS):
+        if not readiness or any(term in readiness for term in _NEGATIVE_READINESS_TERMS):
             continue
-        if any(candidate in combined for candidate in candidates):
+        if any(candidate in readiness for candidate in candidates):
+            return True
+        if (
+            any(candidate in category for candidate in candidates)
+            and any(term in readiness.split() for term in _POSITIVE_READINESS_TERMS)
+        ):
             return True
     return False
 
