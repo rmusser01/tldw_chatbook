@@ -21,7 +21,7 @@ Carry retrieved snippets and citations from Library/Search/RAG into Console answ
 <!-- AC:BEGIN -->
 - [ ] #1 Citation and snippet carry-through scope references TASK-60.3 actual-use audit evidence.
 - [ ] #2 Retrieved evidence keeps source identity, snippet text, and authority labels through Console responses and saved artifacts.
-- [ ] #3 Exported Chatbooks preserve citations/snippets in a user-readable and machine-checkable form.
+- [x] #3 Exported Chatbooks preserve citations/snippets in a user-readable and machine-checkable form.
 - [ ] #4 QA verifies source-to-answer-to-artifact carry-through with actual app use before completion.
 <!-- AC:END -->
 
@@ -49,9 +49,13 @@ Console evidence staging slice added. Console staged context and the Run Inspect
 
 Answer-level citation injection slice added. Staged evidence context now includes explicit citation instructions, available/blocked evidence state, and stable `[S#]` source labels. Assistant responses are parsed for citation markers and validated against the staged evidence bundle on both streaming and non-streaming completion paths, attaching validated, unknown, uncited, blocked, stale, missing, or insufficient-evidence metadata to the generated message widget for the later persistence and export slices.
 
-Console-saved Chatbook artifact preservation slice added. Saved assistant response metadata now carries bounded JSON-safe `citation_validation` and staged `evidence_bundle` payloads when present. Artifacts and Home resume paths expose compact citation/evidence summary fields for Console launch payloads so grounded saved answers retain validation status, cited labels, bundle identity, source count, and snippet count. Full exported Chatbook ZIP preservation and actual app QA remain follow-up work for this task.
+Console-saved Chatbook artifact preservation slice added. Saved assistant response metadata now carries bounded JSON-safe `citation_validation` and staged `evidence_bundle` payloads when present. Artifacts and Home resume paths expose compact citation/evidence summary fields for Console launch payloads so grounded saved answers retain validation status, cited labels, bundle identity, source count, and snippet count. Actual app QA remains follow-up work for this task.
 
 PR review hardening added for the artifact preservation slice. Citation summary text now preserves falsy-but-valid values, caps evidence reference counting on resume paths, and is sanitized at Home/Artifacts payload boundaries before reaching Console live-work rendering.
+
+Exported Chatbook ZIP preservation slice added. Conversation exports now retain JSON-safe message-level `citation_validation`, `evidence_bundle`, and citation payloads in the conversation JSON, emit a per-conversation Markdown citation/evidence report with readable snippets and source details, and advertise report paths plus citation/source/snippet counts through the manifest content-item metadata. Regression coverage verifies machine-checkable JSON preservation, readable snippet reports, and manifest metadata.
+
+PR review hardening added for exported Chatbook ZIP preservation. Conversation export filenames now use validated safe path components, citation reports escape user-controlled Markdown/HTML text, production-shaped DB message rows hydrate citation artifacts from the chat RAG context sidecar, imported Chatbooks persist exported citation payloads back into the same sidecar, and readable citation reports are bounded with explicit truncation metadata while full evidence remains in conversation JSON.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
