@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from html import escape as html_escape
 from typing import Any, Mapping
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
@@ -24,6 +25,11 @@ def _clean(value: Any, fallback: str) -> str:
         return fallback
     text = str(value).strip()
     return text or fallback
+
+
+def _safe_display_text(value: Any, fallback: str = "") -> str:
+    """Normalize user/source text before exposing it in Console display rows."""
+    return html_escape(_clean(value, fallback), quote=False)
 
 
 def coerce_non_negative_int(value: Any) -> int:
@@ -97,18 +103,62 @@ def build_console_evidence_display_state(
     if bundle is None:
         return None
 
-    total_count = len(bundle.references)
-    available_count = len(bundle.available_references())
-    blocked_count = sum(reference.status == "blocked" for reference in bundle.references)
-    stale_count = sum(reference.status == "stale" for reference in bundle.references)
-    missing_count = sum(reference.status == "missing" for reference in bundle.references)
-    authority = ", ".join(
-        dict.fromkeys(
-            reference.authority_label
-            for reference in bundle.references
-            if reference.authority_label
+    available_count = 0
+    blocked_count = 0
+    stale_count = 0
+    missing_count = 0
+    reference_rows = []
+    authority_values: list[str] = []
+    seen_authorities: set[str] = set()
+    for reference in bundle.references:
+        if reference.status == "available":
+            available_count += 1
+        elif reference.status == "blocked":
+            blocked_count += 1
+        elif reference.status == "stale":
+            stale_count += 1
+        elif reference.status == "missing":
+            missing_count += 1
+
+        safe_authority = _safe_display_text(reference.authority_label)
+        if safe_authority and safe_authority not in seen_authorities:
+            authority_values.append(safe_authority)
+            seen_authorities.add(safe_authority)
+
+        reference_status = "blocked" if reference.status != "available" else "ready"
+        reference_rows.extend(
+            (
+                ConsoleDisplayRow(
+                    "Evidence source",
+                    (
+                        f"[{_safe_display_text(reference.evidence_id, 'unknown')}] "
+                        f"{_safe_display_text(reference.title, 'Untitled source')}"
+                    ),
+                    status=reference_status,
+                ),
+                ConsoleDisplayRow(
+                    "Evidence authority",
+                    safe_authority or "unknown",
+                    status=reference_status,
+                ),
+                ConsoleDisplayRow(
+                    "Evidence status",
+                    _safe_display_text(reference.status, "unknown"),
+                    status=reference_status,
+                ),
+            )
         )
-    ) or "unknown"
+        if reference.snippet:
+            reference_rows.append(
+                ConsoleDisplayRow(
+                    "Snippet",
+                    _safe_display_text(reference.snippet),
+                    status=reference_status,
+                )
+            )
+
+    total_count = len(bundle.references)
+    authority = ", ".join(authority_values) or "unknown"
     summary = f"{available_count}/{total_count} available ({bundle.status})"
     recovery = ""
     if total_count == 0:
@@ -126,32 +176,6 @@ def build_console_evidence_display_state(
         recovery = f"Some evidence needs review: {', '.join(warning_parts)}."
 
     row_status = "blocked" if available_count == 0 else "ready"
-    reference_rows = []
-    for reference in bundle.references:
-        reference_status = "blocked" if reference.status != "available" else "ready"
-        reference_rows.extend(
-            (
-                ConsoleDisplayRow(
-                    "Evidence source",
-                    f"[{reference.evidence_id}] {reference.title}",
-                    status=reference_status,
-                ),
-                ConsoleDisplayRow(
-                    "Evidence authority",
-                    reference.authority_label,
-                    status=reference_status,
-                ),
-                ConsoleDisplayRow(
-                    "Evidence status",
-                    reference.status,
-                    status=reference_status,
-                ),
-            )
-        )
-        if reference.snippet:
-            reference_rows.append(
-                ConsoleDisplayRow("Snippet", reference.snippet, status=reference_status)
-            )
     return ConsoleEvidenceDisplayState(
         summary=summary,
         authority=authority,
@@ -242,7 +266,13 @@ class ConsoleStagedContextState:
                     recovery=evidence_state.recovery,
                 )
             )
-            rows.append(ConsoleDisplayRow("Authority", evidence_state.authority))
+            rows.append(
+                ConsoleDisplayRow(
+                    "Authority",
+                    evidence_state.authority,
+                    status=evidence_state.status,
+                )
+            )
             rows.extend(evidence_state.reference_rows)
         rows.extend(
             ConsoleDisplayRow(label=key, value=value)
@@ -324,7 +354,13 @@ class ConsoleInspectorState:
                 )
             )
         if _clean(evidence_authority, ""):
-            rows.append(ConsoleDisplayRow("Authority", _clean(evidence_authority, "")))
+            rows.append(
+                ConsoleDisplayRow(
+                    "Authority",
+                    _clean(evidence_authority, ""),
+                    status=_clean(evidence_status, "ready"),
+                )
+            )
         rows.append(ConsoleDisplayRow("Artifacts", _clean(artifact_status, "unavailable")))
         actions = [
             ConsoleInspectorAction(

@@ -132,6 +132,7 @@ class ConsoleRunInspector(Vertical):
                     row.text,
                     id=self._row_id(row, index),
                     classes=f"console-inspector-row console-inspector-row-{row.status}",
+                    markup=False,
                 )
 
             action_ids = _ACTION_GROUPS.get(heading, ())
@@ -149,6 +150,7 @@ class ConsoleRunInspector(Vertical):
                 row.text,
                 id=self._row_id(row, index),
                 classes=f"console-inspector-row console-inspector-row-{row.status}",
+                markup=False,
             )
         for action in self.state.actions:
             if action.widget_id in rendered_action_ids:
