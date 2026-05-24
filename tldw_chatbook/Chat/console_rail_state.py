@@ -25,6 +25,14 @@ _WORKSPACE_FALLBACK_LABELS = {
     "no-workspace",
     "no_workspace",
 }
+_NEGATIVE_READINESS_TERMS = {
+    "blocked",
+    "missing source",
+    "no results",
+    "not available",
+    "not staged",
+    "unavailable",
+}
 
 
 @dataclass(frozen=True)
@@ -216,6 +224,21 @@ def _has_row_match(rows: tuple[Any, ...], candidates: set[str]) -> bool:
     return False
 
 
+def _has_row_readiness_match(rows: tuple[Any, ...], candidates: set[str]) -> bool:
+    for row in rows:
+        _, status, value, text = _row_text_parts(row)
+        combined = " ".join(
+            part.lower()
+            for part in (status, value, text)
+            if part
+        )
+        if not combined or any(term in combined for term in _NEGATIVE_READINESS_TERMS):
+            continue
+        if any(candidate in combined for candidate in candidates):
+            return True
+    return False
+
+
 def build_console_inspector_rail_badge(
     *,
     run_status: Any = None,
@@ -244,10 +267,13 @@ def build_console_inspector_rail_badge(
     if _coerce_non_negative_int(tool_count) > 0:
         return "tools"
 
-    if can_save_chatbook or _has_row_match(inspector_rows, {"artifact", "chatbook"}):
+    if can_save_chatbook or _has_row_readiness_match(
+        inspector_rows,
+        {"artifact", "chatbook"},
+    ):
         return "artifact"
 
-    if _has_row_match(inspector_rows, {"source", "rag"}):
+    if _has_row_readiness_match(inspector_rows, {"source", "rag", "staged"}):
         return "source"
 
     return ""

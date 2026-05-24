@@ -1,10 +1,14 @@
 from dataclasses import dataclass
 
+from tldw_chatbook.Chat.console_display_state import ConsoleInspectorState
 from tldw_chatbook.Chat.console_rail_state import (
+    ConsoleRailPreferences,
     build_console_context_rail_badge,
     build_console_inspector_rail_badge,
     build_console_rail_preference_key,
     build_console_rail_state,
+    coerce_console_rail_preferences,
+    serialize_console_rail_preferences,
 )
 
 
@@ -191,6 +195,50 @@ def test_console_inspector_rail_badge_detects_failed_from_row_fields():
         )
         == "failed"
     )
+
+
+def test_console_inspector_rail_badge_ignores_idle_inspector_rows():
+    state = ConsoleInspectorState.from_values(
+        provider_ready=True,
+        rag_status="not staged",
+        artifact_status="unavailable",
+    )
+
+    assert build_console_inspector_rail_badge(inspector_rows=state.rows) == ""
+
+
+def test_console_inspector_rail_badge_detects_positive_artifact_and_source_readiness():
+    assert build_console_inspector_rail_badge(can_save_chatbook=True) == "artifact"
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("Artifacts", value="Chatbook artifact available"),),
+        )
+        == "artifact"
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("RAG/source", value="staged from Library Search/RAG"),),
+        )
+        == "source"
+    )
+
+
+def test_console_rail_preferences_accept_boolean_strings_case_insensitively():
+    for raw_value in ("true", "yes", "1", "on", "TRUE", "Yes", "ON"):
+        preferences = coerce_console_rail_preferences({"left_open": raw_value})
+
+        assert preferences.left_open is True
+
+    for raw_value in ("false", "no", "0", "off", "FALSE", "No", "OFF"):
+        preferences = coerce_console_rail_preferences({"right_open": raw_value})
+
+        assert preferences.right_open is False
+
+
+def test_console_rail_preferences_serialize_to_public_dict_shape():
+    assert serialize_console_rail_preferences(
+        ConsoleRailPreferences(left_open=False, right_open=True),
+    ) == {"left_open": False, "right_open": True}
 
 
 def test_console_rail_badges_do_not_mutate_open_booleans():
