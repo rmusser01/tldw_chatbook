@@ -685,5 +685,17 @@ def _console_metadata_payload(metadata: Any) -> dict[str, Any]:
             bool(metadata.get("content_truncated"))
             or len(str(metadata.get("content"))) > _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS
         )
-    payload.update(summarize_citation_artifact_metadata(metadata))
+    payload.update(_console_metadata_summary_payload(metadata))
+    return payload
+
+
+def _console_metadata_summary_payload(metadata: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in summarize_citation_artifact_metadata(metadata).items():
+        if isinstance(value, bool) or isinstance(value, int):
+            payload[key] = value
+            continue
+        safe_value = _safe_metadata_value(value)
+        if safe_value is not None:
+            payload[key] = safe_value
     return payload

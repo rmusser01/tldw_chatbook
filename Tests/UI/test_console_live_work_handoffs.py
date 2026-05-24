@@ -1728,6 +1728,16 @@ async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_
                     "model": "onerror=bad",
                     "content": "<script>bad</script> onerror=bad",
                     "content_truncated": False,
+                    "citation_validation": {
+                        "status": "<script>validated</script>",
+                        "cited_evidence_ids": ["S1", "javascript:bad"],
+                        "citations": [{"evidence_id": "S1"}],
+                    },
+                    "evidence_bundle": {
+                        "bundle_id": "bundle-onclick=bad",
+                        "query": "<script>query</script>",
+                        "references": [{"snippet": "safe"}],
+                    },
                 },
                 "updated_at": "2026-05-03T20:00:00Z",
             },

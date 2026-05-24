@@ -186,7 +186,18 @@ class ArtifactsScreen(BaseAppScreen):
             payload["content_truncated"] = content_truncated
         elif "content_preview" in payload:
             payload["content_truncated"] = False
-        payload.update(summarize_citation_artifact_metadata(metadata))
+        payload.update(cls._safe_console_summary_payload(metadata))
+        return payload
+
+    @classmethod
+    def _safe_console_summary_payload(cls, metadata: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        for key, value in summarize_citation_artifact_metadata(metadata).items():
+            if isinstance(value, bool) or isinstance(value, int):
+                payload[key] = value
+                continue
+            if (safe_value := cls._safe_metadata_value(value, max_length=256)) is not None:
+                payload[key] = safe_value
         return payload
 
     @staticmethod

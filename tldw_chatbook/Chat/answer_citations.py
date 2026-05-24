@@ -17,6 +17,7 @@ CITATION_MARKER_PATTERN = re.compile(r"\[(S[0-9][A-Za-z0-9_-]*)\]")
 QUOTE_BOUNDARY_CHARS = (".", "?", "!", "\n")
 MAX_CITATION_ARTIFACT_SUMMARY_TEXT_CHARS = 256
 MAX_CITATION_ARTIFACT_SUMMARY_IDS = 20
+MAX_CITATION_ARTIFACT_SUMMARY_REFERENCES = 200
 
 
 @dataclass(frozen=True)
@@ -82,8 +83,9 @@ def summarize_citation_artifact_metadata(metadata: Any) -> dict[str, Any]:
             and ``evidence_bundle`` payloads.
 
     Returns:
-        Bounded, display-safe summary fields suitable for Home/Artifacts Console
-        launch payloads. Nested citation payloads stay in artifact metadata.
+        Bounded summary fields suitable for Home/Artifacts Console launch
+        payloads. Nested citation payloads stay in artifact metadata. Callers
+        still validate/escape returned text at their UI or payload boundary.
     """
     if not isinstance(metadata, Mapping):
         return {}
@@ -118,13 +120,16 @@ def summarize_citation_artifact_metadata(metadata: Any) -> dict[str, Any]:
 
         references = evidence_bundle.get("references")
         if isinstance(references, list):
-            payload["evidence_source_count"] = len(references)
+            bounded_references = references[:MAX_CITATION_ARTIFACT_SUMMARY_REFERENCES]
+            payload["evidence_source_count"] = len(bounded_references)
             payload["evidence_snippet_count"] = sum(
                 1
-                for reference in references
+                for reference in bounded_references
                 if isinstance(reference, Mapping)
                 and _citation_summary_text(reference.get("snippet"))
             )
+            if len(references) > MAX_CITATION_ARTIFACT_SUMMARY_REFERENCES:
+                payload["evidence_counts_truncated"] = True
         else:
             payload["evidence_source_count"] = 0
             payload["evidence_snippet_count"] = 0
@@ -137,7 +142,8 @@ def _citation_summary_text(
     *,
     max_length: int = MAX_CITATION_ARTIFACT_SUMMARY_TEXT_CHARS,
 ) -> str:
-    text = " ".join(str(value or "").split())
+    raw = "" if value is None else str(value)
+    text = " ".join(raw.split())
     if len(text) > max_length:
         return text[: max_length - 3].rstrip() + "..."
     return text

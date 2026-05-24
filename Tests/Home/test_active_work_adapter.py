@@ -624,6 +624,16 @@ def test_local_notification_adapter_sanitizes_console_saved_chatbook_payload_tex
                         "model": "gpt-4.1",
                         "content": "<script>alert('x')</script>\nGrounded answer body.",
                         "content_truncated": False,
+                        "citation_validation": {
+                            "status": "<script>validated</script>",
+                            "cited_evidence_ids": ["S1", "javascript:bad"],
+                            "citations": [{"evidence_id": "S1"}],
+                        },
+                        "evidence_bundle": {
+                            "bundle_id": "bundle-onclick=bad",
+                            "query": "<script>query</script>",
+                            "references": [{"snippet": "safe"}],
+                        },
                     },
                 },
             ]
@@ -648,6 +658,10 @@ def test_local_notification_adapter_sanitizes_console_saved_chatbook_payload_tex
     assert "\n" not in str(payload["categories"])
     assert "<script" not in str(payload.get("provider", "")).lower()
     assert "<script" not in str(payload["content_preview"]).lower()
+    assert "<script" not in str(payload.get("citation_status", "")).lower()
+    assert "javascript:" not in str(payload.get("citation_cited_evidence_ids", "")).lower()
+    assert "onclick=" not in str(payload.get("evidence_bundle_id", "")).lower()
+    assert "<script" not in str(payload.get("evidence_query", "")).lower()
 
 
 def test_local_notification_adapter_bounds_console_saved_chatbook_payload_fields():

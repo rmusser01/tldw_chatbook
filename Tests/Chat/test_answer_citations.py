@@ -6,6 +6,7 @@ from tldw_chatbook.Chat.answer_citations import (
     build_answer_citation_validation,
     extract_citation_markers,
     format_evidence_for_cited_answer,
+    summarize_citation_artifact_metadata,
 )
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle, EvidenceReference
@@ -126,6 +127,37 @@ def test_answer_citation_validation_does_not_duplicate_cited_blocked_reference()
     assert result.status == "insufficient_evidence"
     assert [citation["evidence_id"] for citation in payload["citations"]] == ["S1"]
     assert payload["citations"][0]["status"] == "blocked"
+
+
+def test_citation_artifact_summary_preserves_falsy_values_and_caps_reference_scan() -> None:
+    references = [{"snippet": f"Snippet {index}"} for index in range(205)]
+
+    summary = summarize_citation_artifact_metadata(
+        {
+            "citation_validation": {
+                "status": False,
+                "cited_evidence_ids": [0, False, "S1"],
+                "unknown_citation_ids": [0],
+                "uncited_evidence_ids": [False],
+            },
+            "evidence_bundle": {
+                "bundle_id": 0,
+                "query": False,
+                "references": references,
+            },
+        }
+    )
+
+    assert summary["citation_status"] == "False"
+    assert summary["citation_cited_evidence_ids"] == "0, False, S1"
+    assert summary["citation_unknown_evidence_ids"] == "0"
+    assert summary["citation_uncited_evidence_ids"] == "False"
+    assert summary["citation_count"] == 3
+    assert summary["evidence_bundle_id"] == "0"
+    assert summary["evidence_query"] == "False"
+    assert summary["evidence_source_count"] == 200
+    assert summary["evidence_snippet_count"] == 200
+    assert summary["evidence_counts_truncated"] is True
 
 
 def test_answer_citation_validation_marks_cited_blocked_reference_unverified() -> None:
