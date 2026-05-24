@@ -16,6 +16,19 @@ from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, Con
 
 
 CONSOLE_TRANSCRIPT_ACTION_ROW = "Copy | Edit | Save as... | ♻ | ---> | 👍/👎                 🗑"
+CONSOLE_TRANSCRIPT_RULE = "─" * 200
+_ACTION_TOOLTIPS = {
+    "copy": "Copy this message to the clipboard.",
+    "edit": "Edit this message before continuing the thread.",
+    "save-as": "Choose a destination for this message, such as Chatbook or Note.",
+    "regenerate": "Generate another assistant variant for this turn.",
+    "continue": "Continue and extend the selected message.",
+    "feedback-up": "Mark this response as helpful.",
+    "feedback-down": "Mark this response as not helpful.",
+    "delete": "Delete this message from the Console transcript.",
+    "variant-previous": "Show the previous regenerated variant.",
+    "variant-next": "Show the next regenerated variant.",
+}
 
 
 def _message_role_label(message: ConsoleChatMessage) -> str:
@@ -48,6 +61,8 @@ class ConsoleTranscriptMessage(Static):
             id=f"console-message-{message.id}",
             classes=classes,
         )
+        if selected:
+            self.styles.border = ("solid", "grey")
 
     def on_click(self, event: Click) -> None:
         event.stop()
@@ -194,7 +209,7 @@ class ConsoleTranscript(VerticalScroll):
     def _message_widgets(self) -> list[Widget]:
         widgets: list[Widget] = []
         for message in self._messages:
-            widgets.append(Static("─" * 72, classes="console-transcript-rule"))
+            widgets.append(Static(CONSOLE_TRANSCRIPT_RULE, classes="console-transcript-rule"))
             widgets.append(
                 ConsoleTranscriptMessage(
                     message,
@@ -204,7 +219,7 @@ class ConsoleTranscript(VerticalScroll):
             if message.id == self.selected_message_id:
                 widgets.append(self._action_row(message))
         if self._messages:
-            widgets.append(Static("─" * 72, classes="console-transcript-rule"))
+            widgets.append(Static(CONSOLE_TRANSCRIPT_RULE, classes="console-transcript-rule"))
         else:
             widgets.append(
                 Static(
@@ -243,6 +258,8 @@ class ConsoleTranscript(VerticalScroll):
         )
         if action.disabled_reason:
             button.tooltip = action.disabled_reason
+        else:
+            button.tooltip = _ACTION_TOOLTIPS.get(action.action_id)
         return button
 
     def _focus_action_button(self, message_id: str, action_id: str) -> None:

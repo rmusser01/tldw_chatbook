@@ -51,7 +51,7 @@ from ...Chat.console_display_state import (
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
-from ...Chat.provider_readiness import get_provider_readiness
+from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
 from ...Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
@@ -329,11 +329,21 @@ class ChatScreen(BaseAppScreen):
             A `(provider, model)` tuple using the same precedence for Console
             control labels and run-inspector readiness.
         """
-        provider = (
-            self._console_control_provider
-            or getattr(self.app_instance, "chat_api_provider_value", None)
-            or self._chat_default_value("provider")
-        )
+        configured_provider = self._chat_default_value("provider")
+        reactive_provider = getattr(self.app_instance, "chat_api_provider_value", None)
+        if (
+            self._console_control_provider is None
+            and _has_selected_text(configured_provider)
+            and str(reactive_provider or "").strip() == "OpenAI"
+            and str(configured_provider).strip() != "OpenAI"
+        ):
+            provider = configured_provider
+        else:
+            provider = (
+                self._console_control_provider
+                or reactive_provider
+                or configured_provider
+            )
         model = (
             self._console_control_model
             or getattr(self.app_instance, "chat_api_model_value", None)
@@ -420,7 +430,7 @@ class ChatScreen(BaseAppScreen):
     def _build_console_provider_selection(self) -> ConsoleProviderSelection:
         """Return the effective native Console provider selection for sends."""
         provider_value, model_value = self._effective_console_provider_model()
-        provider = str(provider_value or "").strip() or "llama_cpp"
+        provider = provider_config_key(str(provider_value or "").strip()) or "llama_cpp"
         explicit_model = str(model_value).strip() if _has_selected_text(model_value) else None
         app_config = getattr(self.app_instance, "app_config", {}) or {}
         api_settings = self._config_section(app_config, "api_settings")
@@ -1075,8 +1085,8 @@ class ChatScreen(BaseAppScreen):
                     id="console-left-rail",
                     classes="console-region destination-workbench-pane",
                 )
-                left_rail.styles.width = "4fr"
-                left_rail.styles.min_width = 36
+                left_rail.styles.width = "6fr"
+                left_rail.styles.min_width = 48
                 with left_rail:
                     staged_context_tray = ConsoleStagedContextTray(
                         staged_context_state,
@@ -1166,8 +1176,8 @@ class ChatScreen(BaseAppScreen):
                     id="console-run-inspector",
                     classes="console-region destination-workbench-pane",
                 )
-                run_inspector.styles.width = "5fr"
-                run_inspector.styles.min_width = 40
+                run_inspector.styles.width = "4fr"
+                run_inspector.styles.min_width = 34
                 with self._frame_console_region(run_inspector):
                     yield ConsoleRunInspector(
                         inspector_state,

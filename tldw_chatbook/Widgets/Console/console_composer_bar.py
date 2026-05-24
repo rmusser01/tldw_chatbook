@@ -294,7 +294,7 @@ class ConsoleComposerBar(Horizontal):
                 if line_index < len(line_slices) - 1:
                     output_offset += 1
             return rendered
-        return Text(cls.DRAFT_PLACEHOLDER, style="dim")
+        return Text(cls.DRAFT_PLACEHOLDER, style="bright_black")
 
     @classmethod
     def _visible_draft_row_count(cls, text: str, width: int) -> int:

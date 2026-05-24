@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.config import resolve_provider_name
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
@@ -1135,6 +1136,7 @@ async def test_console_run_inspector_groups_state_approvals_and_source_readiness
 
         text = _visible_text(console)
         assert "Run State" in text
+        assert "Status: Ready" in text
         assert "Approvals" in text
         assert "Source Readiness" in text
 
@@ -1155,9 +1157,28 @@ async def test_console_workbench_weights_transcript_as_primary_region():
 
         assert main.region.width > staged.region.width
         assert main.region.width > inspector.region.width
-        assert staged.region.width >= 40
-        assert inspector.region.width >= 40
+        assert staged.region.width > inspector.region.width
+        assert staged.region.width >= 48
+        assert inspector.region.width >= 34
         assert transcript.region.width == main.region.width
+
+
+@pytest.mark.asyncio
+async def test_console_left_rail_sections_use_available_space():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+
+        left_rail = console.query_one("#console-left-rail")
+        staged_context = console.query_one("#console-staged-context-tray")
+        workspace_context = console.query_one("#console-workspace-context")
+
+        assert staged_context.region.width >= left_rail.region.width - 2
+        assert workspace_context.region.width >= left_rail.region.width - 2
+        assert workspace_context.region.height > staged_context.region.height
 
 
 @pytest.mark.asyncio
@@ -1383,6 +1404,63 @@ def test_console_control_and_inspector_share_effective_provider_model_sources():
     assert control_state.provider_label == "Provider: ReactiveOpenAI"
     assert control_state.model_label == "Model: reactive-model"
     assert rows_by_label["Provider"].text == "Provider: ready"
+
+
+def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "local-model",
+        },
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+            },
+        },
+    }
+    app.chat_api_provider_value = "OpenAI"
+    screen = ChatScreen(app)
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.provider == "llama_cpp"
+    assert selection.explicit_model == "local-model"
+    assert selection.base_url == "http://127.0.0.1:9099"
+
+
+def test_provider_name_resolution_matches_config_key_case_insensitively():
+    providers_models = {
+        "OpenAI": ["gpt-4o"],
+        "Llama_cpp": ["local-model"],
+    }
+
+    assert resolve_provider_name("llama_cpp", providers_models) == "Llama_cpp"
+    assert resolve_provider_name("local-llamacpp", providers_models) == "local-llamacpp"
+
+
+def test_console_provider_selection_normalizes_display_provider_key():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "local-model",
+        },
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+            },
+        },
+    }
+    screen = ChatScreen(app)
+    screen._console_control_provider = "Llama_cpp"
+    screen._console_control_model = "local-model"
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.provider == "llama_cpp"
+    assert selection.explicit_model == "local-model"
+    assert selection.base_url == "http://127.0.0.1:9099"
 
 
 @pytest.mark.asyncio

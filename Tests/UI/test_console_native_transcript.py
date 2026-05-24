@@ -64,6 +64,20 @@ def test_console_transcript_renderable_uses_full_width_rules():
     assert "world" in plain
 
 
+def test_console_transcript_widget_rules_are_long_enough_to_clip_full_width():
+    transcript = ConsoleTranscript()
+    transcript.set_messages(
+        [
+            ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hello"),
+        ]
+    )
+
+    first_rule = transcript._message_widgets()[0]
+    renderable = getattr(first_rule, "renderable", "")
+
+    assert len(str(renderable)) >= 160
+
+
 def test_console_transcript_selected_message_shows_action_row():
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1")
     transcript = ConsoleTranscript()
@@ -122,6 +136,22 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
 
 
 @pytest.mark.asyncio
+async def test_console_selected_message_has_visible_terminal_frame():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.click("#console-message-m2")
+        await _wait_for_selector(app, pilot, "#console-message-m2")
+        selected = app.query_one("#console-message-m2")
+
+    assert "console-transcript-message-selected" in selected.classes
+    assert selected.styles.border.top[0] == "solid"
+    assert selected.styles.border.right[0] == "solid"
+    assert selected.styles.border.bottom[0] == "solid"
+    assert selected.styles.border.left[0] == "solid"
+
+
+@pytest.mark.asyncio
 async def test_console_transcript_action_buttons_have_stable_ids():
     app = TranscriptHarness()
 
@@ -135,6 +165,20 @@ async def test_console_transcript_action_buttons_have_stable_ids():
     assert "Copy" in text
     assert "Save as..." in text
     assert "♻" in text
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_action_tooltips_explain_power_user_symbols():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.click("#console-message-m2")
+        await _wait_for_selector(app, pilot, "#console-message-action-continue-m2")
+        continue_action = app.query_one("#console-message-action-continue-m2")
+        save_action = app.query_one("#console-message-action-save-as-m2")
+
+    assert "extend" in str(continue_action.tooltip).lower()
+    assert "destination" in str(save_action.tooltip).lower()
 
 
 @pytest.mark.asyncio

@@ -2977,6 +2977,34 @@ def get_cli_providers_and_models() -> Dict[str, List[str]]:
     return valid_providers
 
 
+def _normalize_provider_lookup_key(provider: Any) -> str:
+    """Return the canonical lookup form used for provider key comparisons."""
+    return str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def resolve_provider_name(
+    provider: Any,
+    providers_models: Dict[str, List[str]],
+) -> str:
+    """Return the configured provider name as it appears in provider options.
+
+    Config files commonly use API-setting keys such as ``llama_cpp`` while the
+    selectable provider list may expose display keys such as ``Llama_cpp``.
+    This keeps UI defaults from falling back to the first provider.
+    """
+    provider_name = str(provider or "").strip()
+    if not provider_name:
+        return provider_name
+    if provider_name in providers_models:
+        return provider_name
+
+    normalized_provider = _normalize_provider_lookup_key(provider_name)
+    for available_provider in providers_models:
+        if _normalize_provider_lookup_key(available_provider) == normalized_provider:
+            return available_provider
+    return provider_name
+
+
 def check_encryption_needed() -> bool:
     """
     Check if the config has API keys that should be encrypted.
