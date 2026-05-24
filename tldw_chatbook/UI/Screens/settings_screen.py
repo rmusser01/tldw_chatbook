@@ -373,6 +373,11 @@ class SettingsScreen(BaseAppScreen):
         next_index = max(0, min(len(category_values) - 1, current_index + delta))
         self._focus_category(category_values[next_index])
 
+    def _select_category(self, category_value: str, *, restore_focus: bool = False) -> None:
+        self.active_category = category_value
+        if restore_focus:
+            self.call_after_refresh(self._focus_category, category_value)
+
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
         self.post_message(NavigateToScreen("customize"))
@@ -382,7 +387,7 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         category_value = self._category_value_from_button(event.button)
         if category_value is not None:
-            self.active_category = category_value
+            self._select_category(category_value, restore_focus=event.button.has_focus)
 
     @on(Button.Pressed, "#settings-console-collapse-large-pastes-toggle")
     def handle_console_collapse_large_pastes_changed(self, event: Button.Pressed) -> None:
@@ -390,6 +395,7 @@ class SettingsScreen(BaseAppScreen):
         next_value = not self._collapse_large_pastes_enabled()
         self._console_settings()["collapse_large_pastes"] = next_value
         event.button.label = self._collapse_large_pastes_label()
+        self.refresh(recompose=True)
         if save_setting_to_cli_config("console", "collapse_large_pastes", next_value):
             self.app.notify("Console paste display setting saved.", severity="information")
         else:
@@ -416,6 +422,6 @@ class SettingsScreen(BaseAppScreen):
         if event.key == "enter":
             category_value = self._focused_category_value()
             if category_value is not None:
-                self.active_category = category_value
+                self._select_category(category_value, restore_focus=True)
                 event.stop()
                 event.prevent_default()

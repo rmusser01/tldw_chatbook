@@ -260,3 +260,36 @@ async def test_settings_tab_focus_and_enter_select_categories():
         screen = _active_destination_screen(host)
 
         assert "Providers & Models" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_keyboard_category_focus_survives_selection_recompose():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.press("tab")
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.press("down")
+        await pilot.press("enter")
+        screen = _active_destination_screen(host)
+
+        assert "Appearance" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        screen = _active_destination_screen(host)
+
+        assert "Console paste collapse: Disabled: collapse large pastes" in _visible_text(screen)
