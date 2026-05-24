@@ -26,6 +26,11 @@ from textual.css.query import QueryError
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_worldbooks
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_dictionaries
+from tldw_chatbook.Chat.answer_citations import (
+    AnswerCitationValidation,
+    build_answer_citation_validation,
+    evidence_bundle_from_value,
+)
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Utils.Utils import safe_float, safe_int
@@ -234,13 +239,92 @@ async def handle_chat_tab_sidebar_toggle(app: 'TldwCli', event: Button.Pressed) 
 def apply_current_handoff_context(app: "TldwCli", message_text: str) -> str:
     payload = getattr(app, "_current_chat_handoff_payload", None)
     if payload is None:
+        _clear_current_handoff_evidence_bundle(app)
         return message_text
 
     payload = ChatHandoffPayload.from_dict(payload)
     if payload is None or payload.status == "sent":
+        _clear_current_handoff_evidence_bundle(app)
         return message_text
 
+    _stage_current_handoff_evidence_bundle(app, payload)
     return payload.format_for_model(message_text)
+
+
+def attach_current_handoff_citation_validation(
+    app: "TldwCli",
+    message_widget: Any,
+    answer_text: str,
+) -> Optional[AnswerCitationValidation]:
+    """Attach validated answer citations from the staged evidence bundle.
+
+    Args:
+        app: Running application instance holding the staged or pending evidence bundle.
+        message_widget: Assistant message widget that should receive citation metadata.
+        answer_text: Final assistant response text to validate.
+
+    Returns:
+        Citation validation result when staged evidence exists, otherwise ``None``.
+    """
+    bundle = _current_handoff_evidence_bundle(app, message_widget)
+    if bundle is None:
+        setattr(app, "_current_chat_answer_citation_validation", None)
+        _clear_message_citation_validation(message_widget)
+        return None
+
+    validation = build_answer_citation_validation(answer_text, bundle)
+    validation_payload = validation.to_payload()
+    setattr(app, "_current_chat_answer_citation_validation", validation_payload)
+
+    if message_widget is not None:
+        setattr(message_widget, "citation_validation", validation)
+        setattr(message_widget, "citation_refs", validation.citations)
+        setattr(message_widget, "citation_validation_payload", validation_payload)
+
+    return validation
+
+
+def _clear_message_citation_validation(message_widget: Any) -> None:
+    if message_widget is None:
+        return
+    for attr in ("citation_validation", "citation_refs", "citation_validation_payload"):
+        if hasattr(message_widget, attr):
+            delattr(message_widget, attr)
+
+
+def _stage_current_handoff_evidence_bundle(app: "TldwCli", payload: ChatHandoffPayload) -> None:
+    metadata = payload.metadata or {}
+    bundle = evidence_bundle_from_value(metadata.get("evidence_bundle"))
+    if bundle is None:
+        _clear_current_handoff_evidence_bundle(app)
+        return
+
+    bundle_payload = bundle.to_payload()
+    setattr(app, "_current_chat_pending_evidence_bundle", bundle_payload)
+    message_widget = getattr(app, "current_ai_message_widget", None)
+    if message_widget is not None:
+        setattr(message_widget, "citation_evidence_bundle", bundle_payload)
+
+
+def _clear_current_handoff_evidence_bundle(app: "TldwCli") -> None:
+    if hasattr(app, "_current_chat_pending_evidence_bundle"):
+        setattr(app, "_current_chat_pending_evidence_bundle", None)
+
+
+def _current_handoff_evidence_bundle(app: "TldwCli", message_widget: Any = None) -> Any:
+    if message_widget is not None:
+        bundle = evidence_bundle_from_value(getattr(message_widget, "citation_evidence_bundle", None))
+        if bundle is not None:
+            return bundle
+
+    bundle = evidence_bundle_from_value(getattr(app, "_current_chat_pending_evidence_bundle", None))
+    if bundle is not None:
+        return bundle
+
+    payload = ChatHandoffPayload.from_dict(getattr(app, "_current_chat_handoff_payload", None))
+    if payload is None:
+        return None
+    return evidence_bundle_from_value((payload.metadata or {}).get("evidence_bundle"))
 
 
 def _tabbed_chat_selector(app: "TldwCli", selector: str) -> str:
