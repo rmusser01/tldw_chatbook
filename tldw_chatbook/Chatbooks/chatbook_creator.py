@@ -12,6 +12,7 @@ import json
 import shutil
 import tempfile
 import zipfile
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Set, Tuple
@@ -30,6 +31,10 @@ from ..DB.Evals_DB import EvalsDB
 from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Utils.text import sanitize_filename
 from ..Utils.paths import get_user_data_dir
+
+
+CITATION_MESSAGE_EXPORT_KEYS = ("citation_validation", "evidence_bundle", "citations")
+MAX_CITATION_REPORT_SNIPPET_CHARS = 1000
 
 
 class ChatbookCreator:
@@ -295,21 +300,42 @@ class ChatbookCreator:
                 if hasattr(last_modified, 'isoformat'):
                     last_modified = last_modified.isoformat()
                     
+                exported_messages = []
+                citation_messages = []
+                for msg in messages:
+                    message_data = {
+                        "id": msg['id'],
+                        "role": msg['sender'],
+                        "content": msg['message'] if 'message' in msg else msg.get('content', ''),
+                        "timestamp": msg['timestamp'] if isinstance(msg['timestamp'], str) else msg['timestamp'].isoformat()
+                    }
+                    citation_payload = self._message_citation_export_payload(msg)
+                    if citation_payload:
+                        message_data.update(citation_payload)
+                        citation_messages.append(message_data)
+                    exported_messages.append(message_data)
+
+                title = conv.get('title', conv.get('conversation_name', 'Untitled'))
+                citation_metadata: dict[str, Any] = {}
+                if citation_messages:
+                    citation_report_path = self._write_conversation_citation_report(
+                        conv_dir,
+                        str(conv_id),
+                        title,
+                        citation_messages,
+                    )
+                    citation_metadata = self._conversation_citation_export_metadata(
+                        citation_messages,
+                        citation_report_path,
+                    )
+
                 conv_data = {
                     "id": conv['id'],
-                    "name": conv.get('title', conv.get('conversation_name', 'Untitled')),
+                    "name": title,
                     "created_at": created_at,
                     "updated_at": last_modified,
                     "character_id": conv.get('character_id'),
-                    "messages": [
-                        {
-                            "id": msg['id'],
-                            "role": msg['sender'],
-                            "content": msg['message'] if 'message' in msg else msg.get('content', ''),
-                            "timestamp": msg['timestamp'] if isinstance(msg['timestamp'], str) else msg['timestamp'].isoformat()
-                        }
-                        for msg in messages
-                    ]
+                    "messages": exported_messages
                 }
                 
                 # Write conversation file
@@ -324,9 +350,10 @@ class ChatbookCreator:
                 manifest.content_items.append(ContentItem(
                     id=conv_id,
                     type=ContentType.CONVERSATION,
-                    title=conv.get('title', conv.get('conversation_name', 'Untitled')),
+                    title=title,
                     created_at=datetime.fromisoformat(conv_data['created_at']),
                     updated_at=datetime.fromisoformat(conv_data['updated_at']),
+                    metadata=citation_metadata,
                     file_path=f"content/conversations/conversation_{conv_id}.json"
                 ))
                 
@@ -336,6 +363,157 @@ class ChatbookCreator:
                     
             except Exception as e:
                 logger.error(f"Error collecting conversation {conv_id}: {e}")
+
+    @staticmethod
+    def _message_citation_export_payload(message: Mapping[str, Any]) -> dict[str, Any]:
+        """Return JSON-safe citation/evidence payloads attached to an exported message."""
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), Mapping) else {}
+        payload: dict[str, Any] = {}
+        for key in CITATION_MESSAGE_EXPORT_KEYS:
+            value = message.get(key)
+            if value is None:
+                value = metadata.get(key)
+            if not ChatbookCreator._has_exportable_citation_value(value):
+                continue
+            payload[key] = ChatbookCreator._json_safe_payload(value)
+        return payload
+
+    @staticmethod
+    def _has_exportable_citation_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, (str, bytes, Mapping, list, tuple, set)):
+            return bool(value)
+        return True
+
+    @staticmethod
+    def _json_safe_payload(value: Any) -> Any:
+        to_payload = getattr(value, "to_payload", None)
+        if callable(to_payload):
+            return ChatbookCreator._json_safe_payload(to_payload())
+
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return ChatbookCreator._json_safe_payload(model_dump(mode="json", exclude_none=True))
+
+        if isinstance(value, Mapping):
+            return {
+                str(key): ChatbookCreator._json_safe_payload(nested_value)
+                for key, nested_value in value.items()
+            }
+        if isinstance(value, (list, tuple, set)):
+            return [ChatbookCreator._json_safe_payload(item) for item in value]
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        return str(value)
+
+    @staticmethod
+    def _conversation_citation_export_metadata(
+        citation_messages: list[dict[str, Any]],
+        citation_report_path: str,
+    ) -> dict[str, Any]:
+        evidence_source_count = 0
+        evidence_snippet_count = 0
+        for message in citation_messages:
+            evidence_bundle = message.get("evidence_bundle")
+            if not isinstance(evidence_bundle, Mapping):
+                continue
+            references = evidence_bundle.get("references")
+            if not isinstance(references, list):
+                continue
+            evidence_source_count += len(references)
+            evidence_snippet_count += sum(
+                1
+                for reference in references
+                if isinstance(reference, Mapping)
+                and ChatbookCreator._citation_report_snippet(reference.get("snippet"))
+            )
+
+        return {
+            "citation_report_path": citation_report_path,
+            "citation_message_count": len(citation_messages),
+            "evidence_source_count": evidence_source_count,
+            "evidence_snippet_count": evidence_snippet_count,
+        }
+
+    def _write_conversation_citation_report(
+        self,
+        conv_dir: Path,
+        conv_id: str,
+        title: str,
+        citation_messages: list[dict[str, Any]],
+    ) -> str:
+        """Write a human-readable citation/source report for exported conversations."""
+        report_file = conv_dir / f"conversation_{conv_id}_citations.md"
+        with open(report_file, 'w', encoding='utf-8') as f:
+            f.write(f"# Citations and Evidence: {title}\n\n")
+            for message in citation_messages:
+                self._write_message_citation_report_section(f, message)
+        return f"content/conversations/{report_file.name}"
+
+    @staticmethod
+    def _write_message_citation_report_section(handle: Any, message: Mapping[str, Any]) -> None:
+        message_id = message.get("id", "unknown")
+        handle.write(f"## Message {message_id}\n\n")
+        handle.write(f"Role: {message.get('role', 'unknown')}\n\n")
+
+        validation = message.get("citation_validation")
+        if isinstance(validation, Mapping):
+            status = validation.get("status")
+            if status is not None:
+                handle.write(f"Citation status: {status}\n")
+            cited_ids = validation.get("cited_evidence_ids")
+            if isinstance(cited_ids, list) and cited_ids:
+                handle.write(f"Cited evidence: {', '.join(str(item) for item in cited_ids)}\n")
+            unknown_ids = validation.get("unknown_citation_ids")
+            if isinstance(unknown_ids, list) and unknown_ids:
+                handle.write(f"Unknown evidence: {', '.join(str(item) for item in unknown_ids)}\n")
+            handle.write("\n")
+
+        evidence_bundle = message.get("evidence_bundle")
+        if not isinstance(evidence_bundle, Mapping):
+            return
+
+        bundle_id = evidence_bundle.get("bundle_id")
+        query = evidence_bundle.get("query")
+        source = evidence_bundle.get("source")
+        if bundle_id is not None:
+            handle.write(f"Evidence bundle: {bundle_id}\n")
+        if source is not None:
+            handle.write(f"Source: {source}\n")
+        if query is not None:
+            handle.write(f"Query: {query}\n")
+        handle.write("\n")
+
+        references = evidence_bundle.get("references")
+        if not isinstance(references, list) or not references:
+            return
+
+        handle.write("### Sources\n\n")
+        for reference in references:
+            if not isinstance(reference, Mapping):
+                continue
+            evidence_id = reference.get("evidence_id", "unknown")
+            title = reference.get("title", "Untitled source")
+            source_type = reference.get("source_type", "source")
+            authority = reference.get("authority_label", "unknown authority")
+            status = reference.get("status", "unknown")
+            handle.write(f"- {evidence_id} | {source_type} | {title} | {authority} | {status}\n")
+            source_id = reference.get("source_id")
+            if source_id is not None:
+                handle.write(f"  - Source id: {source_id}\n")
+            snippet = ChatbookCreator._citation_report_snippet(reference.get("snippet"))
+            if snippet:
+                handle.write(f"  - Snippet: {snippet}\n")
+        handle.write("\n")
+
+    @staticmethod
+    def _citation_report_snippet(value: Any) -> str:
+        raw = "" if value is None else str(value)
+        text = " ".join(raw.split())
+        if len(text) > MAX_CITATION_REPORT_SNIPPET_CHARS:
+            return text[: MAX_CITATION_REPORT_SNIPPET_CHARS - 3].rstrip() + "..."
+        return text
     
     def _collect_notes(
         self,

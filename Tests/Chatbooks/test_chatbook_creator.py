@@ -266,6 +266,115 @@ class TestChatbookCreator:
         assert success is True
         assert output_path.exists()
         assert dependency_info["missing_dependencies"] == []
+
+    @patch('tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB')
+    def test_create_chatbook_preserves_conversation_citation_artifacts(
+        self,
+        mock_chacha_db,
+        chatbook_creator,
+        tmp_path,
+    ):
+        """Conversation exports preserve citation/evidence payloads and readable snippets."""
+        mock_db_instance = MagicMock()
+        mock_chacha_db.return_value = mock_db_instance
+        timestamp = datetime.now().isoformat()
+        mock_db_instance.get_conversation_by_id.return_value = {
+            'id': 'conv-1',
+            'title': 'Incident Chat',
+            'created_at': timestamp,
+            'updated_at': timestamp,
+            'character_id': None,
+        }
+        mock_db_instance.get_messages_for_conversation.return_value = [
+            {
+                'id': 'm-user',
+                'sender': 'user',
+                'message': 'What caused the outage?',
+                'timestamp': timestamp,
+            },
+            {
+                'id': 'm-ai',
+                'sender': 'assistant',
+                'message': 'An expired credential caused the outage. [S1]',
+                'timestamp': timestamp,
+                'metadata': {
+                    'citation_validation': {
+                        'status': 'validated',
+                        'cited_evidence_ids': ['S1'],
+                        'unknown_citation_ids': [],
+                        'uncited_evidence_ids': [],
+                        'citations': [
+                            {
+                                'evidence_id': 'S1',
+                                'source_id': 'note-incident',
+                                'status': 'validated',
+                                'quote': 'An expired credential caused the outage. [S1]',
+                            }
+                        ],
+                    },
+                    'evidence_bundle': {
+                        'bundle_id': 'library-rag:incident',
+                        'query': 'What caused the outage?',
+                        'source': 'Library Search/RAG',
+                        'status': 'available',
+                        'references': [
+                            {
+                                'evidence_id': 'S1',
+                                'source_id': 'note-incident',
+                                'source_type': 'note',
+                                'title': 'Incident Review',
+                                'snippet': 'Expired credential caused the outage during deploy.',
+                                'authority_label': 'Local Library',
+                                'status': 'available',
+                            }
+                        ],
+                    },
+                },
+            },
+        ]
+
+        output_path = tmp_path / "incident_chatbook.zip"
+
+        success, _, dependency_info = chatbook_creator.create_chatbook(
+            name="Incident Chatbook",
+            description="Export with citations",
+            content_selections={ContentType.CONVERSATION: ["conv-1"]},
+            output_path=output_path,
+        )
+
+        assert success is True
+        assert dependency_info["missing_dependencies"] == []
+
+        with zipfile.ZipFile(output_path, 'r') as zf:
+            conversation = json.loads(zf.read('content/conversations/conversation_conv-1.json'))
+            assistant_message = conversation["messages"][1]
+            assert assistant_message["citation_validation"]["status"] == "validated"
+            assert assistant_message["citation_validation"]["cited_evidence_ids"] == ["S1"]
+            assert assistant_message["evidence_bundle"]["bundle_id"] == "library-rag:incident"
+            assert (
+                assistant_message["evidence_bundle"]["references"][0]["snippet"]
+                == "Expired credential caused the outage during deploy."
+            )
+
+            report_text = zf.read(
+                'content/conversations/conversation_conv-1_citations.md'
+            ).decode("utf-8")
+            assert "# Citations and Evidence: Incident Chat" in report_text
+            assert "Citation status: validated" in report_text
+            assert "Expired credential caused the outage during deploy." in report_text
+
+            manifest_data = json.loads(zf.read('manifest.json'))
+            conversation_item = next(
+                item
+                for item in manifest_data["content_items"]
+                if item["id"] == "conv-1" and item["type"] == "conversation"
+            )
+            assert conversation_item["metadata"]["citation_report_path"] == (
+                "content/conversations/conversation_conv-1_citations.md"
+            )
+            assert conversation_item["metadata"]["citation_message_count"] == 1
+            assert conversation_item["metadata"]["evidence_source_count"] == 1
+            assert conversation_item["metadata"]["evidence_snippet_count"] == 1
     
     @patch('zipfile.ZipFile')
     def test_create_chatbook_zip_error(self, mock_zipfile, chatbook_creator, tmp_path):
