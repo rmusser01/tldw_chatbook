@@ -423,6 +423,7 @@ timeout_method = "thread"
 markers = [
     "unit: marks tests as unit tests",
     "integration: marks tests as integration tests",
+    "ui: marks tests as UI/Textual tests",
     "asyncio: marks tests as async",
     "timeout: marks tests with custom timeout values",
     "optional: marks tests that require optional dependencies",
