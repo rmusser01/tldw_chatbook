@@ -19,6 +19,16 @@ _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?P<value>[^\s,;]+)",
     re.IGNORECASE,
 )
+_SCALAR_LIKE_TOML_PATTERN = re.compile(
+    r"""(?x)
+    (?:
+        true|false|
+        [+-]?\d+(?:\.\d+)?|
+        \[.*\]|
+        \{.*\}
+    )
+    """
+)
 
 
 def redact_secret_text(text: str) -> str:
@@ -51,7 +61,7 @@ class SettingsConfigAdapter:
             len(stripped_text) >= 2
             and stripped_text[0] == stripped_text[-1]
             and stripped_text[0] in {"'", '"'}
-        ):
+        ) or _SCALAR_LIKE_TOML_PATTERN.fullmatch(stripped_text):
             return SettingsValidationResult(
                 False,
                 "top-level TOML value must be a table",

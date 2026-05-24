@@ -156,3 +156,13 @@ def test_adapter_rejects_non_mapping_toml():
 
     assert not result.valid
     assert "top-level TOML value must be a table" in result.message
+
+
+def test_adapter_rejects_scalar_like_toml_with_table_message():
+    adapter = SettingsConfigAdapter()
+
+    for value in ("42", "true", "[1, 2]"):
+        result = adapter.validate_raw_toml(value)
+
+        assert not result.valid
+        assert "top-level TOML value must be a table" in result.message
