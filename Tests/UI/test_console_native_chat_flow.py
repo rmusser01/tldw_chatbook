@@ -467,6 +467,34 @@ async def test_console_selected_message_copy_action_uses_app_clipboard():
 
 
 @pytest.mark.asyncio
+async def test_console_selected_message_save_as_action_opens_modal():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
+
+        await pilot.click(f"#console-message-action-save-as-{message.id}")
+        await _wait_for_selector(app, pilot, "#console-save-as-modal")
+
+    assert console._last_console_action.action_id == "save-as"
+
+
+@pytest.mark.asyncio
 async def test_console_failed_stream_renders_inline_retry_and_recovers():
     gateway = FailThenRecoverGateway()
     app = _build_test_app()
