@@ -166,3 +166,12 @@ def test_adapter_rejects_scalar_like_toml_with_table_message():
 
         assert not result.valid
         assert "top-level TOML value must be a table" in result.message
+
+
+def test_adapter_accepts_table_headers_before_scalar_fallback():
+    adapter = SettingsConfigAdapter()
+
+    for value in ("[section]", "[[items]]"):
+        result = adapter.validate_raw_toml(value)
+
+        assert result.valid

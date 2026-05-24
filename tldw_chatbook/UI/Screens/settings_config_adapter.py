@@ -57,19 +57,19 @@ class SettingsConfigAdapter:
     def validate_raw_toml(self, text: str) -> SettingsValidationResult:
         """Validate TOML text and require a top-level table/mapping."""
         stripped_text = text.strip()
-        if (
-            len(stripped_text) >= 2
-            and stripped_text[0] == stripped_text[-1]
-            and stripped_text[0] in {"'", '"'}
-        ) or _SCALAR_LIKE_TOML_PATTERN.fullmatch(stripped_text):
-            return SettingsValidationResult(
-                False,
-                "top-level TOML value must be a table",
-            )
 
         try:
             parsed = toml.loads(text)
         except toml.TomlDecodeError as exc:
+            if (
+                len(stripped_text) >= 2
+                and stripped_text[0] == stripped_text[-1]
+                and stripped_text[0] in {"'", '"'}
+            ) or _SCALAR_LIKE_TOML_PATTERN.fullmatch(stripped_text):
+                return SettingsValidationResult(
+                    False,
+                    "top-level TOML value must be a table",
+                )
             return SettingsValidationResult(False, redact_secret_text(str(exc)))
 
         if not isinstance(parsed, dict):
