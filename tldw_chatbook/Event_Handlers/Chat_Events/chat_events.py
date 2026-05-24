@@ -6,6 +6,7 @@ import logging
 import asyncio
 import inspect
 import json
+import math
 import os
 import time
 from datetime import datetime
@@ -26,6 +27,11 @@ from textual.css.query import QueryError
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_worldbooks
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_dictionaries
+from tldw_chatbook.Chat.answer_citations import (
+    AnswerCitationValidation,
+    build_answer_citation_validation,
+    evidence_bundle_from_value,
+)
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Utils.Utils import safe_float, safe_int
@@ -60,6 +66,11 @@ if TYPE_CHECKING:
 MAX_CONSOLE_CHATBOOK_ARTIFACT_CONTENT_CHARS = 20_000
 MAX_CONSOLE_CHATBOOK_ARTIFACT_TITLE_CHARS = 80
 MAX_CONSOLE_CHATBOOK_ARTIFACT_DESCRIPTION_CHARS = 280
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_STRING_CHARS = 4_000
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_LIST_ITEMS = 50
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DICT_ITEMS = 80
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DEPTH = 6
+_UNSAFE_STRUCTURED_METADATA = object()
 
 def safe_json_loads(json_str: str, max_size: int = 1024 * 1024) -> Optional[Union[dict, list]]:
     """
@@ -93,6 +104,51 @@ def safe_json_loads(json_str: str, max_size: int = 1024 * 1024) -> Optional[Unio
 def _simple_metadata_value(value: Any) -> Optional[Union[str, int, float, bool]]:
     if isinstance(value, (str, int, float, bool)):
         return value
+    return None
+
+
+def _json_safe_structured_metadata_value(value: Any, *, depth: int = 0) -> Any:
+    """Copy only bounded JSON-safe metadata for saved Console artifacts."""
+    if depth > MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DEPTH:
+        return _UNSAFE_STRUCTURED_METADATA
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value[:MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_STRING_CHARS]
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else _UNSAFE_STRUCTURED_METADATA
+    if isinstance(value, Mapping):
+        safe_mapping: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DICT_ITEMS:
+                break
+            safe_key = _json_safe_structured_metadata_value(key, depth=depth + 1)
+            if safe_key is _UNSAFE_STRUCTURED_METADATA:
+                continue
+            safe_item = _json_safe_structured_metadata_value(item, depth=depth + 1)
+            if safe_item is _UNSAFE_STRUCTURED_METADATA:
+                continue
+            safe_mapping[str(safe_key)[:MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_STRING_CHARS]] = safe_item
+        return safe_mapping
+    if isinstance(value, (list, tuple)):
+        safe_items = []
+        for item in value[:MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_LIST_ITEMS]:
+            safe_item = _json_safe_structured_metadata_value(item, depth=depth + 1)
+            if safe_item is not _UNSAFE_STRUCTURED_METADATA:
+                safe_items.append(safe_item)
+        return safe_items
+    return _UNSAFE_STRUCTURED_METADATA
+
+
+def _structured_metadata_from_sources(*values: Any) -> Any | None:
+    for value in values:
+        safe_value = _json_safe_structured_metadata_value(value)
+        if isinstance(safe_value, (dict, list)) and safe_value:
+            return safe_value
     return None
 
 
@@ -152,6 +208,18 @@ def _console_chatbook_artifact_metadata(
         if isinstance(simple_value, str) and not simple_value.strip():
             continue
         metadata[key] = simple_value
+    citation_validation = _structured_metadata_from_sources(
+        getattr(action_widget, "citation_validation_payload", None),
+        getattr(app, "_current_chat_answer_citation_validation", None),
+    )
+    if citation_validation is not None:
+        metadata["citation_validation"] = citation_validation
+    evidence_bundle = _structured_metadata_from_sources(
+        getattr(action_widget, "citation_evidence_bundle", None),
+        getattr(app, "_current_chat_pending_evidence_bundle", None),
+    )
+    if evidence_bundle is not None:
+        metadata["evidence_bundle"] = evidence_bundle
     return metadata
 
 
@@ -234,13 +302,92 @@ async def handle_chat_tab_sidebar_toggle(app: 'TldwCli', event: Button.Pressed) 
 def apply_current_handoff_context(app: "TldwCli", message_text: str) -> str:
     payload = getattr(app, "_current_chat_handoff_payload", None)
     if payload is None:
+        _clear_current_handoff_evidence_bundle(app)
         return message_text
 
     payload = ChatHandoffPayload.from_dict(payload)
     if payload is None or payload.status == "sent":
+        _clear_current_handoff_evidence_bundle(app)
         return message_text
 
+    _stage_current_handoff_evidence_bundle(app, payload)
     return payload.format_for_model(message_text)
+
+
+def attach_current_handoff_citation_validation(
+    app: "TldwCli",
+    message_widget: Any,
+    answer_text: str,
+) -> Optional[AnswerCitationValidation]:
+    """Attach validated answer citations from the staged evidence bundle.
+
+    Args:
+        app: Running application instance holding the staged or pending evidence bundle.
+        message_widget: Assistant message widget that should receive citation metadata.
+        answer_text: Final assistant response text to validate.
+
+    Returns:
+        Citation validation result when staged evidence exists, otherwise ``None``.
+    """
+    bundle = _current_handoff_evidence_bundle(app, message_widget)
+    if bundle is None:
+        setattr(app, "_current_chat_answer_citation_validation", None)
+        _clear_message_citation_validation(message_widget)
+        return None
+
+    validation = build_answer_citation_validation(answer_text, bundle)
+    validation_payload = validation.to_payload()
+    setattr(app, "_current_chat_answer_citation_validation", validation_payload)
+
+    if message_widget is not None:
+        setattr(message_widget, "citation_validation", validation)
+        setattr(message_widget, "citation_refs", validation.citations)
+        setattr(message_widget, "citation_validation_payload", validation_payload)
+
+    return validation
+
+
+def _clear_message_citation_validation(message_widget: Any) -> None:
+    if message_widget is None:
+        return
+    for attr in ("citation_validation", "citation_refs", "citation_validation_payload"):
+        if hasattr(message_widget, attr):
+            delattr(message_widget, attr)
+
+
+def _stage_current_handoff_evidence_bundle(app: "TldwCli", payload: ChatHandoffPayload) -> None:
+    metadata = payload.metadata or {}
+    bundle = evidence_bundle_from_value(metadata.get("evidence_bundle"))
+    if bundle is None:
+        _clear_current_handoff_evidence_bundle(app)
+        return
+
+    bundle_payload = bundle.to_payload()
+    setattr(app, "_current_chat_pending_evidence_bundle", bundle_payload)
+    message_widget = getattr(app, "current_ai_message_widget", None)
+    if message_widget is not None:
+        setattr(message_widget, "citation_evidence_bundle", bundle_payload)
+
+
+def _clear_current_handoff_evidence_bundle(app: "TldwCli") -> None:
+    if hasattr(app, "_current_chat_pending_evidence_bundle"):
+        setattr(app, "_current_chat_pending_evidence_bundle", None)
+
+
+def _current_handoff_evidence_bundle(app: "TldwCli", message_widget: Any = None) -> Any:
+    if message_widget is not None:
+        bundle = evidence_bundle_from_value(getattr(message_widget, "citation_evidence_bundle", None))
+        if bundle is not None:
+            return bundle
+
+    bundle = evidence_bundle_from_value(getattr(app, "_current_chat_pending_evidence_bundle", None))
+    if bundle is not None:
+        return bundle
+
+    payload = ChatHandoffPayload.from_dict(getattr(app, "_current_chat_handoff_payload", None))
+    if payload is None:
+        return None
+    return evidence_bundle_from_value((payload.metadata or {}).get("evidence_bundle"))
 
 
 def _tabbed_chat_selector(app: "TldwCli", selector: str) -> str:

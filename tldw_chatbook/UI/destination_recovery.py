@@ -170,7 +170,8 @@ def optional_dependency_recovery_state(
     *,
     unavailable_what: str,
     missing_dependencies: Iterable[str] | str,
-    install_target: str,
+    install_target: str | None = None,
+    install_targets: Iterable[str] | None = None,
     stable_selector: str,
     recovery_action: str,
     authority_owner: str = "optional dependency",
@@ -181,17 +182,39 @@ def optional_dependency_recovery_state(
         unavailable_what: Specific workflow or control blocked by the missing dependency.
         missing_dependencies: Missing package, extra, or feature names.
         install_target: User-facing install command or setup target.
+        install_targets: Optional source/package install commands. When provided, the
+            first command is treated as the source checkout path and the second as the
+            packaged install path.
         stable_selector: Stable widget selector for the rendered recovery state.
         recovery_action: Target setup area or action.
         authority_owner: Owner of the blocker.
 
     Returns:
         Destination recovery state with dependency-specific visible copy and tooltip.
+
+    Raises:
+        ValueError: If neither `install_target` nor `install_targets` is provided.
     """
 
     dependency_names = _dependency_names(missing_dependencies)
     why = f"Missing optional dependencies: {dependency_names}."
-    next_action = f"Install with {install_target} and restart."
+    install_target_list = [
+        str(target).strip()
+        for target in (install_targets or ())
+        if str(target).strip()
+    ]
+    if install_target_list:
+        if len(install_target_list) >= 2:
+            next_action = (
+                f"Install with {install_target_list[0]} for source checkouts or "
+                f"{install_target_list[1]} for packaged installs, then restart."
+            )
+        else:
+            next_action = f"Install with {install_target_list[0]} and restart."
+    elif install_target:
+        next_action = f"Install with {install_target} and restart."
+    else:
+        raise ValueError("install_target or install_targets is required")
     disabled_tooltip = " ".join(
         (
             DestinationRecoveryState._sentence(unavailable_what),

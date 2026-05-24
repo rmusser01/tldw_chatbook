@@ -1,7 +1,8 @@
 ---
-id: TASK-60
+id: TASK-59.1
 title: Add Chatbook Sync v2 profile summary
 status: Done
+parent_task_id: TASK-59
 labels:
 - sync
 - sync-v2

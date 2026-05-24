@@ -313,6 +313,42 @@ def test_chat_handoff_payload_persistence_omits_nulls_and_redacts_model_metadata
     assert "- safe: ok" in context
 
 
+def test_chat_handoff_payload_model_context_formats_evidence_bundle_readably():
+    payload = ChatHandoffPayload(
+        source="search-rag",
+        item_type="rag-result",
+        title="Incident Review",
+        body="Retrieved content",
+        metadata={
+            "evidence_bundle": {
+                "bundle_id": "library-rag:incident",
+                "query": "Why did the incident happen?",
+                "status": "available",
+                "references": [
+                    {
+                        "evidence_id": "S1",
+                        "source_id": "note-42",
+                        "source_type": "note",
+                        "title": "Incident Review",
+                        "snippet": "Expired credential caused the incident.",
+                        "authority_label": "Source authority: local",
+                        "status": "available",
+                    }
+                ],
+            }
+        },
+    )
+
+    context = payload.model_context_block()
+
+    assert "[Staged evidence]" in context
+    assert "Evidence bundle: library-rag:incident" in context
+    assert "Evidence status: available" in context
+    assert "[S1] Incident Review (note-42) - Source authority: local - available" in context
+    assert "Snippet: Expired credential caused the incident." in context
+    assert "evidence_bundle:" not in context
+
+
 def test_chat_handoff_payload_from_source_content_caps_persisted_body():
     payload = ChatHandoffPayload.from_source_content(
         source="media",

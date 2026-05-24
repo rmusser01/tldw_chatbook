@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from .answer_citations import format_evidence_for_cited_answer
+
 
 SECRET_CONTRACT_KEYS = frozenset({"credential_source", "token", "secret", "api_key", "password"})
 HANDOFF_BODY_CHAR_LIMIT = 80_000
@@ -133,9 +135,12 @@ class ChatHandoffPayload:
         metadata_lines = []
         metadata_snapshot = _json_safe_contract_snapshot(self.metadata or {})
         for key, value in sorted(metadata_snapshot.items()):
+            if key == "evidence_bundle":
+                continue
             if value not in (None, ""):
                 metadata_lines.append(f"- {key}: {value}")
         metadata = "\n".join(metadata_lines)
+        evidence = format_evidence_for_cited_answer(metadata_snapshot.get("evidence_bundle"))
         return (
             "[Staged context]\n"
             f"Source: {self.source}\n"
@@ -151,6 +156,7 @@ class ChatHandoffPayload:
             f"Sync dry-run only: {bool(self.sync_dry_run_report)}\n"
             f"Summary: {self.display_summary or 'none'}\n"
             f"Metadata:\n{metadata or '- none'}\n\n"
+            f"{evidence}"
             f"Content:\n{self.body}"
         )
 

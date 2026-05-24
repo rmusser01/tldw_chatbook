@@ -377,6 +377,15 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                     ai_message_widget.message_text = original_text_for_storage
                     markdown_widget_in_ai_msg.update(original_text_for_storage)
                     ai_message_widget.mark_generation_complete()
+                    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+                        attach_current_handoff_citation_validation,
+                    )
+
+                    attach_current_handoff_citation_validation(
+                        app,
+                        ai_message_widget,
+                        original_text_for_storage,
+                    )
 
                     # Check for tool calls in non-streaming response
                     tool_calls = None

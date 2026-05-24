@@ -36,12 +36,23 @@ tldw-cli --serve
 tldw-serve --port 8080
 ```
 
+### Local-first baseline
+
+The core local-first app installs with `pip install -e .` and includes the Textual shell, Console, local conversations, notes, personas, Library browsing, Chatbook artifacts, and settings. Missing optional extras should be treated as unavailable advanced capabilities, not as a broken core install.
+
+For packaged installs, use:
+
+```bash
+pip install tldw_chatbook
+```
+
 ### Installation with Optional Features
-The application supports several optional feature sets that can be installed based on your needs:
+The application supports several advanced optional capability groups that can be installed based on your needs. Source checkouts use `pip install -e ".[extra]"`; packaged installs use commands such as `pip install "tldw_chatbook[embeddings_rag]"`.
 
 ```bash
 # RAG (Retrieval-Augmented Generation) support
 pip install -e ".[embeddings_rag]"
+pip install "tldw_chatbook[embeddings_rag]"
 
 # Advanced text chunking and language detection
 pip install -e ".[embeddings_rag,chunker]"
@@ -76,32 +87,34 @@ pip install -e ".[dev]"
 
 ### Optional Feature Groups
 
-| Feature Group                  | Enables | Key Dependencies |
-|--------------------------------|---------|------------------|
-| `embeddings_rag`               | Vector search, semantic similarity, hybrid RAG | torch, transformers, sentence-transformers*, chromadb* |
-| `chunker`                      | Advanced text chunking, language detection | nltk, langdetect, jieba, fugashi |
-| `websearch`                    | Web scraping, content extraction | beautifulsoup4, playwright, trafilatura |
-| `coding_map`                   | Code analysis features | grep_ast, pygments |
-| `local_vllm`                   | vLLM inference support | vllm |
-| `local_mlx`                    | MLX inference (Apple Silicon) | mlx-lm |
-| `transcription_faster_whisper` | CPU/CUDA optimized Whisper transcription | faster-whisper |
-| `transcription_lightning_whisper` | Apple Silicon optimized Whisper | lightning-whisper-mlx |
-| `transcription_parakeet`       | Real-time ASR for Apple Silicon | parakeet-mlx |
-| `mlx_whisper`                  | Legacy: Both Apple Silicon transcription providers | lightning-whisper-mlx, parakeet-mlx |
-| `audio`                        | Audio processing with transcription | faster-whisper, soundfile, yt-dlp |
-| `video`                        | Video processing with transcription | faster-whisper, soundfile, yt-dlp |
-| `media_processing`             | Combined audio/video processing | faster-whisper, soundfile, yt-dlp |
-| `pdf`                          | PDF text extraction | pymupdf, docling |
-| `ebook`                        | E-book processing | ebooklib, beautifulsoup4, defusedxml |
-| `nemo`                         | NVIDIA Parakeet ASR models | nemo-toolkit[asr] |
-| `local_transformers`           | HuggingFace transformers | transformers |
-| `mcp`                          | Model Context Protocol integration | mcp |
-| `chatterbox`                   | Chatterbox TTS model support | chatterbox |
-| `local_tts`                    | Local TTS models (Kokoro ONNX) | kokoro-onnx, scipy, pyaudio |
-| `ocr_docext`                   | OCR and document extraction | docext, gradio_client |
-| `debugging`                    | Metrics and telemetry | prometheus-client, opentelemetry-api |
-| `diarization`                  | Speaker diarization for audio | torch, torchaudio, speechbrain |
-| `web`                          | Web server for browser access | textual-serve |
+Advanced optional capability groups:
+
+| Feature Group                  | Capability Area | Enables | Key Dependencies |
+|--------------------------------|-----------------|---------|------------------|
+| `embeddings_rag`               | RAG and retrieval | Vector search, semantic similarity, hybrid RAG | torch, transformers, sentence-transformers*, chromadb* |
+| `chunker`                      | RAG and retrieval | Advanced text chunking, language detection | nltk, langdetect, jieba, fugashi |
+| `websearch`                    | Server/research | Web search and scraping | beautifulsoup4, playwright, trafilatura |
+| `coding_map`                   | Local inference | Code analysis features | grep_ast, pygments |
+| `local_vllm`                   | Local inference | vLLM inference support | vllm |
+| `local_mlx`                    | Local inference | MLX inference (Apple Silicon) | mlx-lm |
+| `transcription_faster_whisper` | Media ingestion and transcription | CPU/CUDA optimized Whisper transcription | faster-whisper |
+| `transcription_lightning_whisper` | Media ingestion and transcription | Apple Silicon optimized Whisper | lightning-whisper-mlx |
+| `transcription_parakeet`       | Media ingestion and transcription | Real-time ASR for Apple Silicon | parakeet-mlx |
+| `mlx_whisper`                  | Media ingestion and transcription | Legacy: Both Apple Silicon transcription providers | lightning-whisper-mlx, parakeet-mlx |
+| `audio`                        | Media ingestion and transcription | Audio processing with transcription | faster-whisper, soundfile, yt-dlp |
+| `video`                        | Media ingestion and transcription | Video processing with transcription | faster-whisper, soundfile, yt-dlp |
+| `media_processing`             | Media ingestion and transcription | Combined audio/video processing | faster-whisper, soundfile, yt-dlp |
+| `pdf`                          | Media ingestion and transcription | PDF text extraction | pymupdf, docling |
+| `ebook`                        | Media ingestion and transcription | E-book processing | ebooklib, beautifulsoup4, defusedxml |
+| `nemo`                         | Media ingestion and transcription | NVIDIA Parakeet ASR models | nemo-toolkit[asr] |
+| `local_transformers`           | Local inference | HuggingFace transformers | transformers |
+| `mcp`                          | MCP integration | Model Context Protocol integration | mcp |
+| `chatterbox`                   | Media ingestion and transcription | Chatterbox TTS model support | chatterbox |
+| `local_tts`                    | Media ingestion and transcription | Local TTS models (Kokoro ONNX) | kokoro-onnx, scipy, pyaudio |
+| `ocr_docext`                   | Media ingestion and transcription | OCR and document extraction | docext, gradio_client |
+| `debugging`                    | Server/research | Metrics and telemetry | prometheus-client, opentelemetry-api |
+| `diarization`                  | Media ingestion and transcription | Speaker diarization for audio | torch, torchaudio, speechbrain |
+| `web`                          | Web access | Web server for browser access | textual-serve |
 
 *Note: `sentence-transformers` and `chromadb` are detected separately and installed automatically when needed.
 

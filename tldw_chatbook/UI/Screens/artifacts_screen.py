@@ -18,6 +18,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
+from ...Chat.answer_citations import summarize_citation_artifact_metadata
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -185,6 +186,18 @@ class ArtifactsScreen(BaseAppScreen):
             payload["content_truncated"] = content_truncated
         elif "content_preview" in payload:
             payload["content_truncated"] = False
+        payload.update(cls._safe_console_summary_payload(metadata))
+        return payload
+
+    @classmethod
+    def _safe_console_summary_payload(cls, metadata: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        for key, value in summarize_citation_artifact_metadata(metadata).items():
+            if isinstance(value, bool) or isinstance(value, int):
+                payload[key] = value
+                continue
+            if (safe_value := cls._safe_metadata_value(value, max_length=256)) is not None:
+                payload[key] = safe_value
         return payload
 
     @staticmethod

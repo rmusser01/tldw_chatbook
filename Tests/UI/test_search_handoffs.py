@@ -16,6 +16,7 @@ from tldw_chatbook.UI.Views.RAGSearch import search_rag_window
 from tldw_chatbook.UI.SearchWindow import SearchWindow
 from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
+    build_library_rag_evidence_bundle,
     build_library_rag_console_live_work_payload,
 )
 from tldw_chatbook.UI.Views.RAGSearch.search_result import SearchResult
@@ -127,7 +128,23 @@ def test_library_rag_console_payload_preserves_evidence_fields():
         query="Why did the incident happen?",
     )
 
-    assert payload == {
+    assert {
+        key: payload[key]
+        for key in (
+            "target_id",
+            "result_id",
+            "query",
+            "title",
+            "source_id",
+            "chunk_id",
+            "snippet",
+            "citations",
+            "score",
+            "runtime_backend",
+            "source_authority",
+            "source_selector_state",
+        )
+    } == {
         "target_id": "local:library-rag:note-42:chunk-7",
         "result_id": "note-42:chunk-7",
         "query": "Why did the incident happen?",
@@ -141,6 +158,118 @@ def test_library_rag_console_payload_preserves_evidence_fields():
         "source_authority": "local",
         "source_selector_state": "local",
     }
+    bundle = payload["evidence_bundle"]
+    reference = bundle["references"][0]
+    assert bundle["query"] == "Why did the incident happen?"
+    assert bundle["status"] == "available"
+    assert reference["evidence_id"] == "S1"
+    assert reference["source_id"] == "note-42"
+    assert reference["snippet"] == "Expired credential caused the incident."
+    assert reference["authority_label"] == "Source authority: local"
+    assert reference["metadata"]["active_context_eligible"] is True
+    assert reference["metadata"]["global_browse_visible"] is True
+
+
+def test_library_rag_evidence_bundle_blocks_cross_workspace_context():
+    bundle = build_library_rag_evidence_bundle(
+        {
+            "result_id": "note-42:chunk-7",
+            "title": "Workspace B Note",
+            "snippet": "Workspace B evidence remains visible.",
+            "source_id": "note-42",
+            "chunk_id": "chunk-7",
+            "source_type": "note",
+            "runtime_backend": "local-fts",
+            "workspace_ids": ("workspace-b",),
+            "active_workspace_id": "workspace-a",
+        },
+        query="Can I use this in Workspace A?",
+    )
+
+    payload = bundle.to_payload()
+    reference = payload["references"][0]
+    assert payload["status"] == "blocked"
+    assert reference["status"] == "blocked"
+    assert reference["workspace_id"] == "workspace-b"
+    assert reference["authority_label"] == (
+        "Workspace: workspace-b (blocked for active workspace workspace-a)"
+    )
+    assert reference["metadata"]["global_browse_visible"] is True
+    assert reference["metadata"]["active_context_eligible"] is False
+    assert reference["metadata"]["eligibility_reason"] == "cross_workspace"
+    assert reference["metadata"]["active_workspace_id"] == "workspace-a"
+
+
+def test_library_rag_evidence_bundle_preserves_provenance_identity():
+    bundle = build_library_rag_evidence_bundle(
+        {
+            "title": "Server Transcript",
+            "snippet": "The server transcript contains the source evidence.",
+            "provenance": {
+                "source_id": "media-9",
+                "chunk_id": "chunk-3",
+                "source_type": "media",
+                "runtime_backend": "server-rag",
+            },
+        },
+        query="What does the transcript say?",
+    )
+
+    payload = bundle.to_payload()
+    reference = payload["references"][0]
+    assert reference["source_id"] == "media-9"
+    assert reference["source_type"] == "media"
+    assert reference["source_owner"] == "server"
+    assert reference["content_ref"] == "server:library-rag:media-9:chunk-3"
+    assert reference["metadata"]["chunk_id"] == "chunk-3"
+    assert reference["metadata"]["runtime_backend"] == "server-rag"
+
+
+def test_library_rag_evidence_bundle_marks_empty_results_missing():
+    bundle = build_library_rag_evidence_bundle(
+        [],
+        query="What evidence is available?",
+    )
+
+    payload = bundle.to_payload()
+    assert payload["status"] == "missing"
+    assert payload["references"] == []
+    assert payload["metadata"]["eligible_reference_count"] == 0
+    assert payload["metadata"]["blocked_reference_count"] == 0
+
+
+@pytest.mark.parametrize("status", ("stale", "unknown"))
+def test_library_rag_evidence_bundle_preserves_non_missing_reference_status(status):
+    bundle = build_library_rag_evidence_bundle(
+        {
+            "title": "Indexed source",
+            "snippet": "Existing evidence has a non-ready state.",
+            "source_id": f"{status}-source",
+            "evidence_status": status,
+        },
+        query=f"Show {status} evidence",
+    )
+
+    payload = bundle.to_payload()
+    reference = payload["references"][0]
+    assert payload["status"] == status
+    assert reference["status"] == status
+
+
+def test_library_rag_evidence_bundle_drops_out_of_range_scores():
+    payload = build_library_rag_console_live_work_payload(
+        {
+            "title": "Out of range score",
+            "snippet": "Score should not prevent staging evidence.",
+            "source_id": "note-99",
+            "score": 1.5,
+        },
+        query="Can this evidence stage?",
+    )
+
+    reference = payload["evidence_bundle"]["references"][0]
+    assert payload["score"] is None
+    assert "score" not in reference
 
 
 def test_library_rag_console_payload_uses_shared_validation_for_unsafe_text():

@@ -13,6 +13,7 @@ PENDING_LAUNCH_CARD_ID = "console-pending-launch-card"
 LIVE_WORK_CARD_CLASS = "console-live-work-status-card"
 PRIMARY_ACTION_BUTTON_ID = "console-live-work-primary-action"
 SOURCE_READINESS_CARD_ID = "console-live-work-source-readiness"
+HIDDEN_PAYLOAD_DISPLAY_KEYS = frozenset({"evidence_bundle"})
 
 
 def _clean_text(value: Any, fallback: str) -> str:
@@ -99,6 +100,7 @@ class ConsoleLiveWorkLaunch:
         return tuple(
             (str(key), self.payload[key])
             for key in sorted(self.payload, key=lambda item: str(item))
+            if str(key) not in HIDDEN_PAYLOAD_DISPLAY_KEYS
         )
 
 

@@ -1636,6 +1636,76 @@ async def test_artifacts_destination_reopens_console_saved_chatbook_with_provena
 
 
 @pytest.mark.asyncio
+async def test_artifacts_destination_reopens_console_saved_chatbook_with_citation_metadata():
+    app = _build_test_app()
+    app.local_chatbook_service = StaticLocalChatbookService(
+        (
+            {
+                "chatbook_id": 77,
+                "id": "77",
+                "name": "Grounded Answer",
+                "description": "Saved from Console assistant response.",
+                "file_path": "/tmp/grounded-answer.chatbook",
+                "tags": ["console", "artifact"],
+                "categories": ["Console", "Artifacts"],
+                "metadata": {
+                    "artifact_source": "console",
+                    "artifact_kind": "assistant-response",
+                    "content": "The credential expired [S1].",
+                    "citation_validation": {
+                        "status": "validated",
+                        "citations": [
+                            {
+                                "evidence_id": "S1",
+                                "source_id": "note-1",
+                                "status": "validated",
+                                "quote": "The credential expired [S1].",
+                            }
+                        ],
+                        "cited_evidence_ids": ["S1"],
+                        "unknown_citation_ids": [],
+                        "uncited_evidence_ids": [],
+                        "recovery": "",
+                    },
+                    "evidence_bundle": {
+                        "bundle_id": "library-rag:incident",
+                        "query": "Why did the incident happen?",
+                        "status": "available",
+                        "references": [
+                            {
+                                "evidence_id": "S1",
+                                "source_id": "note-1",
+                                "source_type": "note",
+                                "title": "Incident Review",
+                                "snippet": "Expired credential caused the incident.",
+                                "authority_label": "Source authority: local",
+                                "status": "available",
+                            }
+                        ],
+                    },
+                },
+                "updated_at": "2026-05-05T20:00:00Z",
+            },
+        )
+    )
+    app.open_console_for_live_work = Mock()
+    host = DestinationHarness(app, "artifacts")
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#artifacts-console-available")
+        await pilot.click("#artifacts-use-in-console")
+
+    launch_payload = app.open_console_for_live_work.call_args.kwargs["payload"]
+    assert launch_payload["citation_status"] == "validated"
+    assert launch_payload["citation_cited_evidence_ids"] == "S1"
+    assert launch_payload["citation_count"] == 1
+    assert launch_payload["evidence_bundle_id"] == "library-rag:incident"
+    assert launch_payload["evidence_source_count"] == 1
+    assert launch_payload["evidence_snippet_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_launch():
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
@@ -1658,6 +1728,16 @@ async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_
                     "model": "onerror=bad",
                     "content": "<script>bad</script> onerror=bad",
                     "content_truncated": False,
+                    "citation_validation": {
+                        "status": "<script>validated</script>",
+                        "cited_evidence_ids": ["S1", "javascript:bad"],
+                        "citations": [{"evidence_id": "S1"}],
+                    },
+                    "evidence_bundle": {
+                        "bundle_id": "bundle-onclick=bad",
+                        "query": "<script>query</script>",
+                        "references": [{"snippet": "safe"}],
+                    },
                 },
                 "updated_at": "2026-05-03T20:00:00Z",
             },
