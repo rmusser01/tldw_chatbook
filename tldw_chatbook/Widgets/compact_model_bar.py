@@ -13,7 +13,7 @@ from textual.reactive import reactive
 from textual import on
 from textual.css.query import NoMatches
 
-from ..config import get_cli_providers_and_models, get_cli_setting
+from ..config import get_cli_providers_and_models, get_cli_setting, resolve_provider_name
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -46,8 +46,10 @@ class CompactModelBar(Horizontal):
         defaults = config.get("chat_defaults", {})
         providers_models = get_cli_providers_and_models()
         available_providers = list(providers_models.keys())
-        default_provider = defaults.get("provider",
-                                        available_providers[0] if available_providers else "")
+        default_provider = resolve_provider_name(
+            defaults.get("provider", available_providers[0] if available_providers else ""),
+            providers_models,
+        )
 
         # Provider select
         provider_options = [(p, p) for p in available_providers]
@@ -91,8 +93,10 @@ class CompactModelBar(Horizontal):
         defaults = config.get("chat_defaults", {})
         providers_models = get_cli_providers_and_models()
         available_providers = list(providers_models.keys())
-        default_provider = defaults.get("provider",
-                                        available_providers[0] if available_providers else "")
+        default_provider = resolve_provider_name(
+            defaults.get("provider", available_providers[0] if available_providers else ""),
+            providers_models,
+        )
         # Set provider
         try:
             provider_select = self.query_one("#compact-api-provider", Select)

@@ -46,7 +46,8 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         assert "Staged Context" in text
         assert "Convos & Workspaces" in text
         assert "Workspace: Local Default" in text
-        assert "Workspace switching is read-only" in text
+        assert "Workspace: Local Default [read-only]" in text
+        assert "Workspace switching is locked" in text
         assert text.count("read-only") == 1
         assert "Change workspace" not in text
         assert "New conversation" not in text
