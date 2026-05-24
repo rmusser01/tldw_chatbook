@@ -3,7 +3,12 @@
 #
 import pytest
 import sys
+import tomllib
+from pathlib import Path
 from unittest.mock import patch
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_optional_deps_import():
@@ -28,7 +33,8 @@ def test_optional_feature_metadata_exposes_recovery_commands_and_capability_tier
     assert rag.extra == "embeddings_rag"
     assert rag.label == "Library/Search-RAG"
     assert rag.capability_tier == "advanced"
-    assert rag.feature_area == "rag"
+    assert rag.feature_area == "RAG and retrieval"
+    assert rag.owner == "Library Search/RAG"
     assert rag.source_install_command == 'pip install -e ".[embeddings_rag]"'
     assert rag.package_install_command == 'pip install "tldw_chatbook[embeddings_rag]"'
     assert rag.recovery_action == "Settings > RAG"
@@ -36,8 +42,26 @@ def test_optional_feature_metadata_exposes_recovery_commands_and_capability_tier
 
     web = get_optional_feature_info("web")
     assert web.label == "Web server"
-    assert web.feature_area == "web"
+    assert web.feature_area == "Web access"
+    assert web.owner == "Web/browser serving"
     assert web.source_install_command == 'pip install -e ".[web]"'
+
+
+def test_optional_feature_metadata_covers_pyproject_extras():
+    """Every declared optional extra has source-honest recovery metadata."""
+    from tldw_chatbook.Utils.optional_deps import OPTIONAL_FEATURES, get_optional_feature_info
+
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    declared_extras = set(pyproject["project"]["optional-dependencies"])
+
+    assert set(OPTIONAL_FEATURES) == declared_extras
+    for extra in declared_extras:
+        info = get_optional_feature_info(extra)
+        assert info.extra == extra
+        assert info.owner != "optional dependency"
+        assert info.feature_area
+        assert info.recovery_action
+        assert info.unavailable_what
 
 
 def test_optional_feature_metadata_groups_release_capabilities_without_core_install():
@@ -49,14 +73,14 @@ def test_optional_feature_metadata_groups_release_capabilities_without_core_inst
 
     groups = optional_feature_groups_by_area()
     assert LOCAL_FIRST_BASELINE_INSTALL_COMMAND == "pip install -e ."
-    assert "rag" in groups
-    assert "media" in groups
-    assert "mcp" in groups
-    assert "server" in groups
-    assert "web" in groups
-    assert "embeddings_rag" in groups["rag"]
-    assert "mcp" in groups["mcp"]
-    assert "web" in groups["web"]
+    assert "RAG and retrieval" in groups
+    assert "Media ingestion and transcription" in groups
+    assert "MCP integration" in groups
+    assert "Local inference" in groups
+    assert "Web access" in groups
+    assert "embeddings_rag" in groups["RAG and retrieval"]
+    assert "mcp" in groups["MCP integration"]
+    assert "web" in groups["Web access"]
 
 
 def test_unavailable_feature_handler():

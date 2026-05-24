@@ -141,129 +141,216 @@ class OptionalFeatureInfo:
         return f'pip install "tldw_chatbook[{self.extra}]"'
 
 
+AREA_RAG = "RAG and retrieval"
+AREA_MEDIA = "Media ingestion and transcription"
+AREA_MCP = "MCP integration"
+AREA_LOCAL_INFERENCE = "Local inference"
+AREA_WEB = "Web access"
+AREA_DIAGNOSTICS = "Diagnostics and telemetry"
+AREA_WATCHLISTS = "Watchlists and schedules"
+AREA_VISUALIZATION = "Library visualization"
+AREA_DEVELOPMENT = "Development tooling"
+AREA_ALL = "All optional capabilities"
+
+OWNER_LIBRARY_RAG = "Library Search/RAG"
+OWNER_LIBRARY_MEDIA = "Library import/media"
+OWNER_MCP = "MCP destination"
+OWNER_CONSOLE_PROVIDER = "Console/provider setup"
+OWNER_WEB = "Web/browser serving"
+OWNER_SETTINGS = "Settings"
+OWNER_WATCHLISTS = "Watchlists"
+OWNER_LIBRARY = "Library"
+OWNER_DEVELOPMENT = "Development tooling"
+OWNER_RELEASE = "Release packaging"
+
+
+def _feature(
+    extra: str,
+    label: str,
+    feature_area: str,
+    package_dependencies: tuple[str, ...],
+    recovery_action: str,
+    unavailable_what: str,
+    owner: str,
+) -> OptionalFeatureInfo:
+    return OptionalFeatureInfo(
+        extra=extra,
+        label=label,
+        feature_area=feature_area,
+        capability_tier="advanced",
+        package_dependencies=package_dependencies,
+        recovery_action=recovery_action,
+        unavailable_what=unavailable_what,
+        owner=owner,
+    )
+
+
 OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
-    "embeddings_rag": OptionalFeatureInfo(
-        extra="embeddings_rag",
-        label="Library/Search-RAG",
-        feature_area="rag",
-        capability_tier="advanced",
-        package_dependencies=("torch", "transformers", "sentence-transformers", "chromadb"),
-        recovery_action="Settings > RAG",
-        unavailable_what="Search/RAG queries",
+    "all-tools": _feature(
+        "all-tools", "All optional tools", AREA_ALL,
+        ("grep_ast", "chromadb", "vllm", "playwright", "faster-whisper", "mcp[cli]"),
+        "Release packaging", "All optional capabilities", OWNER_RELEASE,
     ),
-    "chunker": OptionalFeatureInfo(
-        extra="chunker",
-        label="Advanced chunking",
-        feature_area="rag",
-        capability_tier="advanced",
-        package_dependencies=("nltk", "langdetect", "scikit-learn", "jieba", "fugashi"),
-        recovery_action="Library > Import/Export",
-        unavailable_what="Advanced chunking",
+    "audio": _feature(
+        "audio", "Audio ingestion and transcription", AREA_MEDIA,
+        ("soundfile", "scipy", "yt-dlp", "faster-whisper"),
+        "Library > Import/Export", "Audio processing", OWNER_LIBRARY_MEDIA,
     ),
-    "websearch": OptionalFeatureInfo(
-        extra="websearch",
-        label="Web search and scraping",
-        feature_area="server",
-        capability_tier="advanced",
-        package_dependencies=("beautifulsoup4", "playwright", "trafilatura"),
-        recovery_action="Search/RAG or server research settings",
-        unavailable_what="Web search",
+    "chatterbox": _feature(
+        "chatterbox", "Chatterbox TTS", AREA_MEDIA,
+        ("chatterbox-tts", "torchaudio", "torch"),
+        "STTS", "Chatterbox TTS", OWNER_LIBRARY_MEDIA,
     ),
-    "audio": OptionalFeatureInfo(
-        extra="audio",
-        label="Audio ingestion and transcription",
-        feature_area="media",
-        capability_tier="advanced",
-        package_dependencies=("soundfile", "scipy", "yt-dlp", "faster-whisper"),
-        recovery_action="Library > Import/Export",
-        unavailable_what="Audio processing",
+    "chunker": _feature(
+        "chunker", "Advanced chunking", AREA_RAG,
+        ("nltk", "langdetect", "scikit-learn", "jieba", "fugashi"),
+        "Library > Import/Export", "Advanced chunking", OWNER_LIBRARY_RAG,
     ),
-    "video": OptionalFeatureInfo(
-        extra="video",
-        label="Video ingestion and transcription",
-        feature_area="media",
-        capability_tier="advanced",
-        package_dependencies=("soundfile", "scipy", "yt-dlp", "faster-whisper"),
-        recovery_action="Library > Import/Export",
-        unavailable_what="Video processing",
+    "coding_map": _feature(
+        "coding_map", "Code map analysis", AREA_LOCAL_INFERENCE,
+        ("grep_ast", "pygments", "tqdm"),
+        "Console/provider setup", "Code map analysis", OWNER_CONSOLE_PROVIDER,
     ),
-    "pdf": OptionalFeatureInfo(
-        extra="pdf",
-        label="PDF processing",
-        feature_area="media",
-        capability_tier="advanced",
-        package_dependencies=("pymupdf", "pymupdf4llm", "docling"),
-        recovery_action="Library > Import/Export",
-        unavailable_what="PDF ingestion",
+    "debugging": _feature(
+        "debugging", "Metrics and telemetry", AREA_DIAGNOSTICS,
+        ("prometheus_client", "opentelemetry-api", "opentelemetry-sdk"),
+        "Settings > Diagnostics", "Diagnostics/telemetry", OWNER_SETTINGS,
     ),
-    "ebook": OptionalFeatureInfo(
-        extra="ebook",
-        label="E-book processing",
-        feature_area="media",
-        capability_tier="advanced",
-        package_dependencies=("ebooklib", "beautifulsoup4", "defusedxml"),
-        recovery_action="Library > Import/Export",
-        unavailable_what="E-book ingestion",
+    "dev": _feature(
+        "dev", "Development dependencies", AREA_DEVELOPMENT,
+        ("pytest", "textual-dev", "hypothesis", "build", "twine"),
+        "Development setup", "Development tooling", OWNER_DEVELOPMENT,
     ),
-    "mcp": OptionalFeatureInfo(
-        extra="mcp",
-        label="MCP server and client support",
-        feature_area="mcp",
-        capability_tier="advanced",
-        package_dependencies=("mcp[cli]",),
-        recovery_action="MCP",
-        unavailable_what="MCP server/client tools",
+    "diarization": _feature(
+        "diarization", "Speaker diarization", AREA_MEDIA,
+        ("torch", "torchaudio", "speechbrain", "scikit-learn"),
+        "Library > Import/Export", "Speaker diarization", OWNER_LIBRARY_MEDIA,
     ),
-    "web": OptionalFeatureInfo(
-        extra="web",
-        label="Web server",
-        feature_area="web",
-        capability_tier="advanced",
-        package_dependencies=("textual-serve",),
-        recovery_action="Web server setup",
-        unavailable_what="Browser access",
+    "ebook": _feature(
+        "ebook", "E-book processing", AREA_MEDIA,
+        ("ebooklib", "beautifulsoup4", "defusedxml"),
+        "Library > Import/Export", "E-book ingestion", OWNER_LIBRARY_MEDIA,
     ),
-    "local_vllm": OptionalFeatureInfo(
-        extra="local_vllm",
-        label="Local vLLM inference",
-        feature_area="server",
-        capability_tier="advanced",
-        package_dependencies=("vllm",),
-        recovery_action="Settings > Models",
-        unavailable_what="Local vLLM inference",
+    "embeddings_rag": _feature(
+        "embeddings_rag", "Library/Search-RAG", AREA_RAG,
+        ("torch", "transformers", "sentence-transformers", "chromadb"),
+        "Settings > RAG", "Search/RAG queries", OWNER_LIBRARY_RAG,
     ),
-    "local_mlx": OptionalFeatureInfo(
-        extra="local_mlx",
-        label="Local MLX inference",
-        feature_area="server",
-        capability_tier="advanced",
-        package_dependencies=("mlx-lm",),
-        recovery_action="Settings > Models",
-        unavailable_what="Local MLX inference",
+    "higgs_tts": _feature(
+        "higgs_tts", "Higgs Audio TTS", AREA_MEDIA,
+        ("torch", "torchaudio", "librosa", "soundfile"),
+        "STTS", "Higgs Audio TTS", OWNER_LIBRARY_MEDIA,
     ),
-    "local_tts": OptionalFeatureInfo(
-        extra="local_tts",
-        label="Local text-to-speech",
-        feature_area="media",
-        capability_tier="advanced",
-        package_dependencies=("kokoro-onnx", "onnxruntime", "pyaudio"),
-        recovery_action="STTS",
-        unavailable_what="Local TTS",
+    "local_mlx": _feature(
+        "local_mlx", "Local MLX inference", AREA_LOCAL_INFERENCE,
+        ("mlx-lm",),
+        "Settings > Models", "Local MLX inference", OWNER_CONSOLE_PROVIDER,
     ),
-    "ocr_docext": OptionalFeatureInfo(
-        extra="ocr_docext",
-        label="OCR and document extraction",
-        feature_area="media",
-        capability_tier="advanced",
-        package_dependencies=("docext", "gradio_client", "openai"),
-        recovery_action="Library > Import/Export",
-        unavailable_what="OCR/document extraction",
+    "local_transformers": _feature(
+        "local_transformers", "Local Transformers inference", AREA_LOCAL_INFERENCE,
+        ("transformers",),
+        "Settings > Models", "Local Transformers inference", OWNER_CONSOLE_PROVIDER,
+    ),
+    "local_tts": _feature(
+        "local_tts", "Local text-to-speech", AREA_MEDIA,
+        ("kokoro-onnx", "onnxruntime", "pyaudio"),
+        "STTS", "Local TTS", OWNER_LIBRARY_MEDIA,
+    ),
+    "local_vllm": _feature(
+        "local_vllm", "Local vLLM inference", AREA_LOCAL_INFERENCE,
+        ("vllm",),
+        "Settings > Models", "Local vLLM inference", OWNER_CONSOLE_PROVIDER,
+    ),
+    "mcp": _feature(
+        "mcp", "MCP server and client support", AREA_MCP,
+        ("mcp[cli]",),
+        "MCP", "MCP server/client tools", OWNER_MCP,
+    ),
+    "media_processing": _feature(
+        "media_processing", "Combined media processing", AREA_MEDIA,
+        ("soundfile", "scipy", "yt-dlp", "faster-whisper"),
+        "Library > Import/Export", "Media processing", OWNER_LIBRARY_MEDIA,
+    ),
+    "mindmap": _feature(
+        "mindmap", "Mind map visualization", AREA_VISUALIZATION,
+        ("anytree",),
+        "Library", "Mind map visualization", OWNER_LIBRARY,
+    ),
+    "mlx_whisper": _feature(
+        "mlx_whisper", "Legacy MLX Whisper providers", AREA_MEDIA,
+        ("lightning-whisper-mlx", "parakeet-mlx"),
+        "Library > Import/Export", "MLX transcription", OWNER_LIBRARY_MEDIA,
+    ),
+    "nemo": _feature(
+        "nemo", "NVIDIA NeMo ASR", AREA_MEDIA,
+        ("nemo-toolkit[asr]", "torch", "torchaudio"),
+        "Library > Import/Export", "NVIDIA NeMo ASR", OWNER_LIBRARY_MEDIA,
+    ),
+    "ocr_docext": _feature(
+        "ocr_docext", "OCR and document extraction", AREA_MEDIA,
+        ("docext", "gradio_client", "openai"),
+        "Library > Import/Export", "OCR/document extraction", OWNER_LIBRARY_MEDIA,
+    ),
+    "pdf": _feature(
+        "pdf", "PDF processing", AREA_MEDIA,
+        ("pymupdf", "pymupdf4llm", "docling"),
+        "Library > Import/Export", "PDF ingestion", OWNER_LIBRARY_MEDIA,
+    ),
+    "speech_recording": _feature(
+        "speech_recording", "Speech recording", AREA_MEDIA,
+        ("pyaudio", "sounddevice", "webrtcvad"),
+        "STTS", "Speech recording", OWNER_LIBRARY_MEDIA,
+    ),
+    "subscriptions": _feature(
+        "subscriptions", "Subscriptions and scheduled feeds", AREA_WATCHLISTS,
+        ("markdown", "schedule", "feedparser", "cryptography"),
+        "Watchlists", "Subscriptions/watchlists", OWNER_WATCHLISTS,
+    ),
+    "transcription_faster_whisper": _feature(
+        "transcription_faster_whisper", "Faster Whisper transcription", AREA_MEDIA,
+        ("faster-whisper",),
+        "Library > Import/Export", "Faster Whisper transcription", OWNER_LIBRARY_MEDIA,
+    ),
+    "transcription_lightning_whisper": _feature(
+        "transcription_lightning_whisper", "Lightning Whisper MLX transcription", AREA_MEDIA,
+        ("lightning-whisper-mlx",),
+        "Library > Import/Export", "Lightning Whisper transcription", OWNER_LIBRARY_MEDIA,
+    ),
+    "transcription_parakeet": _feature(
+        "transcription_parakeet", "Parakeet MLX transcription", AREA_MEDIA,
+        ("parakeet-mlx",),
+        "Library > Import/Export", "Parakeet transcription", OWNER_LIBRARY_MEDIA,
+    ),
+    "video": _feature(
+        "video", "Video ingestion and transcription", AREA_MEDIA,
+        ("soundfile", "scipy", "yt-dlp", "faster-whisper"),
+        "Library > Import/Export", "Video processing", OWNER_LIBRARY_MEDIA,
+    ),
+    "web": _feature(
+        "web", "Web server", AREA_WEB,
+        ("textual-serve",),
+        "Web server setup", "Browser access", OWNER_WEB,
+    ),
+    "websearch": _feature(
+        "websearch", "Web search and scraping", AREA_WEB,
+        ("beautifulsoup4", "playwright", "trafilatura"),
+        "Search/RAG or server research settings", "Web search", OWNER_LIBRARY_RAG,
     ),
 }
 
 
 def get_optional_feature_info(extra: str) -> OptionalFeatureInfo:
-    """Return recovery metadata for a pyproject optional dependency group."""
+    """Return recovery metadata for a pyproject optional dependency group.
+
+    Args:
+        extra: Optional dependency extra name from `pyproject.toml`.
+
+    Returns:
+        User-facing metadata for the optional feature group.
+
+    Raises:
+        KeyError: If `extra` is not a known optional dependency group.
+    """
 
     try:
         return OPTIONAL_FEATURES[extra]
@@ -272,7 +359,11 @@ def get_optional_feature_info(extra: str) -> OptionalFeatureInfo:
 
 
 def optional_feature_groups_by_area() -> dict[str, tuple[str, ...]]:
-    """Group optional dependency extras by release-facing capability area."""
+    """Group optional dependency extras by release-facing capability area.
+
+    Returns:
+        Mapping of capability area labels to sorted optional extra names.
+    """
 
     grouped: dict[str, list[str]] = {}
     for extra, info in OPTIONAL_FEATURES.items():

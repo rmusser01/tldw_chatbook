@@ -495,7 +495,10 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         return optional_dependency_recovery_state(
             unavailable_what=feature.unavailable_what,
             missing_dependencies=(feature.extra,),
-            install_target=feature.source_install_command,
+            install_targets=(
+                feature.source_install_command,
+                feature.package_install_command,
+            ),
             stable_selector="search-rag-dependency-missing",
             recovery_action=feature.recovery_action,
             authority_owner=feature.owner,

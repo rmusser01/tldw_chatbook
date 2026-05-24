@@ -42,7 +42,9 @@ Improve optional dependency recovery and package metadata after the audit confir
 - Added optional feature metadata helpers in `tldw_chatbook/Utils/optional_deps.py` for capability area, owner, unavailable feature copy, and source/package install commands.
 - Updated Search/RAG recovery copy to use the `embeddings_rag` metadata entry, preserving `Search/RAG queries` as the unavailable feature while exposing safe install actions.
 - Updated README and `Docs/Development/release-recovery-setup.md` with local-first baseline guidance and advanced optional capability group install paths.
+- Addressed PR review by rendering both source-checkout and packaged-install recovery commands, explicitly setting owner metadata for all optional extras, covering every pyproject optional extra in the registry, and adding Google-style docstrings for the new public helpers.
 - Verified with focused optional-dependency, recovery-copy, packaging, and recovery-doc tests: 29 passed.
+  Review follow-up verification: 30 passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

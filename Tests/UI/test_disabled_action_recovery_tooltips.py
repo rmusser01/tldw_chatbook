@@ -118,9 +118,10 @@ async def test_search_rag_missing_embeddings_dependency_exposes_phase_five_recov
         assert "Dependency missing" in recovery_text
         assert "Unavailable: Search/RAG queries." in recovery_text
         assert "Why: Missing optional dependencies: embeddings_rag." in recovery_text
-        assert 'Next: Install with pip install -e ".[embeddings_rag]" and restart.' in recovery_text
+        assert 'pip install -e ".[embeddings_rag]"' in recovery_text
+        assert 'pip install "tldw_chatbook[embeddings_rag]"' in recovery_text
         assert "Recovery: Settings > RAG." in recovery_text
-        assert "Owner: optional dependency." in recovery_text
+        assert "Owner: Library Search/RAG." in recovery_text
 
         search_input = widget.query_one("#search-query-input", Input)
         search_button = widget.query_one("#search-button", Button)
@@ -129,6 +130,7 @@ async def test_search_rag_missing_embeddings_dependency_exposes_phase_five_recov
         assert widget.is_searching is False
         assert "Search/RAG queries" in str(search_button.tooltip)
         assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
+        assert 'pip install "tldw_chatbook[embeddings_rag]"' in str(search_button.tooltip)
 
 
 @pytest.mark.asyncio
