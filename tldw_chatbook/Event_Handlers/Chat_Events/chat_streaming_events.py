@@ -184,6 +184,11 @@ async def handle_stream_done(self, event: StreamDone) -> None:
 
             ai_widget.message_text = event.full_text  # Ensure internal state has the final, complete text
             markdown_widget.update(event.full_text)  # Update display with final text
+            from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+                attach_current_handoff_citation_validation,
+            )
+
+            attach_current_handoff_citation_validation(self, ai_widget, event.full_text)
 
             # Check for tool calls in the response
             tool_calls = None
