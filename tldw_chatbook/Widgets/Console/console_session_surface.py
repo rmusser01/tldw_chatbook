@@ -14,6 +14,10 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
+CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
+CONSOLE_CLOSE_TAB_BUTTON_HEIGHT = 1
+
+
 class ConsoleSessionSurface(Vertical):
     """Host Console transcript/event stream sessions without legacy chat chrome."""
 
@@ -79,10 +83,10 @@ class ConsoleSessionSurface(Vertical):
                     id=f"console-close-session-tab-{session.id}",
                     classes="console-session-close-button",
                 )
-                close_button.styles.width = 3
-                close_button.styles.min_width = 3
-                close_button.styles.max_width = 3
-                close_button.styles.height = 1
-                close_button.styles.min_height = 1
+                close_button.styles.width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
+                close_button.styles.min_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
+                close_button.styles.max_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
+                close_button.styles.height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
+                close_button.styles.min_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
                 await tab_strip.mount(close_button)
             await tab_strip.mount(Button("New tab", id="console-new-chat-tab"))

@@ -114,7 +114,14 @@ class ConsoleChatStore:
         return session
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
-        """Close a native Console session and activate a neighboring session."""
+        """Close a native Console session and activate a neighboring session.
+
+        Args:
+            session_id: Native Console session ID to close.
+
+        Returns:
+            The session activated after closing, or ``None`` when no sessions remain.
+        """
         self._session_or_raise(session_id)
         session_ids = list(self._sessions.keys())
         closed_index = session_ids.index(session_id)
