@@ -618,3 +618,31 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
 
         assert store.active_session_id == first.id
         assert "Chat 1" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_strip_keeps_compact_close_x():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        close_selector = f"#console-close-session-tab-{first.id}"
+        await _wait_for_selector(console, pilot, close_selector)
+        close_button = console.query_one(close_selector, Button)
+
+        assert close_button.label.plain == "x"
+        assert 2 <= close_button.region.width <= 4
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        await _wait_for_selector(console, pilot, f"#console-close-session-tab-{second}")
+        await pilot.click(f"#console-close-session-tab-{second}")
+
+        assert store.active_session_id == first.id
+        assert second not in {session.id for session in store.sessions()}

@@ -42,7 +42,14 @@ class ConsoleSessionSurface(Vertical):
         """Render native Console session tabs from controller-owned state."""
         async with self._session_sync_lock:
             tab_strip = self.query_one("#console-native-tab-strip", Horizontal)
-            desired_ids = [f"console-session-tab-{session.id}" for session in sessions]
+            desired_ids = []
+            for session in sessions:
+                desired_ids.extend(
+                    (
+                        f"console-session-tab-{session.id}",
+                        f"console-close-session-tab-{session.id}",
+                    )
+                )
             desired_ids.append("console-new-chat-tab")
             existing_ids = [child.id for child in tab_strip.children]
             if existing_ids == desired_ids:
@@ -67,4 +74,15 @@ class ConsoleSessionSurface(Vertical):
                         classes=classes,
                     )
                 )
+                close_button = Button(
+                    "x",
+                    id=f"console-close-session-tab-{session.id}",
+                    classes="console-session-close-button",
+                )
+                close_button.styles.width = 3
+                close_button.styles.min_width = 3
+                close_button.styles.max_width = 3
+                close_button.styles.height = 1
+                close_button.styles.min_height = 1
+                await tab_strip.mount(close_button)
             await tab_strip.mount(Button("New tab", id="console-new-chat-tab"))

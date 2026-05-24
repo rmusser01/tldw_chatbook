@@ -112,6 +112,10 @@ class ConsoleChatController:
         """Activate an existing native Console session."""
         return self.store.switch_session(session_id)
 
+    def close_session(self, session_id: str) -> ConsoleChatSession | None:
+        """Close an existing native Console session."""
+        return self.store.close_session(session_id)
+
     def stop_active_run(self) -> bool:
         """Request the active stream to stop at the next safe boundary."""
         if self.run_state.status is not ConsoleRunStatus.STREAMING:

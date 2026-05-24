@@ -74,6 +74,21 @@ def test_store_creates_and_switches_sessions():
     assert store.messages_for_session(first.id)[0].content == "first"
 
 
+def test_store_closes_session_and_activates_neighbor():
+    store = ConsoleChatStore()
+    first = store.ensure_session(title="Chat 1")
+    second = store.create_session(title="Chat 2")
+    store.append_message(second.id, role=ConsoleMessageRole.USER, content="second")
+
+    activated = store.close_session(second.id)
+
+    assert activated == first
+    assert store.active_session_id == first.id
+    assert [session.id for session in store.sessions()] == [first.id]
+    with pytest.raises(KeyError):
+        store.messages_for_session(second.id)
+
+
 def test_store_adds_regenerated_variant_and_selects_it():
     store = ConsoleChatStore()
     session = store.ensure_session()
