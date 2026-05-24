@@ -138,6 +138,8 @@ async def test_console_native_blocked_send_preserves_composer_text_and_shows_rec
         ("http://127.0.0.1:9099/v1/chat/completions", "http://127.0.0.1:9099"),
         ("http://127.0.0.1:9099/v1/models", "http://127.0.0.1:9099"),
         ("http://127.0.0.1:9099/v1", "http://127.0.0.1:9099"),
+        ("127.0.0.1:9099", "http://127.0.0.1:9099"),
+        ("127.0.0.1:9099/v1", "http://127.0.0.1:9099"),
         ("http://127.0.0.1:9099/completion", "http://127.0.0.1:9099"),
         ("http://127.0.0.1:9099/", "http://127.0.0.1:9099"),
         (None, "http://127.0.0.1:9099"),
@@ -147,6 +149,22 @@ def test_console_llamacpp_base_url_normalizes_openai_compatible_endpoints(raw_ur
     screen = ChatScreen(_build_test_app())
 
     assert screen._normalize_llamacpp_base_url(raw_url) == expected
+
+
+def test_console_transcript_sync_timer_polls_at_coarse_interval(monkeypatch):
+    screen = ChatScreen(_build_test_app())
+    captured = {}
+
+    def fake_set_interval(interval, callback):
+        captured["interval"] = interval
+        captured["callback"] = callback
+        return SimpleNamespace(stop=lambda: None)
+
+    monkeypatch.setattr(screen, "set_interval", fake_set_interval)
+
+    screen._start_console_transcript_sync_timer()
+
+    assert captured["interval"] >= 0.15
 
 
 def test_console_provider_selection_reads_local_llamacpp_configured_model():
@@ -391,6 +409,31 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
         messages = store.messages_for_session(store.active_session_id)
         assert messages[-2].content == "hello"
         assert messages[-1].content == "hello"
+
+
+@pytest.mark.asyncio
+async def test_console_unsupported_provider_block_renders_one_normalized_system_message():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        controller = console._ensure_console_chat_controller()
+        controller.provider = "openai"
+        controller.model = "test-model"
+
+        await console._submit_console_native_draft("hello")
+        await _wait_for_text(console, pilot, "Provider blocked: WIP")
+
+        store = console._ensure_console_chat_store()
+        messages = store.messages_for_session(store.active_session_id)
+        system_messages = [message.content for message in messages if message.role is ConsoleMessageRole.SYSTEM]
+        assert system_messages == [
+            "Provider blocked: WIP: Console native provider 'openai' is not wired yet. "
+            "Select llama.cpp for this slice."
+        ]
+        assert controller.run_state.visible_copy == system_messages[0]
 
 
 @pytest.mark.asyncio

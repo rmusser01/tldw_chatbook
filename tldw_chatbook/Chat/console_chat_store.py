@@ -77,6 +77,8 @@ class ConsoleChatStore:
         self._messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
         self._message_session_index: dict[str, str] = {}
         self._pending_persistence_message_ids: set[str] = set()
+        self._stream_chunks_by_message: dict[str, list[str]] = {}
+        self._stream_materialized_counts: dict[str, int] = {}
 
     def ensure_session(
         self,
@@ -143,11 +145,15 @@ class ConsoleChatStore:
     def messages_for_session(self, session_id: str) -> list[ConsoleChatMessage]:
         """Return messages for a session in transcript order."""
         self._session_or_raise(session_id)
+        for message in self._messages_by_session[session_id]:
+            self._materialize_stream_buffer(message)
         return [self._snapshot(message) for message in self._messages_by_session[session_id]]
 
     def get_message(self, message_id: str) -> ConsoleChatMessage:
         """Return a message by native message ID."""
-        return self._snapshot(self._message_or_raise(message_id))
+        message = self._message_or_raise(message_id)
+        self._materialize_stream_buffer(message)
+        return self._snapshot(message)
 
     def session_id_for_message(self, message_id: str) -> str:
         """Return the owning session ID for a message."""
@@ -159,15 +165,19 @@ class ConsoleChatStore:
         """Append streamed assistant content to an existing message."""
         message = self._message_or_raise(message_id)
         self._validate_can_stream(message)
-        message.content += chunk
+        buffer = self._stream_chunks_by_message.setdefault(
+            message.id,
+            [message.content] if message.content else [],
+        )
+        buffer.append(chunk)
         message.status = "streaming"
-        self._persist_pending_message_if_ready(message)
         return self._snapshot(message)
 
     def mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
         """Mark a message complete and flush final visible content to persistence."""
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self._materialize_stream_buffer(message)
         message.status = "complete"
         self._persist_existing_message(message)
         return self._snapshot(message)
@@ -176,6 +186,7 @@ class ConsoleChatStore:
         """Mark a message stopped and flush final visible content to persistence."""
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self._materialize_stream_buffer(message)
         message.status = "stopped"
         self._persist_existing_message(message)
         return self._snapshot(message)
@@ -184,6 +195,7 @@ class ConsoleChatStore:
         """Mark a message failed and flush final visible content to persistence."""
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self._materialize_stream_buffer(message)
         message.status = "failed"
         self._persist_existing_message(message)
         return self._snapshot(message)
@@ -197,11 +209,14 @@ class ConsoleChatStore:
             raise ValueError(f"Only failed messages can be retried, not {message.status}.")
         message.content = ""
         message.status = "pending"
+        self._stream_chunks_by_message.pop(message.id, None)
+        self._stream_materialized_counts.pop(message.id, None)
         return self._snapshot(message)
 
     def add_variant(self, message_id: str, content: str) -> ConsoleChatMessage:
         """Add and select a regenerated variant for an assistant message."""
         message = self._message_or_raise(message_id)
+        self._materialize_stream_buffer(message)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can receive variants.")
         if message.variants is None:
@@ -220,6 +235,7 @@ class ConsoleChatStore:
     def select_variant(self, message_id: str, selected_index: int) -> ConsoleChatMessage:
         """Select one existing variant by index."""
         message = self._message_or_raise(message_id)
+        self._materialize_stream_buffer(message)
         if message.variants is None:
             raise ValueError("Message has no variants.")
         if selected_index < 0 or selected_index >= len(message.variants.variants):
@@ -314,6 +330,17 @@ class ConsoleChatStore:
             if message.id == message_id:
                 return message
         raise KeyError(f"Unknown Console message: {message_id}")
+
+    def _materialize_stream_buffer(self, message: ConsoleChatMessage) -> None:
+        buffer = self._stream_chunks_by_message.get(message.id)
+        if not buffer:
+            return
+        chunk_count = len(buffer)
+        if self._stream_materialized_counts.get(message.id) == chunk_count:
+            return
+        message.content = "".join(buffer)
+        self._stream_materialized_counts[message.id] = chunk_count
+        self._persist_pending_message_if_ready(message)
 
     @staticmethod
     def _snapshot(message: ConsoleChatMessage) -> ConsoleChatMessage:

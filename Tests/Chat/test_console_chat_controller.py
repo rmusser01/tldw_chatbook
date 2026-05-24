@@ -52,6 +52,18 @@ class RecordingStreamingGateway(StreamingGateway):
         yield "ok"
 
 
+class WipBlockedGateway:
+    async def resolve_for_send(self, selection):
+        return type(
+            "Resolution",
+            (),
+            {
+                "ready": False,
+                "visible_copy": "WIP: Console native provider 'openai' is not wired yet.",
+            },
+        )()
+
+
 class FailingStreamingGateway(StreamingGateway):
     async def stream_chat(self, resolution, messages):
         yield "partial"
@@ -212,6 +224,59 @@ async def test_submit_draft_streams_assistant_message_to_completion():
     assert messages[-1].content == "hello"
     assert messages[-1].status == "complete"
     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_sanitizes_user_text_before_storage_and_provider_send():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("hel\x00lo")
+
+    messages = store.messages_for_session(store.active_session_id)
+    assert result.accepted is True
+    assert messages[-2].content == "hello"
+    assert gateway.messages_seen == [{"role": "user", "content": "hello"}]
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_blocks_unsafe_markup_before_storage_or_provider_send():
+    class CountingGateway(StreamingGateway):
+        def __init__(self):
+            self.resolve_calls = 0
+
+        async def resolve_for_send(self, selection):
+            self.resolve_calls += 1
+            return await super().resolve_for_send(selection)
+
+    gateway = CountingGateway()
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("<script>alert('xss')</script>")
+
+    messages = store.messages_for_session(store.active_session_id)
+    assert result.accepted is False
+    assert result.should_clear_draft is False
+    assert gateway.resolve_calls == 0
+    assert [message.role for message in messages] == [ConsoleMessageRole.SYSTEM]
+    assert "unsafe" in messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_blocked_provider_wip_copy_is_normalized_once_in_controller():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=WipBlockedGateway())
+
+    result = await controller.submit_draft("hello")
+
+    messages = store.messages_for_session(store.active_session_id)
+    assert result.accepted is False
+    assert result.visible_copy == "Provider blocked: WIP: Console native provider 'openai' is not wired yet."
+    assert [message.content for message in messages] == [result.visible_copy]
+    assert controller.run_state.visible_copy == result.visible_copy
+    assert controller.run_state_history[-1] is ConsoleRunStatus.BLOCKED
 
 
 @pytest.mark.asyncio

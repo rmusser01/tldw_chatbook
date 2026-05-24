@@ -13,6 +13,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+
+
+MAX_CONSOLE_DRAFT_LENGTH = 100_000
 
 
 class ConsoleProviderGatewayProtocol(Protocol):
@@ -68,21 +72,22 @@ class ConsoleChatController:
         session = self.store.ensure_session(
             workspace_id=self.store.workspace_context.active_workspace_id,
         )
-        if not draft.strip():
-            return self._block(session.id, "Type a message before sending.")
+        clean_draft, validation_error = self._validated_draft(draft)
+        if validation_error is not None:
+            return self._block(session.id, validation_error)
         if self.store.workspace_context.has_policy_blocks:
             return self._block(session.id, self.store.workspace_context.recovery_copy)
 
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
         resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
         if not getattr(resolution, "ready", False):
-            visible_copy = getattr(resolution, "visible_copy", "") or "Provider blocked."
+            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
             return self._block(session.id, visible_copy)
 
         self.store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
-            content=draft,
+            content=clean_draft,
             persist=self.store.persistence is not None,
         )
         provider_messages = self._provider_messages_for_session(session.id)
@@ -139,7 +144,7 @@ class ConsoleChatController:
         self._set_run_state(ConsoleRunState.retrying("Retrying failed response."))
         resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
         if not getattr(resolution, "ready", False):
-            visible_copy = getattr(resolution, "visible_copy", "") or "Provider blocked."
+            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_for_session(
@@ -171,7 +176,7 @@ class ConsoleChatController:
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
         resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
         if not getattr(resolution, "ready", False):
-            visible_copy = getattr(resolution, "visible_copy", "") or "Provider blocked."
+            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_through_message(session_id, message_id)
@@ -207,7 +212,7 @@ class ConsoleChatController:
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
         resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
         if not getattr(resolution, "ready", False):
-            visible_copy = getattr(resolution, "visible_copy", "") or "Provider blocked."
+            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_for_session(
@@ -243,6 +248,30 @@ class ConsoleChatController:
             configured_model=self.configured_model,
             workspace_context=self.store.workspace_context,
         )
+
+    @staticmethod
+    def _validated_draft(draft: str) -> tuple[str, str | None]:
+        raw_draft = str(draft or "")
+        if not raw_draft.strip():
+            return "", "Type a message before sending."
+        if not validate_text_input(
+            raw_draft,
+            max_length=MAX_CONSOLE_DRAFT_LENGTH,
+            allow_html=False,
+        ):
+            return "", "Message blocked: remove unsafe markup or shorten your message."
+        clean_draft = sanitize_string(raw_draft, max_length=MAX_CONSOLE_DRAFT_LENGTH)
+        if not clean_draft.strip():
+            return "", "Type a message before sending."
+        return clean_draft, None
+
+    @staticmethod
+    def _blocked_visible_copy(copy: str) -> str:
+        if "Provider blocked" in copy:
+            return copy
+        if copy.startswith("WIP:"):
+            return f"Provider blocked: {copy}"
+        return copy or "Provider blocked."
 
     def _block(self, session_id: str, visible_copy: str) -> ConsoleSubmitResult:
         self._set_run_state(ConsoleRunState.blocked(visible_copy))

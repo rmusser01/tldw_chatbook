@@ -5,13 +5,55 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Mapping
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Utils.input_validation import validate_url
 
 
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
+INVALID_LLAMACPP_BASE_URL_COPY = (
+    "Provider blocked: invalid llama.cpp base URL. "
+    "Use an http(s) URL such as http://127.0.0.1:9099."
+)
+
+
+def normalize_llamacpp_base_url(api_url: str | None) -> str:
+    """Return the llama.cpp origin root used before appending OpenAI paths."""
+    raw_url = str(api_url or "").strip()
+    if not raw_url:
+        return DEFAULT_LLAMACPP_BASE_URL
+
+    candidate = raw_url if "://" in raw_url else f"http://{raw_url}"
+    parsed = urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return raw_url.rstrip("/")
+
+    path = parsed.path.rstrip("/")
+    normalized_endpoint_paths = {
+        "/v1",
+        "/v1/models",
+        "/models",
+        "/v1/chat/completions",
+        "/chat/completions",
+        "/completion",
+        "/completions",
+    }
+    if path.lower() in normalized_endpoint_paths:
+        path = ""
+    normalized = urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            path,
+            "",
+            "",
+            "",
+        )
+    ).rstrip("/")
+    return normalized or DEFAULT_LLAMACPP_BASE_URL
 
 
 @dataclass(frozen=True)
@@ -49,45 +91,55 @@ class ConsoleProviderGateway:
     async def resolve_llamacpp(self, config: LlamaCppProviderConfig) -> ConsoleProviderResolution:
         """Resolve llama.cpp readiness and the effective model."""
         model = config.explicit_model or config.configured_model
-        if model is not None:
-            if await self._is_reachable(config.base_url):
-                return ConsoleProviderResolution(
-                    provider="llama_cpp",
-                    base_url=config.base_url,
-                    model=model,
-                    ready=True,
-                )
+        base_url = normalize_llamacpp_base_url(config.base_url)
+        if not validate_url(base_url):
             return ConsoleProviderResolution(
                 provider="llama_cpp",
                 base_url=config.base_url,
                 model=model,
                 ready=False,
-                visible_copy=self._unreachable_copy(config.base_url),
+                visible_copy=INVALID_LLAMACPP_BASE_URL_COPY,
+            )
+
+        if model is not None:
+            if await self._is_reachable(base_url):
+                return ConsoleProviderResolution(
+                    provider="llama_cpp",
+                    base_url=base_url,
+                    model=model,
+                    ready=True,
+                )
+            return ConsoleProviderResolution(
+                provider="llama_cpp",
+                base_url=base_url,
+                model=model,
+                ready=False,
+                visible_copy=self._unreachable_copy(base_url),
             )
 
         try:
-            response = await self.http_client.get(f"{config.base_url.rstrip('/')}/v1/models")
+            response = await self.http_client.get(f"{base_url.rstrip('/')}/v1/models")
         except httpx.HTTPError:
             return ConsoleProviderResolution(
                 provider="llama_cpp",
-                base_url=config.base_url,
+                base_url=base_url,
                 model=None,
                 ready=False,
-                visible_copy=self._unreachable_copy(config.base_url),
+                visible_copy=self._unreachable_copy(base_url),
             )
 
         model = self._first_model_id(response)
         if model is None:
             return ConsoleProviderResolution(
                 provider="llama_cpp",
-                base_url=config.base_url,
+                base_url=base_url,
                 model=None,
                 ready=False,
                 visible_copy="Provider blocked: select or configure a llama.cpp model.",
             )
         return ConsoleProviderResolution(
             provider="llama_cpp",
-            base_url=config.base_url,
+            base_url=base_url,
             model=model,
             ready=True,
         )
@@ -122,21 +174,70 @@ class ConsoleProviderGateway:
         messages: list[Mapping[str, Any]],
     ) -> AsyncIterator[str]:
         """Stream OpenAI-compatible chat completion content chunks from llama.cpp."""
+        normalized_base_url = normalize_llamacpp_base_url(base_url)
+        if not validate_url(normalized_base_url):
+            raise ValueError("invalid llama.cpp base URL")
+
         payload = {
             "model": model,
             "messages": list(messages),
             "stream": True,
         }
-        async with self.http_client.stream(
-            "POST",
-            f"{base_url.rstrip('/')}/v1/chat/completions",
-            json=payload,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                chunk = self._content_from_sse_line(line)
-                if chunk:
-                    yield chunk
+        emitted_content = False
+        stream_error: httpx.HTTPError | None = None
+        try:
+            async with self.http_client.stream(
+                "POST",
+                f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    chunk = self._content_from_sse_line(line)
+                    if chunk:
+                        emitted_content = True
+                        yield chunk
+        except httpx.HTTPError as exc:
+            if emitted_content:
+                raise
+            stream_error = exc
+
+        if emitted_content:
+            return
+
+        fallback = await self.complete_llamacpp_chat(
+            base_url=normalized_base_url,
+            model=model,
+            messages=messages,
+        )
+        if fallback:
+            yield fallback
+            return
+        if stream_error is not None:
+            raise stream_error
+
+    async def complete_llamacpp_chat(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        messages: list[Mapping[str, Any]],
+    ) -> str:
+        """Request a non-streaming OpenAI-compatible chat completion."""
+        normalized_base_url = normalize_llamacpp_base_url(base_url)
+        if not validate_url(normalized_base_url):
+            raise ValueError("invalid llama.cpp base URL")
+
+        response = await self.http_client.post(
+            f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": list(messages),
+                "stream": False,
+            },
+        )
+        response.raise_for_status()
+        return self._content_from_completion_response(response) or ""
 
     async def stream_chat(
         self,
@@ -202,6 +303,26 @@ class ConsoleProviderGateway:
             return None
         content = delta.get("content")
         return content if isinstance(content, str) else None
+
+    @staticmethod
+    def _content_from_completion_response(response: httpx.Response) -> str | None:
+        try:
+            payload = response.json()
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return None
+        first = choices[0]
+        if not isinstance(first, dict):
+            return None
+        message = first.get("message")
+        if isinstance(message, dict) and isinstance(message.get("content"), str):
+            return message["content"]
+        text = first.get("text")
+        return text if isinstance(text, str) else None
 
     @staticmethod
     def _unreachable_copy(base_url: str) -> str:

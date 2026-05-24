@@ -36,6 +36,19 @@ def test_store_updates_streaming_message_and_marks_stopped():
     assert updated.status == "stopped"
 
 
+def test_store_buffers_stream_chunks_until_messages_are_materialized():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+
+    chunk_result = store.append_stream_chunk(message.id, "hel")
+
+    assert chunk_result.content == ""
+    materialized = store.messages_for_session(session.id)[0]
+    assert materialized.content == "hel"
+    assert materialized.status == "streaming"
+
+
 def test_store_tracks_active_workspace_context():
     context = ConsoleWorkspaceContext(active_workspace_id="workspace-a")
     store = ConsoleChatStore(workspace_context=context)

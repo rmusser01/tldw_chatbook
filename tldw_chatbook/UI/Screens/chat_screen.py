@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import re
 from typing import Any, Dict, Optional, TYPE_CHECKING
-from urllib.parse import urlparse, urlunparse
 import uuid
 
 import toml
@@ -37,6 +36,7 @@ from ...Chat.console_chat_store import ConsoleChatStore
 from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
     ConsoleProviderGateway,
+    normalize_llamacpp_base_url,
 )
 from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
@@ -282,6 +282,7 @@ class ChatScreen(BaseAppScreen):
         self._console_message_action_service = ConsoleMessageActionService()
         self._last_console_action: ConsoleActionResult | None = None
         self._console_transcript_sync_timer: Any | None = None
+        self._console_sync_in_progress = False
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -355,34 +356,7 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _normalize_llamacpp_base_url(api_url: str | None) -> str:
         """Return the llama.cpp origin root used before appending OpenAI paths."""
-        raw_url = str(api_url or "").strip()
-        if not raw_url:
-            return DEFAULT_LLAMACPP_BASE_URL
-
-        parsed = urlparse(raw_url)
-        path = parsed.path.rstrip("/")
-        normalized_endpoint_paths = {
-            "/v1",
-            "/v1/models",
-            "/models",
-            "/v1/chat/completions",
-            "/chat/completions",
-            "/completion",
-            "/completions",
-        }
-        if path.lower() in normalized_endpoint_paths:
-            path = ""
-        normalized = urlunparse(
-            (
-                parsed.scheme,
-                parsed.netloc,
-                path,
-                "",
-                "",
-                "",
-            )
-        ).rstrip("/")
-        return normalized or DEFAULT_LLAMACPP_BASE_URL
+        return normalize_llamacpp_base_url(api_url) or DEFAULT_LLAMACPP_BASE_URL
 
     @staticmethod
     def _config_section(config: dict[str, Any], key: str) -> dict[str, Any]:
@@ -1641,11 +1615,17 @@ class ChatScreen(BaseAppScreen):
 
     async def _sync_native_console_chat_ui(self) -> None:
         """Refresh visible Console-native state after send/stop transitions."""
-        self._sync_console_chat_core_state()
-        self._sync_console_control_bar()
-        self._sync_console_mode_bar()
-        await self._sync_console_native_session_tabs()
-        await self._sync_native_console_transcript_to_legacy_surface()
+        if self._console_sync_in_progress:
+            return
+        self._console_sync_in_progress = True
+        try:
+            self._sync_console_chat_core_state()
+            self._sync_console_control_bar()
+            self._sync_console_mode_bar()
+            await self._sync_console_native_session_tabs()
+            await self._sync_native_console_transcript_to_legacy_surface()
+        finally:
+            self._console_sync_in_progress = False
 
     async def _sync_console_native_session_tabs(self) -> None:
         """Refresh native Console session tabs from store state."""
@@ -1688,7 +1668,7 @@ class ChatScreen(BaseAppScreen):
             if controller is None or controller.run_state.status not in active_statuses:
                 self._stop_console_transcript_sync_timer()
 
-        self._console_transcript_sync_timer = self.set_interval(0.05, _poll_transcript)
+        self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
 
     def _stop_console_transcript_sync_timer(self) -> None:
         if self._console_transcript_sync_timer is None:
@@ -1698,29 +1678,10 @@ class ChatScreen(BaseAppScreen):
         finally:
             self._console_transcript_sync_timer = None
 
-    @staticmethod
-    def _blocked_visible_copy(copy: str) -> str:
-        if "Provider blocked" in copy:
-            return copy
-        if copy.startswith("WIP:"):
-            return f"Provider blocked: {copy}"
-        return copy or "Provider blocked."
-
     async def _submit_console_native_draft(self, draft: str) -> None:
         controller = self._ensure_console_chat_controller()
         self._start_console_transcript_sync_timer()
         result = await controller.submit_draft(draft)
-        if result.visible_copy and not result.accepted:
-            blocked_copy = self._blocked_visible_copy(result.visible_copy)
-            if blocked_copy != result.visible_copy:
-                store = self._ensure_console_chat_store()
-                if store.active_session_id is not None:
-                    store.append_message(
-                        store.active_session_id,
-                        role=ConsoleMessageRole.SYSTEM,
-                        content=blocked_copy,
-                    )
-            controller.run_state = type(controller.run_state).blocked(blocked_copy)
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:

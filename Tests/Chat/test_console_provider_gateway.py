@@ -175,6 +175,45 @@ async def test_resolve_for_send_dispatches_llamacpp_selection():
 
 
 @pytest.mark.asyncio
+async def test_resolve_for_send_normalizes_scheme_less_llamacpp_base_url_before_http():
+    seen_urls = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    gateway = ConsoleProviderGateway(http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="llama_cpp", base_url="127.0.0.1:9099/v1")
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == "http://127.0.0.1:9099"
+    assert seen_urls == ["http://127.0.0.1:9099/v1/models"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_blocks_invalid_llamacpp_base_url_before_http():
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    gateway = ConsoleProviderGateway(http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="llama_cpp", base_url="file:///etc/passwd")
+    )
+
+    assert resolved.ready is False
+    assert resolved.base_url == "file:///etc/passwd"
+    assert "invalid llama.cpp base URL" in resolved.visible_copy
+    assert requests == []
+
+
+@pytest.mark.asyncio
 async def test_resolve_for_send_blocks_unsupported_provider_with_wip_copy():
     gateway = ConsoleProviderGateway(
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
@@ -216,6 +255,74 @@ async def test_llamacpp_stream_chat_yields_content_chunks():
     ]
 
     assert chunks == ["hel", "lo"]
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_stream_chat_falls_back_to_non_streaming_when_stream_rejected():
+    request_payloads = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        request_payloads.append(request.read())
+        if len(request_payloads) == 1:
+            return httpx.Response(400, json={"error": "streaming disabled"})
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "fallback completion"}}]},
+        )
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="http://127.0.0.1:9099",
+        )
+    )
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_llamacpp_chat(
+            base_url="http://127.0.0.1:9099",
+            model="test-model",
+            messages=[{"role": "user", "content": "say hello"}],
+        )
+    ]
+
+    assert chunks == ["fallback completion"]
+    assert b'"stream":true' in request_payloads[0]
+    assert b'"stream":false' in request_payloads[1]
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_stream_chat_falls_back_when_sse_has_no_content_chunks():
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, content=b"data: {not-json}\n\ndata: [DONE]\n\n")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "fallback after bad sse"}}]},
+        )
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="http://127.0.0.1:9099",
+        )
+    )
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_llamacpp_chat(
+            base_url="http://127.0.0.1:9099",
+            model="test-model",
+            messages=[{"role": "user", "content": "say hello"}],
+        )
+    ]
+
+    assert chunks == ["fallback after bad sse"]
+    assert calls == 2
 
 
 @pytest.mark.asyncio
