@@ -1,7 +1,7 @@
 ---
 id: TASK-60.4.4
 title: Post-release citation and snippet carry-through tranche
-status: In Progress
+status: Done
 labels:
 - post-release
 - rag
@@ -19,10 +19,10 @@ Carry retrieved snippets and citations from Library/Search/RAG into Console answ
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Citation and snippet carry-through scope references TASK-60.3 actual-use audit evidence.
-- [ ] #2 Retrieved evidence keeps source identity, snippet text, and authority labels through Console responses and saved artifacts.
+- [x] #1 Citation and snippet carry-through scope references TASK-60.3 actual-use audit evidence.
+- [x] #2 Retrieved evidence keeps source identity, snippet text, and authority labels through Console responses and saved artifacts.
 - [x] #3 Exported Chatbooks preserve citations/snippets in a user-readable and machine-checkable form.
-- [ ] #4 QA verifies source-to-answer-to-artifact carry-through with actual app use before completion.
+- [x] #4 QA verifies source-to-answer-to-artifact carry-through with actual app use before completion.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,12 +56,14 @@ PR review hardening added for the artifact preservation slice. Citation summary 
 Exported Chatbook ZIP preservation slice added. Conversation exports now retain JSON-safe message-level `citation_validation`, `evidence_bundle`, and citation payloads in the conversation JSON, emit a per-conversation Markdown citation/evidence report with readable snippets and source details, and advertise report paths plus citation/source/snippet counts through the manifest content-item metadata. Regression coverage verifies machine-checkable JSON preservation, readable snippet reports, and manifest metadata.
 
 PR review hardening added for exported Chatbook ZIP preservation. Conversation export filenames now use validated safe path components, citation reports escape user-controlled Markdown/HTML text, production-shaped DB message rows hydrate citation artifacts from the chat RAG context sidecar, imported Chatbooks persist exported citation payloads back into the same sidecar, and readable citation reports are bounded with explicit truncation metadata while full evidence remains in conversation JSON.
+
+Closeout QA added. `Docs/superpowers/qa/product-maturity/post-release-ux-hci/2026-05-24-citation-snippet-carry-through.md` records the `TASK-60.3` actual-use evidence boundary, textual-web/CDP rendered Console baseline screenshot, focused source-to-answer-to-artifact verification, residual live-server boundary, and acceptance decision. The post-release QA index and product maturity roadmap now mark citation/snippet carry-through and optional packaging polish as verified rather than in-progress follow-up work.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+TASK-60.4.4 completed. Library/Search-RAG evidence now carries source identity, snippets, authority labels, answer citation validation, saved artifact summaries, readable export reports, and import-side machine-checkable payloads through the local source-to-answer-to-artifact workflow. Actual rendered-app QA evidence and focused verification are recorded in the post-release UX/HCI QA index.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
