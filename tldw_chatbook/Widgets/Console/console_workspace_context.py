@@ -34,9 +34,9 @@ class ConsoleWorkspaceContextTray(Vertical):
             classes="destination-section",
         )
         yield self._static(
-            self.state.workspace_label,
+            self._workspace_selector_label(),
             id="console-active-workspace",
-            classes="console-workspace-status-row",
+            classes="console-workspace-status-row console-workspace-selector-row",
         )
         yield self._static(
             self.state.authority_label,
@@ -106,3 +106,9 @@ class ConsoleWorkspaceContextTray(Vertical):
                     id="console-new-workspace-conversation-recovery",
                     classes="console-workspace-recovery",
                 )
+
+    def _workspace_selector_label(self) -> str:
+        """Return the visible active-workspace selector affordance."""
+        if self.state.change_workspace_enabled:
+            return self.state.workspace_label
+        return f"{self.state.workspace_label} [read-only]"

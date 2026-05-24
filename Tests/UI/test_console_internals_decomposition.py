@@ -21,9 +21,11 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleStagedContextState,
     build_console_evidence_display_state,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.config import resolve_provider_name
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
@@ -1006,9 +1008,10 @@ async def test_console_start_guidance_hides_after_transcript_has_messages():
         assert start_here.styles.display != "none"
         assert action_hints.styles.display != "none"
 
-        session = console._get_active_chat_session()
-        assert session is not None
-        session.session_data.message_count = 1
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello Console")
+        await console._sync_native_console_chat_ui()
         console._sync_console_control_bar()
         await pilot.pause()
 
@@ -1017,56 +1020,37 @@ async def test_console_start_guidance_hides_after_transcript_has_messages():
 
 
 @pytest.mark.asyncio
-async def test_console_transcript_new_tab_control_is_fully_visible():
+async def test_console_native_transcript_is_visible_transcript_surface():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#new-chat-tab-button")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-        transcript = console.query_one("#console-transcript-region")
-        new_tab_button = console.query_one("#new-chat-tab-button", Button)
-        label = str(new_tab_button.label)
+        transcript = console.query_one("#console-native-transcript")
 
-        assert label == "New tab"
-        assert new_tab_button.region.width >= len(label) + 2
-        assert new_tab_button.region.x >= transcript.region.x
-        assert new_tab_button.region.x + new_tab_button.region.width <= (
-            transcript.region.x + transcript.region.width
-        )
-        assert "New tab" in _visible_text(console)
+        assert transcript.region.width > 0
+        assert transcript.region.height > 0
+        assert transcript.styles.display != "none"
+        assert "Empty transcript" in _visible_text(console)
 
 
 @pytest.mark.asyncio
-async def test_console_chat_tab_close_control_is_compact_x_button():
+async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#new-chat-tab-button")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-        chat_tab_buttons = [
-            button
+        assert len(console.query("#console-chat-tabs")) == 0
+        assert [
+            button.id
             for button in console.query(Button)
-            if button.id and button.id.startswith("chat-tab-")
-        ]
-        close_buttons = [
-            button
-            for button in console.query(Button)
-            if button.id and button.id.startswith("close-tab-")
-        ]
-
-        assert len(chat_tab_buttons) == 1
-        assert len(close_buttons) == 1
-
-        chat_tab = chat_tab_buttons[0]
-        close_button = close_buttons[0]
-
-        assert str(close_button.label) == "x"
-        assert close_button.region.width <= 4
-        assert close_button.region.width < chat_tab.region.width
+            if button.id and button.id.startswith(("chat-tab-", "close-tab-"))
+        ] == []
 
 
 @pytest.mark.asyncio
@@ -1161,6 +1145,7 @@ async def test_console_run_inspector_groups_state_approvals_and_source_readiness
 
         text = _visible_text(console)
         assert "Run State" in text
+        assert "Status: Ready" in text
         assert "Approvals" in text
         assert "Source Readiness" in text
 
@@ -1181,9 +1166,28 @@ async def test_console_workbench_weights_transcript_as_primary_region():
 
         assert main.region.width > staged.region.width
         assert main.region.width > inspector.region.width
-        assert staged.region.width >= 40
-        assert inspector.region.width >= 40
+        assert staged.region.width > inspector.region.width
+        assert staged.region.width >= 48
+        assert inspector.region.width >= 34
         assert transcript.region.width == main.region.width
+
+
+@pytest.mark.asyncio
+async def test_console_left_rail_sections_use_available_space():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+
+        left_rail = console.query_one("#console-left-rail")
+        staged_context = console.query_one("#console-staged-context-tray")
+        workspace_context = console.query_one("#console-workspace-context")
+
+        assert staged_context.region.width >= left_rail.region.width - 2
+        assert workspace_context.region.width >= left_rail.region.width - 2
+        assert workspace_context.region.height > staged_context.region.height
 
 
 @pytest.mark.asyncio
@@ -1409,6 +1413,63 @@ def test_console_control_and_inspector_share_effective_provider_model_sources():
     assert control_state.provider_label == "Provider: ReactiveOpenAI"
     assert control_state.model_label == "Model: reactive-model"
     assert rows_by_label["Provider"].text == "Provider: ready"
+
+
+def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "local-model",
+        },
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+            },
+        },
+    }
+    app.chat_api_provider_value = "OpenAI"
+    screen = ChatScreen(app)
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.provider == "llama_cpp"
+    assert selection.explicit_model == "local-model"
+    assert selection.base_url == "http://127.0.0.1:9099"
+
+
+def test_provider_name_resolution_matches_config_key_case_insensitively():
+    providers_models = {
+        "OpenAI": ["gpt-4o"],
+        "Llama_cpp": ["local-model"],
+    }
+
+    assert resolve_provider_name("llama_cpp", providers_models) == "Llama_cpp"
+    assert resolve_provider_name("local-llamacpp", providers_models) == "local-llamacpp"
+
+
+def test_console_provider_selection_normalizes_display_provider_key():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "local-model",
+        },
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+            },
+        },
+    }
+    screen = ChatScreen(app)
+    screen._console_control_provider = "Llama_cpp"
+    screen._console_control_model = "local-model"
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.provider == "llama_cpp"
+    assert selection.explicit_model == "local-model"
+    assert selection.base_url == "http://127.0.0.1:9099"
 
 
 @pytest.mark.asyncio

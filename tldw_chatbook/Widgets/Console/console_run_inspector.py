@@ -106,11 +106,30 @@ class ConsoleRunInspector(Vertical):
             reason.styles.min_height = 0
             yield reason
 
+    def _status_summary(self) -> str:
+        """Return the primary run-inspector state in one scannable row."""
+        rows = {row.label: row for row in self.state.rows}
+        provider = rows.get("Provider")
+        approvals = rows.get("Approvals")
+        rag_source = rows.get("RAG/source")
+        if provider is not None and provider.status == "blocked":
+            return "Status: Blocked"
+        if approvals is not None and approvals.status == "blocked":
+            return "Status: Needs approval"
+        if rag_source is not None and rag_source.status == "blocked":
+            return "Status: Source blocked"
+        return "Status: Ready"
+
     def compose(self) -> ComposeResult:
         yield Static(
             "Run Inspector",
             id="console-run-inspector-title",
             classes="destination-section",
+        )
+        yield Static(
+            self._status_summary(),
+            id="console-inspector-run-status-summary",
+            classes="console-inspector-status-summary",
         )
         rows_by_label = {row.label: (index, row) for index, row in enumerate(self.state.rows)}
         rendered_labels: set[str] = set()

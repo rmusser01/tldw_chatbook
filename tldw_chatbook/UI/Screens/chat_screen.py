@@ -2,6 +2,7 @@
 
 from datetime import datetime
 import inspect
+import os
 from pathlib import Path
 import re
 from typing import Any, Dict, Optional, TYPE_CHECKING
@@ -22,6 +23,21 @@ from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
 from ...Chat.chat_conversation_service import derive_conversation_title
+from ...Chat.chat_persistence_service import ChatPersistenceService
+from ...Chat.console_chat_controller import ConsoleChatController
+from ...Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleProviderSelection,
+    ConsoleRunStatus,
+    ConsoleWorkspaceContext,
+    ConsoleStagedSource,
+)
+from ...Chat.console_chat_store import ConsoleChatStore
+from ...Chat.console_provider_gateway import (
+    DEFAULT_LLAMACPP_BASE_URL,
+    ConsoleProviderGateway,
+    normalize_llamacpp_base_url,
+)
 from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
@@ -36,7 +52,8 @@ from ...Chat.console_display_state import (
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
-from ...Chat.provider_readiness import get_provider_readiness
+from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
+from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
 from ...Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     ConsoleLiveWorkSourceReadinessState,
@@ -57,8 +74,10 @@ from ...Widgets.Console import (
     ConsoleComposerBar,
     ConsoleControlBar,
     ConsoleRunInspector,
+    ConsoleSaveAsModal,
     ConsoleSessionSurface,
     ConsoleStagedContextTray,
+    ConsoleTranscript,
     ConsoleWorkspaceContextTray,
 )
 from ...Workspaces.display_state import (
@@ -84,6 +103,7 @@ CONSOLE_FRAME_BORDER = ("solid", "#6f7782")
 CONSOLE_START_HERE_COPY = (
     "Start here\n"
     "Ask a question in Composer. Attach sources from Library, runs, Artifacts, or RAG.\n"
+    "Provider setup required before sending.\n"
     "Run command with Ctrl+P."
 )
 CONSOLE_ACTION_HINTS_COPY = "Enter send | Ctrl+P commands | Attach context"
@@ -257,6 +277,13 @@ class ChatScreen(BaseAppScreen):
         self._console_control_provider: Optional[Any] = None
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
+        self._console_chat_store: ConsoleChatStore | None = None
+        self._console_provider_gateway: Any | None = None
+        self._console_chat_controller: ConsoleChatController | None = None
+        self._console_message_action_service = ConsoleMessageActionService()
+        self._last_console_action: ConsoleActionResult | None = None
+        self._console_transcript_sync_timer: Any | None = None
+        self._console_sync_in_progress = False
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -304,11 +331,21 @@ class ChatScreen(BaseAppScreen):
             A `(provider, model)` tuple using the same precedence for Console
             control labels and run-inspector readiness.
         """
-        provider = (
-            self._console_control_provider
-            or getattr(self.app_instance, "chat_api_provider_value", None)
-            or self._chat_default_value("provider")
-        )
+        configured_provider = self._chat_default_value("provider")
+        reactive_provider = getattr(self.app_instance, "chat_api_provider_value", None)
+        if (
+            self._console_control_provider is None
+            and _has_selected_text(configured_provider)
+            and str(reactive_provider or "").strip() == "OpenAI"
+            and str(configured_provider).strip() != "OpenAI"
+        ):
+            provider = configured_provider
+        else:
+            provider = (
+                self._console_control_provider
+                or reactive_provider
+                or configured_provider
+            )
         model = (
             self._console_control_model
             or getattr(self.app_instance, "chat_api_model_value", None)
@@ -316,6 +353,143 @@ class ChatScreen(BaseAppScreen):
             or self._chat_default_value("model")
         )
         return provider, model
+
+    @staticmethod
+    def _normalize_llamacpp_base_url(api_url: str | None) -> str:
+        """Return the llama.cpp origin root used before appending OpenAI paths."""
+        return normalize_llamacpp_base_url(api_url) or DEFAULT_LLAMACPP_BASE_URL
+
+    @staticmethod
+    def _config_section(config: dict[str, Any], key: str) -> dict[str, Any]:
+        value = config.get(key, {})
+        return value if isinstance(value, dict) else {}
+
+    def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
+        """Return explicit workspace policy context for native Console sends."""
+        workspace_id = "global"
+        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry_service is not None:
+            try:
+                active_workspace = registry_service.get_active_workspace()
+                candidate = getattr(active_workspace, "workspace_id", None)
+                if candidate:
+                    workspace_id = str(candidate)
+            except Exception:
+                logger.debug("Console workspace registry was unavailable for send context")
+
+        staged_sources: list[ConsoleStagedSource] = []
+        pending_launch = self._pending_console_launch_context
+        if pending_launch is not None:
+            payload = pending_launch.payload
+            source_id = (
+                payload.get("source_id")
+                or payload.get("target_id")
+                or payload.get("run_id")
+                or pending_launch.title
+            )
+            source_workspace = payload.get("workspace_id")
+            staged_sources.append(
+                ConsoleStagedSource(
+                    source_id=str(source_id),
+                    label=pending_launch.title,
+                    source_type=str(pending_launch.source),
+                    workspace_id=str(source_workspace) if source_workspace else None,
+                )
+            )
+
+        return ConsoleWorkspaceContext(
+            active_workspace_id=workspace_id,
+            staged_sources=tuple(staged_sources),
+        )
+
+    def _build_console_provider_selection(self) -> ConsoleProviderSelection:
+        """Return the effective native Console provider selection for sends."""
+        provider_value, model_value = self._effective_console_provider_model()
+        provider = provider_config_key(str(provider_value or "").strip()) or "llama_cpp"
+        explicit_model = str(model_value).strip() if _has_selected_text(model_value) else None
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        api_settings = self._config_section(app_config, "api_settings")
+        provider_config = self._config_section(api_settings, provider)
+        console_config = self._config_section(app_config, "console")
+        configured_model_value = (
+            provider_config.get("model")
+            or provider_config.get("api_model")
+            or provider_config.get("default_model")
+        )
+        configured_model = (
+            str(configured_model_value).strip()
+            if _has_selected_text(configured_model_value)
+            else None
+        )
+
+        base_url: str | None = None
+        if provider in {"llama_cpp", "local_llamacpp"}:
+            override_url = (
+                os.environ.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
+                or console_config.get("llama_cpp_base_url_override")
+                or provider_config.get("api_url")
+                or provider_config.get("base_url")
+                or provider_config.get("api_base")
+            )
+            base_url = self._normalize_llamacpp_base_url(
+                str(override_url) if override_url is not None else None
+            )
+
+        return ConsoleProviderSelection(
+            provider=provider,
+            base_url=base_url,
+            explicit_model=explicit_model,
+            configured_model=configured_model,
+            workspace_context=self._current_console_workspace_context(),
+        )
+
+    def _ensure_console_chat_store(self) -> ConsoleChatStore:
+        """Return the native Console chat store, creating it lazily."""
+        if self._console_chat_store is None:
+            persistence = None
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            if db is not None:
+                persistence = ChatPersistenceService(db)
+            self._console_chat_store = ConsoleChatStore(
+                persistence=persistence,
+                workspace_context=self._current_console_workspace_context(),
+            )
+        return self._console_chat_store
+
+    def _ensure_console_provider_gateway(self) -> Any:
+        """Return the native Console provider gateway with a test injection seam."""
+        if self._console_provider_gateway is None:
+            factory = getattr(self.app_instance, "console_provider_gateway_factory", None)
+            self._console_provider_gateway = (
+                factory() if callable(factory) else ConsoleProviderGateway()
+            )
+        return self._console_provider_gateway
+
+    def _ensure_console_chat_controller(self) -> ConsoleChatController:
+        """Return the native Console chat controller with fresh selection state."""
+        if self._console_chat_controller is None:
+            selection = self._build_console_provider_selection()
+            self._console_chat_controller = ConsoleChatController(
+                store=self._ensure_console_chat_store(),
+                provider_gateway=self._ensure_console_provider_gateway(),
+                provider=selection.provider,
+                model=selection.explicit_model,
+                configured_model=selection.configured_model,
+                base_url=selection.base_url,
+            )
+        self._sync_console_chat_core_state()
+        return self._console_chat_controller
+
+    def _sync_console_chat_core_state(self) -> ConsoleProviderSelection:
+        """Push current workspace/provider selection into native Console services."""
+        selection = self._build_console_provider_selection()
+        self._ensure_console_chat_store().set_workspace_context(selection.workspace_context)
+        if self._console_chat_controller is not None:
+            self._console_chat_controller.provider = selection.provider
+            self._console_chat_controller.model = selection.explicit_model
+            self._console_chat_controller.configured_model = selection.configured_model
+            self._console_chat_controller.base_url = selection.base_url
+        return selection
 
     def _build_console_control_state(
         self,
@@ -566,6 +740,11 @@ class ChatScreen(BaseAppScreen):
 
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
+        if self._console_chat_store is not None:
+            session_id = self._console_chat_store.active_session_id
+            if session_id is not None and self._console_chat_store.messages_for_session(session_id):
+                return True
+
         active_tab = self.chat_state.get_active_tab()
         if active_tab is not None and active_tab.messages:
             return True
@@ -886,8 +1065,8 @@ class ChatScreen(BaseAppScreen):
                     id="console-left-rail",
                     classes="console-region destination-workbench-pane",
                 )
-                left_rail.styles.width = "4fr"
-                left_rail.styles.min_width = 36
+                left_rail.styles.width = "6fr"
+                left_rail.styles.min_width = 48
                 with left_rail:
                     staged_context_tray = ConsoleStagedContextTray(
                         staged_context_state,
@@ -977,8 +1156,8 @@ class ChatScreen(BaseAppScreen):
                     id="console-run-inspector",
                     classes="console-region destination-workbench-pane",
                 )
-                run_inspector.styles.width = "5fr"
-                run_inspector.styles.min_width = 40
+                run_inspector.styles.width = "4fr"
+                run_inspector.styles.min_width = 34
                 with self._frame_console_region(run_inspector):
                     yield ConsoleRunInspector(
                         inspector_state,
@@ -1019,8 +1198,20 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.05, self.sync_task_resume_state)
         self.set_timer(0.15, self._consume_pending_chat_handoff)
         self._focus_console_composer_if_needed(force=True)
+        self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(lambda: self._focus_console_composer_if_needed(force=True))
         self.set_timer(0.2, lambda: self._focus_console_composer_if_needed(force=True))
+
+    async def on_unmount(self) -> None:
+        """Release Console-native resources owned by this screen."""
+        self._stop_console_transcript_sync_timer()
+        gateway = self._console_provider_gateway
+        close = getattr(gateway, "aclose", None)
+        if callable(close):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        super().on_unmount()
     
     def save_state(self) -> Dict[str, Any]:
         """
@@ -1366,6 +1557,145 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             self.app_instance.notify(message, severity="warning")
 
+    def _native_console_messages(self) -> list[Any]:
+        """Return messages for the active native Console session."""
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is None:
+            return []
+        return store.messages_for_session(store.active_session_id)
+
+    async def _sync_native_console_transcript_to_legacy_surface(self) -> None:
+        """Temporary bridge: render native Console messages in the existing surface."""
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            transcript = None
+
+        if transcript is not None:
+            transcript.set_messages(self._native_console_messages())
+            await transcript.refresh_messages()
+            self._sync_console_transcript_guidance()
+            return
+
+        chat_log = self._get_active_chat_log()
+        if chat_log is None:
+            return
+
+        messages = self._native_console_messages()
+        chat_log.remove_children()
+        for message in messages:
+            role_label = str(message.role.value if hasattr(message.role, "value") else message.role)
+            content = message.content
+            if message.status in {"streaming", "stopped", "failed"}:
+                content = f"{content} [{message.status}]".strip()
+            await chat_log.mount(
+                Static(
+                    Text(f"{role_label.title()}: {content}"),
+                    classes=(
+                        "console-transcript-system-event "
+                        f"console-native-message console-native-message-{role_label}"
+                    ),
+                )
+            )
+        self._sync_console_transcript_guidance()
+
+    def _native_run_status_copy(self) -> str:
+        controller = self._console_chat_controller
+        if controller is None:
+            return ""
+        run_state = controller.run_state
+        if run_state.status is ConsoleRunStatus.IDLE:
+            return ""
+        return run_state.visible_copy or run_state.status.value
+
+    def _sync_console_mode_bar(self) -> None:
+        try:
+            mode_bar = self.query_one("#console-mode-bar", Static)
+        except QueryError:
+            return
+        control_state = self._build_console_control_state(self._pending_console_launch_context)
+        mode_copy = self._console_mode_summary(control_state)
+        if run_status := self._native_run_status_copy():
+            mode_copy = f"{mode_copy} | Run: {run_status}"
+        mode_bar.update(mode_copy)
+
+    async def _sync_native_console_chat_ui(self) -> None:
+        """Refresh visible Console-native state after send/stop transitions."""
+        if self._console_sync_in_progress:
+            return
+        self._console_sync_in_progress = True
+        try:
+            self._sync_console_chat_core_state()
+            self._sync_console_control_bar()
+            self._sync_console_mode_bar()
+            await self._sync_console_native_session_tabs()
+            await self._sync_native_console_transcript_to_legacy_surface()
+        finally:
+            self._console_sync_in_progress = False
+
+    async def _sync_console_native_session_tabs(self) -> None:
+        """Refresh native Console session tabs from store state."""
+        try:
+            surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
+        except QueryError:
+            return
+        store = self._ensure_console_chat_store()
+        store.ensure_session(workspace_id=store.workspace_context.active_workspace_id)
+        await surface.sync_sessions(
+            sessions=store.sessions(),
+            active_session_id=store.active_session_id,
+        )
+
+    async def _append_native_console_system_message(self, message: str) -> None:
+        """Append a system message to native Console state and refresh the bridge."""
+        store = self._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.SYSTEM,
+            content=message,
+        )
+        await self._sync_native_console_chat_ui()
+
+    def _start_console_transcript_sync_timer(self) -> None:
+        if self._console_transcript_sync_timer is not None:
+            return
+
+        async def _poll_transcript() -> None:
+            await self._sync_native_console_chat_ui()
+            controller = self._console_chat_controller
+            active_statuses = {
+                ConsoleRunStatus.VALIDATING,
+                ConsoleRunStatus.RETRYING,
+                ConsoleRunStatus.STREAMING,
+            }
+            if controller is None or controller.run_state.status not in active_statuses:
+                self._stop_console_transcript_sync_timer()
+
+        self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
+
+    def _stop_console_transcript_sync_timer(self) -> None:
+        if self._console_transcript_sync_timer is None:
+            return
+        try:
+            self._console_transcript_sync_timer.stop()
+        finally:
+            self._console_transcript_sync_timer = None
+
+    async def _submit_console_native_draft(self, draft: str) -> None:
+        controller = self._ensure_console_chat_controller()
+        self._start_console_transcript_sync_timer()
+        result = await controller.submit_draft(draft)
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            composer = None
+        if result.should_clear_draft and composer is not None:
+            composer.clear_draft()
+        await self._sync_native_console_chat_ui()
+
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
         provider, model = self._effective_console_provider_model()
@@ -1387,60 +1717,36 @@ class ChatScreen(BaseAppScreen):
                 )
         return ""
 
-    @on(Button.Pressed, "#console-send-message")
     async def handle_console_send_message(self, event: Button.Pressed) -> None:
-        """Route the Console composer send action through the active chat session."""
+        """Route the Console composer send action through the native controller."""
         event.stop()
-        session = self._get_active_chat_session()
-        if session is None:
-            self.app_instance.notify("No active Console chat session is available.", severity="error")
-            return
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
             draft = composer.draft_text()
         except QueryError:
-            composer = None
             draft = ""
         if not draft.strip():
             self._focus_console_composer_if_needed(force=True)
             return
-        if blocked_reason := self._console_send_blocked_reason():
-            await self._append_console_system_event(blocked_reason)
-            self._focus_console_composer_if_needed(force=True)
+        selection = self._build_console_provider_selection()
+        if selection.provider not in {"llama_cpp", "local_llamacpp"}:
+            if blocked_reason := self._console_send_blocked_reason():
+                await self._append_native_console_system_message(blocked_reason)
+                self._focus_console_composer_if_needed(force=True)
+                return
+        controller = self._ensure_console_chat_controller()
+        if not controller.run_state.is_send_allowed:
+            self.app_instance.notify("A Console run is already running.", severity="warning")
             return
-        if draft.strip():
-            set_draft_text = getattr(session, "set_draft_text", None)
-            if callable(set_draft_text):
-                set_draft_text(draft)
-        handler = getattr(session, "handle_send_stop_button", None)
-        if not callable(handler):
-            self.app_instance.notify("Console send is unavailable for this session.", severity="error")
-            return
-        result = handler(event)
-        if inspect.isawaitable(result):
-            await result
-        if draft.strip() and composer is not None:
-            composer.clear_draft()
-        self._sync_console_transcript_guidance()
+        self.run_worker(self._submit_console_native_draft(draft), exclusive=True)
 
-    @on(Button.Pressed, "#console-stop-generation")
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
-        """Route the Console stop action through tab-aware chat stop handling."""
+        """Route the Console stop action through native run control."""
         event.stop()
-        session = self._get_active_chat_session()
-        if session is None:
-            self.app_instance.notify("No active Console chat session is available.", severity="error")
-            return
-        from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_tabs
-
-        await chat_events_tabs.handle_stop_chat_generation_pressed_with_tabs(
-            self.app_instance,
-            event,
-            session.session_data,
-        )
-        update_button = getattr(session, "_update_button_state", None)
-        if callable(update_button):
-            update_button()
+        controller = self._ensure_console_chat_controller()
+        if not controller.stop_active_run():
+            self.app_instance.notify("No active Console run to stop.", severity="warning")
+        await self._sync_native_console_chat_ui()
 
     @on(Button.Pressed, "#console-attach-context")
     async def handle_console_attach_context(self, event: Button.Pressed) -> None:
@@ -1501,6 +1807,123 @@ class ChatScreen(BaseAppScreen):
     def handle_console_inspector_save_chatbook(self, event: Button.Pressed) -> None:
         """Route inspector Chatbook action through the existing Console save seam."""
         self.handle_console_save_chatbook(event)
+
+    async def handle_console_message_action(self, event: Button.Pressed) -> bool:
+        """Route selected transcript message actions through the native action service."""
+        button_id = event.button.id or ""
+        action_id, message_id = self._parse_console_message_action_button_id(button_id)
+        if action_id is None or message_id is None:
+            return False
+
+        event.stop()
+        store = self._ensure_console_chat_store()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            self.app_instance.notify("Console message action target no longer exists.", severity="warning")
+            return True
+
+        if action_id == "save-as":
+            await self.app_instance.push_screen(
+                ConsoleSaveAsModal(
+                    destinations=self._console_message_action_service.save_as_destinations(message)
+                )
+            )
+            self._last_console_action = ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Opened Save as destinations.",
+            )
+            return True
+
+        result = self._console_message_action_service.dispatch(action_id, message)
+        self._last_console_action = result
+        if result.clipboard_text is not None:
+            copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
+            if callable(copy_to_clipboard):
+                copy_to_clipboard(result.clipboard_text)
+        if action_id == "retry" and result.status == "completed":
+            controller = self._ensure_console_chat_controller()
+            self.run_worker(self._retry_console_message(controller, message_id), exclusive=True)
+            return True
+        if action_id == "regenerate" and result.status == "wip":
+            controller = self._ensure_console_chat_controller()
+            self.run_worker(self._regenerate_console_message(controller, message_id), exclusive=True)
+            return True
+        if action_id in {"variant-previous", "variant-next"} and result.status == "completed":
+            self._select_console_message_variant(message_id, direction=action_id)
+            await self._sync_native_console_chat_ui()
+            return True
+        if action_id == "continue" and result.status == "continue_requested":
+            controller = self._ensure_console_chat_controller()
+            self.run_worker(self._continue_console_message(controller, message_id), exclusive=True)
+            return True
+        severity = "information" if result.status in {"completed", "wip"} else "warning"
+        self.app_instance.notify(result.visible_copy, severity=severity)
+        return True
+
+    @staticmethod
+    def _parse_console_message_action_button_id(button_id: str) -> tuple[str | None, str | None]:
+        prefixes = (
+            ("console-message-action-feedback-up-", "feedback-up"),
+            ("console-message-action-feedback-down-", "feedback-down"),
+            ("console-message-action-variant-previous-", "variant-previous"),
+            ("console-message-action-variant-next-", "variant-next"),
+            ("console-message-action-save-as-", "save-as"),
+            ("console-message-action-regenerate-", "regenerate"),
+            ("console-message-action-continue-", "continue"),
+            ("console-message-action-delete-", "delete"),
+            ("console-message-action-retry-", "retry"),
+            ("console-message-action-copy-", "copy"),
+            ("console-message-action-edit-", "edit"),
+        )
+        for prefix, action_id in prefixes:
+            if button_id.startswith(prefix):
+                return action_id, button_id.removeprefix(prefix)
+        return None, None
+
+    async def _retry_console_message(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+    ) -> None:
+        result = await controller.retry_message(message_id)
+        if result.visible_copy:
+            severity = "warning" if not result.accepted else "information"
+            self.app_instance.notify(result.visible_copy, severity=severity)
+        await self._sync_native_console_chat_ui()
+
+    async def _continue_console_message(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+    ) -> None:
+        result = await controller.continue_from_message(message_id)
+        if result.visible_copy and not result.accepted:
+            self.app_instance.notify(result.visible_copy, severity="warning")
+        await self._sync_native_console_chat_ui()
+
+    async def _regenerate_console_message(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+    ) -> None:
+        result = await controller.regenerate_message(message_id)
+        if result.visible_copy and not result.accepted:
+            self.app_instance.notify(result.visible_copy, severity="warning")
+        await self._sync_native_console_chat_ui()
+
+    def _select_console_message_variant(self, message_id: str, *, direction: str) -> None:
+        store = self._ensure_console_chat_store()
+        message = store.get_message(message_id)
+        if message.variants is None:
+            return
+        selected_index = message.variants.selected_index
+        if direction == "variant-previous":
+            selected_index -= 1
+        elif direction == "variant-next":
+            selected_index += 1
+        store.select_variant(message_id, selected_index)
 
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar."""
@@ -2495,6 +2918,28 @@ class ChatScreen(BaseAppScreen):
         
         # Log for debugging
         logger.info(f"ChatScreen on_button_pressed called with button: {button_id}")
+
+        if button_id == "console-send-message":
+            await self.handle_console_send_message(event)
+            return
+        if button_id == "console-stop-generation":
+            await self.handle_console_stop_generation(event)
+            return
+        if button_id == "console-new-chat-tab":
+            event.stop()
+            self._ensure_console_chat_controller().new_session()
+            await self._sync_native_console_chat_ui()
+            return
+        if button_id and button_id.startswith("console-session-tab-"):
+            event.stop()
+            session_id = button_id.removeprefix("console-session-tab-")
+            self._ensure_console_chat_controller().switch_session(session_id)
+            await self._sync_native_console_chat_ui()
+            return
+        if button_id and button_id.startswith("console-message-action-"):
+            handled = await self.handle_console_message_action(event)
+            if handled:
+                return
         
         # Sidebar toggle is handled in ChatWindowEnhanced via @on decorator
         

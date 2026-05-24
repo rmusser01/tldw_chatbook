@@ -198,7 +198,9 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
             "#console-transcript-region",
             "#console-run-inspector",
             "#console-session-surface",
-            "#console-chat-tabs",
+            "#console-native-tab-strip",
+            "#console-native-transcript",
+            "#console-new-chat-tab",
             "#console-native-composer",
         ):
             assert console.query_one(selector)

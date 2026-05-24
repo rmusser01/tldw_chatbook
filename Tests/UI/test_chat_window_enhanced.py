@@ -460,7 +460,7 @@ class TestChatWindowShellBarMounting:
                 assert children.index(task_surface) < children.index(tab_container)
 
     @pytest.mark.asyncio
-    async def test_chat_screen_receives_live_active_session_message_from_native_console_tabs(self):
+    async def test_chat_screen_uses_native_console_tabs_without_legacy_tab_container(self):
         app = _ChatScreenShellSyncTestApp()
 
         with patch.object(ChatScreen, "_load_sidebar_state", lambda self: None), patch.object(
@@ -484,29 +484,26 @@ class TestChatWindowShellBarMounting:
                 await pilot.pause()
 
                 screen = pilot.app.screen
-                tab_container = screen.query_one("#console-chat-tabs", ChatTabContainer)
-                composer_status = screen.query_one("#console-composer-status", Static)
+                assert len(screen.query("#console-chat-tabs")) == 0
+                assert len(screen.query(ChatTabContainer)) == 0
 
-                tab_container._publish_active_session_changed(
-                    ChatSessionData(
-                        tab_id="live-tab",
-                        title="Live Persona Session",
-                        runtime_backend="server",
-                        assistant_kind="persona",
-                        assistant_id="study.coach",
-                        scope_type="workspace",
-                        workspace_id="workspace-42",
-                    )
-                )
-                await pilot.pause()
+                await pilot.click("#console-new-chat-tab")
+                await pilot.pause(0.2)
 
-                rendered_label = str(composer_status.render())
+                tab_strip = screen.query_one("#console-native-tab-strip")
+                native_tabs = [
+                    child
+                    for child in tab_strip.children
+                    if child.id and child.id.startswith("console-session-tab-")
+                ]
+                active_tabs = [
+                    child for child in native_tabs if child.has_class("console-session-tab-active")
+                ]
 
                 assert len(screen.query(ChatWindowEnhanced)) == 0
-                assert "Live Persona Session" in rendered_label
-                assert "server" in rendered_label
-                assert "workspace-42" in rendered_label
-                assert "study.coach" in rendered_label
+                assert [tab.label.plain for tab in native_tabs] == ["Chat 1", "Chat 2"]
+                assert len(active_tabs) == 1
+                assert active_tabs[0].label.plain == "Chat 2"
 
 
 class TestChatScreenConversationParity:
