@@ -80,9 +80,9 @@ Acceptance requires actual screenshots, actual-use functionality evidence, and c
 | Personas loading recovery | `TASK-60.5` | Resolve indefinite Personas local behavior-context loading before accepting the Personas destination. |
 | Watchlists loading recovery | `TASK-60.6` | Resolve indefinite Watchlists local snapshot loading before accepting the Watchlists destination. |
 
-Deferred follow-up tranches:
+Post-release feature tranche status:
 
-| Deferred Tranche | Backlog Owner | Evidence Boundary |
+| Feature Tranche | Backlog Owner | Status / Evidence Boundary |
 | --- | --- | --- |
 | Post-release ACP runtime launch tranche | `TASK-60.4.1` | ACP runtime payloads remain recoverably blocked until a real ACP runtime can launch or attach and report status. |
 | Post-release write sync promotion tranche | `TASK-60.4.2` | Write sync remains deferred until preview, conflict, rollback, and mutation authority are visible and testable. |

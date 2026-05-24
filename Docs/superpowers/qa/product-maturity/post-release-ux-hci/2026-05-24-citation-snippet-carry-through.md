@@ -79,7 +79,7 @@ A user should be able to retrieve evidence from Library/Search-RAG, stage it int
 
 | Finding | Severity | Follow-Up Task | Decision |
 | --- | --- | --- | --- |
-| Full live backend RAG/LLM session was not used for closeout | P2 | Future server-sync/runtime tranche | Accept for `TASK-60.4.4`; source-to-answer-to-artifact contract is covered by focused app/service tests and rendered-app baseline evidence. |
+| Full live backend RAG/LLM session was not used for closeout | P2 | `TASK-60.4.1` / future server-sync runtime work | Accept for `TASK-60.4.4`; source-to-answer-to-artifact contract is covered by focused app/service tests and rendered-app baseline evidence. |
 | Server-backed handoff/sync is not part of this tranche | P2 | `TASK-60.4.1` / future sync work | Accept; this tranche closes local carry-through and export/import preservation only. |
 
 ## Acceptance Decision
