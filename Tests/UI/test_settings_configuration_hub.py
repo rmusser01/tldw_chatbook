@@ -293,3 +293,30 @@ async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch)
         screen = _active_destination_screen(host)
 
         assert "Console paste collapse: Disabled: collapse large pastes" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        toggle = screen.query_one("#settings-console-collapse-large-pastes-toggle")
+        toggle.focus()
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert host.focused is toggle
+        assert "Console paste collapse: Disabled: collapse large pastes" in _visible_text(screen)
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert host.focused is toggle
+        assert "Console paste collapse: Enabled: collapse large pastes" in _visible_text(screen)

@@ -112,6 +112,13 @@ class SettingsScreen(BaseAppScreen):
         state = "Enabled" if self._collapse_large_pastes_enabled() else "Disabled"
         return f"{state}: collapse large pastes"
 
+    def _update_console_paste_summary(self) -> None:
+        try:
+            summary = self.query_one("#settings-overview-console-paste-collapse", Static)
+        except QueryError:
+            return
+        summary.update(f"Console paste collapse: {self._collapse_large_pastes_label()}")
+
     def _sync_safety_states(self) -> tuple[SyncPromotionState, ...]:
         labels = {
             "library_collections": "Collections",
@@ -395,7 +402,7 @@ class SettingsScreen(BaseAppScreen):
         next_value = not self._collapse_large_pastes_enabled()
         self._console_settings()["collapse_large_pastes"] = next_value
         event.button.label = self._collapse_large_pastes_label()
-        self.refresh(recompose=True)
+        self._update_console_paste_summary()
         if save_setting_to_cli_config("console", "collapse_large_pastes", next_value):
             self.app.notify("Console paste display setting saved.", severity="information")
         else:
@@ -420,6 +427,12 @@ class SettingsScreen(BaseAppScreen):
             event.prevent_default()
             return
         if event.key == "enter":
+            focused = self.app.focused
+            if isinstance(focused, Button) and focused.id == "settings-console-collapse-large-pastes-toggle":
+                focused.press()
+                event.stop()
+                event.prevent_default()
+                return
             category_value = self._focused_category_value()
             if category_value is not None:
                 self._select_category(category_value, restore_focus=True)
