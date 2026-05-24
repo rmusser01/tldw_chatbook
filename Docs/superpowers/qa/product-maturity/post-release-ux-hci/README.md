@@ -46,6 +46,15 @@ Current write-sync safety evidence: `2026-05-22-write-sync-safety.md`.
 
 Current Workspaces and Library depth evidence: `2026-05-23-workspaces-library-depth.md`.
 
+Current citation/snippet carry-through evidence: `2026-05-24-citation-snippet-carry-through.md`.
+
+## Citation And Snippet Carry-Through Evidence
+
+| Surface | Evidence Status | Screenshot Approval | Functionality Status | Follow-Up |
+| --- | --- | --- | --- | --- |
+| Library/Search-RAG to Console to Chatbook artifacts and exports | verified | not requested; no visual UI change | source identity, snippets, authority labels, answer citation validation, saved artifact summaries, readable export reports, and import-side citation payloads verified | `TASK-60.4.4` verified |
+| Optional dependency and packaging recovery | verified | not requested; documentation and recovery-copy polish only | optional feature metadata, source-checkout install commands, packaged-install recovery commands, and local-first baseline setup docs verified | `TASK-60.4.5` verified |
+
 ## Write Sync Safety Evidence
 
 | Surface | Evidence Status | Screenshot Approval | Functionality Status | Follow-Up |

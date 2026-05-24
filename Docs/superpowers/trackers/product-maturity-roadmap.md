@@ -80,15 +80,15 @@ Acceptance requires actual screenshots, actual-use functionality evidence, and c
 | Personas loading recovery | `TASK-60.5` | Resolve indefinite Personas local behavior-context loading before accepting the Personas destination. |
 | Watchlists loading recovery | `TASK-60.6` | Resolve indefinite Watchlists local snapshot loading before accepting the Watchlists destination. |
 
-Deferred follow-up tranches:
+Post-release feature tranche status:
 
-| Deferred Tranche | Backlog Owner | Evidence Boundary |
+| Feature Tranche | Backlog Owner | Status / Evidence Boundary |
 | --- | --- | --- |
 | Post-release ACP runtime launch tranche | `TASK-60.4.1` | ACP runtime payloads remain recoverably blocked until a real ACP runtime can launch or attach and report status. |
 | Post-release write sync promotion tranche | `TASK-60.4.2` | Write sync remains deferred until preview, conflict, rollback, and mutation authority are visible and testable. |
 | Post-release Workspaces and Library depth tranche | `TASK-60.4.3` | Workspace switching must preserve global Library visibility while limiting Console context manipulation to eligible workspace items. |
-| Post-release citation and snippet carry-through tranche | `TASK-60.4.4` | In progress as a stacked epic: Library/Search-RAG evidence must carry through answer-level citations, Console persistence, Artifacts, and exports. |
-| Post-release optional dependency and packaging polish tranche | `TASK-60.4.5` | Optional dependency recovery remains source-honest, but package metadata and install-path polish need a dedicated follow-up. |
+| Post-release citation and snippet carry-through tranche | `TASK-60.4.4` | Verified: Library/Search-RAG evidence now carries source identity, snippets, authority labels, answer citation validation, saved Chatbook artifact summaries, readable export reports, and import-side machine-checkable payloads through the local workflow. |
+| Post-release optional dependency and packaging polish tranche | `TASK-60.4.5` | Verified: optional feature recovery copy, package metadata, source-checkout install commands, and packaged-install recovery commands distinguish local-first baseline behavior from advanced capability extras. |
 
 ## Severity Policy
 
