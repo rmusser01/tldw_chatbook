@@ -45,6 +45,7 @@ class ConsoleStagedContextTray(Vertical):
                 row.text,
                 id=f"console-staged-context-row-{index}",
                 classes="console-staged-context-row",
+                markup=False,
             )
         if self.state.recovery:
             yield Static(

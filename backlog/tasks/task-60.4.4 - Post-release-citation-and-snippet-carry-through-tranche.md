@@ -44,6 +44,8 @@ Carry retrieved snippets and citations from Library/Search/RAG into Console answ
 Epic setup started. Added `Docs/superpowers/specs/2026-05-23-citation-snippet-carry-through-epic-design.md` to define the stacked PR model, evidence/citation contracts, answer-level citation injection scope, persistence/export requirements, and QA gates. The implementation remains split across sub-PRs so each seam can be tested and reviewed independently.
 
 Library/Search-RAG evidence bundle slice added. `build_library_rag_console_live_work_payload()` now attaches a serialized `EvidenceBundle` that preserves query, source identity, snippets, citation labels, local/server authority, workspace visibility, and active-context eligibility. Regression coverage verifies local and server Console handoff payloads, cross-workspace blocked evidence, and provenance-only source identity fallback before the later Console staging and answer-citation slices.
+
+Console evidence staging slice added. Console staged context and the Run Inspector now summarize staged Library/Search-RAG evidence count, source authority, reference status, and snippets without exposing raw `evidence_bundle` metadata. Send recovery now blocks RAG-grounded Console sends when no eligible evidence is available, preserving the composer draft and showing native Console feedback. `ChatHandoffPayload.model_context_block()` formats staged evidence in a readable model-context section. Actual textual-web/CDP screenshot evidence was captured at `Docs/superpowers/qa/product-maturity/post-release-ux-hci/actual-screenshots/2026-05-23-console-evidence-staging.png` and approved by the user.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from .citation_evidence_models import EvidenceBundle
+
 
 SECRET_CONTRACT_KEYS = frozenset({"credential_source", "token", "secret", "api_key", "password"})
 HANDOFF_BODY_CHAR_LIMIT = 80_000
@@ -133,9 +135,12 @@ class ChatHandoffPayload:
         metadata_lines = []
         metadata_snapshot = _json_safe_contract_snapshot(self.metadata or {})
         for key, value in sorted(metadata_snapshot.items()):
+            if key == "evidence_bundle":
+                continue
             if value not in (None, ""):
                 metadata_lines.append(f"- {key}: {value}")
         metadata = "\n".join(metadata_lines)
+        evidence = _format_evidence_bundle_context(metadata_snapshot.get("evidence_bundle"))
         return (
             "[Staged context]\n"
             f"Source: {self.source}\n"
@@ -151,6 +156,7 @@ class ChatHandoffPayload:
             f"Sync dry-run only: {bool(self.sync_dry_run_report)}\n"
             f"Summary: {self.display_summary or 'none'}\n"
             f"Metadata:\n{metadata or '- none'}\n\n"
+            f"{evidence}"
             f"Content:\n{self.body}"
         )
 
@@ -177,3 +183,35 @@ def _json_safe_contract_snapshot(value: Any) -> Any:
 def _is_secret_contract_key(key: str) -> bool:
     normalized = key.lower()
     return any(secret_key in normalized for secret_key in SECRET_CONTRACT_KEYS)
+
+
+def _format_evidence_bundle_context(value: Any) -> str:
+    """Render staged evidence metadata as model-readable context, not raw JSON."""
+    if value is None:
+        return ""
+    if isinstance(value, EvidenceBundle):
+        bundle = value
+    elif isinstance(value, Mapping):
+        try:
+            bundle = EvidenceBundle.from_payload(value)
+        except (TypeError, ValueError):
+            return ""
+    else:
+        return ""
+
+    lines = [
+        "[Staged evidence]",
+        f"Evidence bundle: {bundle.bundle_id}",
+        f"Evidence query: {bundle.query or 'none'}",
+        f"Evidence status: {bundle.status}",
+    ]
+    for reference in bundle.references:
+        lines.append(
+            (
+                f"[{reference.evidence_id}] {reference.title} "
+                f"({reference.source_id}) - {reference.authority_label} - {reference.status}"
+            )
+        )
+        if reference.snippet:
+            lines.append(f"Snippet: {reference.snippet}")
+    return "\n".join(lines) + "\n\n"

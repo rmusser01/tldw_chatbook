@@ -23,6 +23,8 @@ _ROW_IDS = {
     "Provider": "console-inspector-provider",
     "Tools": "console-inspector-tools",
     "RAG/source": "console-inspector-rag-source",
+    "Evidence": "console-inspector-evidence",
+    "Authority": "console-inspector-authority",
     "Artifacts": "console-inspector-artifacts",
     "Approvals": "console-inspector-approvals",
 }
@@ -41,7 +43,7 @@ _ROW_GROUPS = (
     (
         "Source Readiness",
         "console-inspector-source-readiness-heading",
-        ("RAG/source", "Artifacts"),
+        ("RAG/source", "Evidence", "Authority", "Artifacts"),
     ),
 )
 
@@ -130,6 +132,7 @@ class ConsoleRunInspector(Vertical):
                     row.text,
                     id=self._row_id(row, index),
                     classes=f"console-inspector-row console-inspector-row-{row.status}",
+                    markup=False,
                 )
 
             action_ids = _ACTION_GROUPS.get(heading, ())
@@ -147,6 +150,7 @@ class ConsoleRunInspector(Vertical):
                 row.text,
                 id=self._row_id(row, index),
                 classes=f"console-inspector-row console-inspector-row-{row.status}",
+                markup=False,
             )
         for action in self.state.actions:
             if action.widget_id in rendered_action_ids:

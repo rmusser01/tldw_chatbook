@@ -31,6 +31,7 @@ from ...Chat.console_display_state import (
     ConsoleControlState,
     ConsoleInspectorState,
     ConsoleStagedContextState,
+    build_console_evidence_display_state,
     coerce_non_negative_int,
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -467,6 +468,7 @@ class ChatScreen(BaseAppScreen):
             getattr(self.app_instance, "console_chatbook_artifact_available", False)
             or self._launch_targets_chatbook_artifact(pending_launch)
         )
+        evidence_state = build_console_evidence_display_state(pending_launch)
         return ConsoleInspectorState.from_values(
             live_work_title=pending_launch.title if pending_launch else None,
             provider_ready=provider_ready,
@@ -474,6 +476,10 @@ class ChatScreen(BaseAppScreen):
                 "" if provider_ready else "Select a provider and model before sending."
             ),
             rag_status=self._console_rag_source_status(pending_launch),
+            evidence_summary=evidence_state.summary if evidence_state else None,
+            evidence_status=evidence_state.status if evidence_state else None,
+            evidence_recovery=evidence_state.recovery if evidence_state else None,
+            evidence_authority=evidence_state.authority if evidence_state else None,
             artifact_status=self._console_artifact_status(
                 pending_launch,
                 can_save_chatbook=can_save_chatbook,
@@ -1371,6 +1377,14 @@ class ChatScreen(BaseAppScreen):
             return f"Console send blocked: {readiness.user_message}"
         if not _has_selected_text(model):
             return "Console send blocked: Select a model before sending."
+        pending_launch = self._consume_pending_console_launch()
+        if pending_launch is not None and _source_mentions_rag(pending_launch.source):
+            evidence_state = build_console_evidence_display_state(pending_launch)
+            if evidence_state is None or evidence_state.available_count == 0:
+                return (
+                    "Console send blocked: Library Search/RAG has no available evidence. "
+                    "Review source authority before sending."
+                )
         return ""
 
     @on(Button.Pressed, "#console-send-message")
