@@ -1,7 +1,7 @@
 # Console Persistent Rails Design
 
 Date: 2026-05-24
-Status: Approved by user and spec review, pending user review before implementation planning
+Status: Approved by user and spec review, ready for implementation planning
 Primary Repo: `tldw_chatbook`
 Scope: Console screen UX, layout state, rail affordances, persistence, and QA
 
@@ -99,11 +99,14 @@ Left `Context` badge priority:
 
 Right `Inspector` badge priority:
 
-1. Failed or blocked run/provider state.
-2. Pending approval.
-3. Ready tool call.
-4. Source/artifact readiness.
-5. Empty or no badge.
+1. Failed run.
+2. Blocked provider or blocked run.
+3. Pending approval.
+4. Ready tool call.
+5. Source/artifact readiness.
+6. Empty or no badge.
+
+Badge builders must be deterministic. If multiple states in the same priority tier are present, choose the first state in the explicit priority list above. Do not concatenate multiple badges into a long status strip.
 
 ## Layout And Visual Hierarchy
 
@@ -125,6 +128,10 @@ When both rails are open:
 
 - The current workbench density remains available for power users.
 - Existing minimum widths continue to guard against broken panel rendering.
+
+At compact terminal widths, the center transcript/composer lane is protected first. If both side rails cannot fit with the existing minimum readable center lane, the right inspector remains collapsed and the left context rail may be collapsed by user action. Rail handles should use fixed narrow widths so they do not squeeze the transcript or composer.
+
+Compact-width protection is a responsive rendering override, not a preference mutation. If a persisted workspace/session preference says `right_open=True` but the terminal is too narrow to safely render the inspector, Console should temporarily render the right rail collapsed for that viewport without overwriting the stored preference.
 
 Visual changes should be restrained:
 
@@ -190,7 +197,7 @@ Responsibilities:
 
 ### Layout Composition
 
-Use either a `ConsoleWorkbenchLayout` widget or focused compose helpers to keep `ChatScreen.compose_content()` smaller.
+Prefer focused compose helpers to keep `ChatScreen.compose_content()` smaller. Introduce a full `ConsoleWorkbenchLayout` widget only if helper extraction becomes awkward during implementation.
 
 Preferred split:
 
@@ -200,19 +207,26 @@ Preferred split:
 - Compose right inspector rail or right rail handle.
 - Compose native composer.
 
-This keeps the current business behavior in `ChatScreen` while moving layout decisions into named units.
+This keeps the current business behavior in `ChatScreen` while moving layout decisions into named units. The first implementation should not refactor unrelated Console chat core, provider gateway, transcript, composer, staged-context, or inspector behavior.
 
 ## Persistence
 
 Rail state persists per workspace/session.
 
-Default key shape should be deterministic and safe, for example:
+Default key shape must be deterministic and safe. Use this key order:
+
+1. `workspace_id + persisted conversation_id`, when both are available.
+2. `workspace_id + active Console session id`, when the conversation is not persisted yet.
+3. `workspace_id + "global"`, when no session id exists.
+4. `"global"`, when no workspace id exists.
+
+The preferred serialized key shape is:
 
 ```text
-console_rail_state:<workspace_id>:<session_id>
+console_rail_state:<workspace_id>:<scope_id>
 ```
 
-If an active session id is unavailable, fall back to active workspace id and a stable global Console key. If workspace id is unavailable, fall back to `global`.
+This order prevents unsaved sessions from losing rail state while still allowing persisted conversations to become the long-term owner once a durable conversation id exists. If an implementation migrates state from a temporary session id to a persisted conversation id, it should copy the latest rail booleans rather than resetting to defaults.
 
 Use the repo's existing app/config/state pattern if there is already a suitable workspace/session preference store. If there is not, use a minimal Console config/state section that stores only rail booleans by safe key.
 
@@ -228,7 +242,7 @@ Persistence must be best-effort:
 - Toggle left rail hides staged/workspace panels and shows the `Context` handle.
 - Toggle right rail hides inspector/source readiness panels and shows the `Inspector` handle.
 - Clicking or keyboard-activating a collapsed handle restores the rail.
-- A visible rail can be collapsed through a small affordance in its panel header or edge.
+- A visible rail collapses through one consistent rail-level toggle affordance, placed in the rail header or immediate rail edge. Do not add separate collapse controls inside each child panel.
 - Collapsed badges update from existing display state without opening the rail.
 - Provider blocked, failed run, pending approval, ready tool call, staged context, and evidence states remain discoverable through collapsed badges.
 - Existing composer, send, stop, tab, transcript selection, provider recovery, and Settings routing behavior remains unchanged.
@@ -270,12 +284,15 @@ Required pure tests:
 Required mounted Console tests:
 
 - First-start Console renders left rail open and right handle collapsed.
+- Compact-width Console protects the center transcript/composer lane with the right rail collapsed.
 - Left collapse hides staged/workspace panels and renders `Context` handle.
 - Right expand restores inspector/source readiness from `Inspector` handle.
 - Right collapsed handle shows a badge for provider blocked state.
+- Right collapsed handle prefers failed over blocked when both are present.
 - Pending approval updates the collapsed right handle badge without opening the inspector.
 - Staged context updates the collapsed left handle badge without opening the context rail.
 - Rail state persists per workspace/session and changes when workspace/session changes.
+- Temporary session rail state migrates or remains stable when a persisted conversation id becomes available.
 - Central transcript width increases when either rail is collapsed.
 - Composer remains full-width under the outer Console workbench across rail states.
 - Collapsed handles are reachable through keyboard focus.
@@ -284,7 +301,10 @@ Required mounted Console tests:
 Required screenshot QA:
 
 - First-start: left open, right collapsed.
-- Right-collapsed actionable badge.
+- Right-collapsed provider blocked badge with central `Open Settings` recovery still visible.
+- Right-collapsed pending approval badge.
+- Right-collapsed failed-run badge.
+- Left-collapsed staged-context badge.
 - Both rails open workbench.
 - Left collapsed, right collapsed.
 
@@ -302,19 +322,28 @@ Mitigation: allow one short badge per handle and use a strict priority order.
 
 Risk: `ChatScreen.compose_content()` becomes more complex.
 
-Mitigation: introduce pure rail state plus a rail handle widget and extract layout composition into named helpers or a workbench layout widget.
+Mitigation: introduce pure rail state plus a rail handle widget and extract layout composition into named helpers first. Only introduce a workbench layout widget if helper extraction is not enough.
 
 Risk: users miss actionable inspector states when the right rail is collapsed.
 
 Mitigation: keep central provider recovery visible, add concise collapsed badges, and ensure command palette/keyboard rail toggles are available.
 
+Risk: compact terminal widths become cramped after adding handles.
+
+Mitigation: keep handles narrow and fixed, keep the right rail collapsed by default, and verify compact 100/120/140-column Console layouts before considering the work complete.
+
+Risk: unsaved sessions lose rail preferences when a durable conversation id appears.
+
+Mitigation: use the explicit persistence key order above and migrate/copy temporary session preferences when a persisted conversation id becomes available.
+
 ## Acceptance Criteria
 
 - [ ] First-start Console defaults to left context rail open and right inspector rail collapsed.
 - [ ] Users can collapse and reopen both rails through visible in-layout handles.
-- [ ] Rail state persists per workspace/session.
-- [ ] Collapsed rails show concise state badges without auto-opening.
+- [ ] Rail state persists per workspace/session using deterministic fallback and unsaved-session migration behavior.
+- [ ] Collapsed rails show concise deterministic state badges without auto-opening.
 - [ ] Central transcript lane gains horizontal room when either rail is collapsed while the composer remains full-width under the outer Console workbench.
+- [ ] Compact terminal widths preserve the center transcript/composer lane and keep collapsed handles readable.
 - [ ] Existing native chat, provider recovery, transcript, tab, staged context, workspace context, and inspector behaviors continue to pass.
 - [ ] Focused unit and mounted tests cover defaults, toggles, persistence, badges, and no-auto-open behavior.
 - [ ] Actual textual-web screenshot QA verifies the approved rail states.
