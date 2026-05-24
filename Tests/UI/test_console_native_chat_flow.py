@@ -489,7 +489,7 @@ async def test_console_selected_message_save_as_action_opens_modal():
         await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
 
         await pilot.click(f"#console-message-action-save-as-{message.id}")
-        await _wait_for_selector(app.screen_stack[-1], pilot, "#console-save-as-modal")
+        await _wait_for_selector(app, pilot, "#console-save-as-modal")
 
     assert console._last_console_action.action_id == "save-as"
 
