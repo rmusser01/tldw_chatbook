@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Select
+from textual.widgets import Input, Select
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -377,3 +377,81 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
 
     assert saved == []
     assert app.app_config["console"]["collapse_large_pastes"] is True
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_uses_effective_console_source():
+    app = _build_test_app()
+    app.chat_api_provider_value = "OpenAI"
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "llama_cpp" in text
+        assert "qwen" in text
+        assert "Source: chat_defaults" in text
+        assert screen.query_one("#settings-provider-value", Input).value == "llama_cpp"
+        assert screen.query_one("#settings-model-value", Input).value == "qwen"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_redacts_secrets(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-token")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        await pilot.click("#settings-test-provider")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Provider test" in text
+        assert "OPENAI_API_KEY=<redacted>" in text
+        assert "sk-" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_saves_chat_defaults(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-provider-value", Input).value = "llama_cpp"
+        screen.query_one("#settings-model-value", Input).value = "qwen"
+        screen.query_one("#settings-streaming-default", Input).value = "false"
+        screen.query_one("#settings-temperature-default", Input).value = "0.2"
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [
+        ("chat_defaults", "provider", "llama_cpp"),
+        ("chat_defaults", "model", "qwen"),
+        ("chat_defaults", "streaming", False),
+        ("chat_defaults", "temperature", 0.2),
+    ]
+    assert app.app_config["chat_defaults"] == {
+        "provider": "llama_cpp",
+        "model": "qwen",
+        "streaming": False,
+        "temperature": 0.2,
+    }

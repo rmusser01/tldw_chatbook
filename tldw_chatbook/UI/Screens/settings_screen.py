@@ -10,7 +10,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.events import Key
 from textual.reactive import reactive
-from textual.widgets import Button, Rule, Static
+from textual.widgets import Button, Input, Rule, Static
 
 from ...Sync_Interop.sync_promotion_state import SyncPromotionState, build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
@@ -18,6 +18,7 @@ from ...Widgets.destination_workbench import DestinationModeStrip
 from ...config import DEFAULT_CONFIG_PATH, coerce_bool_setting, save_setting_to_cli_config
 from ..Navigation.base_app_screen import BaseAppScreen
 from .provider_model_resolution import resolve_effective_provider_model
+from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
 from .settings_config_models import SettingsCategoryId, SettingsCategorySummary, SettingsDraft
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -39,6 +40,7 @@ class SettingsScreen(BaseAppScreen):
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
+        self._provider_test_result = "Provider test has not run."
 
     def _category_summaries(self) -> tuple[SettingsCategorySummary, ...]:
         return (
@@ -108,6 +110,17 @@ class SettingsScreen(BaseAppScreen):
             console_settings = {}
             app_config["console"] = console_settings
         return console_settings
+
+    def _chat_defaults(self) -> dict:
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            self.app_instance.app_config = {}
+            app_config = self.app_instance.app_config
+        chat_defaults = app_config.setdefault("chat_defaults", {})
+        if not isinstance(chat_defaults, dict):
+            chat_defaults = {}
+            app_config["chat_defaults"] = chat_defaults
+        return chat_defaults
 
     def _loaded_collapse_large_pastes_enabled(self) -> bool:
         return coerce_bool_setting(
@@ -233,12 +246,149 @@ class SettingsScreen(BaseAppScreen):
         return "writable" if writable else "not writable"
 
     def _provider_readiness_label(self) -> str:
-        resolved = resolve_effective_provider_model(self.app_instance)
+        resolved = self._resolve_provider_model_for_settings()
         provider = str(resolved.provider or "not selected").strip()
         model = str(resolved.model or "not selected").strip()
         if provider and provider != "not selected":
             return f"Provider readiness: {provider} / {model}"
         return "Provider readiness: needs provider and model"
+
+    def _provider_draft(self) -> SettingsDraft | None:
+        return self._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
+
+    def _provider_draft_value(self, key: str):
+        draft = self._provider_draft()
+        return draft.values.get(key) if draft is not None and key in draft.values else None
+
+    def _resolve_provider_model_for_settings(self):
+        return resolve_effective_provider_model(
+            self.app_instance,
+            settings_provider=self._provider_draft_value("provider"),
+            settings_model=self._provider_draft_value("model"),
+        )
+
+    def _provider_setting_values(self) -> dict[str, object]:
+        defaults = self._chat_defaults()
+        resolved = self._resolve_provider_model_for_settings()
+        return {
+            "provider": str(resolved.provider or "").strip(),
+            "model": str(resolved.model or "").strip(),
+            "streaming": coerce_bool_setting(
+                self._provider_draft_value("streaming")
+                if self._provider_draft_value("streaming") is not None
+                else defaults.get("streaming", True),
+                True,
+            ),
+            "temperature": self._provider_draft_value("temperature")
+            if self._provider_draft_value("temperature") is not None
+            else defaults.get("temperature", 0.7),
+        }
+
+    @staticmethod
+    def _normalise_temperature(value: object) -> float:
+        return float(str(value).strip())
+
+    def _provider_form_values_from_widgets(self) -> dict[str, object]:
+        provider = self.query_one("#settings-provider-value", Input).value.strip()
+        model = self.query_one("#settings-model-value", Input).value.strip()
+        streaming = coerce_bool_setting(
+            self.query_one("#settings-streaming-default", Input).value,
+            True,
+        )
+        temperature = self._normalise_temperature(
+            self.query_one("#settings-temperature-default", Input).value
+        )
+        return {
+            "provider": provider,
+            "model": model,
+            "streaming": streaming,
+            "temperature": temperature,
+        }
+
+    def _stage_provider_value(self, key: str, value: object) -> None:
+        category = SettingsCategoryId.PROVIDERS_MODELS
+        draft = self._settings_drafts.setdefault(category, SettingsDraft(category=category))
+        original = self._chat_defaults().get(key)
+        draft.set_value(key, original, value)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    @staticmethod
+    def _provider_key_env_name(provider: str) -> str | None:
+        provider_key = provider.strip().lower()
+        if provider_key == "openai":
+            return "OPENAI_API_KEY"
+        if provider_key == "anthropic":
+            return "ANTHROPIC_API_KEY"
+        if provider_key == "cohere":
+            return "COHERE_API_KEY"
+        if provider_key == "mistral":
+            return "MISTRAL_API_KEY"
+        return None
+
+    @staticmethod
+    def _provider_endpoint_summary(provider: str, config: dict) -> str:
+        provider_key = provider.strip()
+        provider_config = config.get(provider_key, {}) if isinstance(config, dict) else {}
+        if not isinstance(provider_config, dict):
+            provider_config = {}
+        endpoint = (
+            provider_config.get("api_base")
+            or provider_config.get("base_url")
+            or provider_config.get("api_url")
+            or provider_config.get("endpoint")
+        )
+        if endpoint:
+            return f"Endpoint: {endpoint}"
+        if provider_key.lower() in {"llama_cpp", "ollama", "koboldcpp", "local"}:
+            return "Endpoint: local/default or provider-specific config"
+        return "Endpoint: provider default"
+
+    def _provider_key_status(self, provider: str) -> str:
+        env_name = self._provider_key_env_name(provider)
+        if env_name is None:
+            return "API key: not required for this provider"
+        if os.environ.get(env_name):
+            return f"{env_name}=<redacted>"
+        return f"{env_name}=missing"
+
+    def _run_provider_readiness_test(self) -> str:
+        try:
+            values = self._provider_form_values_from_widgets()
+        except QueryError:
+            values = self._provider_setting_values()
+        provider = str(values.get("provider") or "").strip()
+        model = str(values.get("model") or "").strip()
+
+        findings: list[str] = ["Provider test"]
+        if not provider:
+            findings.append("provider=missing")
+        else:
+            findings.append(f"provider={provider}")
+        if not model:
+            findings.append("model=missing")
+        else:
+            findings.append(f"model={model}")
+
+        env_name = self._provider_key_env_name(provider)
+        if env_name is not None:
+            raw_value = os.environ.get(env_name)
+            findings.append(f"{env_name}={raw_value if raw_value else 'missing'}")
+        else:
+            findings.append("api_key=not required")
+
+        if provider.lower() in {"llama_cpp", "ollama", "koboldcpp", "local"}:
+            findings.append("network=not checked")
+
+        status = "ready" if provider and model else "blocked"
+        findings.append(f"status={status}")
+        return redact_secret_text(" | ".join(findings))
+
+    def _update_provider_test_result(self) -> None:
+        try:
+            self.query_one("#settings-provider-test-result", Static).update(self._provider_test_result)
+        except QueryError:
+            pass
 
     def _render_category_buttons(self) -> ComposeResult:
         for summary in self._category_summaries():
@@ -281,14 +431,55 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Diagnostics: validate config before saving raw TOML changes.")
 
     def _render_provider_detail(self) -> ComposeResult:
-        resolved = resolve_effective_provider_model(self.app_instance)
+        resolved = self._resolve_provider_model_for_settings()
+        values = self._provider_setting_values()
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
         yield Static("Providers & Models", classes="destination-section settings-column-title")
         with Vertical(id="settings-providers-models-card", classes="settings-focus-card"):
             yield Static("Provider readiness", classes="destination-section")
             yield Static(self._provider_readiness_label())
+            yield Static(f"Source: {resolved.provider_source}")
             yield Static(f"Provider source: {resolved.provider_source}")
             yield Static(f"Model source: {resolved.model_source}")
             yield Static("Changes here will share the same provider/model resolution path as Console.")
+            yield Static("Provider", classes="destination-section")
+            yield Input(
+                value=str(values["provider"]),
+                id="settings-provider-value",
+                placeholder="Provider, e.g. OpenAI or llama_cpp",
+            )
+            yield Static("Model", classes="destination-section")
+            yield Input(
+                value=str(values["model"]),
+                id="settings-model-value",
+                placeholder="Model name",
+            )
+            yield Static("Streaming default", classes="destination-section")
+            yield Input(
+                value=str(values["streaming"]).lower(),
+                id="settings-streaming-default",
+                placeholder="true or false",
+            )
+            yield Static("Temperature default", classes="destination-section")
+            yield Input(
+                value=str(values["temperature"]),
+                id="settings-temperature-default",
+                placeholder="0.0 - 2.0",
+            )
+            yield Static(
+                self._provider_endpoint_summary(str(values["provider"]), app_config),
+                id="settings-provider-endpoint",
+            )
+            yield Static(
+                self._provider_key_status(str(values["provider"])),
+                id="settings-provider-key-status",
+            )
+            yield Button(
+                "Test Provider",
+                id="settings-test-provider",
+                tooltip="Run a local, non-network readiness check for this provider configuration.",
+            )
+            yield Static(self._provider_test_result, id="settings-provider-test-result")
 
     def _render_console_behavior_card(self, *, compact: bool = False) -> ComposeResult:
         with Vertical(id="settings-console-behavior-card", classes="settings-secondary-card"):
@@ -486,6 +677,30 @@ class SettingsScreen(BaseAppScreen):
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
+    @on(Input.Changed, "#settings-provider-value")
+    def handle_provider_value_changed(self, event: Input.Changed) -> None:
+        self._stage_provider_value("provider", event.value.strip())
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Input.Changed, "#settings-model-value")
+    def handle_model_value_changed(self, event: Input.Changed) -> None:
+        self._stage_provider_value("model", event.value.strip())
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Input.Changed, "#settings-streaming-default")
+    def handle_streaming_default_changed(self, event: Input.Changed) -> None:
+        self._stage_provider_value("streaming", coerce_bool_setting(event.value, True))
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Input.Changed, "#settings-temperature-default")
+    def handle_temperature_default_changed(self, event: Input.Changed) -> None:
+        try:
+            value = self._normalise_temperature(event.value)
+        except ValueError:
+            value = event.value
+        self._stage_provider_value("temperature", value)
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
     @on(Button.Pressed, "#settings-save-category")
     def handle_save_category(self, event: Button.Pressed) -> None:
         event.stop()
@@ -496,8 +711,38 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self.action_settings_revert_category()
 
+    @on(Button.Pressed, "#settings-test-provider")
+    def handle_test_provider(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_settings_test_category()
+
     def action_settings_save_category(self) -> None:
         category = self._active_category_id()
+        if category is SettingsCategoryId.PROVIDERS_MODELS:
+            try:
+                values = self._provider_form_values_from_widgets()
+            except ValueError:
+                self.app.notify("Temperature must be a number.", severity="error")
+                return
+            defaults = self._chat_defaults()
+            dirty_values = {
+                key: value
+                for key, value in values.items()
+                if defaults.get(key) != value
+            }
+            if not dirty_values:
+                self.app.notify("No Settings changes to save.", severity="information")
+                return
+            saved = SettingsConfigAdapter().save_values("chat_defaults", values)
+            if saved:
+                defaults.update(values)
+                self._settings_drafts.pop(category, None)
+                self._update_draft_status_widgets(category)
+                self.app.notify("Provider and model settings saved.", severity="information")
+            else:
+                self.app.notify("Failed to save provider and model settings.", severity="error")
+            return
+
         draft = self._settings_drafts.get(category)
         if not draft or not draft.is_dirty:
             self.app.notify("No Settings changes to save.", severity="information")
@@ -525,11 +770,26 @@ class SettingsScreen(BaseAppScreen):
         self._settings_drafts.pop(category, None)
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             self._sync_console_behavior_widgets()
+        elif category is SettingsCategoryId.PROVIDERS_MODELS:
+            values = self._provider_setting_values()
+            try:
+                self.query_one("#settings-provider-value", Input).value = str(values["provider"])
+                self.query_one("#settings-model-value", Input).value = str(values["model"])
+                self.query_one("#settings-streaming-default", Input).value = str(values["streaming"]).lower()
+                self.query_one("#settings-temperature-default", Input).value = str(values["temperature"])
+            except QueryError:
+                pass
+            self._update_draft_status_widgets(category)
         else:
             self._update_draft_status_widgets(category)
         self.app.notify("Settings category changes reverted.", severity="information")
 
     def action_settings_test_category(self) -> None:
+        if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
+            self._provider_test_result = self._run_provider_readiness_test()
+            self._update_provider_test_result()
+            self.app.notify("Provider test finished.", severity="information")
+            return
         self.app.notify("No test action is available for this Settings category yet.", severity="warning")
 
     def _sync_console_behavior_widgets(self) -> None:
@@ -562,7 +822,10 @@ class SettingsScreen(BaseAppScreen):
             return
         if event.key == "enter":
             focused = self.app.focused
-            if isinstance(focused, Button) and focused.id == "settings-console-collapse-large-pastes-toggle":
+            if isinstance(focused, Button) and focused.id in {
+                "settings-console-collapse-large-pastes-toggle",
+                "settings-test-provider",
+            }:
                 focused.press()
                 event.stop()
                 event.prevent_default()
