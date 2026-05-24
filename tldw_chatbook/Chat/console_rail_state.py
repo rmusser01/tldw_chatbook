@@ -34,8 +34,10 @@ _NEGATIVE_READINESS_TERMS = {
     "unavailable",
 }
 _POSITIVE_READINESS_TERMS = {
+    "attached",
     "available",
     "ready",
+    "retrieving",
     "staged",
 }
 
@@ -80,6 +82,15 @@ def _sanitize_key_part(value: Any) -> str:
     return sanitized or "global"
 
 
+def _sanitize_optional_key_part(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return _sanitize_key_part(text)
+
+
 def _build_persistence_key(workspace_id: str, scope_id: str) -> str:
     return f"{_PERSISTENCE_PREFIX}:{workspace_id}:{scope_id}"
 
@@ -102,8 +113,8 @@ def build_console_rail_preference_key(
         and session scopes are available.
     """
     workspace_scope = _sanitize_key_part(workspace_id)
-    conversation_scope = _sanitize_key_part(conversation_id) if conversation_id else ""
-    session_scope = _sanitize_key_part(session_id) if session_id else ""
+    conversation_scope = _sanitize_optional_key_part(conversation_id)
+    session_scope = _sanitize_optional_key_part(session_id)
 
     if conversation_scope:
         fallback_value = (
@@ -229,10 +240,19 @@ def _has_row_match(rows: tuple[Any, ...], candidates: set[str]) -> bool:
     return False
 
 
-def _has_row_readiness_match(rows: tuple[Any, ...], candidates: set[str]) -> bool:
+def _contains_any_term(text: str, terms: set[str]) -> bool:
+    tokens = set(re.findall(r"[a-z0-9]+", text))
+    return bool(tokens & terms)
+
+
+def _has_row_readiness_match(rows: tuple[Any, ...], category_terms: set[str]) -> bool:
     for row in rows:
         label, status, value, text = _row_text_parts(row)
-        category = label.lower()
+        category = " ".join(
+            part.lower()
+            for part in (label, status, value, text)
+            if part
+        )
         readiness = " ".join(
             part.lower()
             for part in (status, value, text)
@@ -240,11 +260,9 @@ def _has_row_readiness_match(rows: tuple[Any, ...], candidates: set[str]) -> boo
         )
         if not readiness or any(term in readiness for term in _NEGATIVE_READINESS_TERMS):
             continue
-        if any(candidate in readiness for candidate in candidates):
-            return True
         if (
-            any(candidate in category for candidate in candidates)
-            and any(term in readiness.split() for term in _POSITIVE_READINESS_TERMS)
+            any(term in category for term in category_terms)
+            and _contains_any_term(readiness, _POSITIVE_READINESS_TERMS)
         ):
             return True
     return False
@@ -284,7 +302,7 @@ def build_console_inspector_rail_badge(
     ):
         return "artifact"
 
-    if _has_row_readiness_match(inspector_rows, {"source", "rag", "staged"}):
+    if _has_row_readiness_match(inspector_rows, {"source", "rag"}):
         return "source"
 
     return ""

@@ -98,6 +98,40 @@ def test_console_rail_preference_key_covers_scope_fallbacks():
     assert global_key.fallback_value is None
 
 
+def test_console_rail_preference_key_treats_zero_scope_ids_as_present():
+    key = build_console_rail_preference_key(
+        workspace_id="workspace",
+        conversation_id=0,
+        session_id=0,
+    )
+    session_key = build_console_rail_preference_key(
+        workspace_id="workspace",
+        session_id=0,
+    )
+
+    assert key.value == "console_rail_state:workspace:0"
+    assert key.fallback_value == "console_rail_state:workspace:0"
+    assert session_key.value == "console_rail_state:workspace:0"
+
+
+def test_console_rail_preference_key_treats_whitespace_scope_ids_as_absent():
+    session_key = build_console_rail_preference_key(
+        workspace_id="workspace",
+        conversation_id="   ",
+        session_id=0,
+    )
+    global_key = build_console_rail_preference_key(
+        workspace_id="workspace",
+        conversation_id="   ",
+        session_id="\t",
+    )
+
+    assert session_key.value == "console_rail_state:workspace:0"
+    assert session_key.fallback_value is None
+    assert global_key.value == "console_rail_state:workspace:global"
+    assert global_key.fallback_value is None
+
+
 def test_console_context_rail_badge_prioritizes_available_context():
     assert build_console_context_rail_badge(staged_source_count=3) == "3 staged"
     assert (
@@ -232,6 +266,27 @@ def test_console_inspector_rail_badge_detects_positive_artifact_and_source_readi
             inspector_rows=(Row("RAG/source", value="staged from Library Search/RAG"),),
         )
         == "source"
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("RAG/source", value="staged"),),
+        )
+        == "source"
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("RAG/source", status="ready"),),
+        )
+        == "source"
+    )
+
+
+def test_console_inspector_rail_badge_does_not_treat_staged_as_source_category():
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("Review", value="staged"),),
+        )
+        == ""
     )
 
 
