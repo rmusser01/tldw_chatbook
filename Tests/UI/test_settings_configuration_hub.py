@@ -5,6 +5,14 @@ from textual.widgets import Select
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
 )
+from tldw_chatbook.UI.Screens.settings_config_adapter import (
+    SettingsConfigAdapter,
+    redact_secret_text,
+)
+from tldw_chatbook.UI.Screens.settings_config_models import (
+    SettingsCategoryId,
+    SettingsDraft,
+)
 
 
 def _app(
@@ -122,3 +130,29 @@ def test_effective_provider_model_ignores_textual_blank_select_provider_for_defa
 
     assert result.provider == "llama_cpp"
     assert result.provider_source == "chat_defaults"
+
+
+def test_settings_draft_tracks_dirty_values():
+    draft = SettingsDraft(category=SettingsCategoryId.CONSOLE_BEHAVIOR)
+    draft.set_value("collapse_large_pastes", True, False)
+
+    assert draft.is_dirty
+    assert draft.dirty_keys == {"collapse_large_pastes"}
+
+
+def test_redact_secret_text_removes_api_key_like_values():
+    text = "failed with OPENAI_API_KEY=sk-secret-token and token abc"
+
+    redacted = redact_secret_text(text)
+
+    assert "sk-secret-token" not in redacted
+    assert "OPENAI_API_KEY=<redacted>" in redacted
+
+
+def test_adapter_rejects_non_mapping_toml():
+    adapter = SettingsConfigAdapter()
+
+    result = adapter.validate_raw_toml('"not a mapping"')
+
+    assert not result.valid
+    assert "top-level TOML value must be a table" in result.message
