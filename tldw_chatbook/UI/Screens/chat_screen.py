@@ -1065,8 +1065,8 @@ class ChatScreen(BaseAppScreen):
                     id="console-left-rail",
                     classes="console-region destination-workbench-pane",
                 )
-                left_rail.styles.width = "6fr"
-                left_rail.styles.min_width = 48
+                left_rail.styles.width = "4fr"
+                left_rail.styles.min_width = 36
                 with left_rail:
                     staged_context_tray = ConsoleStagedContextTray(
                         staged_context_state,
@@ -1156,8 +1156,8 @@ class ChatScreen(BaseAppScreen):
                     id="console-run-inspector",
                     classes="console-region destination-workbench-pane",
                 )
-                run_inspector.styles.width = "4fr"
-                run_inspector.styles.min_width = 34
+                run_inspector.styles.width = "5fr"
+                run_inspector.styles.min_width = 40
                 with self._frame_console_region(run_inspector):
                     yield ConsoleRunInspector(
                         inspector_state,
@@ -2929,6 +2929,33 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             self._ensure_console_chat_controller().new_session()
             await self._sync_native_console_chat_ui()
+            return
+        if button_id and button_id.startswith("console-close-session-tab-"):
+            event.stop()
+            session_id = button_id.removeprefix("console-close-session-tab-")
+            store = self._ensure_console_chat_store()
+            try:
+                messages = store.messages_for_session(session_id)
+            except KeyError:
+                messages = []
+            if messages:
+                from ...Widgets.confirmation_dialog import ConfirmationDialog
+
+                async def _do_close() -> None:
+                    self._ensure_console_chat_controller().close_session(session_id)
+                    await self._sync_native_console_chat_ui()
+
+                dialog = ConfirmationDialog(
+                    title="Close Tab",
+                    message="This tab has messages that will be lost.\n\nClose it anyway?",
+                    confirm_label="Close",
+                    cancel_label="Keep",
+                    confirm_callback=_do_close,
+                )
+                self.app.push_screen(dialog)
+            else:
+                self._ensure_console_chat_controller().close_session(session_id)
+                await self._sync_native_console_chat_ui()
             return
         if button_id and button_id.startswith("console-session-tab-"):
             event.stop()

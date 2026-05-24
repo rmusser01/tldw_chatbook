@@ -113,6 +113,41 @@ class ConsoleChatStore:
         self.active_session_id = session.id
         return session
 
+    def close_session(self, session_id: str) -> ConsoleChatSession | None:
+        """Close a native Console session and activate a neighboring session.
+
+        Args:
+            session_id: Native Console session ID to close.
+
+        Returns:
+            The session activated after closing, or ``None`` when no sessions remain.
+        """
+        self._session_or_raise(session_id)
+        session_ids = list(self._sessions.keys())
+        closed_index = session_ids.index(session_id)
+
+        for message in self._messages_by_session.get(session_id, []):
+            self._message_session_index.pop(message.id, None)
+            self._stream_chunks_by_message.pop(message.id, None)
+            self._stream_materialized_counts.pop(message.id, None)
+            self._pending_persistence_message_ids.discard(message.id)
+
+        self._messages_by_session.pop(session_id, None)
+        self._sessions.pop(session_id, None)
+
+        if self.active_session_id != session_id:
+            return self._sessions.get(self.active_session_id or "")
+
+        remaining_sessions = list(self._sessions.values())
+        if not remaining_sessions:
+            self.active_session_id = None
+            return None
+
+        next_index = min(closed_index, len(remaining_sessions) - 1)
+        next_session = remaining_sessions[next_index]
+        self.active_session_id = next_session.id
+        return next_session
+
     def sessions(self) -> list[ConsoleChatSession]:
         """Return native Console sessions in creation order."""
         return list(self._sessions.values())

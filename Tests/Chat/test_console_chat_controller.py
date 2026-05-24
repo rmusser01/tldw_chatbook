@@ -423,6 +423,40 @@ async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk()
 
 
 @pytest.mark.asyncio
+async def test_close_streaming_session_stops_run_without_key_error():
+    class WaitingGateway(StreamingGateway):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages):
+            yield "partial"
+            self.started.set()
+            await self.release.wait()
+            yield "ignored"
+
+    gateway = WaitingGateway()
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    task = asyncio.create_task(controller.submit_draft("hello"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    session_id = store.active_session_id
+
+    assert session_id is not None
+    assert controller.run_state.status is ConsoleRunStatus.STREAMING
+
+    controller.close_session(session_id)
+    gateway.release.set()
+    result = await asyncio.wait_for(task, timeout=0.5)
+
+    assert result.accepted is True
+    assert result.visible_copy == "Session closed."
+    assert store.sessions() == []
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+
+
+@pytest.mark.asyncio
 async def test_submit_draft_marks_assistant_failed_when_stream_errors():
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)

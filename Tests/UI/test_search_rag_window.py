@@ -220,10 +220,8 @@ class TestSearchRAGWindow:
                 assert search_input.disabled is True
                 assert "Embeddings not available" in search_input.placeholder
                 assert search_button.disabled is True
-                assert (
-                    "Search/RAG requires optional embeddings dependencies"
-                    in str(search_button.tooltip)
-                )
+                assert "Search/RAG queries" in str(search_button.tooltip)
+                assert "Missing optional dependencies: embeddings_rag" in str(search_button.tooltip)
                 assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
                 assert window.is_searching is False
 

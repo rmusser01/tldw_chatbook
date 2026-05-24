@@ -112,6 +112,27 @@ class ConsoleChatController:
         """Activate an existing native Console session."""
         return self.store.switch_session(session_id)
 
+    def close_session(self, session_id: str) -> ConsoleChatSession | None:
+        """Close an existing native Console session.
+
+        Args:
+            session_id: Native Console session ID to close.
+
+        Returns:
+            The session activated after closing, or ``None`` when no sessions remain.
+        """
+        if self._active_stream_belongs_to_session(session_id):
+            self._stop_requested = True
+            if (
+                self._active_stream_task is not None
+                and self._active_stream_task is not asyncio.current_task()
+            ):
+                self._active_stream_task.cancel()
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.STOPPED, "Session closed.")
+            )
+        return self.store.close_session(session_id)
+
     def stop_active_run(self) -> bool:
         """Request the active stream to stop at the next safe boundary."""
         if self.run_state.status is not ConsoleRunStatus.STREAMING:
@@ -305,29 +326,45 @@ class ConsoleChatController:
                 if not chunk:
                     continue
                 if self._stop_requested:
+                    try:
+                        stopped = (
+                            self.store.mark_message_stopped(assistant_message_id)
+                            if not prepare_retry or retry_prepared
+                            else self.store.get_message(assistant_message_id)
+                        )
+                    except KeyError:
+                        return self._session_closed_result()
+                    self._set_run_state(
+                        ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
+                    )
+                    return ConsoleSubmitResult(True, True, stopped.content)
+                if prepare_retry and not retry_prepared:
+                    self.store.prepare_message_retry(assistant_message_id)
+                    retry_prepared = True
+                try:
+                    self.store.append_stream_chunk(assistant_message_id, chunk)
+                except KeyError:
+                    return self._session_closed_result()
+                if chunk:
+                    emitted_content = True
+            if self._stop_requested:
+                try:
                     stopped = (
                         self.store.mark_message_stopped(assistant_message_id)
                         if not prepare_retry or retry_prepared
                         else self.store.get_message(assistant_message_id)
                     )
-                    self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped."))
-                    return ConsoleSubmitResult(True, True, stopped.content)
-                if prepare_retry and not retry_prepared:
-                    self.store.prepare_message_retry(assistant_message_id)
-                    retry_prepared = True
-                self.store.append_stream_chunk(assistant_message_id, chunk)
-                if chunk:
-                    emitted_content = True
-            if self._stop_requested:
-                stopped = (
-                    self.store.mark_message_stopped(assistant_message_id)
-                    if not prepare_retry or retry_prepared
-                    else self.store.get_message(assistant_message_id)
+                except KeyError:
+                    return self._session_closed_result()
+                self._set_run_state(
+                    ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
                 )
-                self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped."))
                 return ConsoleSubmitResult(True, True, stopped.content)
             if not emitted_content:
-                failed = self.store.get_message(assistant_message_id)
+                try:
+                    failed = self.store.get_message(assistant_message_id)
+                except KeyError:
+                    return self._session_closed_result()
                 self._set_run_state(
                     ConsoleRunState(
                         ConsoleRunStatus.FAILED,
@@ -335,19 +372,32 @@ class ConsoleChatController:
                     )
                 )
                 if not prepare_retry:
-                    failed = self.store.mark_message_failed(assistant_message_id)
+                    try:
+                        failed = self.store.mark_message_failed(assistant_message_id)
+                    except KeyError:
+                        return self._session_closed_result()
                 return ConsoleSubmitResult(True, True, failed.content)
-            completed = self.store.mark_message_complete(assistant_message_id)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+            try:
+                completed = self.store.mark_message_complete(assistant_message_id)
+            except KeyError:
+                return self._session_closed_result()
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
+            )
             return ConsoleSubmitResult(True, True, completed.content)
         except asyncio.CancelledError:
             if self._stop_requested:
-                stopped = (
-                    self.store.mark_message_stopped(assistant_message_id)
-                    if not prepare_retry or retry_prepared
-                    else self.store.get_message(assistant_message_id)
+                try:
+                    stopped = (
+                        self.store.mark_message_stopped(assistant_message_id)
+                        if not prepare_retry or retry_prepared
+                        else self.store.get_message(assistant_message_id)
+                    )
+                except KeyError:
+                    return self._session_closed_result()
+                self._set_run_state(
+                    ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
                 )
-                self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped."))
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
         except Exception as exc:
@@ -355,13 +405,16 @@ class ConsoleChatController:
             if not prepare_retry or retry_prepared:
                 try:
                     self.store.append_stream_chunk(assistant_message_id, f"\n{visible_copy}")
-                except ValueError:
+                except (KeyError, ValueError):
                     pass
-            failed = (
-                self.store.mark_message_failed(assistant_message_id)
-                if not prepare_retry or retry_prepared
-                else self.store.get_message(assistant_message_id)
-            )
+            try:
+                failed = (
+                    self.store.mark_message_failed(assistant_message_id)
+                    if not prepare_retry or retry_prepared
+                    else self.store.get_message(assistant_message_id)
+                )
+            except KeyError:
+                return self._session_closed_result()
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
             return ConsoleSubmitResult(True, True, failed.content)
         finally:
@@ -410,6 +463,19 @@ class ConsoleChatController:
     def _set_run_state(self, run_state: ConsoleRunState) -> None:
         self.run_state = run_state
         self.run_state_history.append(run_state.status)
+
+    def _active_stream_belongs_to_session(self, session_id: str) -> bool:
+        if self._active_assistant_message_id is None:
+            return False
+        try:
+            return self.store.session_id_for_message(self._active_assistant_message_id) == session_id
+        except KeyError:
+            return False
+
+    def _session_closed_result(self) -> ConsoleSubmitResult:
+        visible_copy = "Session closed."
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy))
+        return ConsoleSubmitResult(True, True, visible_copy)
 
     def _active_run_rejection(self) -> ConsoleSubmitResult | None:
         if self.run_state.is_send_allowed:

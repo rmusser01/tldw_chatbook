@@ -618,3 +618,67 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
 
         assert store.active_session_id == first.id
         assert "Chat 1" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_strip_keeps_compact_close_x():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        close_selector = f"#console-close-session-tab-{first.id}"
+        await _wait_for_selector(console, pilot, close_selector)
+        close_button = console.query_one(close_selector, Button)
+
+        assert close_button.label.plain == "x"
+        assert 2 <= close_button.region.width <= 4
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        await _wait_for_selector(console, pilot, f"#console-close-session-tab-{second}")
+        await pilot.click(f"#console-close-session-tab-{second}")
+
+        assert store.active_session_id == first.id
+        assert second not in {session.id for session in store.sessions()}
+
+
+@pytest.mark.asyncio
+async def test_console_close_tab_with_messages_shows_confirmation():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+        store.create_session(title="Chat 2")
+        await console._sync_native_console_chat_ui()
+
+        close_selector = f"#console-close-session-tab-{session.id}"
+        await _wait_for_selector(console, pilot, close_selector)
+        await pilot.click(close_selector)
+
+        from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+        for _ in range(20):
+            await pilot.pause()
+            if any(isinstance(s, ConfirmationDialog) for s in host.screen_stack):
+                break
+
+        dialog_screens = [s for s in host.screen_stack if isinstance(s, ConfirmationDialog)]
+        assert len(dialog_screens) == 1, "confirmation dialog should appear for tab with messages"
+        assert session.id in {s.id for s in store.sessions()}, "session not closed yet"
+
+        await pilot.click("#confirm-button")
+        for _ in range(10):
+            await pilot.pause()
+
+        assert session.id not in {s.id for s in store.sessions()}, "session closed after confirm"
