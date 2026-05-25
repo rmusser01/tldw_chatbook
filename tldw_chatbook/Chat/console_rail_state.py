@@ -22,8 +22,13 @@ _WORKSPACE_FALLBACK_LABELS = {
     "default",
     "global",
     "no workspace",
+    "no workspace selected",
     "no-workspace",
     "no_workspace",
+    "workspace: local default",
+}
+_INACTIVE_STAGED_SUMMARIES = {
+    "no live work item is staged",
 }
 _NEGATIVE_READINESS_TERMS = {
     "blocked",
@@ -194,6 +199,15 @@ def _clean_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _normalized_inactive_text(value: Any) -> str:
+    return _clean_text(value).lower().rstrip(".")
+
+
+def _has_active_staged_summary(value: Any) -> bool:
+    normalized = _normalized_inactive_text(value)
+    return bool(normalized) and normalized not in _INACTIVE_STAGED_SUMMARIES
+
+
 def build_console_context_rail_badge(
     *,
     staged_source_count: Any = 0,
@@ -206,7 +220,7 @@ def build_console_context_rail_badge(
     if count > 0:
         return f"{count} staged"
 
-    if _clean_text(staged_summary):
+    if _has_active_staged_summary(staged_summary):
         return "staged"
 
     workspace_text = _clean_text(workspace_label)
@@ -249,11 +263,7 @@ def _contains_any_term(text: str, terms: set[str]) -> bool:
 def _has_row_readiness_match(rows: tuple[Any, ...], category_terms: set[str]) -> bool:
     for row in rows:
         label, status, value, text = _row_text_parts(row)
-        category = " ".join(
-            part.lower()
-            for part in (label, status, value, text)
-            if part
-        )
+        category = label.lower()
         readiness = " ".join(
             part.lower()
             for part in (status, value, text)

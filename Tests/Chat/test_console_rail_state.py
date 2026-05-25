@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 
-from tldw_chatbook.Chat.console_display_state import ConsoleInspectorState
+from tldw_chatbook.Chat.console_display_state import (
+    ConsoleInspectorState,
+    ConsoleStagedContextState,
+)
 from tldw_chatbook.Chat.console_rail_state import (
     ConsoleRailPreferences,
     build_console_context_rail_badge,
@@ -160,6 +163,31 @@ def test_console_context_rail_badge_ignores_workspace_fallback_labels():
         )
 
 
+def test_console_context_rail_badge_ignores_empty_staged_summary():
+    empty_summary = ConsoleStagedContextState.empty().summary
+
+    assert (
+        build_console_context_rail_badge(
+            staged_summary=empty_summary,
+            session_label="Conversation 1",
+        )
+        == "session"
+    )
+    assert build_console_context_rail_badge(staged_summary=empty_summary) == ""
+
+
+def test_console_context_rail_badge_ignores_default_workspace_display_labels():
+    for workspace_label in ("No workspace selected", "Workspace: Local Default"):
+        assert (
+            build_console_context_rail_badge(
+                workspace_label=workspace_label,
+                session_label="Conversation 1",
+            )
+            == "session"
+        )
+        assert build_console_context_rail_badge(workspace_label=workspace_label) == ""
+
+
 def test_console_inspector_rail_badge_prioritizes_run_and_review_state():
     assert build_console_inspector_rail_badge(run_status="failed") == "failed"
     assert (
@@ -297,6 +325,33 @@ def test_console_inspector_rail_badge_does_not_treat_staged_as_source_category()
             inspector_rows=(Row("Review", value="staged"),),
         )
         == ""
+    )
+
+
+def test_console_inspector_rail_badge_requires_label_category_for_artifact_and_source():
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("Review", value="source available"),),
+        )
+        == ""
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("Review", value="artifact available"),),
+        )
+        == ""
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("Artifacts", value="available"),),
+        )
+        == "artifact"
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("RAG/source", value="available"),),
+        )
+        == "source"
     )
 
 
