@@ -34,7 +34,11 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         workspace_context = console.query_one("#console-workspace-context")
         assert staged_context.region.y < workspace_context.region.y
         assert staged_context.region.x == workspace_context.region.x
-        assert staged_context.region.x == left_rail.region.x
+        assert staged_context.region.x >= left_rail.region.x
+        assert (
+            staged_context.region.x + staged_context.region.width
+            <= left_rail.region.x + left_rail.region.width
+        )
         assert staged_context.region.width == workspace_context.region.width
         assert workspace_context.region.height > staged_context.region.height
         workspace_recovery = console.query_one("#console-workspace-recovery")

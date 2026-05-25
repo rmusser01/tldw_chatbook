@@ -140,6 +140,10 @@ class ConsoleChatController:
         if self._active_assistant_message_id is None:
             return False
         self._stop_requested = True
+        self._mark_stream_stopped(
+            self._active_assistant_message_id,
+            visible_copy="Response stopped.",
+        )
         if self._active_stream_task is not None and self._active_stream_task is not asyncio.current_task():
             self._active_stream_task.cancel()
         return True
@@ -327,16 +331,14 @@ class ConsoleChatController:
                     continue
                 if self._stop_requested:
                     try:
-                        stopped = (
-                            self.store.mark_message_stopped(assistant_message_id)
-                            if not prepare_retry or retry_prepared
-                            else self.store.get_message(assistant_message_id)
+                        stopped = self._mark_stream_stopped(
+                            assistant_message_id,
+                            visible_copy="Response stopped.",
+                            prepare_retry=prepare_retry,
+                            retry_prepared=retry_prepared,
                         )
                     except KeyError:
                         return self._session_closed_result()
-                    self._set_run_state(
-                        ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
-                    )
                     return ConsoleSubmitResult(True, True, stopped.content)
                 if prepare_retry and not retry_prepared:
                     self.store.prepare_message_retry(assistant_message_id)
@@ -349,16 +351,14 @@ class ConsoleChatController:
                     emitted_content = True
             if self._stop_requested:
                 try:
-                    stopped = (
-                        self.store.mark_message_stopped(assistant_message_id)
-                        if not prepare_retry or retry_prepared
-                        else self.store.get_message(assistant_message_id)
+                    stopped = self._mark_stream_stopped(
+                        assistant_message_id,
+                        visible_copy="Response stopped.",
+                        prepare_retry=prepare_retry,
+                        retry_prepared=retry_prepared,
                     )
                 except KeyError:
                     return self._session_closed_result()
-                self._set_run_state(
-                    ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
-                )
                 return ConsoleSubmitResult(True, True, stopped.content)
             if not emitted_content:
                 try:
@@ -388,16 +388,14 @@ class ConsoleChatController:
         except asyncio.CancelledError:
             if self._stop_requested:
                 try:
-                    stopped = (
-                        self.store.mark_message_stopped(assistant_message_id)
-                        if not prepare_retry or retry_prepared
-                        else self.store.get_message(assistant_message_id)
+                    stopped = self._mark_stream_stopped(
+                        assistant_message_id,
+                        visible_copy="Response stopped.",
+                        prepare_retry=prepare_retry,
+                        retry_prepared=retry_prepared,
                     )
                 except KeyError:
                     return self._session_closed_result()
-                self._set_run_state(
-                    ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
-                )
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
         except Exception as exc:
@@ -459,6 +457,27 @@ class ConsoleChatController:
             if message.id == message_id:
                 break
         return messages
+
+    def _mark_stream_stopped(
+        self,
+        assistant_message_id: str,
+        *,
+        visible_copy: str,
+        prepare_retry: bool = False,
+        retry_prepared: bool = True,
+    ) -> ConsoleChatMessage:
+        """Mark a streaming assistant message stopped, tolerating an earlier stop request."""
+        if prepare_retry and not retry_prepared:
+            stopped = self.store.get_message(assistant_message_id)
+        else:
+            try:
+                stopped = self.store.mark_message_stopped(assistant_message_id)
+            except ValueError:
+                stopped = self.store.get_message(assistant_message_id)
+                if stopped.status != "stopped":
+                    raise
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy))
+        return stopped
 
     def _set_run_state(self, run_state: ConsoleRunState) -> None:
         self.run_state = run_state

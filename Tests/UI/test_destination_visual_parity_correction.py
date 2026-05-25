@@ -181,6 +181,15 @@ def _visible_button_labels(screen) -> set[str]:
     return {str(button.label) for button in screen.query(Button) if button.display}
 
 
+def _is_effectively_displayed(widget) -> bool:
+    current = widget
+    while current is not None:
+        if current.display is False or current.styles.display == "none":
+            return False
+        current = getattr(current, "parent", None)
+    return True
+
+
 class StaticArtifactsChatbookService:
     def __init__(self, chatbooks):
         self.chatbooks = tuple(chatbooks)
@@ -270,24 +279,36 @@ async def test_home_dashboard_regions_fit_default_viewport():
 
 
 @pytest.mark.asyncio
-async def test_console_uses_three_pane_workbench_and_visible_composer():
+async def test_console_first_start_shows_left_rail_main_and_right_handle():
     app = _build_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-grid")
         _assert_strip_compact(console, "#console-control-bar", max_height=3)
-        _assert_ascii_workbench_contract(
-            console,
-            workbench="#console-workspace-grid",
-            panes=("#console-left-rail", "#console-main-column", "#console-run-inspector"),
-            actions=("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
-            height=42,
-        )
-        assert console.query_one("#console-staged-context-tray")
-        assert console.query_one("#console-workspace-context")
+        workbench = console.query_one("#console-workspace-grid")
+        left_rail = console.query_one("#console-left-rail")
+        main_column = console.query_one("#console-main-column")
+        right_rail = console.query_one("#console-right-rail")
+        right_handle = console.query_one("#console-inspector-rail-handle")
         transcript = console.query_one("#console-session-surface")
         composer = console.query_one("#console-native-composer")
+
+        assert workbench.region.y <= 12, f"Console workbench starts too low: {workbench.region}"
+        _assert_visible_in_viewport(workbench, height=42, context="Console workbench")
+        assert _is_effectively_displayed(left_rail)
+        assert _is_effectively_displayed(main_column)
+        assert not _is_effectively_displayed(right_rail)
+        assert _is_effectively_displayed(right_handle)
+        assert left_rail.region.x < main_column.region.x < right_handle.region.x
+        assert left_rail.region.height >= 20
+        assert main_column.region.height >= 20
+        assert right_handle.region.height >= 20
+        _assert_visible_in_viewport(left_rail, height=42, context="Console left rail")
+        _assert_visible_in_viewport(main_column, height=42, context="Console main column")
+        _assert_visible_in_viewport(right_handle, height=42, context="Console right handle")
+        assert console.query_one("#console-staged-context-tray")
+        assert console.query_one("#console-workspace-context")
         _assert_visible_in_viewport(transcript, height=42, context="Console transcript")
         _assert_visible_in_viewport(composer, height=42, context="Console composer")
 

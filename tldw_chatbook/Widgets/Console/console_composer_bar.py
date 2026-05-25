@@ -12,7 +12,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
-from textual.events import Click
+from textual.events import Click, DescendantBlur, DescendantFocus
 from textual.widgets import Button, Input, Static
 
 from ...config import coerce_bool_setting
@@ -72,6 +72,9 @@ class ConsoleComposerBar(Horizontal):
         self.collapse_large_pastes = coerce_bool_setting(collapse_large_pastes, True)
         self._segments: list[_DraftSegment] = []
         self._segments_initialized = False
+        self._run_active = False
+        self._send_blocked = False
+        self._can_save_chatbook = False
 
     @property
     def collapse_large_pastes_enabled(self) -> bool:
@@ -162,6 +165,96 @@ class ConsoleComposerBar(Horizontal):
             self.query_one("#console-command-input", Input).value = self._canonical_draft_text()
         except NoMatches:
             return
+
+    def _sync_interaction_classes(self) -> None:
+        """Mirror focus-within and draft presence onto stable CSS state classes."""
+        has_draft = (
+            any(segment.text for segment in self._segments)
+            if self._segments_initialized
+            else bool(self.draft_text())
+        )
+        self.set_class(self.has_focus_within, "console-composer-focused")
+        self.set_class(has_draft, "console-composer-has-draft")
+
+    def _sync_current_action_state(self) -> None:
+        """Refresh action buttons from the current draft and cached run/save state."""
+        self.sync_action_state(
+            has_draft=bool(self.draft_text().strip()),
+            run_active=self._run_active,
+            can_save_chatbook=self._can_save_chatbook,
+            send_blocked=self._send_blocked,
+        )
+
+    def sync_action_state(
+        self,
+        *,
+        has_draft: bool,
+        run_active: bool,
+        can_save_chatbook: bool,
+        send_blocked: bool = False,
+    ) -> None:
+        """Refresh composer action priority and disabled state.
+
+        Args:
+            has_draft: Whether the canonical draft has non-whitespace content.
+            run_active: Whether a Console run is currently stoppable.
+            can_save_chatbook: Whether a Chatbook artifact is available to save.
+            send_blocked: Whether the current run state blocks new sends.
+        """
+        has_draft = bool(has_draft)
+        run_active = bool(run_active)
+        can_save_chatbook = bool(can_save_chatbook)
+        send_blocked = bool(send_blocked)
+        self._run_active = run_active
+        self._send_blocked = send_blocked
+        self._can_save_chatbook = can_save_chatbook
+
+        try:
+            send_button = self.query_one("#console-send-message", Button)
+            stop_button = self.query_one("#console-stop-generation", Button)
+            save_button = self.query_one("#console-save-chatbook", Button)
+        except NoMatches:
+            return
+
+        send_ready = has_draft and not send_blocked
+        send_button.disabled = False
+        send_button.variant = "primary" if send_ready else "default"
+        if send_blocked:
+            send_button.tooltip = "Wait for the active Console run to finish before sending."
+        elif has_draft:
+            send_button.tooltip = "Send the active Console session draft."
+        else:
+            send_button.tooltip = "Type a message before sending."
+        send_button.set_class(send_ready, "console-action-primary")
+        send_button.set_class(not send_ready, "console-action-subdued")
+        send_button.set_class(send_blocked, "console-action-disabled")
+        send_button.set_class(send_ready, "console-send-ready")
+        send_button.set_class(not has_draft, "console-send-inactive")
+        send_button.set_class(send_blocked, "console-send-blocked")
+
+        stop_button.disabled = False
+        stop_button.variant = "warning" if run_active else "default"
+        stop_button.tooltip = (
+            "Stop generation in the active Console session."
+            if run_active
+            else "No active Console run to stop."
+        )
+        stop_button.set_class(run_active, "console-stop-active")
+        stop_button.set_class(not run_active, "console-stop-idle")
+        stop_button.set_class(not run_active, "console-action-disabled")
+
+        save_button.disabled = False
+        save_button.variant = "default"
+        save_button.tooltip = (
+            "Open the available Chatbook artifact in Artifacts."
+            if can_save_chatbook
+            else "No Chatbook artifact is available to save yet."
+        )
+        save_button.set_class(True, "console-action-secondary")
+        save_button.set_class(True, "console-save-chatbook-secondary")
+        save_button.set_class(can_save_chatbook, "console-save-chatbook-ready")
+        save_button.set_class(not can_save_chatbook, "console-action-subdued")
+        save_button.set_class(not can_save_chatbook, "console-action-disabled")
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
@@ -354,9 +447,23 @@ class ConsoleComposerBar(Horizontal):
 
     def on_mount(self) -> None:
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
 
     def on_resize(self, event: Any) -> None:
         self._refresh_visible_draft()
+
+    def on_focus(self) -> None:
+        self._sync_interaction_classes()
+
+    def on_blur(self) -> None:
+        self._sync_interaction_classes()
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        self._sync_interaction_classes()
+
+    def on_descendant_blur(self, event: DescendantBlur) -> None:
+        self._sync_interaction_classes()
 
     def load_draft(self, text: str) -> None:
         """Replace the native Console draft with literal text."""
@@ -364,6 +471,8 @@ class ConsoleComposerBar(Horizontal):
         self._segments_initialized = True
         self._sync_hidden_input()
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
 
     def clear_draft(self) -> None:
         """Clear the native Console draft without falling back to stale input."""
@@ -371,10 +480,14 @@ class ConsoleComposerBar(Horizontal):
         self._segments_initialized = True
         self._sync_hidden_input()
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
 
     def insert_text(self, text: str) -> None:
         """Append user-entered text to the Console draft as literal text."""
         if not text:
+            self._sync_interaction_classes()
+            self._sync_current_action_state()
             return
         if not self._segments_initialized:
             existing = self.draft_text()
@@ -384,10 +497,14 @@ class ConsoleComposerBar(Horizontal):
         self._append_literal_segment(text)
         self._sync_hidden_input()
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
 
     def insert_pasted_text(self, text: str) -> None:
         """Append pasted text, collapsing only large inserted chunks for display."""
         if not text:
+            self._sync_interaction_classes()
+            self._sync_current_action_state()
             return
         if not self._segments_initialized:
             existing = self.draft_text()
@@ -404,6 +521,8 @@ class ConsoleComposerBar(Horizontal):
             self._append_literal_segment(text)
         self._sync_hidden_input()
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
 
     def delete_left(self) -> None:
         """Delete the last draft character for simple terminal-style editing."""
@@ -411,6 +530,8 @@ class ConsoleComposerBar(Horizontal):
             self.load_draft(self.draft_text()[:-1])
             return
         if not self._segments:
+            self._sync_interaction_classes()
+            self._sync_current_action_state()
             return
 
         last_segment = self._segments[-1]
@@ -418,6 +539,8 @@ class ConsoleComposerBar(Horizontal):
             self._segments.pop()
             self._sync_hidden_input()
             self._refresh_visible_draft()
+            self._sync_interaction_classes()
+            self._sync_current_action_state()
             return
 
         last_segment.text = last_segment.text[:-1]
@@ -425,6 +548,8 @@ class ConsoleComposerBar(Horizontal):
             self._segments.pop()
         self._sync_hidden_input()
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
 
     def _reset_pending_unfurl_state(self) -> bool:
         """Reset pending paste unfurl confirmations without refreshing display."""

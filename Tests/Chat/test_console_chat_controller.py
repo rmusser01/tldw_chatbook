@@ -314,6 +314,10 @@ async def test_stop_active_run_marks_assistant_message_stopped():
     await asyncio.sleep(0)
 
     assert controller.stop_active_run() is True
+    messages = store.messages_for_session(store.active_session_id)
+    assert messages[-1].content == "partial"
+    assert messages[-1].status == "stopped"
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
 
     gateway.release.set()
     result = await task

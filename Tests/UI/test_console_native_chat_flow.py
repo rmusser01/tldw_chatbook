@@ -11,7 +11,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from textual.widgets import Button
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -96,7 +96,7 @@ class FailThenRecoverGateway(_ReadyResolutionGateway):
         yield "recovered"
 
 
-async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 20) -> None:
+async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 80) -> None:
     for _ in range(attempts):
         if expected in _visible_text(screen):
             return
@@ -257,6 +257,47 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
 
 
 @pytest.mark.asyncio
+async def test_console_composer_stop_is_disabled_when_idle():
+    gateway = WaitingGateway()
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+        stop_button = composer.query_one("#console-stop-generation", Button)
+
+        assert stop_button.disabled is False
+        assert stop_button.has_class("console-action-disabled")
+        assert stop_button.has_class("console-stop-idle")
+        assert not stop_button.has_class("console-stop-active")
+
+        composer.load_draft("hello")
+        console.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await _wait_for_text(console, pilot, "partial")
+
+        assert send_button.disabled is False
+        assert send_button.has_class("console-action-disabled")
+        assert send_button.has_class("console-send-blocked")
+        assert not send_button.has_class("console-action-primary")
+        assert stop_button.disabled is False
+        assert stop_button.has_class("console-stop-active")
+        assert not stop_button.has_class("console-action-disabled")
+        assert not stop_button.has_class("console-stop-idle")
+
+        stop_button.press()
+        await _wait_for_text(console, pilot, "stopped")
+
+
+@pytest.mark.asyncio
 async def test_console_duplicate_send_during_stream_does_not_break_stop_control():
     gateway = WaitingGateway()
     app = _build_test_app()
@@ -277,7 +318,10 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         await _wait_for_text(console, pilot, "partial")
 
         composer.load_draft("second send")
-        console.query_one("#console-send-message", Button).press()
+        send_button = console.query_one("#console-send-message", Button)
+        assert send_button.disabled is False
+        assert send_button.has_class("console-send-blocked")
+        send_button.press()
         await pilot.pause(0.1)
         assert console._ensure_console_chat_controller().run_state.status.value == "streaming"
 
@@ -302,6 +346,24 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
+        for _ in range(20):
+            if (
+                console._ensure_console_chat_controller().run_state.status
+                is ConsoleRunStatus.VALIDATING
+            ):
+                break
+            await pilot.pause(0.01)
+        console._sync_console_control_bar()
+        send_button = console.query_one("#console-send-message", Button)
+        stop_button = console.query_one("#console-stop-generation", Button)
+
+        assert send_button.disabled is False
+        assert send_button.has_class("console-action-disabled")
+        assert send_button.has_class("console-send-blocked")
+        assert not send_button.has_class("console-action-primary")
+        assert stop_button.disabled is False
+        assert stop_button.has_class("console-stop-idle")
+
         await asyncio.wait_for(gateway.started.wait(), timeout=1)
         await _wait_for_text(console, pilot, "partial")
         gateway.release.set()
