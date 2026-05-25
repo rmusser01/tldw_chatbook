@@ -60,11 +60,14 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkStatusCardState,
 )
 from ...Chat.console_rail_state import (
+    ConsoleRailPreferences,
     ConsoleRailState,
     build_console_rail_preference_key,
     build_console_rail_state,
+    coerce_console_rail_preferences,
+    serialize_console_rail_preferences,
 )
-from ...config import coerce_bool_setting
+from ...config import coerce_bool_setting, save_setting_to_cli_config
 from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
@@ -266,6 +269,30 @@ class ChatScreen(BaseAppScreen):
         if not _is_empty_select_value(event.value):
             self._console_control_model = str(event.value)
         self._sync_console_control_bar()
+
+    @on(Button.Pressed, "#console-context-rail-collapse")
+    def on_console_context_rail_collapse(self, event: Button.Pressed) -> None:
+        """Collapse the Console context rail and persist the preference."""
+        event.stop()
+        self._set_console_rail_preference(left_open=False)
+
+    @on(Button.Pressed, "#console-context-rail-open")
+    def on_console_context_rail_open(self, event: Button.Pressed) -> None:
+        """Open the Console context rail and persist the preference."""
+        event.stop()
+        self._set_console_rail_preference(left_open=True)
+
+    @on(Button.Pressed, "#console-inspector-rail-collapse")
+    def on_console_inspector_rail_collapse(self, event: Button.Pressed) -> None:
+        """Collapse the Console inspector rail and persist the preference."""
+        event.stop()
+        self._set_console_rail_preference(right_open=False)
+
+    @on(Button.Pressed, "#console-inspector-rail-open")
+    def on_console_inspector_rail_open(self, event: Button.Pressed) -> None:
+        """Open the Console inspector rail and persist the preference."""
+        event.stop()
+        self._set_console_rail_preference(right_open=True)
     
     
     # Reactive property for sidebar state persistence
@@ -592,6 +619,57 @@ class ChatScreen(BaseAppScreen):
             return rail_state_config[fallback_key]
         return None
 
+    def _persist_console_rail_preferences(
+        self,
+        key: str,
+        preferences: ConsoleRailPreferences,
+        *,
+        notify_on_failure: bool = False,
+    ) -> bool:
+        """Best-effort persistence for an already-updated in-memory preference."""
+        serialized = serialize_console_rail_preferences(preferences)
+        try:
+            saved = save_setting_to_cli_config(
+                "console.rail_state",
+                key,
+                serialized,
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist Console rail preference: {}", exc)
+            saved = False
+        if not saved and notify_on_failure:
+            self.app_instance.notify(
+                "Console rail preference is saved for this session only.",
+                severity="warning",
+            )
+        return bool(saved)
+
+    def _migrate_console_rail_fallback_preferences(
+        self,
+        key: str,
+        fallback_key: str | None,
+    ) -> None:
+        """Copy temporary session rail preferences to a durable key when needed."""
+        if not fallback_key:
+            return
+        rail_state_config = self._console_rail_state_config()
+        if key in rail_state_config or fallback_key not in rail_state_config:
+            return
+        preferences = coerce_console_rail_preferences(rail_state_config[fallback_key])
+        rail_state_config[key] = serialize_console_rail_preferences(preferences)
+        self._persist_console_rail_preferences(
+            key,
+            preferences,
+            notify_on_failure=False,
+        )
+
+    def _current_console_session_id(self) -> Optional[str]:
+        """Return a durable external Console session scope when one is available."""
+        session_id = getattr(self.app_instance, "console_rail_session_id", None)
+        if session_id:
+            return str(session_id)
+        return None
+
     def _console_rail_available_columns(self) -> int | None:
         """Return available screen width for responsive rail state."""
         width = getattr(getattr(self, "size", None), "width", None)
@@ -633,7 +711,11 @@ class ChatScreen(BaseAppScreen):
         preference_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
             conversation_id=self._current_console_conversation_id(),
-            session_id=active_session_id,
+            session_id=self._current_console_session_id(),
+        )
+        self._migrate_console_rail_fallback_preferences(
+            preference_key.value,
+            preference_key.fallback_value,
         )
         return build_console_rail_state(
             preference_key=preference_key,
@@ -652,6 +734,74 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=inspector_state.can_save_chatbook,
             available_columns=self._console_rail_available_columns(),
         )
+
+    def _sync_console_rail_visibility(self, rail_state: ConsoleRailState) -> None:
+        """Apply Console rail visibility without recomposing the screen."""
+        targets = (
+            ("#console-left-rail", rail_state.left_open),
+            ("#console-context-rail-handle", not rail_state.left_open),
+            ("#console-right-rail", rail_state.right_open),
+            ("#console-inspector-rail-handle", not rail_state.right_open),
+        )
+        for selector, visible in targets:
+            try:
+                widget = self.query_one(selector)
+            except QueryError:
+                continue
+            widget.styles.display = "block" if visible else "none"
+            widget.display = visible
+
+        self.refresh(layout=True)
+
+    def _current_console_rail_state(self) -> ConsoleRailState:
+        """Build the current effective rail state from mounted Console context."""
+        pending_launch = self._pending_console_launch_context
+        staged_context_state = self._build_console_staged_context_state(pending_launch)
+        inspector_state = self._build_console_inspector_state(pending_launch)
+        workspace_context_state = self._build_console_workspace_context_state()
+        return self._build_console_rail_state(
+            staged_context_state=staged_context_state,
+            inspector_state=inspector_state,
+            workspace_context_state=workspace_context_state,
+        )
+
+    def _set_console_rail_preference(
+        self,
+        *,
+        left_open: bool | None = None,
+        right_open: bool | None = None,
+        notify_on_failure: bool = True,
+    ) -> ConsoleRailState:
+        """Persist requested Console rail preference changes and return new state."""
+        workspace_context = self._current_console_workspace_context()
+        preference_key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            conversation_id=self._current_console_conversation_id(),
+            session_id=self._current_console_session_id(),
+        )
+        self._migrate_console_rail_fallback_preferences(
+            preference_key.value,
+            preference_key.fallback_value,
+        )
+        rail_state_config = self._console_rail_state_config()
+        current = coerce_console_rail_preferences(
+            rail_state_config.get(preference_key.value)
+        )
+        next_preferences = ConsoleRailPreferences(
+            left_open=current.left_open if left_open is None else bool(left_open),
+            right_open=current.right_open if right_open is None else bool(right_open),
+        )
+        rail_state_config[preference_key.value] = serialize_console_rail_preferences(
+            next_preferences
+        )
+        self._persist_console_rail_preferences(
+            preference_key.value,
+            next_preferences,
+            notify_on_failure=notify_on_failure,
+        )
+        rail_state = self._current_console_rail_state()
+        self._sync_console_rail_visibility(rail_state)
+        return rail_state
 
     def _sync_console_workspace_context(
         self,
@@ -1197,13 +1347,18 @@ class ChatScreen(BaseAppScreen):
                     left_rail.styles.display = "none"
                 with left_rail:
                     with Horizontal(classes="console-rail-header"):
-                        yield Static("Context")
-                        yield Button(
+                        rail_label = Static("Context")
+                        rail_label.styles.width = "1fr"
+                        yield rail_label
+                        collapse_button = Button(
                             "Hide",
                             id="console-context-rail-collapse",
                             classes="console-rail-collapse-button",
                             compact=True,
                         )
+                        collapse_button.styles.width = 6
+                        collapse_button.styles.min_width = 6
+                        yield collapse_button
                     staged_context_tray = ConsoleStagedContextTray(
                         staged_context_state,
                         id="console-staged-context-tray",
@@ -1298,13 +1453,18 @@ class ChatScreen(BaseAppScreen):
                     right_rail.styles.display = "none"
                 with self._frame_console_region(right_rail):
                     with Horizontal(classes="console-rail-header"):
-                        yield Static("Inspector")
-                        yield Button(
+                        rail_label = Static("Inspector")
+                        rail_label.styles.width = "1fr"
+                        yield rail_label
+                        collapse_button = Button(
                             "Hide",
                             id="console-inspector-rail-collapse",
                             classes="console-rail-collapse-button",
                             compact=True,
                         )
+                        collapse_button.styles.width = 6
+                        collapse_button.styles.min_width = 6
+                        yield collapse_button
                     with Vertical(id="console-run-inspector"):
                         yield ConsoleRunInspector(
                             inspector_state,

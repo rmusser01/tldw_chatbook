@@ -12,6 +12,9 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
 def _is_displayed(widget) -> bool:
@@ -26,6 +29,43 @@ def _is_displayed(widget) -> bool:
 def _assert_selector_hidden_or_absent(screen, selector: str) -> None:
     matches = list(screen.query(selector))
     assert not matches or all(not _is_displayed(widget) for widget in matches)
+
+
+async def _wait_for_displayed(screen, pilot, selector: str):
+    for _ in range(20):
+        widget = screen.query_one(selector)
+        if _is_displayed(widget):
+            return widget
+        await pilot.pause(0.05)
+    raise AssertionError(f"{selector} was not displayed")
+
+
+async def _wait_for_hidden(screen, pilot, selector: str) -> None:
+    for _ in range(20):
+        if not any(_is_displayed(widget) for widget in screen.query(selector)):
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(f"{selector} was still displayed")
+
+
+async def _wait_for_main_column_width_change(
+    screen,
+    pilot,
+    *,
+    original_width: int,
+    direction: str,
+) -> int:
+    for _ in range(20):
+        width = screen.query_one("#console-main-column").region.width
+        if direction == "increase" and width > original_width:
+            return width
+        if direction == "decrease" and width < original_width:
+            return width
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"main column width did not {direction}; original={original_width}, "
+        f"current={screen.query_one('#console-main-column').region.width}"
+    )
 
 
 def test_generated_console_stylesheet_includes_rail_rules():
@@ -99,3 +139,202 @@ async def test_console_first_start_right_handle_is_focusable():
             "console-inspector-rail-open was not reachable by tab; "
             f"focused={focused_id!r}"
         )
+
+
+@pytest.mark.asyncio
+async def test_console_context_rail_collapse_hides_left_rail_and_expands_main_column():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-context-rail-collapse")
+        first_start_width = console.query_one("#console-main-column").region.width
+
+        await pilot.click("#console-context-rail-collapse")
+
+        await _wait_for_hidden(console, pilot, "#console-left-rail")
+        await _wait_for_hidden(console, pilot, "#console-staged-context-tray")
+        await _wait_for_hidden(console, pilot, "#console-workspace-context")
+        assert _is_displayed(console.query_one("#console-context-rail-handle"))
+        assert (
+            await _wait_for_main_column_width_change(
+                console,
+                pilot,
+                original_width=first_start_width,
+                direction="increase",
+            )
+        ) > first_start_width
+
+
+@pytest.mark.asyncio
+async def test_console_inspector_rail_open_restores_right_rail_and_narrows_main_column():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-open")
+        right_collapsed_width = console.query_one("#console-main-column").region.width
+
+        await pilot.click("#console-inspector-rail-open")
+
+        await _wait_for_displayed(console, pilot, "#console-right-rail")
+        assert _is_displayed(console.query_one("#console-run-inspector-state"))
+        await _wait_for_hidden(console, pilot, "#console-inspector-rail-handle")
+        assert (
+            await _wait_for_main_column_width_change(
+                console,
+                pilot,
+                original_width=right_collapsed_width,
+                direction="decrease",
+            )
+        ) < right_collapsed_width
+
+
+@pytest.mark.asyncio
+async def test_console_rail_state_persists_by_workspace_session_key(monkeypatch):
+    app = _build_test_app()
+    app.app_config = {"console": {"rail_state": {}}}
+    saved_settings = []
+
+    def fake_save_setting(section, key, value):
+        saved_settings.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "save_setting_to_cli_config",
+        fake_save_setting,
+        raising=False,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-context-rail-collapse")
+        await pilot.click("#console-context-rail-collapse")
+        await _wait_for_hidden(console, pilot, "#console-left-rail")
+        await pilot.click("#console-inspector-rail-open")
+        await _wait_for_displayed(console, pilot, "#console-right-rail")
+
+    rail_state = app.app_config["console"]["rail_state"]
+    assert rail_state["console_rail_state:global:global"] == {
+        "left_open": False,
+        "right_open": True,
+    }
+    assert saved_settings[-1] == (
+        "console.rail_state",
+        "console_rail_state:global:global",
+        {"left_open": False, "right_open": True},
+    )
+
+    remounted_host = ConsoleHarness(app)
+    async with remounted_host.run_test(size=(180, 48)) as pilot:
+        console = remounted_host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-context-rail-handle")
+
+        _assert_selector_hidden_or_absent(console, "#console-left-rail")
+        assert _is_displayed(console.query_one("#console-context-rail-handle"))
+        assert _is_displayed(console.query_one("#console-right-rail"))
+        _assert_selector_hidden_or_absent(console, "#console-inspector-rail-handle")
+
+
+@pytest.mark.asyncio
+async def test_console_rail_state_uses_workspace_session_specific_keys(monkeypatch):
+    app = _build_test_app()
+    app.app_config = {
+        "console": {
+            "rail_state": {
+                "console_rail_state:workspace-a:session-a": {
+                    "left_open": False,
+                    "right_open": True,
+                }
+            }
+        }
+    }
+
+    def workspace_a(self):
+        return ConsoleWorkspaceContext(active_workspace_id="workspace-a")
+
+    def workspace_b(self):
+        return ConsoleWorkspaceContext(active_workspace_id="workspace-b")
+
+    monkeypatch.setattr(ChatScreen, "_current_console_workspace_context", workspace_a)
+    monkeypatch.setattr(
+        ChatScreen,
+        "_current_console_session_id",
+        lambda self: "session-a",
+        raising=False,
+    )
+    host_a = ConsoleHarness(app)
+    async with host_a.run_test(size=(180, 48)) as pilot:
+        console = host_a.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-context-rail-handle")
+
+        _assert_selector_hidden_or_absent(console, "#console-left-rail")
+        assert _is_displayed(console.query_one("#console-right-rail"))
+
+    monkeypatch.setattr(ChatScreen, "_current_console_workspace_context", workspace_b)
+    monkeypatch.setattr(
+        ChatScreen,
+        "_current_console_session_id",
+        lambda self: "session-b",
+        raising=False,
+    )
+    host_b = ConsoleHarness(app)
+    async with host_b.run_test(size=(180, 48)) as pilot:
+        console = host_b.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
+
+        assert _is_displayed(console.query_one("#console-left-rail"))
+        _assert_selector_hidden_or_absent(console, "#console-right-rail")
+        assert _is_displayed(console.query_one("#console-inspector-rail-handle"))
+
+
+@pytest.mark.asyncio
+async def test_console_session_preference_copies_to_durable_conversation_key(monkeypatch):
+    app = _build_test_app()
+    app.app_config = {
+        "console": {
+            "rail_state": {
+                "console_rail_state:global:session-1": {
+                    "left_open": False,
+                    "right_open": True,
+                }
+            }
+        }
+    }
+
+    monkeypatch.setattr(
+        ChatScreen,
+        "_current_console_session_id",
+        lambda self: "session-1",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ChatScreen,
+        "_current_console_conversation_id",
+        lambda self, session_data=None: "conv-1",
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: True,
+        raising=False,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-context-rail-handle")
+
+    rail_state = app.app_config["console"]["rail_state"]
+    assert rail_state["console_rail_state:global:session-1"] == {
+        "left_open": False,
+        "right_open": True,
+    }
+    assert rail_state["console_rail_state:global:conv-1"] == {
+        "left_open": False,
+        "right_open": True,
+    }
