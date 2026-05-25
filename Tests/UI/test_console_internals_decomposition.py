@@ -1493,6 +1493,46 @@ async def test_console_left_rail_sections_use_available_space():
 
 
 @pytest.mark.asyncio
+async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-grid")
+
+        workbench_border = console.query_one("#console-workspace-grid").styles.border
+        assert workbench_border.top[0] == "solid"
+        assert workbench_border.right[0] == "solid"
+        assert workbench_border.bottom[0] == "solid"
+        assert workbench_border.left[0] == "solid"
+
+        transcript_border = console.query_one("#console-transcript-region").styles.border
+        assert transcript_border.top[0] in {"", "none"}
+        assert transcript_border.right[0] == "solid"
+        assert transcript_border.bottom[0] == "solid"
+        assert transcript_border.left[0] == "solid"
+
+        staged_context_border = console.query_one("#console-staged-context-tray").styles.border
+        assert staged_context_border.top[0] in {"", "none"}
+        assert staged_context_border.right[0] in {"", "none"}
+        assert staged_context_border.bottom[0] in {"", "none"}
+        assert staged_context_border.left[0] in {"", "none"}
+
+        workspace_context_border = console.query_one("#console-workspace-context").styles.border
+        assert workspace_context_border.top[0] in {"", "none"}
+        assert workspace_context_border.right[0] in {"", "none"}
+        assert workspace_context_border.bottom[0] in {"", "none"}
+        assert workspace_context_border.left[0] in {"", "none"}
+
+        composer_border = console.query_one("#console-native-composer").styles.border
+        assert composer_border.top[0] == "solid"
+        assert composer_border.right[0] == "solid"
+        assert composer_border.bottom[0] == "solid"
+        assert composer_border.left[0] == "solid"
+
+
+@pytest.mark.asyncio
 async def test_console_workbench_panes_have_visible_terminal_frames():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1504,8 +1544,6 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         for selector in (
             "#console-workspace-grid",
             "#console-left-rail",
-            "#console-staged-context-tray",
-            "#console-workspace-context",
             "#console-inspector-rail-handle",
             "#console-native-composer",
         ):
@@ -1520,6 +1558,16 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         assert transcript_border.right[0] == "solid"
         assert transcript_border.bottom[0] == "solid"
         assert transcript_border.left[0] == "solid"
+
+        for selector in (
+            "#console-staged-context-tray",
+            "#console-workspace-context",
+        ):
+            border = console.query_one(selector).styles.border
+            assert border.top[0] in {"", "none"}, f"{selector} has a heavy top frame"
+            assert border.right[0] in {"", "none"}, f"{selector} has a heavy right frame"
+            assert border.bottom[0] in {"", "none"}, f"{selector} has a heavy bottom frame"
+            assert border.left[0] in {"", "none"}, f"{selector} has a heavy left frame"
 
         await _open_console_inspector(console, pilot)
 

@@ -110,6 +110,7 @@ CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = "Type a Library RAG query before running retrieval."
 CONSOLE_FRAME_COLOR = "#6f7782"
 CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
+CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
 CONSOLE_INLINE_GUIDANCE_COPY = "Ask in Composer. Attach as needed."
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
@@ -1275,12 +1276,33 @@ class ChatScreen(BaseAppScreen):
         button.styles.min_height = 0
 
     @staticmethod
-    def _frame_console_region(widget: Any, *, top: bool = True) -> Any:
+    def _frame_console_region(
+        widget: Any,
+        *,
+        top: bool = True,
+        variant: str = "solid",
+    ) -> Any:
         """Apply a visible Textual-native workbench frame."""
+        if variant == "quiet":
+            widget.add_class("console-frame-quiet")
+            widget.styles.border = CONSOLE_QUIET_FRAME_BORDER
+            return widget
+        widget.add_class("console-frame-solid")
         widget.styles.border = CONSOLE_FRAME_BORDER
         if not top:
             widget.styles.border_top = ("none", CONSOLE_FRAME_COLOR)
         return widget
+
+    @staticmethod
+    def _staged_context_frame_variant(state: ConsoleStagedContextState) -> str:
+        """Use quiet framing when the staged context tray is only an empty placeholder."""
+        return "quiet" if not state.rows and state.summary == "No staged work." else "solid"
+
+    @staticmethod
+    def _workspace_context_frame_variant(state: ConsoleWorkspaceContextState) -> str:
+        """Use quiet framing when workspace context has no actionable content."""
+        has_actions = state.change_workspace_enabled or state.new_conversation_enabled
+        return "solid" if state.conversation_rows or has_actions else "quiet"
 
     def _render_console_live_work_source_readiness(self) -> ComposeResult:
         """Render Console source readiness when no live-work item is staged."""
@@ -1534,7 +1556,10 @@ class ChatScreen(BaseAppScreen):
                     staged_context_tray.styles.width = "100%"
                     staged_context_tray.styles.min_width = 0
                     staged_context_tray.styles.height = "1fr"
-                    yield self._frame_console_region(staged_context_tray)
+                    yield self._frame_console_region(
+                        staged_context_tray,
+                        variant=self._staged_context_frame_variant(staged_context_state),
+                    )
 
                     workspace_context_tray = ConsoleWorkspaceContextTray(
                         workspace_context_state,
@@ -1544,7 +1569,10 @@ class ChatScreen(BaseAppScreen):
                     workspace_context_tray.styles.width = "100%"
                     workspace_context_tray.styles.min_width = 0
                     workspace_context_tray.styles.height = "2fr"
-                    yield self._frame_console_region(workspace_context_tray)
+                    yield self._frame_console_region(
+                        workspace_context_tray,
+                        variant=self._workspace_context_frame_variant(workspace_context_state),
+                    )
 
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"

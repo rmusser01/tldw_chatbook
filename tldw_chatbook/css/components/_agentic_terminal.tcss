@@ -377,6 +377,12 @@
     background: $ds-surface-panel;
 }
 
+#console-staged-context-tray.console-frame-quiet,
+#console-workspace-context.console-frame-quiet {
+    border: none;
+    background: $ds-surface-panel;
+}
+
 #console-run-inspector {
     width: 100%;
     min-width: 0;
