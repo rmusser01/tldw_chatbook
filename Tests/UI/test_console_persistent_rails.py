@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from textual.widgets import Button
 
@@ -26,6 +28,19 @@ def _assert_selector_hidden_or_absent(screen, selector: str) -> None:
     assert not matches or all(not _is_displayed(widget) for widget in matches)
 
 
+def test_generated_console_stylesheet_includes_rail_rules():
+    stylesheet = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
+    css = stylesheet.read_text(encoding="utf-8")
+
+    for selector in (
+        "#console-right-rail",
+        ".console-rail-handle",
+        ".console-rail-header",
+        ".console-rail-collapse-button",
+    ):
+        assert selector in css
+
+
 @pytest.mark.asyncio
 async def test_console_first_start_renders_left_rail_and_right_handle():
     app = _build_test_app()
@@ -38,6 +53,7 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
         assert _is_displayed(console.query_one("#console-left-rail"))
         assert _is_displayed(console.query_one("#console-staged-context-tray"))
         assert _is_displayed(console.query_one("#console-workspace-context"))
+        _assert_selector_hidden_or_absent(console, "#console-context-rail-handle")
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
         _assert_selector_hidden_or_absent(console, "#console-run-inspector-state")
         _assert_selector_hidden_or_absent(
@@ -46,6 +62,20 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
         )
         assert _is_displayed(console.query_one("#console-inspector-rail-handle"))
         assert "Inspector" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_first_start_does_not_create_rail_state_config_on_read():
+    app = _build_test_app()
+    console_config = app.app_config.setdefault("console", {})
+    console_config.pop("rail_state", None)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
+
+    assert "rail_state" not in console_config
 
 
 @pytest.mark.asyncio

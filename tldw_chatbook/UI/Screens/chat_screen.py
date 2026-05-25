@@ -577,7 +577,15 @@ class ChatScreen(BaseAppScreen):
         fallback_key: str | None,
     ) -> Any:
         """Read stored Console rail preferences without writing persistence."""
-        rail_state_config = self._console_rail_state_config()
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return None
+        console_config = app_config.get("console")
+        if not isinstance(console_config, dict):
+            return None
+        rail_state_config = console_config.get("rail_state")
+        if not isinstance(rail_state_config, dict):
+            return None
         if key in rail_state_config:
             return rail_state_config[key]
         if fallback_key and fallback_key in rail_state_config:
