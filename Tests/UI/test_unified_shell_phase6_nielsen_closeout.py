@@ -121,7 +121,7 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             )
             settings_text = _screen_text(app)
             assert "Settings owns global preferences" in settings_text
-            assert "MCP and tool-control settings live under MCP, not global Settings." in settings_text
+            assert "runtime MCP, ACP, and tool control stay in their own destinations" in settings_text
 
 
 def test_phase_six_nielsen_closeout_evidence_and_tracking_are_current() -> None:

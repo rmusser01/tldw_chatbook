@@ -46,6 +46,7 @@ class SettingsScreen(BaseAppScreen):
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
         self._advanced_config_result = "Advanced config validation: not run"
+        self._advanced_config_validated_text: str | None = None
 
     def _category_summaries(self) -> tuple[SettingsCategorySummary, ...]:
         return (
@@ -97,6 +98,33 @@ class SettingsScreen(BaseAppScreen):
                 "Raw TOML view and expert configuration editing.",
                 "Advanced",
             ),
+        )
+
+    def _category_groups(self) -> tuple[tuple[str, tuple[SettingsCategoryId, ...]], ...]:
+        return (
+            (
+                "Core",
+                (
+                    SettingsCategoryId.OVERVIEW,
+                    SettingsCategoryId.PROVIDERS_MODELS,
+                ),
+            ),
+            (
+                "Interface",
+                (
+                    SettingsCategoryId.APPEARANCE,
+                    SettingsCategoryId.CONSOLE_BEHAVIOR,
+                ),
+            ),
+            (
+                "Data & Privacy",
+                (
+                    SettingsCategoryId.STORAGE,
+                    SettingsCategoryId.PRIVACY_SECURITY,
+                ),
+            ),
+            ("Troubleshooting", (SettingsCategoryId.DIAGNOSTICS,)),
+            ("Expert", (SettingsCategoryId.ADVANCED_CONFIG,)),
         )
 
     def _active_summary(self) -> SettingsCategorySummary:
@@ -175,6 +203,7 @@ class SettingsScreen(BaseAppScreen):
             self.query_one("#settings-selected-category-draft-status", Static).update(status)
         except QueryError:
             pass
+        self._update_category_state_banner(category)
         try:
             category_status = "Unsaved" if has_unsaved_changes else self._category_summary_by_id(category).status
             category_status_widget = self.query_one(
@@ -193,6 +222,46 @@ class SettingsScreen(BaseAppScreen):
             if summary.category is category:
                 return summary
         return self._category_summaries()[0]
+
+    def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
+        if self._category_has_unsaved_changes(category):
+            return "State: Unsaved changes | Save or Revert before leaving this category."
+        if category is SettingsCategoryId.ADVANCED_CONFIG:
+            return "State: Guarded | Save blocked until the current text validates; backup created before overwrite."
+        if category is SettingsCategoryId.PROVIDERS_MODELS:
+            return "State: Shared with Console | Provider and model changes affect new Console sends."
+        if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+            return "State: Console scoped | Changes affect composer behavior after save."
+        if category is SettingsCategoryId.DIAGNOSTICS:
+            return "State: Safe to run | Validation and reload expose status without writing raw TOML."
+        if category is SettingsCategoryId.APPEARANCE:
+            return "State: Routed | Open Appearance for theme and density controls."
+        if category is SettingsCategoryId.STORAGE:
+            return "State: Local paths | Verify write access before changing storage locations."
+        if category is SettingsCategoryId.PRIVACY_SECURITY:
+            return "State: Local privacy | Secrets stay redacted in validation and diagnostics."
+        return "State: Active | Review readiness across Settings categories."
+
+    def _render_category_state_banner(self, category: SettingsCategoryId) -> Static:
+        banner = Static(
+            self._category_state_banner_text(category),
+            id="settings-category-state-banner",
+            classes="settings-state-banner",
+        )
+        if self._category_has_unsaved_changes(category):
+            banner.add_class("settings-dirty-category")
+        return banner
+
+    def _update_category_state_banner(self, category: SettingsCategoryId) -> None:
+        try:
+            banner = self.query_one("#settings-category-state-banner", Static)
+        except QueryError:
+            return
+        banner.update(self._category_state_banner_text(category))
+        if self._category_has_unsaved_changes(category):
+            banner.add_class("settings-dirty-category")
+        else:
+            banner.remove_class("settings-dirty-category")
 
     def _stage_console_large_paste_value(self, value: bool) -> None:
         category = SettingsCategoryId.CONSOLE_BEHAVIOR
@@ -325,10 +394,36 @@ class SettingsScreen(BaseAppScreen):
         status = "valid" if result.valid else "invalid"
         return f"Advanced config validation: {status} - {redact_secret_text(result.message)}"
 
+    def _advanced_validation_status(self, text: str | None = None) -> str:
+        current_text = self._advanced_editor_text() if text is None else text
+        if self._advanced_config_validated_text is None:
+            return "Last validated: not validated"
+        if self._advanced_config_validated_text == current_text:
+            return "Last validated: current text"
+        return "Last validated: stale after edits"
+
+    def _advanced_save_allowed(self, text: str | None = None) -> bool:
+        current_text = self._advanced_editor_text() if text is None else text
+        return self._advanced_config_validated_text == current_text
+
+    def _update_advanced_validation_status(self) -> None:
+        self._set_static_text(
+            "#settings-advanced-config-validation-status",
+            self._advanced_validation_status(),
+        )
+        try:
+            self.query_one("#settings-advanced-save-config", Button).disabled = (
+                not self._advanced_save_allowed()
+            )
+        except QueryError:
+            pass
+
     def _save_advanced_config_text(self, text: str) -> str:
         validation = SettingsConfigAdapter().validate_raw_toml(text)
         if not validation.valid:
             return f"Advanced config save: blocked - {redact_secret_text(validation.message)}"
+        if self._advanced_config_validated_text != text:
+            return "Advanced config save: blocked - validate current TOML before save"
 
         config_path = self._config_path()
         tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
@@ -510,60 +605,145 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
 
+    def _detail_row(self, label: str, value: object, *, identifier: str | None = None) -> Static:
+        return Static(
+            f"{label}: {value}",
+            id=identifier,
+            classes="settings-detail-row",
+        )
+
+    def _split_detail_row(self, text: str) -> Static:
+        label, separator, value = text.partition(":")
+        if not separator:
+            return self._detail_row("Path", text)
+        return self._detail_row(label.strip(), value.strip())
+
+    def _inspector_guidance(self, category: SettingsCategoryId) -> tuple[tuple[str, str], ...]:
+        guidance: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
+            SettingsCategoryId.OVERVIEW: (
+                ("Affected config", "all Settings categories summarized for readiness"),
+                ("Recovery", "open the specific category before changing values"),
+                ("Boundary", "runtime MCP, ACP, and tool control stay in their own destinations"),
+            ),
+            SettingsCategoryId.PROVIDERS_MODELS: (
+                ("Affected config", "chat_defaults provider, model, streaming, and temperature"),
+                ("Recovery", "test provider readiness before saving and revert if Console generation is blocked"),
+                ("Boundary", "provider routing is shared with Console but runtime tool approval stays in Console"),
+            ),
+            SettingsCategoryId.APPEARANCE: (
+                ("Affected config", "theme, density, and visual customization values"),
+                ("Recovery", "open Appearance, preview changes, then return to Settings if needed"),
+                ("Boundary", "visual preferences do not change runtime or data access"),
+            ),
+            SettingsCategoryId.STORAGE: (
+                ("Affected config", "config file path, local database paths, media storage roots"),
+                ("Recovery", "verify paths, reload config, then restart only if storage roots changed"),
+                ("Boundary", "server handoff does not move local source content unless explicitly requested"),
+            ),
+            SettingsCategoryId.PRIVACY_SECURITY: (
+                ("Affected config", "secret redaction, local privacy boundaries, and future encryption controls"),
+                ("Recovery", "validate diagnostics output and rotate exposed credentials outside Chatbook"),
+                ("Boundary", "raw secret values are not displayed in Settings validation results"),
+            ),
+            SettingsCategoryId.CONSOLE_BEHAVIOR: (
+                ("Affected config", "composer behavior, paste collapse, and chat-flow defaults"),
+                ("Recovery", "revert unsaved changes or disable paste collapse if composer flow is disrupted"),
+                ("Boundary", "normal typing remains literal; only large paste chunks are transformed"),
+            ),
+            SettingsCategoryId.DIAGNOSTICS: (
+                ("Affected config", "read-only validation, reload status, and troubleshooting output"),
+                ("Recovery", "validate first, reload only after confirming the config source is correct"),
+                ("Boundary", "diagnostics redact secrets and should not mutate advanced config"),
+            ),
+            SettingsCategoryId.ADVANCED_CONFIG: (
+                ("Affected config", "raw TOML for every loaded configuration section"),
+                ("Recovery", "validate current text, save atomically, then restore from backup if needed"),
+                ("Boundary", "save is blocked until the exact current text validates"),
+            ),
+        }
+        return guidance[category]
+
     def _render_category_buttons(self) -> ComposeResult:
-        for summary in self._category_summaries():
-            button = Button(
-                summary.title,
-                id=f"settings-category-{summary.category.value}",
-                classes="settings-category-button",
-                tooltip=summary.description,
+        summaries_by_id = {summary.category: summary for summary in self._category_summaries()}
+        for group_title, category_ids in self._category_groups():
+            yield Static(
+                group_title,
+                id=f"settings-category-group-{group_title.lower().replace(' ', '-').replace('&', 'and')}",
+                classes="settings-category-group-title",
             )
-            if summary.category.value == self.active_category:
-                button.add_class("settings-active-section")
-            yield button
-            yield Static(summary.description, classes="destination-section")
-            if summary.status:
-                status = Static(
-                    f"Status: {self._category_status(summary)}",
-                    id=f"settings-category-{summary.category.value}-status",
-                    classes="destination-section settings-status-row",
+            for category_id in category_ids:
+                summary = summaries_by_id[category_id]
+                is_active = summary.category.value == self.active_category
+                button = Button(
+                    f"{'> ' if is_active else '  '}{summary.title}",
+                    id=f"settings-category-{summary.category.value}",
+                    classes="settings-category-button",
+                    tooltip=summary.description,
                 )
-                if self._category_has_unsaved_changes(summary.category):
-                    status.add_class("settings-dirty-category")
-                yield status
+                if is_active:
+                    button.add_class("settings-active-section")
+                yield button
+                if summary.status:
+                    status = Static(
+                        f"Status: {self._category_status(summary)}",
+                        id=f"settings-category-{summary.category.value}-status",
+                        classes="destination-section settings-status-row settings-category-status-hidden",
+                    )
+                    if self._category_has_unsaved_changes(summary.category):
+                        status.add_class("settings-dirty-category")
+                    yield status
 
     def _render_overview_detail(self) -> ComposeResult:
         yield Static("Overview", classes="destination-section settings-column-title")
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
+            yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
             yield Static("Provider readiness", classes="destination-section")
-            yield Static(self._provider_readiness_label(), id="settings-overview-provider-readiness")
+            yield self._detail_row(
+                "Provider readiness",
+                self._provider_readiness_label().removeprefix("Provider readiness: "),
+                identifier="settings-overview-provider-readiness",
+            )
             yield Static("Storage", classes="destination-section")
-            yield Static(
-                f"Storage: config path {self._config_path()} ({self._config_writable_status()})",
-                id="settings-overview-storage",
+            yield self._detail_row(
+                "Config path",
+                f"{self._config_path()} ({self._config_writable_status()})",
+                identifier="settings-overview-storage",
             )
             yield Static("Privacy", classes="destination-section")
-            yield Static(
-                "Privacy: local config by default; secret-looking diagnostics are redacted.",
-                id="settings-overview-privacy",
+            yield self._detail_row(
+                "Privacy",
+                "local config by default; secret-looking diagnostics are redacted",
+                identifier="settings-overview-privacy",
             )
-            yield Static(
-                f"Console paste collapse: {self._collapse_large_pastes_label()}",
-                id="settings-overview-console-paste-collapse",
+            yield self._detail_row(
+                "Console paste collapse",
+                self._collapse_large_pastes_label(),
+                identifier="settings-overview-console-paste-collapse",
             )
-            yield Static("Diagnostics: validate config before saving raw TOML changes.")
+            yield self._detail_row(
+                "Diagnostics",
+                "validate config before saving raw TOML changes",
+            )
 
     def _render_provider_detail(self) -> ComposeResult:
         resolved = self._resolve_provider_model_for_settings()
         values = self._provider_setting_values()
         yield Static("Providers & Models", classes="destination-section settings-column-title")
         with Vertical(id="settings-providers-models-card", classes="settings-focus-card"):
+            yield self._render_category_state_banner(SettingsCategoryId.PROVIDERS_MODELS)
             yield Static("Provider readiness", classes="destination-section")
-            yield Static(self._provider_readiness_label(), id="settings-provider-readiness")
-            yield Static(f"Source: {resolved.provider_source}", id="settings-provider-source")
-            yield Static(f"Provider source: {resolved.provider_source}")
-            yield Static(f"Model source: {resolved.model_source}", id="settings-model-source")
-            yield Static("Changes here will share the same provider/model resolution path as Console.")
+            yield self._detail_row(
+                "Readiness",
+                self._provider_readiness_label().removeprefix("Provider readiness: "),
+                identifier="settings-provider-readiness",
+            )
+            yield self._detail_row("Source", resolved.provider_source, identifier="settings-provider-source")
+            yield self._detail_row("Provider source", resolved.provider_source)
+            yield self._detail_row("Model source", resolved.model_source, identifier="settings-model-source")
+            yield self._detail_row(
+                "Impact",
+                "shares the same provider/model resolution path as Console",
+            )
             yield Static("Provider", classes="destination-section")
             yield Input(
                 value=str(values["provider"]),
@@ -630,38 +810,69 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Console Behavior", classes="destination-section settings-column-title")
             with Vertical(id="settings-console-behavior-detail", classes="settings-focus-card"):
-                yield Static("Collapse large pasted chunks", classes="destination-section")
-                yield Static("Large paste chunks over 50 characters display as compact placeholders.")
-                yield Static("Normal typing remains literal and does not transform unexpectedly.")
+                yield self._render_category_state_banner(SettingsCategoryId.CONSOLE_BEHAVIOR)
+                yield Static("Composer behavior", classes="destination-section")
+                yield self._detail_row(
+                    "Paste collapse",
+                    "chunks over 50 characters display as compact placeholders",
+                )
+                yield self._detail_row(
+                    "Typing rule",
+                    "normal typing remains literal and never auto-collapses",
+                )
+                yield self._detail_row("Current default", self._collapse_large_pastes_label())
+                yield self._detail_row("Save target", "[console].collapse_large_pastes")
+                yield self._detail_row("Console impact", "composer display only; message payload is preserved")
                 yield from self._render_console_behavior_card(compact=False)
         elif category is SettingsCategoryId.APPEARANCE:
             yield Static("Appearance", classes="destination-section settings-column-title")
             with Vertical(id="settings-appearance-card", classes="settings-focus-card"):
-                yield Static(self._appearance_theme_summary())
-                yield Static("Theme and display customization live in the Appearance surface.")
-                yield Static("Use the inspector action to open the dedicated customization surface.")
-                yield Static("Open Appearance from the inspector to change themes, density, and visual polish.")
+                yield self._render_category_state_banner(SettingsCategoryId.APPEARANCE)
+                yield Static("Visual configuration", classes="destination-section")
+                yield self._split_detail_row(self._appearance_theme_summary())
+                yield self._detail_row("Surface", "dedicated Appearance customization screen")
+                yield self._detail_row("Scope", "theme, density, visual polish")
+                yield self._detail_row("Settings role", "routing and status, not the full editor")
+                yield self._detail_row("Next action", "open Appearance from the inspector")
         elif category is SettingsCategoryId.STORAGE:
             yield Static("Storage", classes="destination-section settings-column-title")
             with Vertical(id="settings-storage-card", classes="settings-focus-card"):
+                yield self._render_category_state_banner(SettingsCategoryId.STORAGE)
+                yield Static("Local paths", classes="destination-section")
                 for path_summary in self._known_storage_paths():
-                    yield Static(path_summary)
-                yield Static(f"Config directory status: {self._config_writable_status()}")
-                yield Static("Database and media paths remain local unless a server handoff is explicit.")
+                    yield self._split_detail_row(path_summary)
+                yield self._detail_row("Config directory status", self._config_writable_status())
+                yield self._detail_row(
+                    "Handoff boundary",
+                    "database and media paths remain local unless a server handoff is explicit",
+                )
+                yield self._detail_row("Safety check", "verify write access before changing storage roots")
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
             yield Static("Privacy & Security", classes="destination-section settings-column-title")
             with Vertical(id="settings-privacy-security-card", classes="settings-focus-card"):
-                yield Static("Secrets are read from environment/config and are not shown in diagnostics.")
-                yield Static("Validation errors redact API key, token, password, and secret assignments.")
-                yield Static("Encryption: not configured from this first-slice Settings screen.")
-                yield Static("Secret redaction: enabled for diagnostics and validation errors.")
+                yield self._render_category_state_banner(SettingsCategoryId.PRIVACY_SECURITY)
+                yield Static("Privacy posture", classes="destination-section")
+                yield self._detail_row(
+                    "Secrets",
+                    "read from environment/config and hidden from diagnostics",
+                )
+                yield self._detail_row(
+                    "Validation redaction",
+                    "API key, token, password, and secret assignments",
+                )
+                yield self._detail_row("Encryption", "not configured from this Settings slice")
+                yield self._detail_row("Secret redaction", "enabled for diagnostics and validation errors")
+                yield self._detail_row("Audit posture", "expose status, not raw credentials")
         elif category is SettingsCategoryId.DIAGNOSTICS:
             yield Static("Diagnostics", classes="destination-section settings-column-title")
             with Vertical(id="settings-diagnostics-card", classes="settings-focus-card"):
+                yield self._render_category_state_banner(SettingsCategoryId.DIAGNOSTICS)
                 yield Static("Validate config", classes="destination-section")
-                yield Static(f"Config path: {self._config_path()}")
-                yield Static("Raw TOML validation is available before applying advanced edits.")
-                yield Static("Logs and troubleshooting should expose actionable errors without secrets.")
+                yield self._detail_row("Config path", self._config_path())
+                yield self._detail_row("Validation", "raw TOML validation before advanced edits")
+                yield self._detail_row("Reload", "load current config into the running app")
+                yield self._detail_row("Redaction", "actionable errors without secrets")
+                yield self._detail_row("Write safety", "validation is read-only")
                 with Horizontal(id="settings-diagnostics-actions", classes="settings-action-row"):
                     yield Button(
                         "Validate Config",
@@ -686,12 +897,28 @@ class SettingsScreen(BaseAppScreen):
         else:
             yield Static("Advanced Config", classes="destination-section settings-column-title")
             with Vertical(id="settings-advanced-config-card", classes="settings-focus-card"):
+                raw_config_text = self._raw_config_text()
+                yield self._render_category_state_banner(SettingsCategoryId.ADVANCED_CONFIG)
                 yield Static("Raw TOML", classes="destination-section")
-                yield Static("Expert-only raw configuration editing with validation before save.")
+                yield self._detail_row("Risk level", "expert-only raw configuration editing")
+                yield self._detail_row(
+                    "Save policy",
+                    "Save blocked until the current text validates",
+                )
+                yield self._detail_row("Write mode", "atomic save with .bak backup before overwrite")
+                yield self._detail_row("Required shape", "table-shaped TOML top-level value")
+                yield self._detail_row(
+                    "Guided path",
+                    "prefer category controls unless raw TOML is required",
+                )
                 yield Static("Raw TOML bypasses guided validation and should be used only for expert edits.")
-                yield Static("Invalid top-level values are blocked; table-shaped TOML is required.")
+                yield Static(
+                    self._advanced_validation_status(),
+                    id="settings-advanced-config-validation-status",
+                    classes="settings-status-row settings-advanced-safety-status",
+                )
                 yield TextArea(
-                    self._raw_config_text(),
+                    raw_config_text,
                     id="settings-advanced-config-editor",
                 )
                 with Horizontal(id="settings-advanced-config-actions", classes="settings-action-row"):
@@ -700,11 +927,13 @@ class SettingsScreen(BaseAppScreen):
                         id="settings-advanced-validate-config",
                         tooltip="Validate raw TOML before writing it to disk.",
                     )
-                    yield Button(
+                    save_button = Button(
                         "Save Raw TOML",
                         id="settings-advanced-save-config",
                         tooltip="Atomically save raw TOML after validation.",
                     )
+                    save_button.disabled = not self._advanced_save_allowed(raw_config_text)
+                    yield save_button
                 yield Static(
                     self._advanced_config_result,
                     id="settings-advanced-config-result",
@@ -736,10 +965,12 @@ class SettingsScreen(BaseAppScreen):
         else:
             yield Static("Impact and boundaries", classes="destination-section")
             yield Static(summary.description)
-        yield Static(
-            "MCP and tool-control settings live under MCP, not global Settings.",
-            id="settings-boundary-note",
-        )
+        for label, value in self._inspector_guidance(summary.category):
+            yield self._detail_row(
+                label,
+                value,
+                identifier="settings-boundary-note" if label == "Boundary" else None,
+            )
         yield Static("Mutation replay: disabled", id="settings-sync-mutation-disabled")
         yield Static(
             "Writes remain blocked until explicit review, conflict, rollback, and audit gates are implemented.",
@@ -910,10 +1141,15 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-advanced-validate-config")
     def handle_advanced_validate_config(self, event: Button.Pressed) -> None:
         event.stop()
-        self._advanced_config_result = self._validate_advanced_config_text(
-            self._advanced_editor_text()
+        current_text = self._advanced_editor_text()
+        validation = SettingsConfigAdapter().validate_raw_toml(current_text)
+        status = "valid" if validation.valid else "invalid"
+        self._advanced_config_result = (
+            f"Advanced config validation: {status} - {redact_secret_text(validation.message)}"
         )
+        self._advanced_config_validated_text = current_text if validation.valid else None
         self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
+        self._update_advanced_validation_status()
 
     @on(Button.Pressed, "#settings-advanced-save-config")
     def handle_advanced_save_config(self, event: Button.Pressed) -> None:
@@ -922,6 +1158,12 @@ class SettingsScreen(BaseAppScreen):
             self._advanced_editor_text()
         )
         self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
+        self._update_advanced_validation_status()
+
+    @on(TextArea.Changed, "#settings-advanced-config-editor")
+    def handle_advanced_config_changed(self, event: TextArea.Changed) -> None:
+        event.stop()
+        self._update_advanced_validation_status()
 
     def action_settings_save_category(self) -> None:
         category = self._active_category_id()

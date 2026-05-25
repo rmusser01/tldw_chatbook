@@ -1,3 +1,5 @@
+import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -246,6 +248,141 @@ async def test_settings_category_selection_updates_detail_and_inspector():
         assert "Console Behavior" in text
         assert "Collapse large pasted chunks" in text
         assert "Affects Console" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_category_navigation_is_grouped_for_scan():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        for group_title in (
+            "Core",
+            "Interface",
+            "Data & Privacy",
+            "Troubleshooting",
+            "Expert",
+        ):
+            assert group_title in text
+
+
+@pytest.mark.asyncio
+async def test_settings_active_category_uses_explicit_nav_marker():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        active = screen.query_one("#settings-category-advanced-config")
+        inactive = screen.query_one("#settings-category-diagnostics")
+
+        assert str(active.label) == "> Advanced Config"
+        assert str(inactive.label) == "  Diagnostics"
+        assert active.has_class("settings-active-section")
+
+
+def test_settings_active_category_focus_style_keeps_label_readable():
+    css_path = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+    )
+    css = css_path.read_text()
+    match = re.search(
+        r"Button\.settings-category-button\.settings-active-section:focus\s*\{(?P<body>[^}]*)\}",
+        css,
+        flags=re.DOTALL,
+    )
+
+    assert match
+    body = match.group("body")
+    assert "reverse" not in body
+    assert "text-style: bold underline;" in body
+
+
+def test_settings_action_button_focus_style_keeps_label_readable():
+    css_path = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+    )
+    css = css_path.read_text()
+    match = re.search(
+        r"\.settings-action-row Button:focus,\s*#settings-impact-pane Button:focus\s*\{(?P<body>[^}]*)\}",
+        css,
+        flags=re.DOTALL,
+    )
+
+    assert match
+    body = match.group("body")
+    assert "reverse" not in body
+    assert "text-style: bold underline;" in body
+    assert "outline: none;" in body
+
+
+def test_settings_shell_button_focus_does_not_use_heavy_outline():
+    css_path = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+    )
+    css = css_path.read_text()
+    match = re.search(
+        r"#settings-shell Button:focus,\s*#settings-shell Button:hover:focus\s*\{(?P<body>[^}]*)\}",
+        css,
+        flags=re.DOTALL,
+    )
+
+    assert match
+    body = match.group("body")
+    assert "outline: none;" in body
+    assert "text-style: bold underline;" in body
+
+
+@pytest.mark.asyncio
+async def test_settings_detail_shows_state_banner_and_structured_rows():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        banner = screen.query_one("#settings-category-state-banner")
+        detail_rows = list(screen.query(".settings-detail-row"))
+
+        assert "State:" in str(banner.renderable)
+        assert banner.has_class("settings-state-banner")
+        assert len(detail_rows) >= 5
+
+
+@pytest.mark.asyncio
+async def test_settings_inspector_uses_category_specific_guidance():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-storage")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Affected config: config file path, local database paths, media storage roots" in text
+        assert "Recovery: verify paths, reload config, then restart only if storage roots changed" in text
+        assert "MCP and tool-control settings live under MCP" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_inspector_boundary_is_structured_without_duplicate_copy():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        boundary = "Boundary: save is blocked until the exact current text validates"
+        assert str(screen.query_one("#settings-boundary-note").renderable) == boundary
+        assert text.count(boundary) == 1
 
 
 @pytest.mark.asyncio
@@ -622,7 +759,10 @@ async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
         assert "Raw TOML bypasses guided validation" in text
         assert screen.query_one("#settings-advanced-config-editor", TextArea)
         assert screen.query_one("#settings-advanced-validate-config")
-        assert screen.query_one("#settings-advanced-save-config")
+        save_button = screen.query_one("#settings-advanced-save-config")
+        assert save_button.disabled
+        assert "Last validated: not validated" in text
+        assert "Save blocked until the current text validates" in text
 
 
 @pytest.mark.asyncio
@@ -654,10 +794,10 @@ async def test_settings_advanced_config_blocks_non_mapping_toml_on_save():
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
         editor.text = "42"
 
-        await pilot.click("#settings-advanced-save-config")
-        text = _visible_text(screen)
+        save_button = screen.query_one("#settings-advanced-save-config")
 
-        assert "top-level TOML value must be a table" in text
+        assert save_button.disabled
+        assert "top-level TOML value must be a table" in screen._save_advanced_config_text("42")
 
 
 @pytest.mark.asyncio
@@ -674,10 +814,15 @@ async def test_settings_advanced_config_saves_atomically_with_backup(monkeypatch
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
         editor.text = "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"
 
+        assert screen.query_one("#settings-advanced-save-config").disabled
+
+        await pilot.click("#settings-advanced-validate-config")
+        assert not screen.query_one("#settings-advanced-save-config").disabled
         await pilot.click("#settings-advanced-save-config")
         text = _visible_text(screen)
 
         assert "Advanced config save: saved" in text
+        assert "Last validated: current text" in text
 
     assert config_path.read_text(encoding="utf-8") == (
         "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"

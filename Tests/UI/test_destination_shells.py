@@ -2547,7 +2547,7 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         assert "Privacy" in text
         assert "Console paste collapse" in text
         assert "Mutation replay: disabled" in text
-        assert "MCP and tool-control settings live under MCP, not global Settings." in text
+        assert "runtime MCP, ACP, and tool control stay in their own destinations" in text
         assert "Column 1:" not in text
         assert "Column 2:" not in text
         assert "Column 3:" not in text
