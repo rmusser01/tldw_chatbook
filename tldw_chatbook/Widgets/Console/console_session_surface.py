@@ -16,6 +16,8 @@ from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
 CONSOLE_CLOSE_TAB_BUTTON_HEIGHT = 1
+CONSOLE_NEW_TAB_BUTTON_WIDTH = 3
+CONSOLE_NEW_TAB_BUTTON_HEIGHT = 1
 CONSOLE_TRANSCRIPT_TITLE = "Transcript / Event Stream"
 
 
@@ -42,9 +44,21 @@ class ConsoleSessionSurface(Vertical):
         tab_strip.styles.min_height = 1
         tab_strip.styles.max_height = 1
         with tab_strip:
-            yield Button("New tab", id="console-new-chat-tab")
+            yield self._build_new_tab_button()
         yield ChatTaskCards(id="console-task-surface")
         yield ConsoleTranscript(id="console-native-transcript")
+
+    def _build_new_tab_button(self) -> Button:
+        """Return the compact symbolic Console new-session control."""
+        button = Button("+", id="console-new-chat-tab", compact=True)
+        button.tooltip = "New Console tab"
+        button.styles.width = CONSOLE_NEW_TAB_BUTTON_WIDTH
+        button.styles.min_width = CONSOLE_NEW_TAB_BUTTON_WIDTH
+        button.styles.max_width = CONSOLE_NEW_TAB_BUTTON_WIDTH
+        button.styles.height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
+        button.styles.min_height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
+        button.styles.max_height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
+        return button
 
     async def sync_sessions(
         self,
@@ -91,14 +105,17 @@ class ConsoleSessionSurface(Vertical):
                     "x",
                     id=f"console-close-session-tab-{session.id}",
                     classes="console-session-close-button",
+                    compact=True,
                 )
+                close_button.tooltip = "Close Console tab"
                 close_button.styles.width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
                 close_button.styles.min_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
                 close_button.styles.max_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
                 close_button.styles.height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
                 close_button.styles.min_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
+                close_button.styles.max_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
                 await tab_strip.mount(close_button)
-            await tab_strip.mount(Button("New tab", id="console-new-chat-tab"))
+            await tab_strip.mount(self._build_new_tab_button())
 
     def sync_inline_guidance(self, *, visible: bool, copy: str = "") -> None:
         """Render compact first-run guidance without adding a separate row."""

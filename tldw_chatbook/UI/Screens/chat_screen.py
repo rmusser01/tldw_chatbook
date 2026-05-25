@@ -1542,14 +1542,15 @@ class ChatScreen(BaseAppScreen):
                         rail_label.styles.width = "1fr"
                         yield rail_label
                         collapse_button = Button(
-                            "Hide <",
+                            "<",
                             id="console-context-rail-collapse",
                             classes="console-rail-collapse-button",
                             compact=True,
                         )
                         collapse_button.tooltip = "Collapse Context rail"
-                        collapse_button.styles.width = 8
-                        collapse_button.styles.min_width = 8
+                        collapse_button.styles.width = 3
+                        collapse_button.styles.min_width = 3
+                        collapse_button.styles.max_width = 3
                         yield collapse_button
                     staged_context_tray = ConsoleStagedContextTray(
                         staged_context_state,
@@ -1660,14 +1661,15 @@ class ChatScreen(BaseAppScreen):
                         rail_label.styles.width = "1fr"
                         yield rail_label
                         collapse_button = Button(
-                            "Hide >",
+                            ">",
                             id="console-inspector-rail-collapse",
                             classes="console-rail-collapse-button",
                             compact=True,
                         )
                         collapse_button.tooltip = "Collapse Inspector rail"
-                        collapse_button.styles.width = 8
-                        collapse_button.styles.min_width = 8
+                        collapse_button.styles.width = 3
+                        collapse_button.styles.min_width = 3
+                        collapse_button.styles.max_width = 3
                         yield collapse_button
                     with Vertical(id="console-run-inspector"):
                         yield ConsoleRunInspector(

@@ -1308,6 +1308,29 @@ async def test_console_empty_transcript_uses_compact_ready_state():
 
 
 @pytest.mark.asyncio
+async def test_console_session_tab_strip_uses_symbolic_controls_with_tooltips():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-chat-tab")
+        await _wait_for_selector(console, pilot, ".console-session-close-button")
+
+        new_tab = console.query_one("#console-new-chat-tab", Button)
+        close_buttons = list(console.query(".console-session-close-button"))
+
+        assert str(new_tab.label) == "+"
+        assert new_tab.tooltip == "New Console tab"
+        assert new_tab.region.width >= 3
+        assert close_buttons
+        for close_button in close_buttons:
+            assert str(close_button.label) == "x"
+            assert close_button.tooltip == "Close Console tab"
+            assert close_button.region.width >= 3
+
+
+@pytest.mark.asyncio
 async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
     app = _build_test_app()
     host = ConsoleHarness(app)
