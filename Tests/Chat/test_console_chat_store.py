@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleWorkspaceContext
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -72,6 +73,61 @@ def test_store_creates_and_switches_sessions():
 
     assert store.active_session_id == first.id
     assert store.messages_for_session(first.id)[0].content == "first"
+
+
+def test_console_sessions_store_independent_settings_snapshots() -> None:
+    store = ConsoleChatStore()
+    first_settings = ConsoleSessionSettings(provider="llama_cpp", model="a", temperature=0.1)
+    second_settings = ConsoleSessionSettings(provider="openai", model="b", temperature=0.9)
+
+    first = store.create_session(title="A", settings=first_settings)
+    second = store.create_session(title="B", settings=second_settings)
+
+    assert store.session_settings(first.id).model == "a"
+    assert store.session_settings(second.id).model == "b"
+
+
+def test_replacing_session_settings_does_not_mutate_other_sessions() -> None:
+    store = ConsoleChatStore()
+    first = store.create_session(settings=ConsoleSessionSettings(provider="llama_cpp", model="a"))
+    second = store.create_session(settings=ConsoleSessionSettings(provider="llama_cpp", model="b"))
+
+    store.replace_session_settings(
+        first.id,
+        ConsoleSessionSettings(provider="llama_cpp", model="changed"),
+    )
+
+    assert store.session_settings(first.id).model == "changed"
+    assert store.session_settings(second.id).model == "b"
+
+
+def test_ensure_session_applies_settings_only_when_creating_session() -> None:
+    store = ConsoleChatStore()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="new")
+
+    session = store.ensure_session(settings=settings)
+
+    assert store.session_settings(session.id) == settings
+
+
+def test_ensure_session_settings_do_not_mutate_existing_active_session() -> None:
+    store = ConsoleChatStore()
+    original_settings = ConsoleSessionSettings(provider="llama_cpp", model="original")
+    session = store.ensure_session(settings=original_settings)
+
+    ensured = store.ensure_session(
+        settings=ConsoleSessionSettings(provider="openai", model="ignored"),
+    )
+
+    assert ensured.id == session.id
+    assert store.session_settings(session.id) == original_settings
+
+
+def test_session_settings_returns_none_when_session_has_no_settings() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+
+    assert store.session_settings(session.id) is None
 
 
 def test_store_closes_session_and_activates_neighbor():

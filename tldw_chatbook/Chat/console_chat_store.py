@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleVariantSet,
     ConsoleWorkspaceContext,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 
 
 class ConsoleChatPersistence(Protocol):
@@ -59,6 +60,7 @@ class ConsoleChatSession:
     workspace_id: str = "global"
     id: str = field(default_factory=lambda: str(uuid4()))
     persisted_conversation_id: str | None = None
+    settings: ConsoleSessionSettings | None = None
 
 
 class ConsoleChatStore:
@@ -85,22 +87,25 @@ class ConsoleChatStore:
         *,
         title: str = "Chat 1",
         workspace_id: str | None = None,
+        settings: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
         """Return the active session, creating one when needed."""
         if self.active_session_id is not None:
             return self._sessions[self.active_session_id]
-        return self.create_session(title=title, workspace_id=workspace_id)
+        return self.create_session(title=title, workspace_id=workspace_id, settings=settings)
 
     def create_session(
         self,
         *,
         title: str = "Chat 1",
         workspace_id: str | None = None,
+        settings: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
         """Create and activate a new native Console session."""
         session = ConsoleChatSession(
             title=title,
             workspace_id=workspace_id or self.workspace_context.active_workspace_id,
+            settings=settings,
         )
         self._sessions[session.id] = session
         self._messages_by_session[session.id] = []
@@ -151,6 +156,20 @@ class ConsoleChatStore:
     def sessions(self) -> list[ConsoleChatSession]:
         """Return native Console sessions in creation order."""
         return list(self._sessions.values())
+
+    def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
+        """Return in-memory settings for a native Console session."""
+        return self._session_or_raise(session_id).settings
+
+    def replace_session_settings(
+        self,
+        session_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> ConsoleChatSession:
+        """Replace in-memory settings for a native Console session."""
+        session = self._session_or_raise(session_id)
+        session.settings = settings
+        return replace(session)
 
     def set_workspace_context(self, workspace_context: ConsoleWorkspaceContext) -> None:
         """Replace the active workspace context."""
