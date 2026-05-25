@@ -159,6 +159,36 @@ def test_gate15_console_internals_evidence_is_tracked():
     assert "## Implementation Notes" in task
 
 
+def test_console_session_surface_uses_flex_height_not_full_percent_height():
+    for stylesheet in (
+        Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
+        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+    ):
+        css = _repo_text(stylesheet)
+
+        assert "#console-session-surface,\n#console-chat-tabs" not in css
+        assert "#console-session-surface {\n    height: 1fr;" in css
+        assert (
+            "#console-session-surface {\n"
+            "    padding: 0;\n"
+            "    margin: 0;\n"
+            "    border: none;"
+        ) in css
+        assert (
+            "#console-native-tab-strip {\n"
+            "    height: 1;\n"
+            "    min-height: 1;\n"
+            "    margin: 0;"
+        ) in css
+        assert (
+            "#console-start-here,\n"
+            "#console-action-hints {\n"
+            "    display: none;\n"
+            "    height: 0;\n"
+            "    min-height: 0;"
+        ) in css
+
+
 @pytest.mark.asyncio
 async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
     app = _build_test_app()
@@ -175,6 +205,24 @@ async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
         assert len(console.query("#chat-enhanced-sidebar")) == 0
         assert len(console.query("#toggle-chat-left-sidebar")) == 0
         assert len(console.query("#chat-main-content")) == 0
+
+
+@pytest.mark.asyncio
+async def test_console_hidden_control_bar_does_not_reserve_a_row():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-grid")
+
+        mode_bar = console.query_one("#console-mode-bar")
+        control_bar = console.query_one("#console-control-bar")
+        workbench = console.query_one("#console-workspace-grid")
+
+        assert control_bar.styles.display == "none"
+        assert control_bar.region.height == 0
+        assert workbench.region.y <= mode_bar.region.y + mode_bar.region.height
 
 
 @pytest.mark.asyncio
@@ -861,31 +909,35 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-start-here")
         await _wait_for_selector(console, pilot, "#console-provider-blocker")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         start_here = console.query_one("#console-start-here", Static)
+        action_hints = console.query_one("#console-action-hints", Static)
         provider_strip = console.query_one("#console-provider-recovery-strip")
-        assert provider_strip.region.y < start_here.region.y
+        transcript = console.query_one("#console-native-transcript")
+        assert provider_strip.region.y < transcript.region.y
+        assert start_here.styles.display == "none"
+        assert action_hints.styles.display == "none"
 
         text = _visible_text(console)
         for expected in (
-            "Empty transcript",
-            "Start here",
-            "Ask a question",
-            "Attach sources",
-            "Run command",
             "Provider setup needed",
             "OpenAI missing API key",
             "Settings",
-            "No messages yet. Send a prompt or attach context.",
-            "Provider setup required before sending.",
-            "Enter send",
-            "Ctrl+P commands",
-            "Attach context",
+            "No messages yet.",
             "Ask, command, or paste task...",
         ):
             assert expected in text
+        for redundant_copy in (
+            "Start here",
+            "Run command",
+            "Provider setup required before sending.",
+            "Enter send",
+            "Ctrl+P commands",
+            "No messages yet. Send a prompt or attach context.",
+        ):
+            assert redundant_copy not in text
         assert "Provider: OpenAI is not ready" not in text
         assert "Provider setup is shown in the recovery strip above." not in text
         blocker = console.query_one("#console-provider-blocker", Static)
@@ -1025,19 +1077,35 @@ async def test_console_provider_blocker_updates_without_transcript_recompose(mon
 
 
 @pytest.mark.asyncio
-async def test_console_start_guidance_hides_after_transcript_has_messages():
+async def test_console_inline_guidance_does_not_reserve_transcript_space():
     app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-start-here")
         await _wait_for_selector(console, pilot, "#console-action-hints")
+        await _wait_for_selector(console, pilot, "#console-transcript-title")
         start_here = console.query_one("#console-start-here", Static)
         action_hints = console.query_one("#console-action-hints", Static)
+        transcript_title = console.query_one("#console-transcript-title", Static)
 
-        assert start_here.styles.display != "none"
-        assert action_hints.styles.display != "none"
+        assert start_here.styles.display == "none"
+        assert action_hints.styles.display == "none"
+        assert str(start_here.styles.height) == "0"
+        start_copy = getattr(start_here.render(), "plain", str(start_here.render()))
+        title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
+        assert start_copy == ""
+        assert title_copy == "Transcript / Event Stream | Ask in Composer. Attach as needed."
 
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
@@ -1048,6 +1116,81 @@ async def test_console_start_guidance_hides_after_transcript_has_messages():
 
         assert start_here.styles.display == "none"
         assert action_hints.styles.display == "none"
+        title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
+        assert title_copy == "Transcript / Event Stream"
+
+
+@pytest.mark.asyncio
+async def test_console_inline_guidance_disappears_after_user_starts_typing():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-transcript-title")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        transcript_title = console.query_one("#console-transcript-title", Static)
+
+        title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
+        assert title_copy == "Transcript / Event Stream | Ask in Composer. Attach as needed."
+
+        await pilot.press("h")
+        await pilot.pause(0.1)
+
+        title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
+        assert composer.draft_text() == "h"
+        assert title_copy == "Transcript / Event Stream"
+
+        composer.clear_draft()
+        console._sync_console_transcript_guidance()
+        await pilot.pause(0.1)
+
+        title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
+        assert composer.draft_text() == ""
+        assert title_copy == "Transcript / Event Stream"
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_header_sits_at_top_of_center_panel():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-start-here")
+        await _wait_for_selector(console, pilot, "#console-transcript-title")
+
+        start_here = console.query_one("#console-start-here", Static)
+        transcript_region = console.query_one("#console-transcript-region")
+        transcript_title = console.query_one("#console-transcript-title", Static)
+        tab_strip = console.query_one("#console-native-tab-strip")
+        transcript = console.query_one("#console-native-transcript")
+
+        assert start_here.styles.display == "none"
+        assert start_here.region.height == 0
+        assert transcript_region.styles.border.top[0] in {"", "none"}
+        assert transcript_title.region.y == transcript_region.region.y
+        assert tab_strip.region.y == transcript_title.region.y + transcript_title.region.height
+        assert transcript.region.y == tab_strip.region.y + tab_strip.region.height
 
 
 @pytest.mark.asyncio
@@ -1064,7 +1207,9 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         assert transcript.region.width > 0
         assert transcript.region.height > 0
         assert transcript.styles.display != "none"
-        assert "Empty transcript" in _visible_text(console)
+        text = _visible_text(console)
+        assert "No messages yet." in text
+        assert "No messages yet. Send a prompt or attach context." not in text
 
 
 @pytest.mark.asyncio
@@ -1288,7 +1433,6 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
             "#console-left-rail",
             "#console-staged-context-tray",
             "#console-workspace-context",
-            "#console-transcript-region",
             "#console-inspector-rail-handle",
             "#console-native-composer",
         ):
@@ -1297,6 +1441,12 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
             assert border.right[0] == "solid", f"{selector} missing right frame"
             assert border.bottom[0] == "solid", f"{selector} missing bottom frame"
             assert border.left[0] == "solid", f"{selector} missing left frame"
+
+        transcript_border = console.query_one("#console-transcript-region").styles.border
+        assert transcript_border.top[0] in {"", "none"}
+        assert transcript_border.right[0] == "solid"
+        assert transcript_border.bottom[0] == "solid"
+        assert transcript_border.left[0] == "solid"
 
         await _open_console_inspector(console, pilot)
 
@@ -1324,11 +1474,17 @@ async def test_console_empty_staged_context_recovery_fits_tray():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-staged-context-recovery")
 
+        summary = console.query_one("#console-staged-context-summary")
         recovery = console.query_one("#console-staged-context-recovery")
+        summary_plain = getattr(summary.render(), "plain", str(summary.render()))
         rendered = recovery.render()
         plain = getattr(rendered, "plain", str(rendered))
 
-        assert all(len(line) <= recovery.region.width for line in plain.splitlines())
+        assert summary_plain == "No staged work."
+        assert plain == "Attach sources."
+        visible_text_width = max(0, recovery.region.width - 2)
+        assert all(len(line) <= visible_text_width for line in summary_plain.splitlines())
+        assert all(len(line) <= visible_text_width for line in plain.splitlines())
 
 
 @pytest.mark.asyncio

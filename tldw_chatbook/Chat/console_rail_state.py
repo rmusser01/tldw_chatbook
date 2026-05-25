@@ -29,6 +29,7 @@ _WORKSPACE_FALLBACK_LABELS = {
 }
 _INACTIVE_STAGED_SUMMARIES = {
     "no live work item is staged",
+    "no staged work",
 }
 _NEGATIVE_READINESS_TERMS = {
     "blocked",

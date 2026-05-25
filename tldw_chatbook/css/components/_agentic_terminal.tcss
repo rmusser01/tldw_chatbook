@@ -358,14 +358,14 @@
 }
 
 #console-main-column {
-    width: 9fr;
-    min-width: 52;
-    padding: 0 1;
+    width: 13fr;
+    min-width: 60;
+    padding: 0;
 }
 
 #console-right-rail {
-    width: 5fr;
-    min-width: 40;
+    width: 4fr;
+    min-width: 34;
 }
 
 #console-staged-context-tray,
@@ -405,6 +405,8 @@
 .console-rail-collapse-button {
     height: 1;
     min-height: 1;
+    text-align: left;
+    content-align: left middle;
 }
 
 .console-rail-handle-badge {
@@ -420,6 +422,13 @@
     height: 1;
     min-height: 1;
     layout: horizontal;
+}
+
+.console-rail-title {
+    width: 1fr;
+    min-width: 0;
+    text-align: left;
+    content-align: left middle;
 }
 
 .console-inspector-group-heading {
@@ -471,6 +480,12 @@
     min-height: 0;
 }
 
+#console-session-surface {
+    padding: 0;
+    margin: 0;
+    border: none;
+}
+
 #console-transcript-region {
     padding: 0 1;
     border: round $ds-grid-line;
@@ -486,15 +501,25 @@
 }
 
 .console-start-here {
-    margin: 0 0 1 0;
-    border-left: solid $ds-action-focus;
-    background: $ds-surface-raised;
+    margin: 0;
+    border: none;
+    background: $ds-surface-panel;
     color: $ds-text-primary;
+}
+
+#console-start-here,
+#console-action-hints {
+    display: none;
+    height: 0;
+    min-height: 0;
+    max-height: 0;
+    padding: 0;
+    margin: 0;
 }
 
 .console-provider-blocker {
     margin: 0 0 1 0;
-    border-left: solid $ds-status-warning;
+    border: solid $ds-status-warning;
     background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold;
@@ -576,7 +601,6 @@
     color: $ds-text-primary;
 }
 
-#console-session-surface,
 #console-chat-tabs,
 #console-chat-tabs #chat-sessions-container,
 #console-chat-tabs .chat-session {
@@ -600,7 +624,7 @@
 #console-native-tab-strip {
     height: 1;
     min-height: 1;
-    margin: 0 0 1 0;
+    margin: 0;
 }
 
 .console-session-tab,

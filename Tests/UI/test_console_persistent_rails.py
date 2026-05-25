@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -145,9 +145,11 @@ def test_generated_console_stylesheet_includes_rail_rules():
         "#console-right-rail",
         ".console-rail-handle",
         ".console-rail-header",
+        ".console-rail-title",
         ".console-rail-collapse-button",
     ):
         assert selector in css
+    assert "content-align: left middle;" in css
 
 
 @pytest.mark.asyncio
@@ -170,7 +172,9 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
             "#console-live-work-source-readiness",
         )
         assert _is_displayed(console.query_one("#console-inspector-rail-handle"))
-        assert "Inspector" in _visible_text(console)
+        open_button = console.query_one("#console-inspector-rail-open", Button)
+        assert str(open_button.label) == "< Open"
+        assert "Inspector" not in str(open_button.label)
 
 
 @pytest.mark.asyncio
@@ -226,6 +230,8 @@ async def test_console_context_rail_collapse_hides_left_rail_and_expands_main_co
         await _wait_for_hidden(console, pilot, "#console-staged-context-tray")
         await _wait_for_hidden(console, pilot, "#console-workspace-context")
         assert _is_displayed(console.query_one("#console-context-rail-handle"))
+        open_button = console.query_one("#console-context-rail-open", Button)
+        assert str(open_button.label) == "Open >"
         assert (
             await _wait_for_main_column_width_change(
                 console,
@@ -234,6 +240,49 @@ async def test_console_context_rail_collapse_hides_left_rail_and_expands_main_co
                 direction="increase",
             )
         ) > first_start_width
+
+
+@pytest.mark.asyncio
+async def test_console_visible_rail_headers_are_left_aligned_and_collapse_buttons_signal_direction():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-context-rail-collapse")
+
+        context_title = console.query_one("#console-context-rail-title", Static)
+        context_collapse = console.query_one("#console-context-rail-collapse", Button)
+        assert context_title.has_class("console-rail-title")
+        assert str(context_collapse.label) == "Hide <"
+        assert context_title.region.x < context_collapse.region.x
+
+        await pilot.click("#console-inspector-rail-open")
+        await _wait_for_displayed(console, pilot, "#console-right-rail")
+
+        inspector_title = console.query_one("#console-inspector-rail-title", Static)
+        inspector_collapse = console.query_one("#console-inspector-rail-collapse", Button)
+        assert inspector_title.has_class("console-rail-title")
+        assert str(inspector_collapse.label) == "Hide >"
+        assert inspector_title.region.x < inspector_collapse.region.x
+
+
+@pytest.mark.asyncio
+async def test_console_main_column_keeps_priority_width_when_both_rails_are_open():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-open")
+        await pilot.click("#console-inspector-rail-open")
+        await _wait_for_displayed(console, pilot, "#console-right-rail")
+
+        left_width = console.query_one("#console-left-rail").region.width
+        main_width = console.query_one("#console-main-column").region.width
+        right_width = console.query_one("#console-right-rail").region.width
+
+        assert main_width >= left_width + right_width + 16
 
 
 @pytest.mark.asyncio

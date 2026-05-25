@@ -16,6 +16,7 @@ from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
 CONSOLE_CLOSE_TAB_BUTTON_HEIGHT = 1
+CONSOLE_TRANSCRIPT_TITLE = "Transcript / Event Stream"
 
 
 class ConsoleSessionSurface(Vertical):
@@ -27,12 +28,20 @@ class ConsoleSessionSurface(Vertical):
         self._session_sync_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            "Transcript / Event Stream",
+        title = Static(
+            CONSOLE_TRANSCRIPT_TITLE,
             id="console-transcript-title",
             classes="destination-section",
         )
-        with Horizontal(id="console-native-tab-strip"):
+        title.styles.height = 1
+        title.styles.min_height = 1
+        yield title
+
+        tab_strip = Horizontal(id="console-native-tab-strip")
+        tab_strip.styles.height = 1
+        tab_strip.styles.min_height = 1
+        tab_strip.styles.max_height = 1
+        with tab_strip:
             yield Button("New tab", id="console-new-chat-tab")
         yield ChatTaskCards(id="console-task-surface")
         yield ConsoleTranscript(id="console-native-transcript")
@@ -90,3 +99,15 @@ class ConsoleSessionSurface(Vertical):
                 close_button.styles.min_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
                 await tab_strip.mount(close_button)
             await tab_strip.mount(Button("New tab", id="console-new-chat-tab"))
+
+    def sync_inline_guidance(self, *, visible: bool, copy: str = "") -> None:
+        """Render compact first-run guidance without adding a separate row."""
+        try:
+            title = self.query_one("#console-transcript-title", Static)
+        except Exception:
+            return
+        guidance = " ".join(str(copy or "").split())
+        if visible and guidance:
+            title.update(f"{CONSOLE_TRANSCRIPT_TITLE} | {guidance}")
+            return
+        title.update(CONSOLE_TRANSCRIPT_TITLE)

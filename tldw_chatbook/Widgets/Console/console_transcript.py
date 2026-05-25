@@ -223,7 +223,7 @@ class ConsoleTranscript(VerticalScroll):
         else:
             widgets.append(
                 Static(
-                    "Empty transcript\nNo messages yet. Send a prompt or attach context.",
+                    "No messages yet.",
                     classes="console-transcript-empty-state",
                 )
             )

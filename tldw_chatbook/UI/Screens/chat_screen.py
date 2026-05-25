@@ -108,14 +108,11 @@ CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = "Type a Library RAG query before running retrieval."
-CONSOLE_FRAME_BORDER = ("solid", "#6f7782")
-CONSOLE_START_HERE_COPY = (
-    "Start here\n"
-    "Ask a question in Composer. Attach sources from Library, runs, Artifacts, or RAG.\n"
-    "Provider setup required before sending.\n"
-    "Run command with Ctrl+P."
-)
-CONSOLE_ACTION_HINTS_COPY = "Enter send | Ctrl+P commands | Attach context"
+CONSOLE_FRAME_COLOR = "#6f7782"
+CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
+CONSOLE_INLINE_GUIDANCE_COPY = "Ask in Composer. Attach as needed."
+CONSOLE_START_HERE_COPY = ""
+CONSOLE_ACTION_HINTS_COPY = ""
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -317,6 +314,7 @@ class ChatScreen(BaseAppScreen):
         self._last_console_action: ConsoleActionResult | None = None
         self._console_transcript_sync_timer: Any | None = None
         self._console_sync_in_progress = False
+        self._console_guidance_dismissed = False
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -1080,6 +1078,15 @@ class ChatScreen(BaseAppScreen):
         return widget
 
     @staticmethod
+    def _collapse_console_hidden_control_bar(widget: ConsoleControlBar) -> ConsoleControlBar:
+        """Keep the legacy Console control seam mounted without layout cost."""
+        widget.styles.display = "none"
+        widget.styles.height = 0
+        widget.styles.min_height = 0
+        widget.styles.max_height = 0
+        return widget
+
+    @staticmethod
     def _console_mode_summary(control_state: ConsoleControlState) -> str:
         return " | ".join(
             (
@@ -1144,6 +1151,23 @@ class ChatScreen(BaseAppScreen):
                     continue
         return False
 
+    def _console_guidance_visible(self, blocker_copy: str | None = None) -> bool:
+        """Return whether first-run Console guidance should still be visible."""
+        if self._console_guidance_dismissed:
+            return False
+        if self._console_transcript_has_messages():
+            return False
+        if blocker_copy is None:
+            blocker_copy = self._console_provider_blocker_copy()
+        return not bool(blocker_copy)
+
+    def _dismiss_console_guidance(self) -> None:
+        """Hide first-run Console guidance after the user starts composing."""
+        if self._console_guidance_dismissed:
+            return
+        self._console_guidance_dismissed = True
+        self._sync_console_transcript_guidance()
+
     @staticmethod
     def _configure_console_copy_block(
         widget: Static,
@@ -1152,19 +1176,24 @@ class ChatScreen(BaseAppScreen):
         visible: bool,
     ) -> None:
         """Update a compact Console status copy block without remounting it."""
-        widget.update(copy if visible else "")
-        if visible:
+        should_show = visible and bool(copy.strip())
+        widget.update(copy if should_show else "")
+        if should_show:
+            row_count = copy.count("\n") + 1
             widget.styles.display = "block"
-            widget.styles.height = "auto"
-            widget.styles.min_height = 1
+            widget.styles.height = row_count
+            widget.styles.min_height = row_count
+            widget.styles.max_height = row_count
             return
         widget.styles.display = "none"
         widget.styles.height = 0
         widget.styles.min_height = 0
+        widget.styles.max_height = 0
 
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
-        guidance_visible = not self._console_transcript_has_messages()
+        blocker_copy = self._console_provider_blocker_copy()
+        guidance_visible = self._console_guidance_visible(blocker_copy)
         for selector, copy in (
             ("#console-start-here", CONSOLE_START_HERE_COPY),
             ("#console-action-hints", CONSOLE_ACTION_HINTS_COPY),
@@ -1180,11 +1209,20 @@ class ChatScreen(BaseAppScreen):
             )
 
         try:
+            surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
+        except QueryError:
+            pass
+        else:
+            surface.sync_inline_guidance(
+                visible=guidance_visible,
+                copy=CONSOLE_INLINE_GUIDANCE_COPY,
+            )
+
+        try:
             provider_strip = self.query_one("#console-provider-recovery-strip", Horizontal)
             provider_blocker = self.query_one("#console-provider-blocker", Static)
         except QueryError:
             return
-        blocker_copy = self._console_provider_blocker_copy()
         self._configure_console_provider_recovery_strip(
             provider_strip,
             provider_blocker,
@@ -1237,9 +1275,11 @@ class ChatScreen(BaseAppScreen):
         button.styles.min_height = 0
 
     @staticmethod
-    def _frame_console_region(widget: Any) -> Any:
+    def _frame_console_region(widget: Any, *, top: bool = True) -> Any:
         """Apply a visible Textual-native workbench frame."""
         widget.styles.border = CONSOLE_FRAME_BORDER
+        if not top:
+            widget.styles.border_top = ("none", CONSOLE_FRAME_COLOR)
         return widget
 
     def _render_console_live_work_source_readiness(self) -> ComposeResult:
@@ -1431,12 +1471,14 @@ class ChatScreen(BaseAppScreen):
                 id="console-mode-bar",
                 classes="ds-panel",
             )
-            yield ConsoleControlBar(
-                control_state,
-                self.app_instance,
-                on_sidebar_toggle_requested=self._toggle_console_chat_sidebar,
-                id="console-control-bar",
-                classes="ds-panel console-hidden-control",
+            yield self._collapse_console_hidden_control_bar(
+                ConsoleControlBar(
+                    control_state,
+                    self.app_instance,
+                    on_sidebar_toggle_requested=self._toggle_console_chat_sidebar,
+                    id="console-control-bar",
+                    classes="ds-panel console-hidden-control",
+                )
             )
             workspace_grid = self._frame_console_region(
                 Horizontal(id="console-workspace-grid", classes="ds-panel destination-workbench")
@@ -1461,23 +1503,28 @@ class ChatScreen(BaseAppScreen):
                     id="console-left-rail",
                     classes="console-region destination-workbench-pane",
                 )
-                left_rail.styles.width = "4fr"
-                left_rail.styles.min_width = 36
+                left_rail.styles.width = "3fr"
+                left_rail.styles.min_width = 30
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
                 with self._frame_console_region(left_rail):
                     with Horizontal(classes="console-rail-header"):
-                        rail_label = Static("Context")
+                        rail_label = Static(
+                            "Context",
+                            id="console-context-rail-title",
+                            classes="console-rail-title",
+                        )
                         rail_label.styles.width = "1fr"
                         yield rail_label
                         collapse_button = Button(
-                            "Hide",
+                            "Hide <",
                             id="console-context-rail-collapse",
                             classes="console-rail-collapse-button",
                             compact=True,
                         )
-                        collapse_button.styles.width = 6
-                        collapse_button.styles.min_width = 6
+                        collapse_button.tooltip = "Collapse Context rail"
+                        collapse_button.styles.width = 8
+                        collapse_button.styles.min_width = 8
                         yield collapse_button
                     staged_context_tray = ConsoleStagedContextTray(
                         staged_context_state,
@@ -1500,15 +1547,16 @@ class ChatScreen(BaseAppScreen):
                     yield self._frame_console_region(workspace_context_tray)
 
                 main_column = Vertical(id="console-main-column")
-                main_column.styles.width = "10fr"
-                main_column.styles.min_width = 52
+                main_column.styles.width = "13fr"
+                main_column.styles.min_width = 60
                 with main_column:
                     transcript_region = self._frame_console_region(
-                        Vertical(id="console-transcript-region", classes="console-region")
+                        Vertical(id="console-transcript-region", classes="console-region"),
+                        top=False,
                     )
                     with transcript_region:
-                        guidance_visible = not self._console_transcript_has_messages()
                         provider_blocker_copy = self._console_provider_blocker_copy()
+                        guidance_visible = self._console_guidance_visible(provider_blocker_copy)
                         provider_recovery_strip = Horizontal(
                             id="console-provider-recovery-strip",
                             classes="console-provider-recovery-strip",
@@ -1567,23 +1615,28 @@ class ChatScreen(BaseAppScreen):
                     id="console-right-rail",
                     classes="console-region destination-workbench-pane",
                 )
-                right_rail.styles.width = "5fr"
-                right_rail.styles.min_width = 40
+                right_rail.styles.width = "4fr"
+                right_rail.styles.min_width = 34
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
                 with self._frame_console_region(right_rail):
                     with Horizontal(classes="console-rail-header"):
-                        rail_label = Static("Inspector")
+                        rail_label = Static(
+                            "Inspector",
+                            id="console-inspector-rail-title",
+                            classes="console-rail-title",
+                        )
                         rail_label.styles.width = "1fr"
                         yield rail_label
                         collapse_button = Button(
-                            "Hide",
+                            "Hide >",
                             id="console-inspector-rail-collapse",
                             classes="console-rail-collapse-button",
                             compact=True,
                         )
-                        collapse_button.styles.width = 6
-                        collapse_button.styles.min_width = 6
+                        collapse_button.tooltip = "Collapse Inspector rail"
+                        collapse_button.styles.width = 8
+                        collapse_button.styles.min_width = 8
                         yield collapse_button
                     with Vertical(id="console-run-inspector"):
                         yield ConsoleRunInspector(
@@ -2171,6 +2224,7 @@ class ChatScreen(BaseAppScreen):
         if not draft.strip():
             self._focus_console_composer_if_needed(force=True)
             return
+        self._dismiss_console_guidance()
         selection = self._build_console_provider_selection()
         if selection.provider not in {"llama_cpp", "local_llamacpp"}:
             if blocked_reason := self._console_send_blocked_reason():
@@ -2515,6 +2569,7 @@ class ChatScreen(BaseAppScreen):
             return
         if event.is_printable and event.character is not None:
             composer.insert_text(event.character)
+            self._dismiss_console_guidance()
             event.stop()
             event.prevent_default()
 
@@ -2527,6 +2582,7 @@ class ChatScreen(BaseAppScreen):
         if not self._should_capture_console_input(composer):
             return
         composer.insert_pasted_text(event.text)
+        self._dismiss_console_guidance()
         event.stop()
 
     def on_click(self, event: Click) -> None:
