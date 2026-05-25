@@ -498,6 +498,44 @@ async def test_console_provider_blocked_badge_does_not_auto_open_inspector():
 
 
 @pytest.mark.asyncio
+async def test_console_provider_ready_with_missing_model_uses_model_recovery_copy(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": ""},
+        "console": {
+            "rail_state": {
+                "console_rail_state:global:global": {
+                    "left_open": True,
+                    "right_open": False,
+                }
+            }
+        },
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = ""
+    monkeypatch.setattr(
+        ChatScreen,
+        "_effective_console_provider_model",
+        lambda self: ("llama_cpp", ""),
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
+
+        inspector_state = console._build_console_inspector_state(None)
+        provider_row = next(
+            row for row in inspector_state.rows if row.label == "Provider"
+        )
+        assert provider_row.status == "blocked"
+        assert "Select a model before sending." in provider_row.recovery
+        assert "is ready" not in provider_row.recovery
+
+
+@pytest.mark.asyncio
 async def test_console_failed_badge_takes_priority_over_provider_blocked():
     app = _build_test_app()
     app.app_config = {

@@ -978,11 +978,23 @@ class ChatScreen(BaseAppScreen):
             str(provider or ""),
             getattr(self.app_instance, "app_config", {}) or {},
         )
-        provider_ready = (
+        provider_runtime_ready = (
             bool(explicit_provider_ready)
             if explicit_provider_ready is not None
-            else readiness.ready and _has_selected_text(model)
+            else readiness.ready
         )
+        model_selected = _has_selected_text(model)
+        provider_ready = (
+            provider_runtime_ready
+            and model_selected
+        )
+        provider_recovery = ""
+        if not provider_ready:
+            provider_recovery = (
+                "Select a model before sending."
+                if provider_runtime_ready and not model_selected
+                else readiness.user_message
+            )
         can_save_chatbook = bool(
             getattr(self.app_instance, "console_chatbook_artifact_available", False)
             or self._launch_targets_chatbook_artifact(pending_launch)
@@ -991,9 +1003,7 @@ class ChatScreen(BaseAppScreen):
         return ConsoleInspectorState.from_values(
             live_work_title=pending_launch.title if pending_launch else None,
             provider_ready=provider_ready,
-            provider_recovery=(
-                "" if provider_ready else readiness.user_message
-            ),
+            provider_recovery=provider_recovery,
             rag_status=self._console_rag_source_status(pending_launch),
             evidence_summary=evidence_state.summary if evidence_state else None,
             evidence_status=evidence_state.status if evidence_state else None,
