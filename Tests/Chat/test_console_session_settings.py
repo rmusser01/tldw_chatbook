@@ -1,3 +1,4 @@
+import tldw_chatbook.Chat.console_session_settings as session_settings
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     build_console_context_estimate,
@@ -42,6 +43,27 @@ def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:
     assert settings.min_p == 0.05
     assert settings.top_k == 40
     assert settings.max_tokens == 2048
+
+
+def test_public_helpers_accept_planned_positional_call_forms() -> None:
+    config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "chat-default"},
+        "api_settings": {"llama_cpp": {"api_url": "127.0.0.1:9099/v1"}},
+    }
+
+    settings = build_default_console_session_settings(config, "llama_cpp", None)
+    provider_options = build_console_provider_options({"llama_cpp": ["m"]})
+    model_options = build_console_model_options("llama_cpp", {"llama_cpp": ["m"]}, "current")
+    estimate = build_console_context_estimate(
+        [{"role": "user", "content": "hello"}],
+        "openai",
+        "gpt-3.5-turbo",
+    )
+
+    assert settings.provider == "llama_cpp"
+    assert [option.value for option in provider_options] == ["llama_cpp"]
+    assert [option.value for option in model_options] == ["current", "m"]
+    assert estimate.used_tokens is not None
 
 
 def test_model_options_include_current_model_missing_from_registry() -> None:
@@ -147,6 +169,17 @@ def test_readiness_unsupported_provider_missing_key_is_still_primary_wip() -> No
     assert "missing API key" in readiness.detail
 
 
+def test_readiness_configured_unknown_non_native_provider_is_wip() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="future_provider", model="future-model"),
+        app_config={"api_settings": {"future_provider": {}}},
+        environ={},
+    )
+
+    assert readiness.label == "WIP"
+    assert "not wired" in readiness.detail
+
+
 def test_context_estimate_counts_messages_and_staged_sources() -> None:
     estimate = build_console_context_estimate(
         messages=[{"role": "user", "content": "hello world"}],
@@ -165,3 +198,20 @@ def test_context_estimate_counts_messages_and_staged_sources() -> None:
     assert "2 sources staged" in estimate.label
     assert estimate.staged_source_count == 2
     assert estimate.staged_context_summary == "2 staged sources"
+
+
+def test_context_estimate_token_counter_failure_uses_unknown_copy(monkeypatch) -> None:
+    def fail_count(*_args: object, **_kwargs: object) -> int:
+        raise RuntimeError("tokenizer unavailable")
+
+    monkeypatch.setattr(session_settings, "count_tokens_chat_history", fail_count)
+
+    estimate = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hello world"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+    )
+
+    assert estimate.used_tokens is None
+    assert estimate.token_limit is None
+    assert estimate.label == "Context: unknown"

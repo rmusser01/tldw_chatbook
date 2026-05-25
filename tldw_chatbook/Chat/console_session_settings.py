@@ -87,7 +87,6 @@ class ConsoleSettingsContextEstimate:
 
 
 def build_console_provider_options(
-    *,
     providers_models: Mapping[str, Sequence[str]],
 ) -> list[ConsoleSettingsOption]:
     """Return sorted provider options from the configured model registry."""
@@ -96,7 +95,6 @@ def build_console_provider_options(
 
 
 def build_console_model_options(
-    *,
     provider: str,
     providers_models: Mapping[str, Sequence[str]],
     current_model: str | None = None,
@@ -121,7 +119,6 @@ def build_console_model_options(
 
 
 def build_default_console_session_settings(
-    *,
     app_config: Mapping[str, object],
     provider: str | None = None,
     model: str | None = None,
@@ -211,15 +208,9 @@ def build_console_settings_readiness(
         )
 
     readiness = get_provider_readiness(settings.provider, app_config, environ=environ)
-    if readiness.reason == "Unknown provider":
-        return ConsoleSettingsReadiness(
-            label="Unknown",
-            detail=readiness.user_message,
-            native_send_supported=False,
-        )
-
     native_send_supported = provider_key in native_keys and readiness.ready
-    if provider_key not in native_keys:
+    provider_is_configured = _has_provider_settings_key(app_config, provider_key)
+    if provider_key not in native_keys and (provider_is_configured or readiness.reason != "Unknown provider"):
         detail = f"Console native provider '{provider_key}' is not wired yet."
         if readiness.reason == "Missing API key":
             detail = f"{detail} This provider also has a missing API key."
@@ -228,6 +219,13 @@ def build_console_settings_readiness(
         return ConsoleSettingsReadiness(
             label="WIP",
             detail=detail,
+            native_send_supported=False,
+        )
+
+    if readiness.reason == "Unknown provider":
+        return ConsoleSettingsReadiness(
+            label="Unknown",
+            detail=readiness.user_message,
             native_send_supported=False,
         )
 
@@ -253,10 +251,10 @@ def build_console_settings_readiness(
 
 
 def build_console_context_estimate(
-    *,
     messages: Sequence[Mapping[str, str]],
     provider: str,
     model: str | None,
+    *,
     staged_source_count: int = 0,
     staged_context_summary: str = "",
     max_tokens_response: int | None = None,
@@ -268,7 +266,7 @@ def build_console_context_estimate(
         return ConsoleSettingsContextEstimate(
             used_tokens=None,
             token_limit=None,
-            label="Token estimate unavailable until a model is selected.",
+            label="Context: unknown",
             staged_source_count=staged_source_count,
             staged_context_summary=staged_context_summary,
         )
@@ -286,7 +284,7 @@ def build_console_context_estimate(
         return ConsoleSettingsContextEstimate(
             used_tokens=None,
             token_limit=None,
-            label="Token estimate unavailable for this model.",
+            label="Context: unknown",
             staged_source_count=staged_source_count,
             staged_context_summary=staged_context_summary,
         )
@@ -320,6 +318,11 @@ def _provider_settings(app_config: Mapping[str, object], provider_key: str) -> M
             value = configured_value
             break
     return value if isinstance(value, Mapping) else {}
+
+
+def _has_provider_settings_key(app_config: Mapping[str, object], provider_key: str) -> bool:
+    api_settings = _mapping_value(app_config, "api_settings")
+    return any(provider_config_key(configured_provider) == provider_key for configured_provider in api_settings)
 
 
 def _default_base_url(provider_key: str, provider_settings: Mapping[str, object]) -> str | None:
