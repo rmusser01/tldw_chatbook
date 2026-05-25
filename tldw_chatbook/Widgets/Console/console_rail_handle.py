@@ -32,11 +32,12 @@ class ConsoleRailHandle(Vertical):
         self.add_class(f"console-rail-handle-{side}")
 
     def compose(self) -> ComposeResult:
-        button = Button(self._button_label(), id=self.button_id, compact=True)
+        button = Button(self.label, id=self.button_id, compact=True)
         button.add_class("console-rail-handle-button")
+        button.add_class(f"console-rail-handle-button-{self.side}")
         button.tooltip = (
             "Open Context rail"
-            if self.side == "left" or self.label.lower() == "context"
+            if self.side == "left"
             else "Open Inspector rail"
         )
         yield button
@@ -52,9 +53,3 @@ class ConsoleRailHandle(Vertical):
         self.label = label
         self.badge = badge
         self.refresh(recompose=True)
-
-    def _button_label(self) -> str:
-        """Return compact, directional affordance copy for the collapsed rail."""
-        if self.side == "left":
-            return "Open >"
-        return "< Open"

@@ -66,6 +66,19 @@ def _assert_handle_visible_text_fits(handle) -> None:
         )
 
 
+def _assert_handle_aligned_with_workbench_frame(screen, handle_selector: str) -> None:
+    handle = screen.query_one(handle_selector)
+    main_column = screen.query_one("#console-main-column")
+    workspace_grid = screen.query_one("#console-workspace-grid")
+
+    assert handle.region.y == main_column.region.y
+    assert handle.region.height == main_column.region.height
+    assert handle.region.y >= workspace_grid.region.y
+    assert handle.region.y + handle.region.height <= (
+        workspace_grid.region.y + workspace_grid.region.height
+    )
+
+
 async def _wait_for_badge(screen, pilot, selector: str, expected: str) -> str:
     for _ in range(20):
         matches = list(screen.query(selector))
@@ -172,9 +185,16 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
             "#console-live-work-source-readiness",
         )
         assert _is_displayed(console.query_one("#console-inspector-rail-handle"))
+        _assert_handle_aligned_with_workbench_frame(
+            console,
+            "#console-inspector-rail-handle",
+        )
+        assert console.query_one("#console-inspector-rail-handle").has_class(
+            "console-rail-handle-right"
+        )
         open_button = console.query_one("#console-inspector-rail-open", Button)
-        assert str(open_button.label) == "< Open"
-        assert "Inspector" not in str(open_button.label)
+        assert str(open_button.label) == "< Inspector"
+        assert open_button.tooltip == "Open Inspector rail"
 
 
 @pytest.mark.asyncio
@@ -230,8 +250,16 @@ async def test_console_context_rail_collapse_hides_left_rail_and_expands_main_co
         await _wait_for_hidden(console, pilot, "#console-staged-context-tray")
         await _wait_for_hidden(console, pilot, "#console-workspace-context")
         assert _is_displayed(console.query_one("#console-context-rail-handle"))
+        _assert_handle_aligned_with_workbench_frame(
+            console,
+            "#console-context-rail-handle",
+        )
+        assert console.query_one("#console-context-rail-handle").has_class(
+            "console-rail-handle-left"
+        )
         open_button = console.query_one("#console-context-rail-open", Button)
-        assert str(open_button.label) == "Open >"
+        assert str(open_button.label) == "Context >"
+        assert open_button.tooltip == "Open Context rail"
         assert (
             await _wait_for_main_column_width_change(
                 console,
@@ -818,7 +846,11 @@ async def test_console_compact_width_preserves_main_column_and_forces_right_coll
         assert composer.region.width >= workspace_grid.region.width - 2
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
         assert _is_displayed(right_handle)
-        assert right_handle.region.width == 10
+        assert right_handle.region.width == 12
+        _assert_handle_aligned_with_workbench_frame(
+            console,
+            "#console-inspector-rail-handle",
+        )
         _assert_handle_visible_text_fits(right_handle)
 
     assert app.app_config["console"]["rail_state"][preference_key]["right_open"] is True
