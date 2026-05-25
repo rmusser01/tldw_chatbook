@@ -217,7 +217,7 @@ class ConsoleComposerBar(Horizontal):
             return
 
         send_ready = has_draft and not send_blocked
-        send_button.disabled = send_blocked
+        send_button.disabled = False
         send_button.variant = "primary" if send_ready else "default"
         if send_blocked:
             send_button.tooltip = "Wait for the active Console run to finish before sending."
@@ -232,7 +232,7 @@ class ConsoleComposerBar(Horizontal):
         send_button.set_class(not has_draft, "console-send-inactive")
         send_button.set_class(send_blocked, "console-send-blocked")
 
-        stop_button.disabled = not run_active
+        stop_button.disabled = False
         stop_button.variant = "warning" if run_active else "default"
         stop_button.tooltip = (
             "Stop generation in the active Console session."
@@ -243,7 +243,7 @@ class ConsoleComposerBar(Horizontal):
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
 
-        save_button.disabled = not can_save_chatbook
+        save_button.disabled = False
         save_button.variant = "default"
         save_button.tooltip = (
             "Open the available Chatbook artifact in Artifacts."

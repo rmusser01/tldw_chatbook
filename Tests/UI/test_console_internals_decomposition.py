@@ -464,7 +464,7 @@ async def test_console_composer_save_chatbook_is_secondary():
         send_button = composer.query_one("#console-send-message", Button)
         save_button = composer.query_one("#console-save-chatbook", Button)
 
-        assert save_button.disabled is True
+        assert save_button.disabled is False
         assert save_button.has_class("console-action-secondary")
         assert save_button.has_class("console-save-chatbook-secondary")
         assert save_button.has_class("console-action-subdued")
