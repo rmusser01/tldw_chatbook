@@ -359,6 +359,10 @@ async def test_console_composer_marks_has_draft_state():
         await pilot.pause(0.1)
         assert not composer.has_class("console-composer-has-draft")
 
+        composer.load_draft(" ")
+        await pilot.pause(0.1)
+        assert composer.has_class("console-composer-has-draft")
+
 
 @pytest.mark.asyncio
 async def test_console_native_composer_auto_expands_for_long_drafts():

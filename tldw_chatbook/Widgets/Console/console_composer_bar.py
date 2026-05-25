@@ -165,7 +165,7 @@ class ConsoleComposerBar(Horizontal):
 
     def _sync_interaction_classes(self) -> None:
         self.set_class(self.has_focus_within, "console-composer-focused")
-        self.set_class(bool(self.draft_text().strip()), "console-composer-has-draft")
+        self.set_class(bool(self.draft_text()), "console-composer-has-draft")
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
