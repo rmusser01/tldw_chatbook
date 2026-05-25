@@ -279,7 +279,7 @@ async def test_home_dashboard_regions_fit_default_viewport():
 
 
 @pytest.mark.asyncio
-async def test_console_uses_three_pane_workbench_and_visible_composer():
+async def test_console_first_start_shows_left_rail_main_and_right_handle():
     app = _build_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
