@@ -678,7 +678,7 @@ class ChatScreen(BaseAppScreen):
             logger.warning("Failed to persist Console rail preference: {}", exc)
             saved = False
         if not saved and notify_on_failure:
-            self.call_from_thread(self._notify_console_rail_preference_save_failure)
+            self.app.call_from_thread(self._notify_console_rail_preference_save_failure)
 
     def _notify_console_rail_preference_save_failure(self) -> None:
         """Notify from the UI thread when background preference persistence fails."""
