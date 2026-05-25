@@ -1089,14 +1089,17 @@ class ChatScreen(BaseAppScreen):
 
     @staticmethod
     def _console_mode_summary(control_state: ConsoleControlState) -> str:
-        return " | ".join(
-            (
-                "Mode: Chat / RAG / Run Follow",
-                control_state.persona_label,
-                control_state.sources_label,
-                control_state.tools_label,
-                control_state.approvals_label,
-            )
+        def readiness_count(label: str) -> str:
+            value = label.partition(":")[2].strip()
+            return value.split(maxsplit=1)[0] if value else "0"
+
+        return (
+            "Mode: Chat / RAG / Run Follow"
+            f" | {control_state.persona_label}"
+            " | Readiness: "
+            f"Sources {readiness_count(control_state.sources_label)}, "
+            f"Tools {readiness_count(control_state.tools_label)}, "
+            f"Approvals {readiness_count(control_state.approvals_label)}"
         )
 
     @staticmethod

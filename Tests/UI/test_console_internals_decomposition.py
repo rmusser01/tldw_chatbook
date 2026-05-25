@@ -226,6 +226,28 @@ async def test_console_hidden_control_bar_does_not_reserve_a_row():
 
 
 @pytest.mark.asyncio
+async def test_console_mode_bar_groups_location_mode_and_readiness():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-mode-bar")
+
+        title = console.query_one("#console-title", Static)
+        mode_bar = console.query_one("#console-mode-bar", Static)
+
+        title_plain = getattr(title.render(), "plain", str(title.render()))
+        mode_plain = getattr(mode_bar.render(), "plain", str(mode_bar.render()))
+
+        assert title_plain == "Console | Live agent control, chat, RAG, tools, approvals | Local"
+        assert (
+            mode_plain
+            == "Mode: Chat / RAG / Run Follow | Assistant: General | Readiness: Sources 0, Tools 0, Approvals 0"
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_gate15_keeps_existing_chat_send_control_reachable():
     app = _build_test_app()
     host = ConsoleHarness(app)
