@@ -993,6 +993,8 @@ class ChatScreen(BaseAppScreen):
             provider_recovery = (
                 "Select a model before sending."
                 if provider_runtime_ready and not model_selected
+                else "Select a provider and model before sending."
+                if explicit_provider_ready is False
                 else readiness.user_message
             )
         can_save_chatbook = bool(
