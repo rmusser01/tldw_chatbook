@@ -230,10 +230,10 @@ async def test_console_tab_reaches_major_console_screen_regions():
         await _wait_for_selector(console, pilot, "#console-staged-context-tray")
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        await _wait_for_selector(console, pilot, "#console-run-inspector")
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-open")
 
         seen_focus_ids = set()
-        for _ in range(24):
+        for _ in range(64):
             focused = getattr(console.app, "focused", None)
             if focused is not None and getattr(focused, "id", None):
                 seen_focus_ids.add(focused.id)
@@ -241,3 +241,4 @@ async def test_console_tab_reaches_major_console_screen_regions():
 
     assert "console-native-transcript" in seen_focus_ids
     assert "console-native-composer" in seen_focus_ids
+    assert "console-inspector-rail-open" in seen_focus_ids

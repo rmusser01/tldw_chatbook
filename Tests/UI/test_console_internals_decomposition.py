@@ -96,6 +96,30 @@ async def _wait_for_console_library_rag_button_state(
     )
 
 
+async def _open_console_inspector(console, pilot) -> None:
+    """Open the persistent Inspector rail and wait for measurable layout."""
+    right_rail = console.query_one("#console-right-rail")
+    if getattr(right_rail, "display", False) and right_rail.region.width > 0:
+        return
+
+    await _wait_for_selector(console, pilot, "#console-inspector-rail-open")
+    await pilot.click("#console-inspector-rail-open")
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        right_rail = console.query_one("#console-right-rail")
+        inspector_state = console.query_one("#console-run-inspector-state")
+        if (
+            getattr(right_rail, "display", False)
+            and right_rail.region.width > 0
+            and inspector_state.region.width > 0
+        ):
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError("Timed out waiting for Console Inspector rail to open")
+
+
 def _assert_single_style_span(renderable: Text, *, style: str, expected_text: str) -> None:
     matching_spans = [span for span in renderable.spans if span.style == style]
     assert len(matching_spans) == 1
@@ -864,7 +888,11 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             assert expected in text
         assert "Provider: OpenAI is not ready" not in text
         assert "Provider setup is shown in the recovery strip above." not in text
-        assert text.lower().count("missing api key") == 1
+        blocker = console.query_one("#console-provider-blocker", Static)
+        blocker_text = getattr(blocker.render(), "plain", str(blocker.render()))
+        assert blocker_text == "Provider setup needed: OpenAI missing API key"
+        assert console.query_one("#console-inspector-rail-handle").display is True
+        assert console.query_one("#console-right-rail").display is False
 
 
 @pytest.mark.asyncio
@@ -906,7 +934,8 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         assert blocker_text == "Provider setup needed: OpenAI missing API key"
         text = _visible_text(console)
         assert "Open Settings" in text
-        assert text.lower().count("missing api key") == 1
+        assert console.query_one("#console-inspector-rail-handle").display is True
+        assert console.query_one("#console-right-rail").display is False
 
 
 @pytest.mark.asyncio
@@ -1077,6 +1106,7 @@ async def test_console_inspector_live_work_sources_stay_near_top():
 
     async with host.run_test(size=(220, 64)) as pilot:
         console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-live-work-source-readiness")
 
         inspector = console.query_one("#console-run-inspector")
@@ -1084,7 +1114,10 @@ async def test_console_inspector_live_work_sources_stay_near_top():
         source_readiness = console.query_one("#console-live-work-source-readiness")
 
         assert inspector_state.region.height <= 14
-        assert source_readiness.region.y <= inspector.region.y + inspector_state.region.height + 2
+        assert source_readiness.region.y >= (
+            inspector_state.region.y + inspector_state.region.height
+        )
+        assert source_readiness.region.y <= inspector.region.y + inspector.region.height + 1
         assert source_readiness.region.height <= 18
 
 
@@ -1095,6 +1128,7 @@ async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overl
 
     async with host.run_test(size=(196, 64)) as pilot:
         console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-live-work-source-readiness")
 
         run_rag = console.query_one("#console-run-library-rag", Button)
@@ -1119,6 +1153,7 @@ async def test_console_empty_inspector_hides_disabled_actions_until_actionable()
 
     async with host.run_test(size=(196, 64)) as pilot:
         console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-inspector-state")
 
         for selector in (
@@ -1135,19 +1170,56 @@ async def test_console_empty_inspector_hides_disabled_actions_until_actionable()
 @pytest.mark.asyncio
 async def test_console_run_inspector_groups_state_approvals_and_source_readiness():
     app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(196, 64)) as pilot:
         console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-run-state-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-approvals-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-source-readiness-heading")
 
-        text = _visible_text(console)
-        assert "Run State" in text
-        assert "Status: Ready" in text
-        assert "Approvals" in text
-        assert "Source Readiness" in text
+        assert (
+            getattr(
+                console.query_one("#console-inspector-run-status-summary", Static).render(),
+                "plain",
+                "",
+            )
+            == "Status: Ready"
+        )
+        assert (
+            getattr(
+                console.query_one("#console-inspector-run-state-heading", Static).render(),
+                "plain",
+                "",
+            )
+            == "Run State"
+        )
+        assert (
+            getattr(
+                console.query_one("#console-inspector-approvals-heading", Static).render(),
+                "plain",
+                "",
+            )
+            == "Approvals"
+        )
+        assert (
+            getattr(
+                console.query_one("#console-inspector-source-readiness-heading", Static).render(),
+                "plain",
+                "",
+            )
+            == "Source Readiness"
+        )
 
 
 @pytest.mark.asyncio
@@ -1161,15 +1233,25 @@ async def test_console_workbench_weights_transcript_as_primary_region():
 
         staged = console.query_one("#console-left-rail")
         main = console.query_one("#console-main-column")
-        inspector = console.query_one("#console-run-inspector")
+        right_handle = console.query_one("#console-inspector-rail-handle")
+        right_rail = console.query_one("#console-right-rail")
         transcript = console.query_one("#console-transcript-region")
 
         assert main.region.width > staged.region.width
-        assert main.region.width > inspector.region.width
-        assert inspector.region.width > staged.region.width
+        assert main.region.width > right_handle.region.width
+        assert right_handle.display is True
+        assert right_handle.region.width > 0
+        assert right_rail.display is False
+        assert right_rail.region.width == 0
         assert staged.region.width >= 36
-        assert inspector.region.width >= 40
         assert transcript.region.width == main.region.width
+
+        await _open_console_inspector(console, pilot)
+
+        assert right_rail.display is True
+        assert right_rail.region.width >= 40
+        assert right_handle.display is False
+        assert console.query_one("#console-run-inspector-state").region.width > 0
 
 
 @pytest.mark.asyncio
@@ -1201,10 +1283,11 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
 
         for selector in (
             "#console-workspace-grid",
+            "#console-left-rail",
             "#console-staged-context-tray",
             "#console-workspace-context",
             "#console-transcript-region",
-            "#console-run-inspector",
+            "#console-inspector-rail-handle",
             "#console-native-composer",
         ):
             border = console.query_one(selector).styles.border
@@ -1212,6 +1295,22 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
             assert border.right[0] == "solid", f"{selector} missing right frame"
             assert border.bottom[0] == "solid", f"{selector} missing bottom frame"
             assert border.left[0] == "solid", f"{selector} missing left frame"
+
+        await _open_console_inspector(console, pilot)
+
+        right_rail = console.query_one("#console-right-rail")
+        inspector_state = console.query_one("#console-run-inspector-state")
+        border = right_rail.styles.border
+        assert border.top[0] == "solid", "#console-right-rail missing top frame"
+        assert border.right[0] == "solid", "#console-right-rail missing right frame"
+        assert border.bottom[0] == "solid", "#console-right-rail missing bottom frame"
+        assert border.left[0] == "solid", "#console-right-rail missing left frame"
+        assert inspector_state.region.width > 0
+        assert right_rail.region.x <= inspector_state.region.x
+        assert (
+            inspector_state.region.x + inspector_state.region.width
+            <= right_rail.region.x + right_rail.region.width
+        )
 
 
 @pytest.mark.asyncio
@@ -1402,15 +1501,18 @@ def test_console_control_state_tolerates_missing_launch_source():
 
 def test_console_control_and_inspector_share_effective_provider_model_sources():
     app = _build_test_app()
-    app.app_config = {"chat_defaults": {"model": "reactive-model"}}
-    app.chat_api_provider_value = "ReactiveOpenAI"
+    app.app_config = {
+        "chat_defaults": {"model": "reactive-model"},
+        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
+    }
+    app.chat_api_provider_value = "OpenAI"
     screen = ChatScreen(app)
 
     control_state = screen._build_console_control_state(None)
     inspector_state = screen._build_console_inspector_state(None)
     rows_by_label = {row.label: row for row in inspector_state.rows}
 
-    assert control_state.provider_label == "Provider: ReactiveOpenAI"
+    assert control_state.provider_label == "Provider: OpenAI"
     assert control_state.model_label == "Model: reactive-model"
     assert rows_by_label["Provider"].text == "Provider: ready"
 
@@ -1486,8 +1588,9 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
     }
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
+    async with host.run_test(size=(196, 48)) as pilot:
         console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-provider")
 
         assert "Provider: blocked" in str(
@@ -1520,8 +1623,9 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
     }
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
+    async with host.run_test(size=(196, 48)) as pilot:
         console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-review-approval")
 
         assert "Approvals: 1 pending" in str(

@@ -1436,7 +1436,7 @@ class ChatScreen(BaseAppScreen):
                 left_handle.styles.max_width = 10
                 if rail_state.left_open:
                     left_handle.styles.display = "none"
-                yield left_handle
+                yield self._frame_console_region(left_handle)
 
                 left_rail = Vertical(
                     id="console-left-rail",
@@ -1446,7 +1446,7 @@ class ChatScreen(BaseAppScreen):
                 left_rail.styles.min_width = 36
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
-                with left_rail:
+                with self._frame_console_region(left_rail):
                     with Horizontal(classes="console-rail-header"):
                         rail_label = Static("Context")
                         rail_label.styles.width = "1fr"
@@ -1589,7 +1589,7 @@ class ChatScreen(BaseAppScreen):
                 right_handle.styles.max_width = 10
                 if rail_state.right_open:
                     right_handle.styles.display = "none"
-                yield right_handle
+                yield self._frame_console_region(right_handle)
             yield self._frame_console_region(
                 ConsoleComposerBar(
                     id="console-native-composer",
