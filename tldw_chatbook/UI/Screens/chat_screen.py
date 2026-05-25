@@ -59,6 +59,11 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkSourceReadinessState,
     ConsoleLiveWorkStatusCardState,
 )
+from ...Chat.console_rail_state import (
+    ConsoleRailState,
+    build_console_rail_preference_key,
+    build_console_rail_state,
+)
 from ...config import coerce_bool_setting
 from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
@@ -73,6 +78,7 @@ from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
     ConsoleComposerBar,
     ConsoleControlBar,
+    ConsoleRailHandle,
     ConsoleRunInspector,
     ConsoleSaveAsModal,
     ConsoleSessionSurface,
@@ -542,6 +548,101 @@ class ChatScreen(BaseAppScreen):
         return build_console_workspace_state(
             registry_service=getattr(self.app_instance, "workspace_registry_service", None),
             current_conversation=self._current_console_conversation_id(session_data),
+        )
+
+    def _console_config(self) -> dict[str, Any]:
+        """Return mutable Console app config, initializing the section if needed."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            app_config = {}
+            setattr(self.app_instance, "app_config", app_config)
+        console_config = app_config.get("console")
+        if not isinstance(console_config, dict):
+            console_config = {}
+            app_config["console"] = console_config
+        return console_config
+
+    def _console_rail_state_config(self) -> dict[str, Any]:
+        """Return mutable Console rail-state config, initializing it if needed."""
+        console_config = self._console_config()
+        rail_state_config = console_config.get("rail_state")
+        if not isinstance(rail_state_config, dict):
+            rail_state_config = {}
+            console_config["rail_state"] = rail_state_config
+        return rail_state_config
+
+    def _stored_console_rail_preferences(
+        self,
+        key: str,
+        fallback_key: str | None,
+    ) -> Any:
+        """Read stored Console rail preferences without writing persistence."""
+        rail_state_config = self._console_rail_state_config()
+        if key in rail_state_config:
+            return rail_state_config[key]
+        if fallback_key and fallback_key in rail_state_config:
+            return rail_state_config[fallback_key]
+        return None
+
+    def _console_rail_available_columns(self) -> int | None:
+        """Return available screen width for responsive rail state."""
+        width = getattr(getattr(self, "size", None), "width", None)
+        return int(width) if width else None
+
+    def _current_console_run_status_value(self) -> str:
+        """Return the current Console run status value for rail badging."""
+        controller = self._console_chat_controller
+        if controller is not None:
+            run_state = getattr(controller, "run_state", None)
+            status = getattr(run_state, "status", None)
+            if status is not None:
+                return str(getattr(status, "value", status))
+        override = getattr(self.app_instance, "console_run_status_override", None)
+        if override is not None:
+            return str(getattr(override, "value", override))
+        return "idle"
+
+    def _build_console_rail_state(
+        self,
+        *,
+        staged_context_state: ConsoleStagedContextState,
+        inspector_state: ConsoleInspectorState,
+        workspace_context_state: ConsoleWorkspaceContextState,
+    ) -> ConsoleRailState:
+        """Build the effective Console rail state for the current composition."""
+        workspace_context = self._current_console_workspace_context()
+        active_session_id = (
+            self._console_chat_store.active_session_id
+            if self._console_chat_store is not None
+            else None
+        )
+        active_session = None
+        if self._console_chat_store is not None and active_session_id is not None:
+            for session in self._console_chat_store.sessions():
+                if session.id == active_session_id:
+                    active_session = session
+                    break
+        preference_key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            conversation_id=self._current_console_conversation_id(),
+            session_id=active_session_id,
+        )
+        return build_console_rail_state(
+            preference_key=preference_key,
+            stored_preferences=self._stored_console_rail_preferences(
+                preference_key.value,
+                preference_key.fallback_value,
+            ),
+            staged_source_count=len(workspace_context.staged_sources),
+            staged_summary=staged_context_state.summary,
+            workspace_label=workspace_context_state.workspace_label,
+            session_label=getattr(active_session, "title", ""),
+            run_status=self._current_console_run_status_value(),
+            inspector_rows=inspector_state.rows,
+            tool_count=self._console_tool_count(),
+            approval_count=self._console_pending_approval_count(),
+            can_save_chatbook=inspector_state.can_save_chatbook,
+            available_columns=self._console_rail_available_columns(),
         )
 
     def _sync_console_workspace_context(
@@ -1029,6 +1130,11 @@ class ChatScreen(BaseAppScreen):
         staged_context_state = self._build_console_staged_context_state(pending_launch)
         inspector_state = self._build_console_inspector_state(pending_launch)
         workspace_context_state = self._build_console_workspace_context_state()
+        rail_state = self._build_console_rail_state(
+            staged_context_state=staged_context_state,
+            inspector_state=inspector_state,
+            workspace_context_state=workspace_context_state,
+        )
         with Vertical(id="console-shell"):
             yield Static(
                 "Console | Live agent control, chat, RAG, tools, approvals | Local",
@@ -1061,13 +1167,35 @@ class ChatScreen(BaseAppScreen):
                 Horizontal(id="console-workspace-grid", classes="ds-panel destination-workbench")
             )
             with workspace_grid:
+                left_handle = ConsoleRailHandle(
+                    label=rail_state.left_label,
+                    badge=rail_state.left_badge,
+                    button_id="console-context-rail-open",
+                    badge_id="console-context-rail-badge",
+                    side="left",
+                    id="console-context-rail-handle",
+                )
+                if rail_state.left_open:
+                    left_handle.styles.display = "none"
+                yield left_handle
+
                 left_rail = Vertical(
                     id="console-left-rail",
                     classes="console-region destination-workbench-pane",
                 )
                 left_rail.styles.width = "4fr"
                 left_rail.styles.min_width = 36
+                if not rail_state.left_open:
+                    left_rail.styles.display = "none"
                 with left_rail:
+                    with Horizontal(classes="console-rail-header"):
+                        yield Static("Context")
+                        yield Button(
+                            "Hide",
+                            id="console-context-rail-collapse",
+                            classes="console-rail-collapse-button",
+                            compact=True,
+                        )
                     staged_context_tray = ConsoleStagedContextTray(
                         staged_context_state,
                         id="console-staged-context-tray",
@@ -1152,21 +1280,44 @@ class ChatScreen(BaseAppScreen):
                         yield action_hints
                         yield self._ensure_console_session_surface()
 
-                run_inspector = Vertical(
-                    id="console-run-inspector",
+                right_rail = Vertical(
+                    id="console-right-rail",
                     classes="console-region destination-workbench-pane",
                 )
-                run_inspector.styles.width = "5fr"
-                run_inspector.styles.min_width = 40
-                with self._frame_console_region(run_inspector):
-                    yield ConsoleRunInspector(
-                        inspector_state,
-                        id="console-run-inspector-state",
-                    )
+                right_rail.styles.width = "5fr"
+                right_rail.styles.min_width = 40
+                if not rail_state.right_open:
+                    right_rail.styles.display = "none"
+                with self._frame_console_region(right_rail):
+                    with Horizontal(classes="console-rail-header"):
+                        yield Static("Inspector")
+                        yield Button(
+                            "Hide",
+                            id="console-inspector-rail-collapse",
+                            classes="console-rail-collapse-button",
+                            compact=True,
+                        )
+                    with Vertical(id="console-run-inspector"):
+                        yield ConsoleRunInspector(
+                            inspector_state,
+                            id="console-run-inspector-state",
+                        )
                     if pending_launch:
                         yield from self._render_console_live_work_status_card(pending_launch)
                     else:
                         yield from self._render_console_live_work_source_readiness()
+
+                right_handle = ConsoleRailHandle(
+                    label=rail_state.right_label,
+                    badge=rail_state.right_badge,
+                    button_id="console-inspector-rail-open",
+                    badge_id="console-inspector-rail-badge",
+                    side="right",
+                    id="console-inspector-rail-handle",
+                )
+                if rail_state.right_open:
+                    right_handle.styles.display = "none"
+                yield right_handle
             yield self._frame_console_region(
                 ConsoleComposerBar(
                     id="console-native-composer",
