@@ -1,7 +1,7 @@
 # Console Session Settings Design
 
 Date: 2026-05-25
-Status: Approved by user and spec review; amended with post-review clarifications, pending user spec review
+Status: Approved by user and spec review; amended with post-review clarifications
 Primary Repo: `tldw_chatbook`
 Scope: Console screen UX, per-tab session settings, provider/model discoverability, sampling controls, and context summary
 
