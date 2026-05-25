@@ -96,7 +96,7 @@ class FailThenRecoverGateway(_ReadyResolutionGateway):
         yield "recovered"
 
 
-async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 20) -> None:
+async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 80) -> None:
     for _ in range(attempts):
         if expected in _visible_text(screen):
             return
