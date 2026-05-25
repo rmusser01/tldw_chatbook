@@ -780,15 +780,45 @@ class ChatScreen(BaseAppScreen):
             workspace_label=workspace_context_state.workspace_label,
             session_label=getattr(active_session, "title", ""),
             run_status=self._current_console_run_status_value(),
-            inspector_rows=inspector_state.rows,
+            inspector_rows=self._console_badge_inspector_rows(inspector_state),
             tool_count=self._console_tool_count(),
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=inspector_state.can_save_chatbook,
             available_columns=self._console_rail_available_columns(),
         )
 
+    @staticmethod
+    def _console_badge_inspector_rows(
+        inspector_state: ConsoleInspectorState,
+    ) -> tuple[Any, ...]:
+        """Return only rows whose blocked state should outrank review badges."""
+        return tuple(
+            row
+            for row in inspector_state.rows
+            if str(getattr(row, "label", "")).strip().lower()
+            in {"provider", "rag/source", "evidence", "source"}
+        )
+
     def _sync_console_rail_visibility(self, rail_state: ConsoleRailState) -> None:
         """Apply Console rail visibility without recomposing the screen."""
+        for selector, label, badge in (
+            (
+                "#console-context-rail-handle",
+                rail_state.left_label,
+                rail_state.left_badge,
+            ),
+            (
+                "#console-inspector-rail-handle",
+                rail_state.right_label,
+                rail_state.right_badge,
+            ),
+        ):
+            try:
+                handle = self.query_one(selector, ConsoleRailHandle)
+            except QueryError:
+                continue
+            handle.sync_state(label, badge)
+
         targets = (
             ("#console-left-rail", rail_state.left_open),
             ("#console-context-rail-handle", not rail_state.left_open),
@@ -944,10 +974,14 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleInspectorState:
         provider, model = self._effective_console_provider_model()
         explicit_provider_ready = getattr(self.app_instance, "console_provider_ready", None)
+        readiness = get_provider_readiness(
+            str(provider or ""),
+            getattr(self.app_instance, "app_config", {}) or {},
+        )
         provider_ready = (
             bool(explicit_provider_ready)
             if explicit_provider_ready is not None
-            else _has_selected_text(provider) and _has_selected_text(model)
+            else readiness.ready and _has_selected_text(model)
         )
         can_save_chatbook = bool(
             getattr(self.app_instance, "console_chatbook_artifact_available", False)
@@ -958,7 +992,7 @@ class ChatScreen(BaseAppScreen):
             live_work_title=pending_launch.title if pending_launch else None,
             provider_ready=provider_ready,
             provider_recovery=(
-                "" if provider_ready else "Select a provider and model before sending."
+                "" if provider_ready else readiness.user_message
             ),
             rag_status=self._console_rag_source_status(pending_launch),
             evidence_summary=evidence_state.summary if evidence_state else None,
@@ -2346,10 +2380,12 @@ class ChatScreen(BaseAppScreen):
         try:
             inspector = self.query_one("#console-run-inspector-state", ConsoleRunInspector)
         except QueryError:
-            return
-        inspector.sync_state(
-            self._build_console_inspector_state(self._pending_console_launch_context)
-        )
+            inspector = None
+        if inspector is not None:
+            inspector.sync_state(
+                self._build_console_inspector_state(self._pending_console_launch_context)
+            )
+        self._sync_console_rail_visibility(self._current_console_rail_state())
 
     def _hide_console_legacy_chat_inputs(self) -> None:
         """Keep Console on a single native composer surface."""

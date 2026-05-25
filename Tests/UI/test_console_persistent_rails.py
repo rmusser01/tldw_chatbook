@@ -14,6 +14,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat import console_chat_store as console_chat_store_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TabState
@@ -31,6 +32,28 @@ def _is_displayed(widget) -> bool:
 def _assert_selector_hidden_or_absent(screen, selector: str) -> None:
     matches = list(screen.query(selector))
     assert not matches or all(not _is_displayed(widget) for widget in matches)
+
+
+def _static_text(widget) -> str:
+    renderable = getattr(widget, "renderable", "")
+    return getattr(renderable, "plain", str(renderable))
+
+
+async def _wait_for_badge(screen, pilot, selector: str, expected: str) -> str:
+    for _ in range(20):
+        matches = list(screen.query(selector))
+        for widget in matches:
+            if _is_displayed(widget):
+                text = _static_text(widget)
+                if expected in text:
+                    return text
+        await pilot.pause(0.05)
+    visible_text = " ".join(
+        _static_text(widget) for widget in screen.query(selector) if _is_displayed(widget)
+    )
+    raise AssertionError(
+        f"{selector} did not include {expected!r}; visible badge text={visible_text!r}"
+    )
 
 
 async def _wait_for_displayed(screen, pilot, selector: str):
@@ -436,3 +459,210 @@ async def test_console_rail_fallback_migration_read_path_does_not_create_empty_s
         console._current_console_rail_state()
 
     assert "rail_state" not in console_config
+
+
+@pytest.mark.asyncio
+async def test_console_provider_blocked_badge_does_not_auto_open_inspector():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4.1-2025-04-14"},
+        "api_settings": {"openai": {"api_key": ""}},
+        "console": {
+            "rail_state": {
+                "console_rail_state:global:global": {
+                    "left_open": True,
+                    "right_open": False,
+                }
+            }
+        },
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
+
+        _assert_selector_hidden_or_absent(console, "#console-right-rail")
+        assert "blocked" in await _wait_for_badge(
+            console,
+            pilot,
+            "#console-inspector-rail-badge",
+            "blocked",
+        )
+        assert _is_displayed(console.query_one("#console-provider-recovery-strip"))
+        settings_button = console.query_one("#console-open-provider-settings", Button)
+        assert _is_displayed(settings_button)
+        assert settings_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_failed_badge_takes_priority_over_provider_blocked():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4.1-2025-04-14"},
+        "api_settings": {"openai": {"api_key": ""}},
+        "console": {
+            "rail_state": {
+                "console_rail_state:global:global": {
+                    "left_open": True,
+                    "right_open": False,
+                }
+            }
+        },
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    app.console_run_status_override = "failed"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
+
+        badge = await _wait_for_badge(
+            console,
+            pilot,
+            "#console-inspector-rail-badge",
+            "failed",
+        )
+        assert "blocked" not in badge
+        _assert_selector_hidden_or_absent(console, "#console-right-rail")
+
+
+@pytest.mark.asyncio
+async def test_console_pending_approval_badge_does_not_auto_open_inspector():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
+        "console": {
+            "rail_state": {
+                "console_rail_state:global:global": {
+                    "left_open": True,
+                    "right_open": False,
+                }
+            }
+        }
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "local-model"
+    app.console_pending_approval_count = 1
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
+
+        assert "1 approval" in await _wait_for_badge(
+            console,
+            pilot,
+            "#console-inspector-rail-badge",
+            "1 approval",
+        )
+        _assert_selector_hidden_or_absent(console, "#console-right-rail")
+
+
+@pytest.mark.asyncio
+async def test_console_tool_badge_when_no_higher_priority_inspector_badge():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
+        "console": {
+            "rail_state": {
+                "console_rail_state:global:global": {
+                    "left_open": True,
+                    "right_open": False,
+                }
+            }
+        }
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "local-model"
+    app.console_tool_count = 2
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
+
+        assert "tools" in await _wait_for_badge(
+            console,
+            pilot,
+            "#console-inspector-rail-badge",
+            "tools",
+        )
+        _assert_selector_hidden_or_absent(console, "#console-right-rail")
+
+
+@pytest.mark.asyncio
+async def test_console_left_staged_context_badge_does_not_auto_open_context():
+    app = _build_test_app()
+    app.console_rail_session_id = "badge-session"
+    app.app_config = {
+        "console": {
+            "rail_state": {
+                "console_rail_state:global:badge-session": {
+                    "left_open": False,
+                    "right_open": False,
+                }
+            }
+        }
+    }
+    app.pending_console_launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="RAG result",
+        payload={"query": "badge sync"},
+        status="ready",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-context-rail-handle")
+
+        _assert_selector_hidden_or_absent(console, "#console-left-rail")
+        badge = await _wait_for_badge(
+            console,
+            pilot,
+            "#console-context-rail-badge",
+            "staged",
+        )
+        assert badge in {"1 staged", "staged"}
+
+
+@pytest.mark.asyncio
+async def test_console_badge_state_update_after_mount_does_not_auto_open_inspector():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
+        "console": {
+            "rail_state": {
+                "console_rail_state:global:global": {
+                    "left_open": True,
+                    "right_open": False,
+                }
+            }
+        }
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "local-model"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
+        _assert_selector_hidden_or_absent(console, "#console-right-rail")
+        _assert_selector_hidden_or_absent(console, "#console-inspector-rail-badge")
+
+        app.console_pending_approval_count = 1
+        console._sync_console_control_bar()
+        await pilot.pause(0.05)
+
+        _assert_selector_hidden_or_absent(console, "#console-right-rail")
+        assert "1 approval" in await _wait_for_badge(
+            console,
+            pilot,
+            "#console-inspector-rail-badge",
+            "1 approval",
+        )

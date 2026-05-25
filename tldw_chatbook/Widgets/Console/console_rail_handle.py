@@ -44,3 +44,11 @@ class ConsoleRailHandle(Vertical):
             badge = Static(self.badge, id=self.badge_id, markup=False)
             badge.add_class("console-rail-handle-badge")
             yield badge
+
+    def sync_state(self, label: str, badge: str) -> None:
+        """Refresh this handle's label and badge without recomposing the screen."""
+        if self.label == label and self.badge == badge:
+            return
+        self.label = label
+        self.badge = badge
+        self.refresh(recompose=True)
