@@ -331,12 +331,21 @@ async def test_console_composer_marks_focus_state():
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        transcript = console.query_one("#console-native-transcript")
 
-        composer.focus()
+        visible_draft.focus()
         await pilot.pause(0.1)
 
         assert composer.has_focus_within
         assert composer.has_class("console-composer-focused")
+
+        transcript.can_focus = True
+        transcript.focus()
+        await pilot.pause(0.1)
+
+        assert not composer.has_focus_within
+        assert not composer.has_class("console-composer-focused")
 
 
 @pytest.mark.asyncio

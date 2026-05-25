@@ -12,7 +12,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
-from textual.events import Click
+from textual.events import Click, DescendantBlur, DescendantFocus
 from textual.widgets import Button, Input, Static
 
 from ...config import coerce_bool_setting
@@ -164,8 +164,14 @@ class ConsoleComposerBar(Horizontal):
             return
 
     def _sync_interaction_classes(self) -> None:
+        """Mirror focus-within and draft presence onto stable CSS state classes."""
+        has_draft = (
+            any(segment.text for segment in self._segments)
+            if self._segments_initialized
+            else bool(self.draft_text())
+        )
         self.set_class(self.has_focus_within, "console-composer-focused")
-        self.set_class(bool(self.draft_text()), "console-composer-has-draft")
+        self.set_class(has_draft, "console-composer-has-draft")
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
@@ -367,6 +373,12 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
 
     def on_blur(self) -> None:
+        self._sync_interaction_classes()
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        self._sync_interaction_classes()
+
+    def on_descendant_blur(self, event: DescendantBlur) -> None:
         self._sync_interaction_classes()
 
     def load_draft(self, text: str) -> None:
