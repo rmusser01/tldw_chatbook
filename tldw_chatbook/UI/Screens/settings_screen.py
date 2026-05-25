@@ -29,6 +29,20 @@ from ..Navigation.main_navigation import NavigateToScreen
 logger = logging.getLogger(__name__)
 
 
+class SettingsCategorySearchInput(Input):
+    """Settings category filter input with deterministic Enter submission."""
+
+    async def _on_key(self, event: Key) -> None:
+        if event.key in {"enter", "return"}:
+            submit = getattr(self.screen, "_submit_category_search", None)
+            if callable(submit):
+                submit(self.value)
+            event.stop()
+            event.prevent_default()
+            return
+        await super()._on_key(event)
+
+
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, accounts, storage, and app behavior."""
 
@@ -39,6 +53,7 @@ class SettingsScreen(BaseAppScreen):
     ]
 
     active_category = reactive(SettingsCategoryId.OVERVIEW.value, recompose=True)
+    category_search_query = reactive("")
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
@@ -223,6 +238,121 @@ class SettingsScreen(BaseAppScreen):
             if summary.category is category:
                 return summary
         return self._category_summaries()[0]
+
+    def _category_search_text(self, query_text: str | None = None) -> str:
+        raw_query = self.category_search_query if query_text is None else query_text
+        return raw_query.strip()
+
+    def _category_search_rank(
+        self,
+        summary: SettingsCategorySummary,
+        query_text: str | None = None,
+    ) -> int | None:
+        query = self._category_search_text(query_text).lower()
+        if not query:
+            return 0
+        primary_haystack = " ".join((summary.category.value, summary.title)).lower()
+        if query in primary_haystack:
+            return 0
+        secondary_haystack = " ".join(
+            (
+                summary.description,
+                self._category_status(summary),
+            )
+        ).lower()
+        if query in secondary_haystack:
+            return 1
+        return None
+
+    def _category_matches_search(
+        self,
+        summary: SettingsCategorySummary,
+        query_text: str | None = None,
+    ) -> bool:
+        return self._category_search_rank(summary, query_text) is not None
+
+    def _filtered_category_summaries(
+        self,
+        query_text: str | None = None,
+    ) -> tuple[SettingsCategorySummary, ...]:
+        ranked_summaries: list[tuple[int, int, SettingsCategorySummary]] = []
+        for index, summary in enumerate(self._category_summaries()):
+            rank = self._category_search_rank(summary, query_text)
+            if rank is not None:
+                ranked_summaries.append((rank, index, summary))
+        return tuple(summary for _, _, summary in sorted(ranked_summaries))
+
+    def _filtered_category_values(self, query_text: str | None = None) -> list[str]:
+        return [
+            summary.category.value
+            for summary in self._filtered_category_summaries(query_text)
+        ]
+
+    def _category_search_status_text(self, query_text: str | None = None) -> str:
+        query = self._category_search_text(query_text)
+        if not query:
+            return "No filter | / focus category search"
+        matches = self._filtered_category_summaries(query)
+        match_label = "match" if len(matches) == 1 else "matches"
+        if matches:
+            return f"Filter: {query} | {len(matches)} {match_label} | Enter opens {matches[0].title}"
+        return f"Filter: {query} | 0 matches | Esc clears"
+
+    @staticmethod
+    def _category_group_dom_id(group_title: str) -> str:
+        return f"settings-category-group-{group_title.lower().replace(' ', '-').replace('&', 'and')}"
+
+    def _apply_category_search_filter(self) -> None:
+        summaries_by_id = {summary.category: summary for summary in self._category_summaries()}
+        visible_count = 0
+        query = self._category_search_text()
+        for group_title, category_ids in self._category_groups():
+            group_visible = False
+            for category_id in category_ids:
+                summary = summaries_by_id[category_id]
+                rank = self._category_search_rank(summary)
+                is_visible = rank is not None
+                group_visible = group_visible or is_visible
+                visible_count += int(is_visible)
+                try:
+                    button = self.query_one(f"#settings-category-{summary.category.value}", Button)
+                    button.display = is_visible
+                    button.remove_class("settings-primary-search-match")
+                    button.remove_class("settings-secondary-search-match")
+                    if query and rank == 0:
+                        button.add_class("settings-primary-search-match")
+                    elif query and rank == 1:
+                        button.add_class("settings-secondary-search-match")
+                except QueryError:
+                    pass
+            try:
+                self.query_one(f"#{self._category_group_dom_id(group_title)}", Static).display = group_visible
+            except QueryError:
+                pass
+
+        try:
+            status = self.query_one("#settings-category-search-status", Static)
+            status.update(self._category_search_status_text())
+        except QueryError:
+            pass
+        try:
+            search = self.query_one("#settings-category-search", Input)
+            search.set_class(bool(query), "settings-category-search-active")
+        except QueryError:
+            pass
+        try:
+            empty_state = self.query_one("#settings-category-search-empty", Static)
+        except QueryError:
+            return
+        empty_state.update(f"No Settings categories match: {query}")
+        empty_state.display = bool(query and visible_count == 0)
+
+    def _submit_category_search(self, query_text: str) -> None:
+        self.category_search_query = query_text
+        self._apply_category_search_filter()
+        category_values = self._filtered_category_values(query_text)
+        if category_values:
+            self._select_category(category_values[0], restore_focus=True)
 
     def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
         if self._category_has_unsaved_changes(category):
@@ -743,14 +873,26 @@ class SettingsScreen(BaseAppScreen):
 
     def _render_category_buttons(self) -> ComposeResult:
         summaries_by_id = {summary.category: summary for summary in self._category_summaries()}
+        visible_count = 0
         for group_title, category_ids in self._category_groups():
-            yield Static(
+            visible_categories = tuple(
+                category_id
+                for category_id in category_ids
+                if self._category_matches_search(summaries_by_id[category_id])
+            )
+            if not visible_categories:
+                visible_categories = ()
+            group_heading = Static(
                 group_title,
-                id=f"settings-category-group-{group_title.lower().replace(' ', '-').replace('&', 'and')}",
+                id=self._category_group_dom_id(group_title),
                 classes="settings-category-group-title",
             )
+            group_heading.display = bool(visible_categories)
+            yield group_heading
             for category_id in category_ids:
                 summary = summaries_by_id[category_id]
+                is_visible = category_id in visible_categories
+                visible_count += int(is_visible)
                 is_active = summary.category.value == self.active_category
                 button = Button(
                     f"{'> ' if is_active else '  '}{summary.title}",
@@ -760,6 +902,13 @@ class SettingsScreen(BaseAppScreen):
                 )
                 if is_active:
                     button.add_class("settings-active-section")
+                if self._category_search_text() and is_visible:
+                    rank = self._category_search_rank(summary)
+                    if rank == 0:
+                        button.add_class("settings-primary-search-match")
+                    elif rank == 1:
+                        button.add_class("settings-secondary-search-match")
+                button.display = is_visible
                 yield button
                 if summary.status:
                     status = Static(
@@ -770,6 +919,13 @@ class SettingsScreen(BaseAppScreen):
                     if self._category_has_unsaved_changes(summary.category):
                         status.add_class("settings-dirty-category")
                     yield status
+        empty_state = Static(
+            f"No Settings categories match: {self._category_search_text()}",
+            id="settings-category-search-empty",
+            classes="settings-search-empty",
+        )
+        empty_state.display = bool(self._category_search_text() and visible_count == 0)
+        yield empty_state
 
     def _render_overview_detail(self) -> ComposeResult:
         yield Static("Overview", classes="destination-section settings-column-title")
@@ -1088,6 +1244,22 @@ class SettingsScreen(BaseAppScreen):
             with Horizontal(id="settings-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="settings-category-pane", classes="destination-workbench-pane"):
                     yield Static("Settings Sections", classes="destination-section settings-column-title")
+                    yield SettingsCategorySearchInput(
+                        value=self.category_search_query,
+                        placeholder="Filter settings (/)",
+                        id="settings-category-search",
+                        classes="settings-category-search",
+                    )
+                    yield Static(
+                        "/ filter | Enter open | Esc clear",
+                        id="settings-category-search-help",
+                        classes="settings-category-search-help",
+                    )
+                    yield Static(
+                        self._category_search_status_text(),
+                        id="settings-category-search-status",
+                        classes="settings-category-search-status",
+                    )
                     yield from self._render_category_buttons()
                 yield self._column_divider("settings-category-detail-divider")
                 with Vertical(id="settings-detail-pane", classes="destination-workbench-pane"):
@@ -1114,6 +1286,16 @@ class SettingsScreen(BaseAppScreen):
             return self._category_value_from_button(focused)
         return None
 
+    def _category_search_has_focus(self) -> bool:
+        focused = self.app.focused
+        return isinstance(focused, Input) and focused.id == "settings-category-search"
+
+    def _focus_category_search(self) -> None:
+        try:
+            self.query_one("#settings-category-search", Input).focus()
+        except QueryError:
+            logger.debug("Unable to focus Settings category search")
+
     def _focus_category(self, category_value: str) -> None:
         try:
             self.query_one(f"#settings-category-{category_value}", Button).focus()
@@ -1121,7 +1303,9 @@ class SettingsScreen(BaseAppScreen):
             logger.debug("Unable to focus Settings category button: %s", category_value)
 
     def _move_category_focus(self, delta: int) -> None:
-        category_values = [summary.category.value for summary in self._category_summaries()]
+        category_values = self._filtered_category_values()
+        if not category_values:
+            return
         current_value = self._focused_category_value() or self.active_category
         try:
             current_index = category_values.index(current_value)
@@ -1145,6 +1329,17 @@ class SettingsScreen(BaseAppScreen):
         category_value = self._category_value_from_button(event.button)
         if category_value is not None:
             self._select_category(category_value, restore_focus=event.button.has_focus)
+
+    @on(Input.Changed, "#settings-category-search")
+    def handle_category_search_changed(self, event: Input.Changed) -> None:
+        event.stop()
+        self.category_search_query = event.value
+        self._apply_category_search_filter()
+
+    @on(Input.Submitted, "#settings-category-search")
+    def handle_category_search_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit_category_search(event.value)
 
     @on(Button.Pressed, "#settings-console-collapse-large-pastes-toggle")
     def handle_console_collapse_large_pastes_changed(self, event: Button.Pressed) -> None:
@@ -1333,8 +1528,28 @@ class SettingsScreen(BaseAppScreen):
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     def on_key(self, event: Key) -> None:
+        focused = self.app.focused
+        if (
+            event.key in {"/", "slash"}
+            or getattr(event, "character", None) == "/"
+        ) and not isinstance(focused, (Input, TextArea)):
+            self._focus_category_search()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "escape" and self.category_search_query:
+            if self._category_search_has_focus() or not isinstance(focused, (Input, TextArea)):
+                self.category_search_query = ""
+                try:
+                    self.query_one("#settings-category-search", Input).value = ""
+                except QueryError:
+                    pass
+                self._apply_category_search_filter()
+                self._focus_category_search()
+                event.stop()
+                event.prevent_default()
+                return
         if event.key == "tab":
-            focused = self.app.focused
             if focused is None or getattr(focused, "has_class", lambda *_: False)("nav-button"):
                 self._focus_category(SettingsCategoryId.OVERVIEW.value)
                 event.stop()
@@ -1351,7 +1566,13 @@ class SettingsScreen(BaseAppScreen):
             event.prevent_default()
             return
         if event.key == "enter":
-            focused = self.app.focused
+            if self._category_search_has_focus():
+                query_text = focused.value if isinstance(focused, Input) else None
+                if query_text is not None:
+                    self._submit_category_search(query_text)
+                event.stop()
+                event.prevent_default()
+                return
             if isinstance(focused, Button) and focused.id in {
                 "settings-console-collapse-large-pastes-toggle",
                 "settings-test-provider",

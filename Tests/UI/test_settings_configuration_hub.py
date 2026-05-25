@@ -471,6 +471,78 @@ async def test_settings_keyboard_category_focus_survives_selection_recompose():
 
 
 @pytest.mark.asyncio
+async def test_settings_category_search_filters_and_enter_opens_first_match():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.press("/")
+        screen = _active_destination_screen(host)
+        search = screen.query_one("#settings-category-search", Input)
+
+        assert search.has_focus
+
+        await pilot.press(*"priv")
+        await pilot.pause()
+
+        assert screen.query_one("#settings-category-privacy-security").display
+        assert not screen.query_one("#settings-category-providers-models").display
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.PRIVACY_SECURITY.value
+        assert "Privacy & Security" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_category_search_reports_ranked_matches_and_enter_target():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.press("/")
+        screen = _active_destination_screen(host)
+
+        await pilot.press(*"priv")
+        await pilot.pause()
+
+        visible_text = _visible_text(screen)
+        assert "Filter: priv | 2 matches | Enter opens Privacy & Security" in visible_text
+        assert screen.query_one("#settings-category-privacy-security").has_class(
+            "settings-primary-search-match"
+        )
+        assert screen.query_one("#settings-category-overview").has_class(
+            "settings-secondary-search-match"
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_category_search_escape_clears_filter():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.press("/")
+        screen = _active_destination_screen(host)
+
+        await pilot.press(*"zzz")
+        await pilot.pause()
+
+        assert "No Settings categories match" in _visible_text(screen)
+        assert not any(button.display for button in screen.query(".settings-category-button"))
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        search = screen.query_one("#settings-category-search", Input)
+        assert search.value == ""
+        assert sum(1 for button in screen.query(".settings-category-button") if button.display) == len(
+            screen._category_summaries()
+        )
+
+
+@pytest.mark.asyncio
 async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}

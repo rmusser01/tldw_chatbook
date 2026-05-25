@@ -1,7 +1,7 @@
 # Settings Configuration Hub QA Notes
 
 Date: 2026-05-25
-Branch: `codex/settings-config-hub-design`
+Branch: `codex/settings-config-next-slice`
 Screen: Settings
 Spec: `Docs/superpowers/specs/2026-05-24-settings-configuration-hub-design.md`
 Evidence method: actual textual-web/CDP screenshots driven with Playwright browser automation.
@@ -17,6 +17,7 @@ Evidence method: actual textual-web/CDP screenshots driven with Playwright brows
 - Diagnostics: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/07-diagnostics.png`
 - Advanced Config: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/08-advanced-config.png`
 - Focused Settings button final fix: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/11-focused-settings-button-no-heavy-outline.png`
+- Category search polish: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/13-category-search-polish.png`
 
 User approval: approved after actual rendered screenshot review.
 
@@ -33,6 +34,8 @@ These captures showed that one-line Settings buttons inherited the global heavy 
 - Overview and each first-slice category rendered with the three-column Settings workbench.
 - Advanced Config rendered guarded raw TOML controls with validation-first save policy.
 - Focused Settings buttons no longer render as empty heavy-outline rectangles.
+- Category search filters Settings sections, reports match count, distinguishes primary and secondary matches, and opens the top-ranked category on Enter.
+- The active search field remains visually identifiable while filtering, and the wider Settings section column keeps filtered category labels readable.
 - Scope Inspector preserves the boundary that runtime MCP, ACP, and tool control stay in their own destinations.
 
 ## Automated Verification
@@ -41,11 +44,11 @@ Commands were run with the project virtual environment active:
 
 ```bash
 python tldw_chatbook/css/build_css.py
-python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_destination_visual_parity_correction.py::test_settings_dirty_category_status_has_visual_marker_class Tests/UI/test_destination_visual_parity_correction.py::test_settings_advanced_config_controls_use_action_and_status_rows Tests/UI/test_destination_shells.py::test_settings_destination_uses_three_column_workbench_contract Tests/UI/test_destination_shells.py::test_settings_appearance_action_routes_to_customize_surface Tests/UI/test_destination_shells.py::test_settings_console_paste_collapse_toggle_reflects_and_persists_config --tb=short
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short
 git diff --check
 ```
 
-Result: `52 passed`, one existing requests dependency warning, and `git diff --check` clean.
+Result: `56 passed`, one existing requests dependency warning, and `git diff --check` clean.
 
 ## Residual Risks
 
