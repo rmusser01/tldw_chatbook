@@ -1412,6 +1412,51 @@ async def test_runtime_and_settings_default_states_preserve_workbench_geometry(
 
 
 @pytest.mark.asyncio
+async def test_settings_dirty_category_status_has_visual_marker_class():
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await pilot.click("#settings-category-console-behavior")
+        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        status = screen.query_one("#settings-category-console-behavior-status")
+
+        assert "Status: Unsaved" in str(status.renderable)
+        assert status.has_class("settings-dirty-category")
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_controls_use_action_and_status_rows():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await pilot.click("#settings-category-advanced-config")
+        await _wait_for_selector(screen, pilot, "#settings-advanced-config-editor")
+
+        actions = screen.query_one("#settings-advanced-config-actions")
+        result = screen.query_one("#settings-advanced-config-result")
+
+        assert actions.has_class("settings-action-row")
+        assert result.has_class("settings-status-row")
+        for selector in (
+            "#settings-advanced-config-editor",
+            "#settings-advanced-validate-config",
+            "#settings-advanced-save-config",
+            "#settings-advanced-config-result",
+        ):
+            _assert_marker_inside_container(
+                screen,
+                selector,
+                "#settings-detail-pane",
+                context=f"Advanced config control escaped Settings detail pane: {selector}",
+            )
+
+
+@pytest.mark.asyncio
 async def test_acp_runtime_blocked_state_uses_setup_and_compatibility_columns():
     app = _build_test_app()
     host = DestinationHarness(app, "acp")

@@ -1,0 +1,939 @@
+import re
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from textual.widgets import Input, Select, TextArea
+
+from Tests.UI.test_destination_shells import (
+    DestinationHarness,
+    _active_destination_screen,
+    _build_test_app,
+    _visible_text,
+)
+from tldw_chatbook.UI.Screens.provider_model_resolution import (
+    resolve_effective_provider_model,
+)
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Screens.settings_config_adapter import (
+    SettingsConfigAdapter,
+    redact_secret_text,
+)
+from tldw_chatbook.UI.Screens.settings_config_models import (
+    SettingsCategoryId,
+    SettingsDraft,
+)
+
+
+def _app(
+    *,
+    provider=None,
+    api_model=None,
+    model=None,
+    defaults=None,
+):
+    return SimpleNamespace(
+        app_config={"chat_defaults": defaults or {}},
+        chat_api_provider_value=provider,
+        chat_api_model_value=api_model,
+        chat_model_value=model,
+    )
+
+
+async def _wait_for_settings_text(screen, pilot, expected_text: str, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if expected_text in _visible_text(screen):
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}")
+
+
+def test_effective_provider_model_prefers_console_overrides():
+    app = _app(
+        provider="OpenAI",
+        api_model="gpt-4.1",
+        model=None,
+        defaults={"provider": "llama_cpp", "model": "qwen"},
+    )
+
+    result = resolve_effective_provider_model(
+        app,
+        console_provider="Anthropic",
+        console_model="claude",
+    )
+
+    assert result.provider == "Anthropic"
+    assert result.model == "claude"
+    assert result.provider_source == "console_control"
+    assert result.model_source == "console_control"
+
+
+def test_effective_provider_model_preserves_configured_provider_when_reactive_is_default_openai():
+    app = _app(
+        provider="OpenAI",
+        api_model=None,
+        model=None,
+        defaults={"provider": "llama_cpp", "model": "qwen"},
+    )
+
+    result = resolve_effective_provider_model(app)
+
+    assert result.provider == "llama_cpp"
+    assert result.provider_source == "chat_defaults"
+    assert result.model == "qwen"
+
+
+def test_effective_provider_model_prefers_settings_draft_values():
+    app = _app(
+        provider="OpenAI",
+        api_model="gpt-4.1",
+        model=None,
+        defaults={"provider": "llama_cpp", "model": "qwen"},
+    )
+
+    result = resolve_effective_provider_model(
+        app,
+        settings_provider="Ollama",
+        settings_model="llama3.1",
+    )
+
+    assert result.provider == "Ollama"
+    assert result.model == "llama3.1"
+    assert result.provider_source == "settings_draft"
+    assert result.model_source == "settings_draft"
+
+
+def test_effective_provider_model_ignores_blank_provider_overrides_for_default_fallback():
+    app = _app(
+        provider="OpenAI",
+        api_model=None,
+        model=None,
+        defaults={"provider": "llama_cpp", "model": "qwen"},
+    )
+
+    result = resolve_effective_provider_model(
+        app,
+        settings_provider=" ",
+        console_provider="None",
+    )
+
+    assert result.provider == "llama_cpp"
+    assert result.provider_source == "chat_defaults"
+
+
+def test_effective_provider_model_ignores_blank_reactive_provider_for_default_fallback():
+    for reactive_provider in ("", " ", "None"):
+        app = _app(
+            provider=reactive_provider,
+            api_model=None,
+            model=None,
+            defaults={"provider": "llama_cpp", "model": "qwen"},
+        )
+
+        result = resolve_effective_provider_model(app)
+
+        assert result.provider == "llama_cpp"
+        assert result.provider_source == "chat_defaults"
+
+
+def test_effective_provider_model_ignores_textual_blank_select_provider_for_default_fallback():
+    app = _app(
+        provider="OpenAI",
+        api_model=None,
+        model=None,
+        defaults={"provider": "llama_cpp", "model": "qwen"},
+    )
+
+    result = resolve_effective_provider_model(app, settings_provider=Select.BLANK)
+
+    assert result.provider == "llama_cpp"
+    assert result.provider_source == "chat_defaults"
+
+
+def test_effective_provider_model_ignores_blank_model_overrides_for_default_fallback():
+    app = _app(
+        provider="OpenAI",
+        api_model=None,
+        model=None,
+        defaults={"provider": "llama_cpp", "model": "qwen"},
+    )
+
+    for blank_model in ("", " ", "None", Select.BLANK):
+        result = resolve_effective_provider_model(
+            app,
+            settings_model=blank_model,
+            console_model=" ",
+        )
+
+        assert result.model == "qwen"
+        assert result.model_source == "chat_defaults"
+
+
+def test_effective_provider_model_handles_non_mapping_app_config():
+    app = SimpleNamespace(
+        app_config=[],
+        chat_api_provider_value=None,
+        chat_api_model_value=None,
+        chat_model_value=None,
+    )
+
+    result = resolve_effective_provider_model(app)
+
+    assert result.provider is None
+    assert result.model is None
+
+
+def test_settings_draft_tracks_dirty_values():
+    draft = SettingsDraft(category=SettingsCategoryId.CONSOLE_BEHAVIOR)
+    draft.set_value("collapse_large_pastes", True, False)
+
+    assert draft.is_dirty
+    assert draft.dirty_keys == {"collapse_large_pastes"}
+
+
+def test_redact_secret_text_removes_api_key_like_values():
+    text = "failed with OPENAI_API_KEY=sk-secret-token and token abc"
+
+    redacted = redact_secret_text(text)
+
+    assert "sk-secret-token" not in redacted
+    assert "OPENAI_API_KEY=<redacted>" in redacted
+
+
+def test_adapter_rejects_non_mapping_toml():
+    adapter = SettingsConfigAdapter()
+
+    result = adapter.validate_raw_toml('"not a mapping"')
+
+    assert not result.valid
+    assert "top-level TOML value must be a table" in result.message
+
+
+def test_adapter_rejects_scalar_like_toml_with_table_message():
+    adapter = SettingsConfigAdapter()
+
+    for value in (
+        "42",
+        "true",
+        "[1, 2]",
+        "nan",
+        "inf",
+        "0xDEADBEEF",
+        "1979-05-27",
+        "1979-05-27T07:32:00Z",
+    ):
+        result = adapter.validate_raw_toml(value)
+
+        assert not result.valid
+        assert "top-level TOML value must be a table" in result.message
+
+
+def test_adapter_accepts_table_headers_before_scalar_fallback():
+    adapter = SettingsConfigAdapter()
+
+    for value in ("[section]", "[[items]]"):
+        result = adapter.validate_raw_toml(value)
+
+        assert result.valid
+
+
+def test_adapter_validate_config_file_rejects_corrupt_toml(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[chat_defaults\nprovider = \"OpenAI\"\n", encoding="utf-8")
+
+    result = SettingsConfigAdapter().validate_config_file(config_path)
+
+    assert not result.valid
+    assert "Expected" in result.message or "Invalid" in result.message
+
+
+def test_adapter_save_values_attempts_all_keys_when_one_save_fails(monkeypatch):
+    calls = []
+
+    def fake_save(section, key, value):
+        calls.append((section, key, value))
+        return key != "provider"
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        fake_save,
+    )
+
+    result = SettingsConfigAdapter().save_values(
+        "chat_defaults",
+        {"provider": "bad", "model": "still-attempted"},
+    )
+
+    assert not result
+    assert calls == [
+        ("chat_defaults", "provider", "bad"),
+        ("chat_defaults", "model", "still-attempted"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_settings_defaults_to_overview_category():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Overview" in text
+        assert "Provider readiness" in text
+        assert "Storage" in text
+        assert "Privacy" in text
+        assert "Console paste collapse" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_category_selection_updates_detail_and_inspector():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Console Behavior" in text
+        assert "Collapse large pasted chunks" in text
+        assert "Affects Console" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_category_navigation_is_grouped_for_scan():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        for group_title in (
+            "Core",
+            "Interface",
+            "Data & Privacy",
+            "Troubleshooting",
+            "Expert",
+        ):
+            assert group_title in text
+
+
+@pytest.mark.asyncio
+async def test_settings_active_category_uses_explicit_nav_marker():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        active = screen.query_one("#settings-category-advanced-config")
+        inactive = screen.query_one("#settings-category-diagnostics")
+
+        assert str(active.label) == "> Advanced Config"
+        assert str(inactive.label) == "  Diagnostics"
+        assert active.has_class("settings-active-section")
+
+
+def test_settings_active_category_focus_style_keeps_label_readable():
+    css_path = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+    )
+    css = css_path.read_text()
+    match = re.search(
+        r"Button\.settings-category-button\.settings-active-section:focus\s*\{(?P<body>[^}]*)\}",
+        css,
+        flags=re.DOTALL,
+    )
+
+    assert match
+    body = match.group("body")
+    assert "reverse" not in body
+    assert "text-style: bold underline;" in body
+
+
+def test_settings_action_button_focus_style_keeps_label_readable():
+    css_path = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+    )
+    css = css_path.read_text()
+    match = re.search(
+        r"\.settings-action-row Button:focus,\s*#settings-impact-pane Button:focus\s*\{(?P<body>[^}]*)\}",
+        css,
+        flags=re.DOTALL,
+    )
+
+    assert match
+    body = match.group("body")
+    assert "reverse" not in body
+    assert "text-style: bold underline;" in body
+    assert "outline: none;" in body
+
+
+def test_settings_shell_button_focus_does_not_use_heavy_outline():
+    css_path = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+    )
+    css = css_path.read_text()
+    match = re.search(
+        r"#settings-shell Button:focus,\s*#settings-shell Button:hover:focus\s*\{(?P<body>[^}]*)\}",
+        css,
+        flags=re.DOTALL,
+    )
+
+    assert match
+    body = match.group("body")
+    assert "outline: none;" in body
+    assert "text-style: bold underline;" in body
+
+
+@pytest.mark.asyncio
+async def test_settings_detail_shows_state_banner_and_structured_rows():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        banner = screen.query_one("#settings-category-state-banner")
+        detail_rows = list(screen.query(".settings-detail-row"))
+
+        assert "State:" in str(banner.renderable)
+        assert banner.has_class("settings-state-banner")
+        assert len(detail_rows) >= 5
+
+
+@pytest.mark.asyncio
+async def test_settings_inspector_uses_category_specific_guidance():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-storage")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Affected config: config file path, local database paths, media storage roots" in text
+        assert "Recovery: verify paths, reload config, then restart only if storage roots changed" in text
+        assert "MCP and tool-control settings live under MCP" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_inspector_boundary_is_structured_without_duplicate_copy():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        boundary = "Boundary: save is blocked until the exact current text validates"
+        assert str(screen.query_one("#settings-boundary-note").renderable) == boundary
+        assert text.count(boundary) == 1
+
+
+@pytest.mark.asyncio
+async def test_settings_tab_focus_and_enter_select_categories():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.press("tab")
+        await pilot.press("down")
+        await pilot.press("enter")
+        screen = _active_destination_screen(host)
+
+        assert "Providers & Models" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_keyboard_category_focus_survives_selection_recompose():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.press("tab")
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.press("down")
+        await pilot.press("enter")
+        screen = _active_destination_screen(host)
+
+        assert "Appearance" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        await pilot.click("#settings-category-overview")
+        screen = _active_destination_screen(host)
+
+        assert "Console paste collapse: Disabled: collapse large pastes" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        toggle = screen.query_one("#settings-console-collapse-large-pastes-toggle")
+        toggle.focus()
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert host.focused is toggle
+        assert "Disabled: collapse large pastes" in str(toggle.label)
+        assert "Unsaved" in _visible_text(screen)
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert host.focused is toggle
+        assert "Enabled: collapse large pastes" in str(toggle.label)
+        assert "No unsaved changes" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        screen = _active_destination_screen(host)
+
+        assert "Unsaved" in _visible_text(screen)
+        assert app.app_config["console"]["collapse_large_pastes"] is True
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [("console", "collapse_large_pastes", False)]
+    assert app.app_config["console"]["collapse_large_pastes"] is False
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        screen = _active_destination_screen(host)
+
+        assert "Unsaved" in _visible_text(screen)
+
+        await pilot.click("#settings-revert-category")
+        assert "No unsaved changes" in _visible_text(screen)
+
+    assert saved == []
+    assert app.app_config["console"]["collapse_large_pastes"] is True
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_uses_effective_console_source():
+    app = _build_test_app()
+    app.chat_api_provider_value = "OpenAI"
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "llama_cpp" in text
+        assert "qwen" in text
+        assert "Source: chat_defaults" in text
+        assert screen.query_one("#settings-provider-value", Input).value == "llama_cpp"
+        assert screen.query_one("#settings-model-value", Input).value == "qwen"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_redacts_secrets(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-token")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        await pilot.click("#settings-test-provider")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Provider test" in text
+        assert "OPENAI_API_KEY=<redacted>" in text
+        assert "sk-" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_saves_chat_defaults(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-provider-value", Input).value = "llama_cpp"
+        screen.query_one("#settings-model-value", Input).value = "qwen"
+        screen.query_one("#settings-streaming-default", Input).value = "false"
+        screen.query_one("#settings-temperature-default", Input).value = "0.2"
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [
+        ("chat_defaults", "provider", "llama_cpp"),
+        ("chat_defaults", "model", "qwen"),
+        ("chat_defaults", "streaming", False),
+        ("chat_defaults", "temperature", 0.2),
+    ]
+    assert app.app_config["chat_defaults"] == {
+        "provider": "llama_cpp",
+        "model": "qwen",
+        "streaming": False,
+        "temperature": 0.2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_does_not_save_unedited_effective_defaults(monkeypatch):
+    app = _build_test_app()
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1"
+    app.app_config["chat_defaults"] = {}
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        await pilot.click("#settings-save-category")
+
+    assert saved == []
+    assert app.app_config["chat_defaults"] == {}
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_saves_only_dirty_provider_fields(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-model-value", Input).value = "gpt-4.1-mini"
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [("chat_defaults", "model", "gpt-4.1-mini")]
+    assert app.app_config["chat_defaults"] == {
+        "provider": "OpenAI",
+        "model": "gpt-4.1-mini",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_blocks_unknown_provider():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAi Typo", "model": "fake-model"}
+    app.app_config["api_settings"] = {}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        await pilot.click("#settings-test-provider")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Unknown provider" in text
+        assert "status=blocked" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_uses_api_settings_env_var_without_secret_leak(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Groq", "model": "llama-3.3-70b-versatile"}
+    app.app_config["api_settings"] = {
+        "groq": {
+            "api_key_env_var": "GROQ_API_KEY",
+        }
+    }
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-secret-token")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        await pilot.click("#settings-test-provider")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "env:GROQ_API_KEY" in text
+        assert "GROQ_API_KEY=<redacted>" in text
+        assert "gsk-secret-token" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_tolerates_invalid_temperature_text():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-temperature-default", Input).value = "not-a-number"
+
+        await pilot.click("#settings-test-provider")
+        text = _visible_text(screen)
+
+        assert "Provider test" in text
+        assert "status=ready" in text
+
+
+@pytest.mark.parametrize(
+    ("button_id", "expected"),
+    [
+        ("#settings-category-appearance", "Open Appearance"),
+        ("#settings-category-storage", "Config path"),
+        ("#settings-category-privacy-security", "Encryption"),
+        ("#settings-category-diagnostics", "Validate config"),
+        ("#settings-category-advanced-config", "Raw TOML"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_settings_first_slice_categories_have_real_content(button_id, expected):
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click(button_id)
+        screen = _active_destination_screen(host)
+
+        assert expected in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_diagnostics_validate_and_reload_config_actions():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-diagnostics")
+        screen = _active_destination_screen(host)
+        await pilot.click("#settings-validate-config")
+        await pilot.click("#settings-reload-config")
+        text = _visible_text(screen)
+
+        assert "Config validation: valid" in text
+        assert "Config reload: loaded" in text
+
+
+def test_settings_diagnostics_strictly_reports_corrupt_toml(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[chat_defaults\nprovider = \"OpenAI\"\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    assert "Config validation: invalid" in screen._validate_current_config()
+    assert "Config reload: failed" in screen._reload_current_config()
+
+
+def test_settings_config_path_validates_env_override(monkeypatch):
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", "unsafe$(touch bad).toml")
+
+    with pytest.raises(ValueError):
+        screen._config_path()
+
+
+def test_settings_advanced_config_save_reports_invalid_env_override(monkeypatch):
+    app = SimpleNamespace(app_config={})
+    screen = SettingsScreen(app)
+    text = "[chat_defaults]\nprovider = \"Ollama\"\n"
+    screen._advanced_config_validated_text = text
+    monkeypatch.setenv("TLDW_CONFIG_PATH", "unsafe$(touch bad).toml")
+
+    result = screen._save_advanced_config_text(text)
+
+    assert "Advanced config save: failed" in result
+    assert "dangerous pattern" in result
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Raw TOML bypasses guided validation" in text
+        assert screen.query_one("#settings-advanced-config-editor", TextArea)
+        assert screen.query_one("#settings-advanced-validate-config")
+        save_button = screen.query_one("#settings-advanced-save-config")
+        assert save_button.disabled
+        assert "Last validated: not validated" in text
+        assert "Save blocked until the current text validates" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_blocks_invalid_toml_and_redacts_secret():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+        editor.text = "OPENAI_API_KEY=sk-secret-token\n[broken"
+
+        await pilot.click("#settings-advanced-validate-config")
+        await _wait_for_settings_text(screen, pilot, "Advanced config validation: invalid")
+        text = _visible_text(screen)
+
+        assert "Advanced config validation: invalid" in text
+        assert "sk-secret-token" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_blocks_non_mapping_toml_on_save():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+        editor.text = "42"
+
+        save_button = screen.query_one("#settings-advanced-save-config")
+
+        assert save_button.disabled
+        assert "top-level TOML value must be a table" in screen._save_advanced_config_text("42")
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_saves_atomically_with_backup(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[chat_defaults]\nprovider = \"OpenAI\"\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+        editor.text = "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"
+
+        assert screen.query_one("#settings-advanced-save-config").disabled
+
+        await pilot.click("#settings-advanced-validate-config")
+        await _wait_for_settings_text(screen, pilot, "Advanced config validation: valid")
+        assert not screen.query_one("#settings-advanced-save-config").disabled
+        await pilot.click("#settings-advanced-save-config")
+        await _wait_for_settings_text(screen, pilot, "Advanced config save: saved")
+        text = _visible_text(screen)
+
+        assert "Advanced config save: saved" in text
+        assert "Last validated: current text" in text
+
+    assert config_path.read_text(encoding="utf-8") == (
+        "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"
+    )
+    assert config_path.with_suffix(".toml.bak").exists()
+    assert app.app_config["chat_defaults"]["provider"] == "Ollama"
+    assert app.app_config["chat_defaults"]["model"] == "llama3"
+
+
+def test_settings_advanced_config_new_file_save_reports_no_backup(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    app = SimpleNamespace(app_config={})
+    screen = SettingsScreen(app)
+    text = "[chat_defaults]\nprovider = \"Ollama\"\n"
+    screen._advanced_config_validated_text = text
+
+    result = screen._save_advanced_config_text(text)
+
+    assert "Advanced config save: saved" in result
+    assert "backup: none (new file)" in result
+    assert config_path.exists()
+    assert not config_path.with_suffix(".toml.bak").exists()

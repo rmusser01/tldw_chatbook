@@ -42,7 +42,8 @@ DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tldw_cli" / "config.toml"
 def _get_effective_config_path() -> Path:
     """Return the active CLI config path, honoring test/runtime overrides."""
     override = os.environ.get("TLDW_CONFIG_PATH")
-    return Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
+    candidate = Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
+    return validate_path_simple(candidate, require_exists=False).resolve()
 
 # --- Encryption support ---
 _ENCRYPTION_PASSWORD = None  # Cached password for the session

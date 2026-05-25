@@ -22,6 +22,7 @@ from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
+from .provider_model_resolution import resolve_effective_provider_model
 from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.console_chat_controller import ConsoleChatController
@@ -350,11 +351,10 @@ class ChatScreen(BaseAppScreen):
         return self._pending_console_launch_context
 
     def _chat_default_value(self, key: str) -> Any:
+        """Return a chat default value from app config for legacy call sites."""
         config = getattr(self.app_instance, "app_config", {}) or {}
-        defaults = config.get("chat_defaults", {})
-        if isinstance(defaults, dict):
-            return defaults.get(key)
-        return None
+        defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
+        return defaults.get(key) if isinstance(defaults, dict) else None
 
     def _effective_console_provider_model(self) -> tuple[Any, Any]:
         """Return the canonical Console provider/model selection.
@@ -363,28 +363,12 @@ class ChatScreen(BaseAppScreen):
             A `(provider, model)` tuple using the same precedence for Console
             control labels and run-inspector readiness.
         """
-        configured_provider = self._chat_default_value("provider")
-        reactive_provider = getattr(self.app_instance, "chat_api_provider_value", None)
-        if (
-            self._console_control_provider is None
-            and _has_selected_text(configured_provider)
-            and str(reactive_provider or "").strip() == "OpenAI"
-            and str(configured_provider).strip() != "OpenAI"
-        ):
-            provider = configured_provider
-        else:
-            provider = (
-                self._console_control_provider
-                or reactive_provider
-                or configured_provider
-            )
-        model = (
-            self._console_control_model
-            or getattr(self.app_instance, "chat_api_model_value", None)
-            or getattr(self.app_instance, "chat_model_value", None)
-            or self._chat_default_value("model")
+        effective = resolve_effective_provider_model(
+            self.app_instance,
+            console_provider=self._console_control_provider,
+            console_model=self._console_control_model,
         )
-        return provider, model
+        return effective.provider, effective.model
 
     @staticmethod
     def _normalize_llamacpp_base_url(api_url: str | None) -> str:

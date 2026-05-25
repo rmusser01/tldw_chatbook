@@ -2537,22 +2537,22 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         text = _visible_text(screen)
 
         assert "Settings | Global preferences, appearance, accounts, storage | Local" in text
-        assert "Mode: Global / Console behavior / Appearance | Runtime controls stay in MCP and ACP" in text
+        assert "Mode: Overview | Runtime controls stay in MCP and ACP" in text
         assert "Settings Sections" in text
         assert "Preference Detail" in text
         assert "Scope Inspector" in text
-        assert "Sync Safety" in text
-        assert "Write Sync Safety" in text
-        assert "This screen is a visibility contract, not an enablement panel." in text
-        assert "Collections: Sync: dry-run only" in text
-        assert "Workspaces: Sync: dry-run only" in text
+        assert "Overview" in text
+        assert "Provider readiness" in text
+        assert "Storage" in text
+        assert "Privacy" in text
+        assert "Console paste collapse" in text
         assert "Mutation replay: disabled" in text
-        assert "No write-sync controls are available here." in text
+        assert "runtime MCP, ACP, and tool control stay in their own destinations" in text
         assert "Column 1:" not in text
         assert "Column 2:" not in text
         assert "Column 3:" not in text
         assert screen.query_one("#settings-workbench").region.height >= 20
-        assert screen.query_one("#settings-sync-safety-card").region.height >= 6
+        assert screen.query_one("#settings-overview-card").region.height >= 6
         category_pane = screen.query_one("#settings-category-pane")
         detail_pane = screen.query_one("#settings-detail-pane")
         impact_pane = screen.query_one("#settings-impact-pane")
@@ -2626,6 +2626,8 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
 
     async with host.run_test(size=(180, 40)) as pilot:
         await pilot.pause(0.1)
+        await pilot.click("#settings-category-console-behavior")
+        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
         toggle = screen.query_one(
             "#settings-console-collapse-large-pastes-toggle",
@@ -2635,6 +2637,12 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
         assert expected_label in str(toggle.label)
 
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        await pilot.pause(0.1)
+
+        assert app.app_config["console"]["collapse_large_pastes"] == initial_value
+        assert saved_settings == []
+
+        await pilot.click("#settings-save-category")
         await pilot.pause(0.1)
 
     assert app.app_config["console"]["collapse_large_pastes"] is expected_saved_value
