@@ -347,7 +347,7 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
         session = await _wait_for_native_console_session(console, pilot)
         assert session.id == "session-1"
         session.persisted_conversation_id = "conv-1"
-        console._sync_console_rail_visibility(console._current_console_rail_state())
+        await console._sync_native_console_chat_ui()
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
 
     rail_state = app.app_config["console"]["rail_state"]

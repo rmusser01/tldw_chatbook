@@ -2001,6 +2001,7 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_mode_bar()
             await self._sync_console_native_session_tabs()
             await self._sync_native_console_transcript_to_legacy_surface()
+            self._sync_console_rail_visibility(self._current_console_rail_state())
         finally:
             self._console_sync_in_progress = False
 
