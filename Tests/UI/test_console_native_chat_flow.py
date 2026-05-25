@@ -11,7 +11,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from textual.widgets import Button
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -346,6 +346,24 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
+        for _ in range(20):
+            if (
+                console._ensure_console_chat_controller().run_state.status
+                is ConsoleRunStatus.VALIDATING
+            ):
+                break
+            await pilot.pause(0.01)
+        console._sync_console_control_bar()
+        send_button = console.query_one("#console-send-message", Button)
+        stop_button = console.query_one("#console-stop-generation", Button)
+
+        assert send_button.disabled is True
+        assert send_button.has_class("console-action-disabled")
+        assert send_button.has_class("console-send-blocked")
+        assert not send_button.has_class("console-action-primary")
+        assert stop_button.disabled is True
+        assert stop_button.has_class("console-stop-idle")
+
         await asyncio.wait_for(gateway.started.wait(), timeout=1)
         await _wait_for_text(console, pilot, "partial")
         gateway.release.set()

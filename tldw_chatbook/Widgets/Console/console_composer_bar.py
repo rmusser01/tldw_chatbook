@@ -73,6 +73,7 @@ class ConsoleComposerBar(Horizontal):
         self._segments: list[_DraftSegment] = []
         self._segments_initialized = False
         self._run_active = False
+        self._send_blocked = False
         self._can_save_chatbook = False
 
     @property
@@ -181,6 +182,7 @@ class ConsoleComposerBar(Horizontal):
             has_draft=bool(self.draft_text().strip()),
             run_active=self._run_active,
             can_save_chatbook=self._can_save_chatbook,
+            send_blocked=self._send_blocked,
         )
 
     def sync_action_state(
@@ -189,6 +191,7 @@ class ConsoleComposerBar(Horizontal):
         has_draft: bool,
         run_active: bool,
         can_save_chatbook: bool,
+        send_blocked: bool = False,
     ) -> None:
         """Refresh composer action priority and disabled state.
 
@@ -196,11 +199,14 @@ class ConsoleComposerBar(Horizontal):
             has_draft: Whether the canonical draft has non-whitespace content.
             run_active: Whether a Console run is currently stoppable.
             can_save_chatbook: Whether a Chatbook artifact is available to save.
+            send_blocked: Whether the current run state blocks new sends.
         """
         has_draft = bool(has_draft)
         run_active = bool(run_active)
         can_save_chatbook = bool(can_save_chatbook)
+        send_blocked = bool(send_blocked)
         self._run_active = run_active
+        self._send_blocked = send_blocked
         self._can_save_chatbook = can_save_chatbook
 
         try:
@@ -210,10 +216,10 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             return
 
-        send_ready = has_draft and not run_active
-        send_button.disabled = run_active
+        send_ready = has_draft and not send_blocked
+        send_button.disabled = send_blocked
         send_button.variant = "primary" if send_ready else "default"
-        if run_active:
+        if send_blocked:
             send_button.tooltip = "Wait for the active Console run to finish before sending."
         elif has_draft:
             send_button.tooltip = "Send the active Console session draft."
@@ -221,10 +227,10 @@ class ConsoleComposerBar(Horizontal):
             send_button.tooltip = "Type a message before sending."
         send_button.set_class(send_ready, "console-action-primary")
         send_button.set_class(not send_ready, "console-action-subdued")
-        send_button.set_class(run_active, "console-action-disabled")
+        send_button.set_class(send_blocked, "console-action-disabled")
         send_button.set_class(send_ready, "console-send-ready")
         send_button.set_class(not has_draft, "console-send-inactive")
-        send_button.set_class(run_active, "console-send-blocked")
+        send_button.set_class(send_blocked, "console-send-blocked")
 
         stop_button.disabled = not run_active
         stop_button.variant = "warning" if run_active else "default"

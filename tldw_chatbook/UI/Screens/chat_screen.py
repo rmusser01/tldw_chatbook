@@ -2551,15 +2551,18 @@ class ChatScreen(BaseAppScreen):
             return
 
         run_active = False
+        send_blocked = False
         controller = self._console_chat_controller
         if controller is not None:
             run_state = getattr(controller, "run_state", None)
             run_active = bool(getattr(run_state, "is_stop_allowed", False))
+            send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
 
         composer.sync_action_state(
             has_draft=bool(composer.draft_text().strip()),
             run_active=run_active,
             can_save_chatbook=can_save_chatbook,
+            send_blocked=send_blocked,
         )
 
     def _hide_console_legacy_chat_inputs(self) -> None:
