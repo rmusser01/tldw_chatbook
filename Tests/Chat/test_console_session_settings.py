@@ -64,6 +64,18 @@ def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:
     assert settings.max_tokens == 2048
 
 
+def test_default_settings_uses_api_base_for_llamacpp_base_url() -> None:
+    settings = build_default_console_session_settings(
+        {
+            "chat_defaults": {"provider": "llama_cpp"},
+            "api_settings": {"llama_cpp": {"api_base": "127.0.0.1:9191/v1"}},
+        },
+        provider="llama_cpp",
+    )
+
+    assert settings.base_url == "http://127.0.0.1:9191"
+
+
 def test_public_helpers_accept_planned_positional_call_forms() -> None:
     config = {
         "chat_defaults": {"provider": "llama_cpp", "model": "chat-default"},
@@ -145,6 +157,33 @@ def test_validation_allows_blank_optional_numeric_fields() -> None:
     assert errors == []
 
 
+def test_validation_accepts_integral_numeric_strings() -> None:
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="m",
+        top_k="10",  # type: ignore[arg-type]
+        max_tokens="512",  # type: ignore[arg-type]
+    )
+
+    errors = validate_console_session_settings(settings, app_config={})
+
+    assert errors == []
+
+
+def test_validation_rejects_bool_and_non_integral_float_numeric_fields() -> None:
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="m",
+        top_k=40.9,  # type: ignore[arg-type]
+        max_tokens=True,  # type: ignore[arg-type]
+    )
+
+    errors = validate_console_session_settings(settings, app_config={})
+
+    assert "Top K must be 0 or greater." in errors
+    assert "Max tokens must be 1 or greater." in errors
+
+
 def test_readiness_wip_precedes_missing_key_for_openai() -> None:
     settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
 
@@ -177,6 +216,32 @@ def test_whitespace_host_url_returns_validation_and_readiness_errors() -> None:
 
     readiness = build_console_settings_readiness(settings, app_config={})
     errors = validate_console_session_settings(settings, app_config={})
+
+    assert readiness.label == "Invalid URL"
+    assert "Base URL must be a valid http(s) URL." in errors
+
+
+def test_invalid_port_urls_return_validation_and_readiness_errors() -> None:
+    for invalid_url in ("http://example.com:99999", "http://example.com:nope"):
+        settings = ConsoleSessionSettings(provider="vllm", model="m", base_url=invalid_url)
+
+        readiness = build_console_settings_readiness(settings, app_config={})
+        errors = validate_console_session_settings(settings, app_config={})
+
+        assert readiness.label == "Invalid URL"
+        assert "Base URL must be a valid http(s) URL." in errors
+
+
+def test_configured_url_provider_validates_invalid_base_url() -> None:
+    settings = ConsoleSessionSettings(
+        provider="future_provider",
+        model="future-model",
+        base_url="file:///tmp/not-http",
+    )
+    app_config = {"api_settings": {"future_provider": {"api_url": "http://127.0.0.1:9000"}}}
+
+    readiness = build_console_settings_readiness(settings, app_config=app_config, environ={})
+    errors = validate_console_session_settings(settings, app_config=app_config)
 
     assert readiness.label == "Invalid URL"
     assert "Base URL must be a valid http(s) URL." in errors
@@ -243,6 +308,27 @@ def test_context_estimate_counts_messages_and_staged_sources() -> None:
     assert "2 sources staged" in estimate.label
     assert estimate.staged_source_count == 2
     assert estimate.staged_context_summary == "2 staged sources"
+
+
+def test_context_estimate_uses_longest_matching_token_limit_prefix() -> None:
+    def token_counter(_messages: list[dict[str, str]], _model: str, _provider: str) -> int:
+        return 1
+
+    gpt4_32k = build_console_context_estimate(
+        messages=[],
+        provider="openai",
+        model="gpt-4-32k-0613",
+        token_counter=token_counter,
+    )
+    gpt35_16k = build_console_context_estimate(
+        messages=[],
+        provider="openai",
+        model="gpt-3.5-turbo-16k-0613",
+        token_counter=token_counter,
+    )
+
+    assert gpt4_32k.token_limit == 32768
+    assert gpt35_16k.token_limit == 16384
 
 
 def test_context_estimate_uses_injected_counter_and_limit_resolver() -> None:

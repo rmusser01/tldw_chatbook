@@ -213,9 +213,9 @@ def validate_console_session_settings(
     app_config: Mapping[str, object],
 ) -> list[str]:
     """Return user-facing validation errors for Console settings."""
-    del app_config
     errors: list[str] = []
     provider_key = provider_config_key(settings.provider)
+    provider_settings = _provider_settings(app_config, provider_key)
 
     if not provider_key:
         errors.append("Provider is required.")
@@ -223,7 +223,7 @@ def validate_console_session_settings(
         errors.append("Model is required.")
 
     base_url = _string_value(settings.base_url)
-    if base_url and _is_url_based_provider(provider_key) and not _valid_base_url(provider_key, base_url):
+    if base_url and _is_url_based_provider(provider_key, provider_settings) and not _valid_base_url(provider_key, base_url):
         errors.append("Base URL must be a valid http(s) URL.")
 
     if not _float_in_range(settings.temperature, 0.0, 2.0):
@@ -232,9 +232,9 @@ def validate_console_session_settings(
         errors.append("Top P must be between 0 and 1.")
     if not _is_blank_value(settings.min_p) and not _float_in_range(settings.min_p, 0.0, 1.0):
         errors.append("Min P must be between 0 and 1.")
-    if not _is_blank_value(settings.top_k) and not _int_at_least(settings.top_k, 0):
+    if not _is_blank_value(settings.top_k) and not _optional_int_at_least(settings.top_k, 0):
         errors.append("Top K must be 0 or greater.")
-    if not _is_blank_value(settings.max_tokens) and not _int_at_least(settings.max_tokens, 1):
+    if not _is_blank_value(settings.max_tokens) and not _optional_int_at_least(settings.max_tokens, 1):
         errors.append("Max tokens must be 1 or greater.")
 
     return errors
@@ -255,7 +255,8 @@ def build_console_settings_readiness(
     }
 
     base_url = _string_value(settings.base_url)
-    if base_url and _is_url_based_provider(provider_key) and not _valid_base_url(provider_key, base_url):
+    provider_settings = _provider_settings(app_config, provider_key)
+    if base_url and _is_url_based_provider(provider_key, provider_settings) and not _valid_base_url(provider_key, base_url):
         detail = (
             INVALID_LLAMACPP_BASE_URL_COPY
             if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
@@ -390,14 +391,20 @@ def _has_provider_settings_key(app_config: Mapping[str, object], provider_key: s
 
 
 def _default_base_url(provider_key: str, provider_settings: Mapping[str, object]) -> str | None:
-    base_url = _first_string(provider_settings.get("api_url"), provider_settings.get("base_url"))
+    base_url = _first_string(
+        provider_settings.get("api_url"),
+        provider_settings.get("base_url"),
+        provider_settings.get("api_base"),
+    )
     if provider_key in {"llama_cpp", "local_llamacpp"}:
         return normalize_llamacpp_base_url(base_url or DEFAULT_LLAMACPP_BASE_URL)
     return base_url
 
 
-def _is_url_based_provider(provider_key: str) -> bool:
-    return provider_key in URL_BASED_PROVIDER_KEYS
+def _is_url_based_provider(provider_key: str, provider_settings: Mapping[str, object]) -> bool:
+    return provider_key in URL_BASED_PROVIDER_KEYS or any(
+        key in provider_settings for key in ("api_url", "base_url", "api_base")
+    )
 
 
 def _valid_base_url(provider_key: str, base_url: str) -> bool:
@@ -414,6 +421,7 @@ def _is_valid_http_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname
+        parsed.port
     except ValueError:
         return False
     return (
@@ -438,14 +446,9 @@ def _float_in_range(value: object, minimum: float, maximum: float) -> bool:
     return minimum <= number <= maximum
 
 
-def _int_at_least(value: object, minimum: int) -> bool:
-    if isinstance(value, bool):
-        return False
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        return False
-    return number >= minimum and number == value
+def _optional_int_at_least(value: object, minimum: int) -> bool:
+    parsed = _parse_optional_int(value)
+    return parsed is not None and parsed >= minimum
 
 
 def _is_blank_value(value: object) -> bool:
@@ -491,6 +494,10 @@ def _optional_int_setting(
         value = primary.get(key)
     else:
         value = fallback.get(key)
+    return _parse_optional_int(value)
+
+
+def _parse_optional_int(value: object) -> int | None:
     if _is_blank_value(value):
         return None
     if isinstance(value, bool):
@@ -499,10 +506,13 @@ def _optional_int_setting(
         return value
     if isinstance(value, float):
         return int(value) if value.is_integer() else None
-    try:
-        return int(value) if isinstance(value, str) else None
-    except (TypeError, ValueError):
-        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdecimal():
+            return int(stripped)
+        if stripped.startswith("-") and stripped[1:].isdecimal():
+            return int(stripped)
+    return None
 
 
 def _estimate_tokens_locally(
@@ -524,8 +534,13 @@ def _resolve_token_limit_locally(model: str, provider: str) -> int:
     if model in CONSOLE_MODEL_TOKEN_LIMITS:
         return CONSOLE_MODEL_TOKEN_LIMITS[model]
 
-    for model_prefix, limit in CONSOLE_MODEL_TOKEN_LIMITS.items():
-        if model_prefix != "default" and model.startswith(model_prefix):
+    model_limits = (
+        (prefix, limit)
+        for prefix, limit in CONSOLE_MODEL_TOKEN_LIMITS.items()
+        if prefix != "default"
+    )
+    for model_prefix, limit in sorted(model_limits, key=lambda item: len(item[0]), reverse=True):
+        if model.startswith(model_prefix):
             return limit
 
     return CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS.get(provider, CONSOLE_MODEL_TOKEN_LIMITS["default"])
