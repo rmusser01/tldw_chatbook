@@ -81,17 +81,25 @@ def _assert_handle_aligned_with_workbench_frame(screen, handle_selector: str) ->
 
 def _assert_handle_button_contained(handle) -> None:
     button = handle.query_one(Button)
+    button_label = _button_text(button)
     handle_right = handle.region.x + handle.region.width
     button_right = button.region.x + button.region.width
     handle_bottom = handle.region.y + handle.region.height
     button_bottom = button.region.y + button.region.height
+    usable_x = handle.region.x + 1
+    usable_y = handle.region.y + 1
+    usable_right = handle_right - 1
+    usable_bottom = handle_bottom - 1
+    usable_width = max(1, handle.region.width - 2)
+    usable_height = max(1, handle.region.height - 2)
 
-    assert button.region.x >= handle.region.x
-    assert button_right <= handle_right
-    assert button.region.width <= handle.region.width
-    assert button.region.y >= handle.region.y
-    assert button_bottom <= handle_bottom
-    assert button.region.height <= handle.region.height
+    assert button.region.x >= usable_x
+    assert button_right <= usable_right
+    assert button.region.width <= usable_width
+    assert button.region.width >= len(button_label)
+    assert button.region.y == usable_y
+    assert button_bottom == usable_bottom
+    assert button.region.height == usable_height
 
 
 async def _wait_for_badge(screen, pilot, selector: str, expected: str) -> str:
@@ -861,7 +869,7 @@ async def test_console_compact_width_preserves_main_column_and_forces_right_coll
         assert composer.region.width >= workspace_grid.region.width - 2
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
         assert _is_displayed(right_handle)
-        assert right_handle.region.width == 12
+        assert right_handle.region.width == 13
         _assert_handle_aligned_with_workbench_frame(
             console,
             "#console-inspector-rail-handle",

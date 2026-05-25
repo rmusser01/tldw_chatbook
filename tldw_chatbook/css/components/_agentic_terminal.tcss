@@ -391,9 +391,9 @@
 }
 
 .console-rail-handle {
-    width: 12;
-    min-width: 12;
-    max-width: 12;
+    width: 13;
+    min-width: 13;
+    max-width: 13;
     height: 100%;
     min-height: 20;
     padding: 0;
@@ -402,11 +402,12 @@
 }
 
 .console-rail-handle-button {
-    width: 10;
+    width: 11;
     min-width: 0;
-    max-width: 10;
-    height: 1fr;
-    min-height: 1;
+    max-width: 11;
+    height: 100%;
+    min-height: 100%;
+    max-height: 100%;
     text-align: center;
     content-align: center middle;
 }
