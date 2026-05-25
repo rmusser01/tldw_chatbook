@@ -402,6 +402,7 @@ async def test_settings_provider_category_uses_effective_console_source():
 async def test_settings_provider_test_redacts_secrets(monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
     monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-token")
     host = DestinationHarness(app, "settings")
 
@@ -455,3 +456,116 @@ async def test_settings_provider_category_saves_chat_defaults(monkeypatch):
         "streaming": False,
         "temperature": 0.2,
     }
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_does_not_save_unedited_effective_defaults(monkeypatch):
+    app = _build_test_app()
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1"
+    app.app_config["chat_defaults"] = {}
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        await pilot.click("#settings-save-category")
+
+    assert saved == []
+    assert app.app_config["chat_defaults"] == {}
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_saves_only_dirty_provider_fields(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-model-value", Input).value = "gpt-4.1-mini"
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [("chat_defaults", "model", "gpt-4.1-mini")]
+    assert app.app_config["chat_defaults"] == {
+        "provider": "OpenAI",
+        "model": "gpt-4.1-mini",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_blocks_unknown_provider():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAi Typo", "model": "fake-model"}
+    app.app_config["api_settings"] = {}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        await pilot.click("#settings-test-provider")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Unknown provider" in text
+        assert "status=blocked" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_uses_api_settings_env_var_without_secret_leak(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Groq", "model": "llama-3.3-70b-versatile"}
+    app.app_config["api_settings"] = {
+        "groq": {
+            "api_key_env_var": "GROQ_API_KEY",
+        }
+    }
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-secret-token")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        await pilot.click("#settings-test-provider")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "env:GROQ_API_KEY" in text
+        assert "GROQ_API_KEY=<redacted>" in text
+        assert "gsk-secret-token" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_tolerates_invalid_temperature_text():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-temperature-default", Input).value = "not-a-number"
+
+        await pilot.click("#settings-test-provider")
+        text = _visible_text(screen)
+
+        assert "Provider test" in text
+        assert "status=ready" in text
