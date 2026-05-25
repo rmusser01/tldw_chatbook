@@ -35,6 +35,9 @@ class ConsoleRailHandle(Vertical):
         button = Button(self.label, id=self.button_id, compact=True)
         button.add_class("console-rail-handle-button")
         button.add_class(f"console-rail-handle-button-{self.side}")
+        button.styles.width = 10
+        button.styles.min_width = 0
+        button.styles.max_width = 10
         button.tooltip = (
             "Open Context rail"
             if self.side == "left"

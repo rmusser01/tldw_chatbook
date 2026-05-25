@@ -402,7 +402,9 @@
 }
 
 .console-rail-handle-button {
-    width: 100%;
+    width: 10;
+    min-width: 0;
+    max-width: 10;
     height: 1fr;
     min-height: 1;
     text-align: center;

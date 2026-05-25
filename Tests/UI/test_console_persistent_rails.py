@@ -79,6 +79,21 @@ def _assert_handle_aligned_with_workbench_frame(screen, handle_selector: str) ->
     )
 
 
+def _assert_handle_button_contained(handle) -> None:
+    button = handle.query_one(Button)
+    handle_right = handle.region.x + handle.region.width
+    button_right = button.region.x + button.region.width
+    handle_bottom = handle.region.y + handle.region.height
+    button_bottom = button.region.y + button.region.height
+
+    assert button.region.x >= handle.region.x
+    assert button_right <= handle_right
+    assert button.region.width <= handle.region.width
+    assert button.region.y >= handle.region.y
+    assert button_bottom <= handle_bottom
+    assert button.region.height <= handle.region.height
+
+
 async def _wait_for_badge(screen, pilot, selector: str, expected: str) -> str:
     for _ in range(20):
         matches = list(screen.query(selector))
@@ -189,9 +204,9 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
             console,
             "#console-inspector-rail-handle",
         )
-        assert console.query_one("#console-inspector-rail-handle").has_class(
-            "console-rail-handle-right"
-        )
+        right_handle = console.query_one("#console-inspector-rail-handle")
+        assert right_handle.has_class("console-rail-handle-right")
+        _assert_handle_button_contained(right_handle)
         open_button = console.query_one("#console-inspector-rail-open", Button)
         assert str(open_button.label) == "< Inspector"
         assert open_button.tooltip == "Open Inspector rail"
@@ -254,9 +269,9 @@ async def test_console_context_rail_collapse_hides_left_rail_and_expands_main_co
             console,
             "#console-context-rail-handle",
         )
-        assert console.query_one("#console-context-rail-handle").has_class(
-            "console-rail-handle-left"
-        )
+        left_handle = console.query_one("#console-context-rail-handle")
+        assert left_handle.has_class("console-rail-handle-left")
+        _assert_handle_button_contained(left_handle)
         open_button = console.query_one("#console-context-rail-open", Button)
         assert str(open_button.label) == "Context >"
         assert open_button.tooltip == "Open Context rail"
@@ -851,6 +866,7 @@ async def test_console_compact_width_preserves_main_column_and_forces_right_coll
             console,
             "#console-inspector-rail-handle",
         )
+        _assert_handle_button_contained(right_handle)
         _assert_handle_visible_text_fits(right_handle)
 
     assert app.app_config["console"]["rail_state"][preference_key]["right_open"] is True
