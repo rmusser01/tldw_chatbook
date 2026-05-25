@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Mapping, Sequence
+from urllib.parse import urlparse
 
 from tldw_chatbook.Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
@@ -14,7 +15,6 @@ from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
 )
-from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.token_counter import (
     count_tokens_chat_history,
     get_model_token_limit,
@@ -254,7 +254,6 @@ def build_console_context_estimate(
     messages: Sequence[Mapping[str, str]],
     provider: str,
     model: str | None,
-    *,
     staged_source_count: int = 0,
     staged_context_summary: str = "",
     max_tokens_response: int | None = None,
@@ -338,7 +337,12 @@ def _is_url_based_provider(provider_key: str) -> bool:
 
 def _valid_base_url(provider_key: str, base_url: str) -> bool:
     candidate = normalize_llamacpp_base_url(base_url) if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS else base_url
-    return validate_url(candidate)
+    return _is_valid_http_url(candidate)
+
+
+def _is_valid_http_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 def _float_in_range(value: object, minimum: float, maximum: float) -> bool:

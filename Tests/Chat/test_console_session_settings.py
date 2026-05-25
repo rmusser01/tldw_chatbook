@@ -58,12 +58,18 @@ def test_public_helpers_accept_planned_positional_call_forms() -> None:
         [{"role": "user", "content": "hello"}],
         "openai",
         "gpt-3.5-turbo",
+        1,
+        "1 staged source",
+        128,
+        "You are concise.",
     )
 
     assert settings.provider == "llama_cpp"
     assert [option.value for option in provider_options] == ["llama_cpp"]
     assert [option.value for option in model_options] == ["current", "m"]
     assert estimate.used_tokens is not None
+    assert estimate.staged_source_count == 1
+    assert estimate.staged_context_summary == "1 staged source"
 
 
 def test_model_options_include_current_model_missing_from_registry() -> None:
@@ -135,6 +141,20 @@ def test_invalid_url_precedes_wip_for_url_provider() -> None:
     readiness = build_console_settings_readiness(settings, app_config={})
 
     assert readiness.label == "Invalid URL"
+
+
+def test_invalid_url_validation_does_not_call_impure_validate_url(monkeypatch) -> None:
+    def impure_validate_url(_url: str) -> bool:
+        raise AssertionError("validate_url should not be called by pure settings helpers")
+
+    monkeypatch.setattr(session_settings, "validate_url", impure_validate_url, raising=False)
+    settings = ConsoleSessionSettings(provider="vllm", model="m", base_url="file:///tmp/x")
+
+    readiness = build_console_settings_readiness(settings, app_config={})
+    errors = validate_console_session_settings(settings, app_config={})
+
+    assert readiness.label == "Invalid URL"
+    assert "Base URL must be a valid http(s) URL." in errors
 
 
 def test_readiness_labels_cover_missing_key_ready_and_unknown() -> None:
