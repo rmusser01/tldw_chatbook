@@ -5,7 +5,7 @@ import logging
 import os
 from pathlib import Path
 
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
@@ -18,6 +18,7 @@ from ...Sync_Interop.sync_promotion_state import SyncPromotionState, build_sync_
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...config import DEFAULT_CONFIG_PATH, coerce_bool_setting, save_setting_to_cli_config
+from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
 from .provider_model_resolution import resolve_effective_provider_model
 from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
@@ -316,16 +317,23 @@ class SettingsScreen(BaseAppScreen):
 
     def _config_path(self) -> Path:
         override = os.environ.get("TLDW_CONFIG_PATH")
-        return Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
+        candidate = Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
+        return validate_path_simple(candidate, require_exists=False).resolve()
 
     def _config_writable_status(self) -> str:
-        config_path = self._config_path()
+        try:
+            config_path = self._config_path()
+        except ValueError as exc:
+            return f"invalid path - {redact_secret_text(str(exc))}"
         target = config_path if config_path.exists() else config_path.parent
         writable = os.access(target, os.W_OK) if target.exists() else os.access(target.parent, os.W_OK)
         return "writable" if writable else "not writable"
 
     def _raw_config_text(self) -> str:
-        config_path = self._config_path()
+        try:
+            config_path = self._config_path()
+        except ValueError as exc:
+            return f"# Unable to use config path: {redact_secret_text(str(exc))}\n"
         if config_path.exists():
             try:
                 return config_path.read_text(encoding="utf-8")
@@ -334,7 +342,10 @@ class SettingsScreen(BaseAppScreen):
         return "# Config file does not exist yet.\n"
 
     def _known_storage_paths(self) -> tuple[str, ...]:
-        paths = [f"Config path: {self._config_path()}"]
+        try:
+            paths = [f"Config path: {self._config_path()}"]
+        except ValueError as exc:
+            paths = [f"Config path: invalid - {redact_secret_text(str(exc))}"]
         user_data_dir = getattr(self.app_instance, "user_data_dir", None)
         if user_data_dir:
             paths.append(f"User data directory: {user_data_dir}")
@@ -367,15 +378,25 @@ class SettingsScreen(BaseAppScreen):
             pass
 
     def _validate_current_config(self) -> str:
+        adapter = SettingsConfigAdapter()
         try:
-            SettingsConfigAdapter().load()
+            result = adapter.validate_config_file(self._config_path())
         except Exception as exc:
             return f"Config validation: invalid - {redact_secret_text(str(exc))}"
-        return "Config validation: valid"
+        if result.valid:
+            return f"Config validation: valid - {redact_secret_text(result.message)}"
+        return f"Config validation: invalid - {redact_secret_text(result.message)}"
 
     def _reload_current_config(self) -> str:
+        adapter = SettingsConfigAdapter()
         try:
-            loaded = SettingsConfigAdapter().load()
+            validation = adapter.validate_config_file(self._config_path())
+        except Exception as exc:
+            return f"Config reload: failed - {redact_secret_text(str(exc))}"
+        if not validation.valid:
+            return f"Config reload: failed - {redact_secret_text(validation.message)}"
+        try:
+            loaded = adapter.load(force_reload=True)
         except Exception as exc:
             return f"Config reload: failed - {redact_secret_text(str(exc))}"
         if isinstance(loaded, dict):
@@ -425,18 +446,68 @@ class SettingsScreen(BaseAppScreen):
         if self._advanced_config_validated_text != text:
             return "Advanced config save: blocked - validate current TOML before save"
 
-        config_path = self._config_path()
+        try:
+            config_path = self._config_path()
+        except ValueError as exc:
+            return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
         tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
         backup_path = config_path.with_suffix(config_path.suffix + ".bak")
+        backup_created = False
         try:
             config_path.parent.mkdir(parents=True, exist_ok=True)
             if config_path.exists():
                 backup_path.write_text(config_path.read_text(encoding="utf-8"), encoding="utf-8")
+                backup_created = True
             tmp_path.write_text(text, encoding="utf-8")
             tmp_path.replace(config_path)
-            return f"Advanced config save: saved; backup: {backup_path}"
+            backup_message = (
+                f"backup: {backup_path}"
+                if backup_created
+                else "backup: none (new file)"
+            )
+            return f"Advanced config save: saved; {backup_message}"
         except OSError as exc:
             return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
+
+    @work(exclusive=True, thread=True)
+    def _advanced_validate_config_worker(self, text: str) -> None:
+        validation = SettingsConfigAdapter().validate_raw_toml(text)
+        status = "valid" if validation.valid else "invalid"
+        result = f"Advanced config validation: {status} - {redact_secret_text(validation.message)}"
+        self.app.call_from_thread(
+            self._apply_advanced_validation_result,
+            text,
+            validation.valid,
+            result,
+        )
+
+    def _apply_advanced_validation_result(self, text: str, valid: bool, result: str) -> None:
+        self._advanced_config_result = result
+        self._advanced_config_validated_text = text if valid else None
+        self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
+        self._update_advanced_validation_status()
+
+    @work(exclusive=True, thread=True)
+    def _advanced_save_config_worker(self, text: str) -> None:
+        result = self._save_advanced_config_text(text)
+        loaded_config: dict | None = None
+        if result.startswith("Advanced config save: saved"):
+            try:
+                loaded_config = SettingsConfigAdapter().load(force_reload=True)
+            except Exception as exc:
+                result = f"{result}; reload failed - {redact_secret_text(str(exc))}"
+        self.app.call_from_thread(
+            self._apply_advanced_save_result,
+            result,
+            loaded_config,
+        )
+
+    def _apply_advanced_save_result(self, result: str, loaded_config: dict | None) -> None:
+        if loaded_config is not None:
+            self.app_instance.app_config = loaded_config
+        self._advanced_config_result = result
+        self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
+        self._update_advanced_validation_status()
 
     def _provider_readiness_label(self) -> str:
         resolved = self._resolve_provider_model_for_settings()
@@ -487,8 +558,15 @@ class SettingsScreen(BaseAppScreen):
         return float(str(value).strip())
 
     def _provider_form_values_from_widgets(self) -> dict[str, object]:
-        provider = self.query_one("#settings-provider-value", Input).value.strip()
-        model = self.query_one("#settings-model-value", Input).value.strip()
+        loaded_values = self._provider_loaded_setting_values()
+        provider = (
+            self.query_one("#settings-provider-value", Input).value.strip()
+            or str(loaded_values["provider"])
+        )
+        model = (
+            self.query_one("#settings-model-value", Input).value.strip()
+            or str(loaded_values["model"])
+        )
         streaming = coerce_bool_setting(
             self.query_one("#settings-streaming-default", Input).value,
             True,
@@ -1079,13 +1157,13 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-provider-value")
     def handle_provider_value_changed(self, event: Input.Changed) -> None:
-        self._stage_provider_value("provider", event.value.strip())
+        self._stage_provider_value("provider", event.value.strip() or None)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
     @on(Input.Changed, "#settings-model-value")
     def handle_model_value_changed(self, event: Input.Changed) -> None:
-        self._stage_provider_value("model", event.value.strip())
+        self._stage_provider_value("model", event.value.strip() or None)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -1142,23 +1220,21 @@ class SettingsScreen(BaseAppScreen):
     def handle_advanced_validate_config(self, event: Button.Pressed) -> None:
         event.stop()
         current_text = self._advanced_editor_text()
-        validation = SettingsConfigAdapter().validate_raw_toml(current_text)
-        status = "valid" if validation.valid else "invalid"
-        self._advanced_config_result = (
-            f"Advanced config validation: {status} - {redact_secret_text(validation.message)}"
-        )
-        self._advanced_config_validated_text = current_text if validation.valid else None
+        self._advanced_config_result = "Advanced config validation: running"
         self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
         self._update_advanced_validation_status()
+        self._advanced_validate_config_worker(current_text)
 
     @on(Button.Pressed, "#settings-advanced-save-config")
     def handle_advanced_save_config(self, event: Button.Pressed) -> None:
         event.stop()
-        self._advanced_config_result = self._save_advanced_config_text(
-            self._advanced_editor_text()
-        )
+        self._advanced_config_result = "Advanced config save: saving"
         self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
-        self._update_advanced_validation_status()
+        try:
+            self.query_one("#settings-advanced-save-config", Button).disabled = True
+        except QueryError:
+            pass
+        self._advanced_save_config_worker(self._advanced_editor_text())
 
     @on(TextArea.Changed, "#settings-advanced-config-editor")
     def handle_advanced_config_changed(self, event: TextArea.Changed) -> None:
@@ -1180,6 +1256,9 @@ class SettingsScreen(BaseAppScreen):
                 if loaded_values.get(key) != value
             }
             if not dirty_values:
+                self._settings_drafts.pop(category, None)
+                self._update_provider_dynamic_widgets()
+                self._update_draft_status_widgets(category)
                 self.app.notify("No Settings changes to save.", severity="information")
                 return
             saved = SettingsConfigAdapter().save_values("chat_defaults", dirty_values)

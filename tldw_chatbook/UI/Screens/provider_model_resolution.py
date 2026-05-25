@@ -26,7 +26,7 @@ def _selected_text(value: Any) -> bool:
 
 def _chat_default(app_instance: Any, key: str) -> Any:
     config = getattr(app_instance, "app_config", {}) or {}
-    defaults = config.get("chat_defaults", {})
+    defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
     return defaults.get(key) if isinstance(defaults, dict) else None
 
 
@@ -40,10 +40,20 @@ def resolve_effective_provider_model(
 ) -> EffectiveProviderModel:
     """Resolve the canonical provider/model pair for Console-adjacent UI.
 
-    Settings drafts win because they are what the user is evaluating before
-    save. Console controls win next because they are the active run surface.
-    The default OpenAI reactive value is ignored when config already names a
-    non-OpenAI provider, matching the existing Console readiness behavior.
+    Args:
+        app_instance: Application object that may expose config and reactive provider/model values.
+        console_provider: Provider selected by the Console control surface.
+        console_model: Model selected by the Console control surface.
+        settings_provider: Provider staged in Settings before save.
+        settings_model: Model staged in Settings before save.
+
+    Returns:
+        Resolved provider/model values plus labels naming each selected source.
+
+    Settings drafts win because they are what the user is evaluating before save.
+    Console controls win next because they are the active run surface. The default
+    OpenAI reactive value is ignored when config already names a non-OpenAI
+    provider, matching the existing Console readiness behavior.
     """
     configured_provider = _chat_default(app_instance, "provider")
     reactive_provider = getattr(app_instance, "chat_api_provider_value", None)
@@ -74,13 +84,13 @@ def resolve_effective_provider_model(
     )
     configured_model = _chat_default(app_instance, "model")
 
-    if settings_model is not None:
+    if _selected_text(settings_model):
         model = settings_model
         model_source = "settings_draft"
-    elif console_model is not None:
+    elif _selected_text(console_model):
         model = console_model
         model_source = "console_control"
-    elif reactive_model is not None:
+    elif _selected_text(reactive_model):
         model = reactive_model
         model_source = "app_reactive"
     else:

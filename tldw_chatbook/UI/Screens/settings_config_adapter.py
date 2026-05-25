@@ -4,10 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from pathlib import Path
 import re
+import sys
 from typing import Any
 
 import toml
+
+if sys.version_info < (3, 11):
+    import tomli as tomllib
+else:
+    import tomllib
 
 from ...config import load_cli_config_and_ensure_existence, save_setting_to_cli_config
 from .settings_config_models import SettingsValidationResult
@@ -42,9 +49,9 @@ def _is_toml_scalar_value(text: str) -> bool:
 class SettingsConfigAdapter:
     """Narrow adapter over existing config helpers for Settings screens."""
 
-    def load(self) -> dict[str, Any]:
+    def load(self, *, force_reload: bool = False) -> dict[str, Any]:
         """Load CLI config through the existing config helper."""
-        return deepcopy(load_cli_config_and_ensure_existence())
+        return deepcopy(load_cli_config_and_ensure_existence(force_reload=force_reload))
 
     def save_values(self, section: str, values: Mapping[str, Any]) -> bool:
         """Persist a group of values to one config section."""
@@ -75,3 +82,29 @@ class SettingsConfigAdapter:
             )
 
         return SettingsValidationResult(True, "TOML is valid")
+
+    def validate_config_file(self, path: Path) -> SettingsValidationResult:
+        """Strictly validate an on-disk TOML config file.
+
+        Args:
+            path: Config file path to parse.
+
+        Returns:
+            Validation result that reports parse and filesystem failures without
+            falling back to default config values.
+        """
+        if not path.exists():
+            return SettingsValidationResult(True, "Config file does not exist yet")
+
+        try:
+            with path.open("rb") as config_file:
+                parsed = tomllib.load(config_file)
+        except tomllib.TOMLDecodeError as exc:
+            return SettingsValidationResult(False, redact_secret_text(str(exc)))
+        except OSError as exc:
+            return SettingsValidationResult(False, redact_secret_text(str(exc)))
+
+        if not isinstance(parsed, dict):
+            return SettingsValidationResult(False, "top-level TOML value must be a table")
+
+        return SettingsValidationResult(True, "Config file TOML is valid")

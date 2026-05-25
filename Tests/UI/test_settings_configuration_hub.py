@@ -1,4 +1,5 @@
 import re
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from Tests.UI.test_destination_shells import (
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
 )
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens.settings_config_adapter import (
     SettingsConfigAdapter,
     redact_secret_text,
@@ -37,6 +39,16 @@ def _app(
         chat_api_model_value=api_model,
         chat_model_value=model,
     )
+
+
+async def _wait_for_settings_text(screen, pilot, expected_text: str, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if expected_text in _visible_text(screen):
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}")
 
 
 def test_effective_provider_model_prefers_console_overrides():
@@ -141,6 +153,39 @@ def test_effective_provider_model_ignores_textual_blank_select_provider_for_defa
     assert result.provider_source == "chat_defaults"
 
 
+def test_effective_provider_model_ignores_blank_model_overrides_for_default_fallback():
+    app = _app(
+        provider="OpenAI",
+        api_model=None,
+        model=None,
+        defaults={"provider": "llama_cpp", "model": "qwen"},
+    )
+
+    for blank_model in ("", " ", "None", Select.BLANK):
+        result = resolve_effective_provider_model(
+            app,
+            settings_model=blank_model,
+            console_model=" ",
+        )
+
+        assert result.model == "qwen"
+        assert result.model_source == "chat_defaults"
+
+
+def test_effective_provider_model_handles_non_mapping_app_config():
+    app = SimpleNamespace(
+        app_config=[],
+        chat_api_provider_value=None,
+        chat_api_model_value=None,
+        chat_model_value=None,
+    )
+
+    result = resolve_effective_provider_model(app)
+
+    assert result.provider is None
+    assert result.model is None
+
+
 def test_settings_draft_tracks_dirty_values():
     draft = SettingsDraft(category=SettingsCategoryId.CONSOLE_BEHAVIOR)
     draft.set_value("collapse_large_pastes", True, False)
@@ -193,6 +238,16 @@ def test_adapter_accepts_table_headers_before_scalar_fallback():
         result = adapter.validate_raw_toml(value)
 
         assert result.valid
+
+
+def test_adapter_validate_config_file_rejects_corrupt_toml(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[chat_defaults\nprovider = \"OpenAI\"\n", encoding="utf-8")
+
+    result = SettingsConfigAdapter().validate_config_file(config_path)
+
+    assert not result.valid
+    assert "Expected" in result.message or "Invalid" in result.message
 
 
 def test_adapter_save_values_attempts_all_keys_when_one_save_fails(monkeypatch):
@@ -746,6 +801,39 @@ async def test_settings_diagnostics_validate_and_reload_config_actions():
         assert "Config reload: loaded" in text
 
 
+def test_settings_diagnostics_strictly_reports_corrupt_toml(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[chat_defaults\nprovider = \"OpenAI\"\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    assert "Config validation: invalid" in screen._validate_current_config()
+    assert "Config reload: failed" in screen._reload_current_config()
+
+
+def test_settings_config_path_validates_env_override(monkeypatch):
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", "unsafe$(touch bad).toml")
+
+    with pytest.raises(ValueError):
+        screen._config_path()
+
+
+def test_settings_advanced_config_save_reports_invalid_env_override(monkeypatch):
+    app = SimpleNamespace(app_config={})
+    screen = SettingsScreen(app)
+    text = "[chat_defaults]\nprovider = \"Ollama\"\n"
+    screen._advanced_config_validated_text = text
+    monkeypatch.setenv("TLDW_CONFIG_PATH", "unsafe$(touch bad).toml")
+
+    result = screen._save_advanced_config_text(text)
+
+    assert "Advanced config save: failed" in result
+    assert "dangerous pattern" in result
+
+
 @pytest.mark.asyncio
 async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
     app = _build_test_app()
@@ -777,6 +865,7 @@ async def test_settings_advanced_config_blocks_invalid_toml_and_redacts_secret()
         editor.text = "OPENAI_API_KEY=sk-secret-token\n[broken"
 
         await pilot.click("#settings-advanced-validate-config")
+        await _wait_for_settings_text(screen, pilot, "Advanced config validation: invalid")
         text = _visible_text(screen)
 
         assert "Advanced config validation: invalid" in text
@@ -817,8 +906,10 @@ async def test_settings_advanced_config_saves_atomically_with_backup(monkeypatch
         assert screen.query_one("#settings-advanced-save-config").disabled
 
         await pilot.click("#settings-advanced-validate-config")
+        await _wait_for_settings_text(screen, pilot, "Advanced config validation: valid")
         assert not screen.query_one("#settings-advanced-save-config").disabled
         await pilot.click("#settings-advanced-save-config")
+        await _wait_for_settings_text(screen, pilot, "Advanced config save: saved")
         text = _visible_text(screen)
 
         assert "Advanced config save: saved" in text
@@ -828,3 +919,21 @@ async def test_settings_advanced_config_saves_atomically_with_backup(monkeypatch
         "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"
     )
     assert config_path.with_suffix(".toml.bak").exists()
+    assert app.app_config["chat_defaults"]["provider"] == "Ollama"
+    assert app.app_config["chat_defaults"]["model"] == "llama3"
+
+
+def test_settings_advanced_config_new_file_save_reports_no_backup(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    app = SimpleNamespace(app_config={})
+    screen = SettingsScreen(app)
+    text = "[chat_defaults]\nprovider = \"Ollama\"\n"
+    screen._advanced_config_validated_text = text
+
+    result = screen._save_advanced_config_text(text)
+
+    assert "Advanced config save: saved" in result
+    assert "backup: none (new file)" in result
+    assert config_path.exists()
+    assert not config_path.with_suffix(".toml.bak").exists()
