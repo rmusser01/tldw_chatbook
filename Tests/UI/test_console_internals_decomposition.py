@@ -408,6 +408,84 @@ async def test_console_composer_marks_has_draft_state():
 
 
 @pytest.mark.asyncio
+async def test_console_composer_send_is_primary_only_with_draft():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+
+        assert send_button.disabled is False
+        assert not send_button.has_class("console-action-primary")
+        assert send_button.has_class("console-action-subdued")
+        assert send_button.has_class("console-send-inactive")
+
+        composer.load_draft("   ")
+        await pilot.pause(0.1)
+
+        assert composer.has_class("console-composer-has-draft")
+        assert send_button.disabled is False
+        assert not send_button.has_class("console-action-primary")
+        assert send_button.has_class("console-action-subdued")
+        assert send_button.has_class("console-send-inactive")
+
+        composer.load_draft("ready to send")
+        await pilot.pause(0.1)
+
+        assert send_button.disabled is False
+        assert send_button.has_class("console-action-primary")
+        assert send_button.has_class("console-send-ready")
+        assert not send_button.has_class("console-action-subdued")
+        assert not send_button.has_class("console-send-inactive")
+
+        composer.clear_draft()
+        await pilot.pause(0.1)
+
+        assert send_button.disabled is False
+        assert not send_button.has_class("console-action-primary")
+        assert send_button.has_class("console-action-subdued")
+        assert send_button.has_class("console-send-inactive")
+
+
+@pytest.mark.asyncio
+async def test_console_composer_save_chatbook_is_secondary():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
+        save_button = composer.query_one("#console-save-chatbook", Button)
+
+        assert save_button.disabled is False
+        assert save_button.has_class("console-action-secondary")
+        assert save_button.has_class("console-save-chatbook-secondary")
+        assert save_button.has_class("console-action-subdued")
+        assert not save_button.has_class("console-action-primary")
+
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=False,
+            can_save_chatbook=True,
+        )
+        await pilot.pause(0.1)
+
+        assert send_button.has_class("console-action-primary")
+        assert save_button.disabled is False
+        assert save_button.has_class("console-action-secondary")
+        assert save_button.has_class("console-save-chatbook-secondary")
+        assert save_button.has_class("console-save-chatbook-ready")
+        assert not save_button.has_class("console-action-primary")
+
+
+@pytest.mark.asyncio
 async def test_console_native_composer_auto_expands_for_long_drafts():
     app = _build_test_app()
     host = ConsoleHarness(app)

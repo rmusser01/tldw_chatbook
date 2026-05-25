@@ -2514,11 +2514,38 @@ class ChatScreen(BaseAppScreen):
             inspector = self.query_one("#console-run-inspector-state", ConsoleRunInspector)
         except QueryError:
             inspector = None
+        inspector_state = self._build_console_inspector_state(
+            self._pending_console_launch_context
+        )
         if inspector is not None:
-            inspector.sync_state(
-                self._build_console_inspector_state(self._pending_console_launch_context)
-            )
+            inspector.sync_state(inspector_state)
+        self._sync_console_composer_action_state(
+            can_save_chatbook=inspector_state.can_save_chatbook
+        )
         self._sync_console_rail_visibility(self._current_console_rail_state())
+
+    def _sync_console_composer_action_state(
+        self,
+        *,
+        can_save_chatbook: bool,
+    ) -> None:
+        """Refresh Console composer action priority from draft, run, and artifact state."""
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+
+        run_active = False
+        controller = self._console_chat_controller
+        if controller is not None:
+            run_state = getattr(controller, "run_state", None)
+            run_active = bool(getattr(run_state, "is_stop_allowed", False))
+
+        composer.sync_action_state(
+            has_draft=bool(composer.draft_text().strip()),
+            run_active=run_active,
+            can_save_chatbook=can_save_chatbook,
+        )
 
     def _hide_console_legacy_chat_inputs(self) -> None:
         """Keep Console on a single native composer surface."""

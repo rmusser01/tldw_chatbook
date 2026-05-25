@@ -257,6 +257,42 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
 
 
 @pytest.mark.asyncio
+async def test_console_composer_stop_is_disabled_when_idle():
+    gateway = WaitingGateway()
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        stop_button = composer.query_one("#console-stop-generation", Button)
+
+        assert stop_button.disabled is True
+        assert stop_button.has_class("console-action-disabled")
+        assert stop_button.has_class("console-stop-idle")
+        assert not stop_button.has_class("console-stop-active")
+
+        composer.load_draft("hello")
+        console.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await _wait_for_text(console, pilot, "partial")
+
+        assert stop_button.disabled is False
+        assert stop_button.has_class("console-stop-active")
+        assert not stop_button.has_class("console-action-disabled")
+        assert not stop_button.has_class("console-stop-idle")
+
+        stop_button.press()
+        await _wait_for_text(console, pilot, "stopped")
+
+
+@pytest.mark.asyncio
 async def test_console_duplicate_send_during_stream_does_not_break_stop_control():
     gateway = WaitingGateway()
     app = _build_test_app()
