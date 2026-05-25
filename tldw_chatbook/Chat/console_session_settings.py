@@ -1,0 +1,438 @@
+"""Pure Console session settings contracts and helpers."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Mapping, Sequence
+
+from tldw_chatbook.Chat.console_provider_gateway import (
+    DEFAULT_LLAMACPP_BASE_URL,
+    INVALID_LLAMACPP_BASE_URL_COPY,
+    normalize_llamacpp_base_url,
+)
+from tldw_chatbook.Chat.provider_readiness import (
+    get_provider_readiness,
+    provider_config_key,
+)
+from tldw_chatbook.Utils.input_validation import validate_url
+from tldw_chatbook.Utils.token_counter import (
+    count_tokens_chat_history,
+    get_model_token_limit,
+)
+
+
+NATIVE_CONSOLE_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
+URL_BASED_PROVIDER_KEYS = frozenset(
+    {
+        "aphrodite",
+        "custom",
+        "custom_2",
+        "koboldcpp",
+        "llama_cpp",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_ollama",
+        "local_vllm",
+        "ollama",
+        "oobabooga",
+        "tabbyapi",
+        "vllm",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ConsoleSessionSettings:
+    """User-editable Console chat session settings."""
+
+    provider: str
+    model: str | None = None
+    base_url: str | None = None
+    temperature: float = 0.7
+    top_p: float = 0.95
+    min_p: float | None = None
+    top_k: int | None = None
+    max_tokens: int | None = None
+    streaming: bool = True
+    persona_label: str = "General"
+    character_label: str = ""
+
+
+@dataclass(frozen=True)
+class ConsoleSettingsOption:
+    """Selectable settings option for provider and model controls."""
+
+    label: str
+    value: str
+
+
+@dataclass(frozen=True)
+class ConsoleSettingsReadiness:
+    """Readiness copy for the currently selected Console settings."""
+
+    label: str
+    detail: str
+    native_send_supported: bool
+
+
+@dataclass(frozen=True)
+class ConsoleSettingsContextEstimate:
+    """Estimated context usage for the current Console session."""
+
+    used_tokens: int | None
+    token_limit: int | None
+    label: str
+    staged_source_count: int = 0
+    staged_context_summary: str = ""
+
+
+def build_console_provider_options(
+    *,
+    providers_models: Mapping[str, Sequence[str]],
+) -> list[ConsoleSettingsOption]:
+    """Return sorted provider options from the configured model registry."""
+    provider_keys = sorted({key for key in (provider_config_key(provider) for provider in providers_models) if key})
+    return [ConsoleSettingsOption(label=provider_key, value=provider_key) for provider_key in provider_keys]
+
+
+def build_console_model_options(
+    *,
+    provider: str,
+    providers_models: Mapping[str, Sequence[str]],
+    current_model: str | None = None,
+) -> list[ConsoleSettingsOption]:
+    """Return model options for a provider, preserving the current model."""
+    provider_key = provider_config_key(provider)
+    model_values: list[str] = []
+
+    current_model_value = _string_value(current_model)
+    if current_model_value and current_model_value not in model_values:
+        model_values.append(current_model_value)
+
+    for configured_provider, configured_models in providers_models.items():
+        if provider_config_key(configured_provider) != provider_key:
+            continue
+        for configured_model in configured_models:
+            configured_model_value = _string_value(configured_model)
+            if configured_model_value and configured_model_value not in model_values:
+                model_values.append(configured_model_value)
+
+    return [ConsoleSettingsOption(label=model, value=model) for model in model_values]
+
+
+def build_default_console_session_settings(
+    *,
+    app_config: Mapping[str, object],
+    provider: str | None = None,
+    model: str | None = None,
+) -> ConsoleSessionSettings:
+    """Build default Console settings from chat defaults and provider config."""
+    chat_defaults = _mapping_value(app_config, "chat_defaults")
+    configured_provider = provider_config_key(_string_value(provider) or _string_setting(chat_defaults, "provider"))
+    provider_settings = _provider_settings(app_config, configured_provider)
+
+    return ConsoleSessionSettings(
+        provider=configured_provider,
+        model=_first_string(
+            model,
+            provider_settings.get("model"),
+            provider_settings.get("api_model"),
+            provider_settings.get("default_model"),
+            chat_defaults.get("model"),
+        ),
+        base_url=_default_base_url(configured_provider, provider_settings),
+        temperature=_float_setting(chat_defaults, provider_settings, "temperature", 0.7),
+        top_p=_float_setting(chat_defaults, provider_settings, "top_p", 0.95),
+        min_p=_optional_float_setting(chat_defaults, provider_settings, "min_p"),
+        top_k=_optional_int_setting(chat_defaults, provider_settings, "top_k"),
+        max_tokens=_optional_int_setting(chat_defaults, provider_settings, "max_tokens"),
+        streaming=_bool_setting(chat_defaults, provider_settings, "streaming", True),
+    )
+
+
+def validate_console_session_settings(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, object],
+) -> list[str]:
+    """Return user-facing validation errors for Console settings."""
+    del app_config
+    errors: list[str] = []
+    provider_key = provider_config_key(settings.provider)
+
+    if not provider_key:
+        errors.append("Provider is required.")
+    if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(settings.model):
+        errors.append("Model is required.")
+
+    base_url = _string_value(settings.base_url)
+    if base_url and _is_url_based_provider(provider_key) and not _valid_base_url(provider_key, base_url):
+        errors.append("Base URL must be a valid http(s) URL.")
+
+    if not _float_in_range(settings.temperature, 0.0, 2.0):
+        errors.append("Temperature must be between 0 and 2.")
+    if not _float_in_range(settings.top_p, 0.0, 1.0):
+        errors.append("Top P must be between 0 and 1.")
+    if not _is_blank_value(settings.min_p) and not _float_in_range(settings.min_p, 0.0, 1.0):
+        errors.append("Min P must be between 0 and 1.")
+    if not _is_blank_value(settings.top_k) and not _int_at_least(settings.top_k, 0):
+        errors.append("Top K must be 0 or greater.")
+    if not _is_blank_value(settings.max_tokens) and not _int_at_least(settings.max_tokens, 1):
+        errors.append("Max tokens must be 1 or greater.")
+
+    return errors
+
+
+def build_console_settings_readiness(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str] | None = None,
+    native_provider_keys: set[str] | None = None,
+) -> ConsoleSettingsReadiness:
+    """Build readiness copy without probing networks or mutating state."""
+    provider_key = provider_config_key(settings.provider)
+    native_keys = {
+        provider_config_key(provider)
+        for provider in (native_provider_keys if native_provider_keys is not None else NATIVE_CONSOLE_PROVIDER_KEYS)
+    }
+
+    base_url = _string_value(settings.base_url)
+    if base_url and _is_url_based_provider(provider_key) and not _valid_base_url(provider_key, base_url):
+        detail = (
+            INVALID_LLAMACPP_BASE_URL_COPY
+            if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
+            else "Provider blocked: invalid base URL. Use an http(s) URL."
+        )
+        return ConsoleSettingsReadiness(
+            label="Invalid URL",
+            detail=detail,
+            native_send_supported=False,
+        )
+
+    readiness = get_provider_readiness(settings.provider, app_config, environ=environ)
+    if readiness.reason == "Unknown provider":
+        return ConsoleSettingsReadiness(
+            label="Unknown",
+            detail=readiness.user_message,
+            native_send_supported=False,
+        )
+
+    native_send_supported = provider_key in native_keys and readiness.ready
+    if provider_key not in native_keys:
+        detail = f"Console native provider '{provider_key}' is not wired yet."
+        if readiness.reason == "Missing API key":
+            detail = f"{detail} This provider also has a missing API key."
+        elif readiness.reason and readiness.reason != "Ready":
+            detail = f"{detail} {readiness.user_message}"
+        return ConsoleSettingsReadiness(
+            label="WIP",
+            detail=detail,
+            native_send_supported=False,
+        )
+
+    if readiness.ready:
+        return ConsoleSettingsReadiness(
+            label="Ready",
+            detail=readiness.user_message,
+            native_send_supported=native_send_supported,
+        )
+
+    if readiness.reason == "Missing API key":
+        return ConsoleSettingsReadiness(
+            label="Missing key",
+            detail=readiness.user_message,
+            native_send_supported=False,
+        )
+
+    return ConsoleSettingsReadiness(
+        label="Not ready",
+        detail=readiness.user_message,
+        native_send_supported=False,
+    )
+
+
+def build_console_context_estimate(
+    *,
+    messages: Sequence[Mapping[str, str]],
+    provider: str,
+    model: str | None,
+    staged_source_count: int = 0,
+    staged_context_summary: str = "",
+    max_tokens_response: int | None = None,
+    system_prompt: str | None = None,
+) -> ConsoleSettingsContextEstimate:
+    """Estimate current context tokens for display in Console settings."""
+    model_name = _string_value(model)
+    if not model_name:
+        return ConsoleSettingsContextEstimate(
+            used_tokens=None,
+            token_limit=None,
+            label="Token estimate unavailable until a model is selected.",
+            staged_source_count=staged_source_count,
+            staged_context_summary=staged_context_summary,
+        )
+
+    provider_key = provider_config_key(provider)
+    estimate_messages: list[Mapping[str, str]] = []
+    if system_prompt:
+        estimate_messages.append({"role": "system", "content": system_prompt})
+    estimate_messages.extend(messages)
+
+    try:
+        used_tokens = count_tokens_chat_history(list(estimate_messages), model_name, provider_key)
+        token_limit = get_model_token_limit(model_name, provider_key)
+    except Exception:
+        return ConsoleSettingsContextEstimate(
+            used_tokens=None,
+            token_limit=None,
+            label="Token estimate unavailable for this model.",
+            staged_source_count=staged_source_count,
+            staged_context_summary=staged_context_summary,
+        )
+
+    label = f"{used_tokens:,} / {token_limit:,} tokens"
+    if max_tokens_response is not None:
+        label = f"{label}; {max_tokens_response:,} response tokens reserved"
+    if staged_source_count:
+        source_word = "source" if staged_source_count == 1 else "sources"
+        label = f"{label}; {staged_source_count} {source_word} staged"
+
+    return ConsoleSettingsContextEstimate(
+        used_tokens=used_tokens,
+        token_limit=token_limit,
+        label=label,
+        staged_source_count=staged_source_count,
+        staged_context_summary=staged_context_summary,
+    )
+
+
+def _mapping_value(source: Mapping[str, object], key: str) -> Mapping[str, object]:
+    value = source.get(key, {})
+    return value if isinstance(value, Mapping) else {}
+
+
+def _provider_settings(app_config: Mapping[str, object], provider_key: str) -> Mapping[str, object]:
+    api_settings = _mapping_value(app_config, "api_settings")
+    value = {}
+    for configured_provider, configured_value in api_settings.items():
+        if provider_config_key(configured_provider) == provider_key:
+            value = configured_value
+            break
+    return value if isinstance(value, Mapping) else {}
+
+
+def _default_base_url(provider_key: str, provider_settings: Mapping[str, object]) -> str | None:
+    base_url = _first_string(provider_settings.get("api_url"), provider_settings.get("base_url"))
+    if provider_key in {"llama_cpp", "local_llamacpp"}:
+        return normalize_llamacpp_base_url(base_url or DEFAULT_LLAMACPP_BASE_URL)
+    return base_url
+
+
+def _is_url_based_provider(provider_key: str) -> bool:
+    return provider_key in URL_BASED_PROVIDER_KEYS
+
+
+def _valid_base_url(provider_key: str, base_url: str) -> bool:
+    candidate = normalize_llamacpp_base_url(base_url) if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS else base_url
+    return validate_url(candidate)
+
+
+def _float_in_range(value: object, minimum: float, maximum: float) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    return minimum <= number <= maximum
+
+
+def _int_at_least(value: object, minimum: int) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return False
+    return number >= minimum and number == value
+
+
+def _is_blank_value(value: object) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _float_setting(
+    primary: Mapping[str, object],
+    fallback: Mapping[str, object],
+    key: str,
+    default: float,
+) -> float:
+    value = primary.get(key) if key in primary else fallback.get(key, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _optional_float_setting(
+    primary: Mapping[str, object],
+    fallback: Mapping[str, object],
+    key: str,
+) -> float | None:
+    if key in primary:
+        value = primary.get(key)
+    else:
+        value = fallback.get(key)
+    if _is_blank_value(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int_setting(
+    primary: Mapping[str, object],
+    fallback: Mapping[str, object],
+    key: str,
+) -> int | None:
+    if key in primary:
+        value = primary.get(key)
+    else:
+        value = fallback.get(key)
+    if _is_blank_value(value):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bool_setting(
+    primary: Mapping[str, object],
+    fallback: Mapping[str, object],
+    key: str,
+    default: bool,
+) -> bool:
+    value = primary.get(key) if key in primary else fallback.get(key, default)
+    return value if isinstance(value, bool) else default
+
+
+def _first_string(*values: object) -> str | None:
+    for value in values:
+        text = _string_value(value)
+        if text:
+            return text
+    return None
+
+
+def _string_setting(source: Mapping[str, object], key: str) -> str:
+    return _string_value(source.get(key)) or ""
+
+
+def _string_value(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None

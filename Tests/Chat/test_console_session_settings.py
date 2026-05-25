@@ -1,0 +1,167 @@
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    build_console_context_estimate,
+    build_console_settings_readiness,
+    build_default_console_session_settings,
+    build_console_model_options,
+    build_console_provider_options,
+    validate_console_session_settings,
+)
+
+
+def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:
+    config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "chat-default",
+            "temperature": 0.2,
+            "top_p": 0.8,
+            "max_tokens": 2048,
+        },
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "127.0.0.1:9099/v1",
+                "model": "configured-model",
+                "top_k": 40,
+                "min_p": 0.05,
+            },
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config=config,
+        provider="llama_cpp",
+        model=None,
+    )
+
+    assert settings.provider == "llama_cpp"
+    assert settings.model == "configured-model"
+    assert settings.base_url == "http://127.0.0.1:9099"
+    assert settings.temperature == 0.2
+    assert settings.top_p == 0.8
+    assert settings.min_p == 0.05
+    assert settings.top_k == 40
+    assert settings.max_tokens == 2048
+
+
+def test_model_options_include_current_model_missing_from_registry() -> None:
+    options = build_console_model_options(
+        provider="llama_cpp",
+        providers_models={"llama_cpp": ["listed-model"]},
+        current_model="configured-model",
+    )
+
+    assert [option.value for option in options] == ["configured-model", "listed-model"]
+
+
+def test_model_options_use_normalized_provider_keys() -> None:
+    options = build_console_model_options(
+        provider="local_llamacpp",
+        providers_models={"local-llamacpp": ["local-model"]},
+        current_model=None,
+    )
+
+    assert [option.value for option in options] == ["local-model"]
+
+
+def test_provider_options_include_all_configured_providers() -> None:
+    options = build_console_provider_options(
+        providers_models={
+            "llama_cpp": ["local-model"],
+            "openai": ["gpt-4.1"],
+            "anthropic": ["claude-sonnet"],
+        }
+    )
+
+    assert [option.value for option in options] == ["anthropic", "llama_cpp", "openai"]
+
+
+def test_validation_rejects_out_of_range_temperature() -> None:
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="m", temperature=2.1)
+
+    errors = validate_console_session_settings(settings, app_config={})
+
+    assert "Temperature must be between 0 and 2." in errors
+
+
+def test_validation_allows_blank_optional_numeric_fields() -> None:
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="m",
+        min_p="",  # type: ignore[arg-type]
+        top_k="",  # type: ignore[arg-type]
+        max_tokens="",  # type: ignore[arg-type]
+    )
+
+    errors = validate_console_session_settings(settings, app_config={})
+
+    assert errors == []
+
+
+def test_readiness_wip_precedes_missing_key_for_openai() -> None:
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+
+    readiness = build_console_settings_readiness(settings, app_config={"api_settings": {}})
+
+    assert readiness.label == "WIP"
+    assert "not wired" in readiness.detail
+
+
+def test_invalid_url_precedes_wip_for_url_provider() -> None:
+    settings = ConsoleSessionSettings(provider="vllm", model="m", base_url="file:///tmp/x")
+
+    readiness = build_console_settings_readiness(settings, app_config={})
+
+    assert readiness.label == "Invalid URL"
+
+
+def test_readiness_labels_cover_missing_key_ready_and_unknown() -> None:
+    missing = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="anthropic", model="claude-sonnet"),
+        app_config={"api_settings": {"anthropic": {"api_key_env_var": "MISSING_KEY"}}},
+        environ={},
+        native_provider_keys={"llama_cpp", "local_llamacpp", "anthropic"},
+    )
+    ready = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="llama_cpp", model="m"),
+        app_config={},
+    )
+    unknown = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="made_up_provider", model="m"),
+        app_config={},
+    )
+
+    assert missing.label == "Missing key"
+    assert ready.label == "Ready"
+    assert unknown.label == "Unknown"
+
+
+def test_readiness_unsupported_provider_missing_key_is_still_primary_wip() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="anthropic", model="claude-sonnet"),
+        app_config={"api_settings": {"anthropic": {"api_key_env_var": "MISSING_KEY"}}},
+        environ={},
+    )
+
+    assert readiness.label == "WIP"
+    assert "missing API key" in readiness.detail
+
+
+def test_context_estimate_counts_messages_and_staged_sources() -> None:
+    estimate = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hello world"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        staged_source_count=2,
+        staged_context_summary="2 staged sources",
+        max_tokens_response=512,
+        system_prompt="You are concise.",
+    )
+
+    assert estimate.used_tokens is not None
+    assert estimate.used_tokens > 0
+    assert estimate.token_limit == 4096
+    assert "tokens" in estimate.label
+    assert "2 sources staged" in estimate.label
+    assert estimate.staged_source_count == 2
+    assert estimate.staged_context_summary == "2 staged sources"
