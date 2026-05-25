@@ -11,7 +11,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.events import Key
 from textual.reactive import reactive
-from textual.widgets import Button, Input, Rule, Static
+from textual.widgets import Button, Input, Rule, Static, TextArea
 
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Sync_Interop.sync_promotion_state import SyncPromotionState, build_sync_promotion_state
@@ -43,6 +43,9 @@ class SettingsScreen(BaseAppScreen):
         super().__init__(app_instance, "settings", **kwargs)
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
         self._provider_test_result = "Provider test has not run."
+        self._diagnostics_validation_result = "Config validation: not run"
+        self._diagnostics_reload_result = "Config reload: not run"
+        self._advanced_config_result = "Advanced config validation: not run"
 
     def _category_summaries(self) -> tuple[SettingsCategorySummary, ...]:
         return (
@@ -246,6 +249,94 @@ class SettingsScreen(BaseAppScreen):
         target = config_path if config_path.exists() else config_path.parent
         writable = os.access(target, os.W_OK) if target.exists() else os.access(target.parent, os.W_OK)
         return "writable" if writable else "not writable"
+
+    def _raw_config_text(self) -> str:
+        config_path = self._config_path()
+        if config_path.exists():
+            try:
+                return config_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                return f"# Unable to read {config_path}: {type(exc).__name__}"
+        return "# Config file does not exist yet.\n"
+
+    def _known_storage_paths(self) -> tuple[str, ...]:
+        paths = [f"Config path: {self._config_path()}"]
+        user_data_dir = getattr(self.app_instance, "user_data_dir", None)
+        if user_data_dir:
+            paths.append(f"User data directory: {user_data_dir}")
+        for attr_name, label in (
+            ("notifications_db_path", "Notifications DB"),
+            ("subscriptions_db_path", "Watchlists DB"),
+            ("workspaces_db_path", "Workspaces DB"),
+        ):
+            value = getattr(self.app_instance, attr_name, None)
+            if value:
+                paths.append(f"{label}: {value}")
+        return tuple(paths)
+
+    def _appearance_theme_summary(self) -> str:
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        if not isinstance(app_config, Mapping):
+            return "Theme: default"
+        for section_name in ("appearance", "ui", "theme"):
+            section = app_config.get(section_name, {})
+            if isinstance(section, Mapping):
+                theme = section.get("theme") or section.get("name")
+                if theme:
+                    return f"Theme: {theme} from [{section_name}]"
+        return "Theme: default"
+
+    def _set_static_text(self, selector: str, text: str) -> None:
+        try:
+            self.query_one(selector, Static).update(text)
+        except QueryError:
+            pass
+
+    def _validate_current_config(self) -> str:
+        try:
+            SettingsConfigAdapter().load()
+        except Exception as exc:
+            return f"Config validation: invalid - {redact_secret_text(str(exc))}"
+        return "Config validation: valid"
+
+    def _reload_current_config(self) -> str:
+        try:
+            loaded = SettingsConfigAdapter().load()
+        except Exception as exc:
+            return f"Config reload: failed - {redact_secret_text(str(exc))}"
+        if isinstance(loaded, dict):
+            self.app_instance.app_config = loaded
+            return "Config reload: loaded"
+        return "Config reload: failed - loaded config was not a table"
+
+    def _advanced_editor_text(self) -> str:
+        try:
+            return self.query_one("#settings-advanced-config-editor", TextArea).text
+        except QueryError:
+            return ""
+
+    def _validate_advanced_config_text(self, text: str) -> str:
+        result = SettingsConfigAdapter().validate_raw_toml(text)
+        status = "valid" if result.valid else "invalid"
+        return f"Advanced config validation: {status} - {redact_secret_text(result.message)}"
+
+    def _save_advanced_config_text(self, text: str) -> str:
+        validation = SettingsConfigAdapter().validate_raw_toml(text)
+        if not validation.valid:
+            return f"Advanced config save: blocked - {redact_secret_text(validation.message)}"
+
+        config_path = self._config_path()
+        tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
+        backup_path = config_path.with_suffix(config_path.suffix + ".bak")
+        try:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            if config_path.exists():
+                backup_path.write_text(config_path.read_text(encoding="utf-8"), encoding="utf-8")
+            tmp_path.write_text(text, encoding="utf-8")
+            tmp_path.replace(config_path)
+            return f"Advanced config save: saved; backup: {backup_path}"
+        except OSError as exc:
+            return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
 
     def _provider_readiness_label(self) -> str:
         resolved = self._resolve_provider_model_for_settings()
@@ -538,12 +629,15 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.APPEARANCE:
             yield Static("Appearance", classes="destination-section settings-column-title")
             with Vertical(id="settings-appearance-card", classes="settings-focus-card"):
+                yield Static(self._appearance_theme_summary())
                 yield Static("Theme and display customization live in the Appearance surface.")
                 yield Static("Use the inspector action to open the dedicated customization surface.")
+                yield Static("Open Appearance from the inspector to change themes, density, and visual polish.")
         elif category is SettingsCategoryId.STORAGE:
             yield Static("Storage", classes="destination-section settings-column-title")
             with Vertical(id="settings-storage-card", classes="settings-focus-card"):
-                yield Static(f"Config path: {self._config_path()}")
+                for path_summary in self._known_storage_paths():
+                    yield Static(path_summary)
                 yield Static(f"Config directory status: {self._config_writable_status()}")
                 yield Static("Database and media paths remain local unless a server handoff is explicit.")
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
@@ -551,19 +645,55 @@ class SettingsScreen(BaseAppScreen):
             with Vertical(id="settings-privacy-security-card", classes="settings-focus-card"):
                 yield Static("Secrets are read from environment/config and are not shown in diagnostics.")
                 yield Static("Validation errors redact API key, token, password, and secret assignments.")
-                yield Static("Encryption status: use local profile protections where configured.")
+                yield Static("Encryption: not configured from this first-slice Settings screen.")
+                yield Static("Secret redaction: enabled for diagnostics and validation errors.")
         elif category is SettingsCategoryId.DIAGNOSTICS:
             yield Static("Diagnostics", classes="destination-section settings-column-title")
             with Vertical(id="settings-diagnostics-card", classes="settings-focus-card"):
                 yield Static("Validate config", classes="destination-section")
+                yield Static(f"Config path: {self._config_path()}")
                 yield Static("Raw TOML validation is available before applying advanced edits.")
                 yield Static("Logs and troubleshooting should expose actionable errors without secrets.")
+                yield Button(
+                    "Validate Config",
+                    id="settings-validate-config",
+                    tooltip="Validate the current Settings config file.",
+                )
+                yield Button(
+                    "Reload Config",
+                    id="settings-reload-config",
+                    tooltip="Reload the current Settings config into the running app.",
+                )
+                yield Static(
+                    self._diagnostics_validation_result,
+                    id="settings-diagnostics-validation-result",
+                )
+                yield Static(
+                    self._diagnostics_reload_result,
+                    id="settings-diagnostics-reload-result",
+                )
         else:
             yield Static("Advanced Config", classes="destination-section settings-column-title")
             with Vertical(id="settings-advanced-config-card", classes="settings-focus-card"):
                 yield Static("Raw TOML", classes="destination-section")
                 yield Static("Expert-only raw configuration editing with validation before save.")
+                yield Static("Raw TOML bypasses guided validation and should be used only for expert edits.")
                 yield Static("Invalid top-level values are blocked; table-shaped TOML is required.")
+                yield TextArea(
+                    self._raw_config_text(),
+                    id="settings-advanced-config-editor",
+                )
+                yield Button(
+                    "Validate Raw TOML",
+                    id="settings-advanced-validate-config",
+                    tooltip="Validate raw TOML before writing it to disk.",
+                )
+                yield Button(
+                    "Save Raw TOML",
+                    id="settings-advanced-save-config",
+                    tooltip="Atomically save raw TOML after validation.",
+                )
+                yield Static(self._advanced_config_result, id="settings-advanced-config-result")
 
     def _render_impact_pane(self) -> ComposeResult:
         summary = self._active_summary()
@@ -743,6 +873,40 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self.action_settings_test_category()
 
+    @on(Button.Pressed, "#settings-validate-config")
+    def handle_validate_config(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._diagnostics_validation_result = self._validate_current_config()
+        self._set_static_text(
+            "#settings-diagnostics-validation-result",
+            self._diagnostics_validation_result,
+        )
+
+    @on(Button.Pressed, "#settings-reload-config")
+    def handle_reload_config(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._diagnostics_reload_result = self._reload_current_config()
+        self._set_static_text(
+            "#settings-diagnostics-reload-result",
+            self._diagnostics_reload_result,
+        )
+
+    @on(Button.Pressed, "#settings-advanced-validate-config")
+    def handle_advanced_validate_config(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._advanced_config_result = self._validate_advanced_config_text(
+            self._advanced_editor_text()
+        )
+        self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
+
+    @on(Button.Pressed, "#settings-advanced-save-config")
+    def handle_advanced_save_config(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._advanced_config_result = self._save_advanced_config_text(
+            self._advanced_editor_text()
+        )
+        self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
+
     def action_settings_save_category(self) -> None:
         category = self._active_category_id()
         if category is SettingsCategoryId.PROVIDERS_MODELS:
@@ -854,6 +1018,10 @@ class SettingsScreen(BaseAppScreen):
             if isinstance(focused, Button) and focused.id in {
                 "settings-console-collapse-large-pastes-toggle",
                 "settings-test-provider",
+                "settings-validate-config",
+                "settings-reload-config",
+                "settings-advanced-validate-config",
+                "settings-advanced-save-config",
             }:
                 focused.press()
                 event.stop()

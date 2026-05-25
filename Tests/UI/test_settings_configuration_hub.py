@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Input, Select
+from textual.widgets import Input, Select, TextArea
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -569,3 +569,117 @@ async def test_settings_provider_test_tolerates_invalid_temperature_text():
 
         assert "Provider test" in text
         assert "status=ready" in text
+
+
+@pytest.mark.parametrize(
+    ("button_id", "expected"),
+    [
+        ("#settings-category-appearance", "Open Appearance"),
+        ("#settings-category-storage", "Config path"),
+        ("#settings-category-privacy-security", "Encryption"),
+        ("#settings-category-diagnostics", "Validate config"),
+        ("#settings-category-advanced-config", "Raw TOML"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_settings_first_slice_categories_have_real_content(button_id, expected):
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click(button_id)
+        screen = _active_destination_screen(host)
+
+        assert expected in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_diagnostics_validate_and_reload_config_actions():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-diagnostics")
+        screen = _active_destination_screen(host)
+        await pilot.click("#settings-validate-config")
+        await pilot.click("#settings-reload-config")
+        text = _visible_text(screen)
+
+        assert "Config validation: valid" in text
+        assert "Config reload: loaded" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Raw TOML bypasses guided validation" in text
+        assert screen.query_one("#settings-advanced-config-editor", TextArea)
+        assert screen.query_one("#settings-advanced-validate-config")
+        assert screen.query_one("#settings-advanced-save-config")
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_blocks_invalid_toml_and_redacts_secret():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+        editor.text = "OPENAI_API_KEY=sk-secret-token\n[broken"
+
+        await pilot.click("#settings-advanced-validate-config")
+        text = _visible_text(screen)
+
+        assert "Advanced config validation: invalid" in text
+        assert "sk-secret-token" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_blocks_non_mapping_toml_on_save():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+        editor.text = "42"
+
+        await pilot.click("#settings-advanced-save-config")
+        text = _visible_text(screen)
+
+        assert "top-level TOML value must be a table" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_saves_atomically_with_backup(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[chat_defaults]\nprovider = \"OpenAI\"\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+        editor.text = "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"
+
+        await pilot.click("#settings-advanced-save-config")
+        text = _visible_text(screen)
+
+        assert "Advanced config save: saved" in text
+
+    assert config_path.read_text(encoding="utf-8") == (
+        "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"
+    )
+    assert config_path.with_suffix(".toml.bak").exists()
