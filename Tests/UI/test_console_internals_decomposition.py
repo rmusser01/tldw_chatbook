@@ -322,6 +322,45 @@ async def test_console_native_composer_receives_typing_on_open():
 
 
 @pytest.mark.asyncio
+async def test_console_composer_marks_focus_state():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        composer.focus()
+        await pilot.pause(0.1)
+
+        assert composer.has_focus_within
+        assert composer.has_class("console-composer-focused")
+
+
+@pytest.mark.asyncio
+async def test_console_composer_marks_has_draft_state():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        assert not composer.has_class("console-composer-has-draft")
+        composer.load_draft("draft state marker")
+        await pilot.pause(0.1)
+        assert composer.has_class("console-composer-has-draft")
+
+        composer.clear_draft()
+        await pilot.pause(0.1)
+        assert not composer.has_class("console-composer-has-draft")
+
+
+@pytest.mark.asyncio
 async def test_console_native_composer_auto_expands_for_long_drafts():
     app = _build_test_app()
     host = ConsoleHarness(app)

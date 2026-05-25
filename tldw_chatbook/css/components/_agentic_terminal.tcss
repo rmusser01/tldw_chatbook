@@ -542,6 +542,15 @@
     background: $ds-surface-panel;
 }
 
+#console-native-composer.console-composer-has-draft {
+    border: round $ds-status-ready;
+}
+
+#console-native-composer.console-composer-focused {
+    border: thick $ds-action-focus;
+    background: $ds-surface-raised;
+}
+
 #console-composer-title,
 #console-composer-status,
 .console-control-label {
@@ -564,10 +573,11 @@
     padding: 0 1;
     border: none;
     background: $ds-surface-raised;
-    color: $ds-text-primary;
+    color: $ds-text-muted;
     overflow: hidden;
 }
 
+#console-native-composer.console-composer-has-draft #console-command-visible-text,
 #console-native-composer:focus-within #console-command-visible-text,
 #console-command-visible-text:focus {
     background: $ds-surface-raised;

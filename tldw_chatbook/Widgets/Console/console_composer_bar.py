@@ -163,6 +163,10 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             return
 
+    def _sync_interaction_classes(self) -> None:
+        self.set_class(self.has_focus_within, "console-composer-focused")
+        self.set_class(bool(self.draft_text().strip()), "console-composer-has-draft")
+
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
         """Return wrapped draft lines for the visible bounded composer."""
@@ -354,9 +358,16 @@ class ConsoleComposerBar(Horizontal):
 
     def on_mount(self) -> None:
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
 
     def on_resize(self, event: Any) -> None:
         self._refresh_visible_draft()
+
+    def on_focus(self) -> None:
+        self._sync_interaction_classes()
+
+    def on_blur(self) -> None:
+        self._sync_interaction_classes()
 
     def load_draft(self, text: str) -> None:
         """Replace the native Console draft with literal text."""
@@ -364,6 +375,7 @@ class ConsoleComposerBar(Horizontal):
         self._segments_initialized = True
         self._sync_hidden_input()
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
 
     def clear_draft(self) -> None:
         """Clear the native Console draft without falling back to stale input."""
@@ -371,10 +383,12 @@ class ConsoleComposerBar(Horizontal):
         self._segments_initialized = True
         self._sync_hidden_input()
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
 
     def insert_text(self, text: str) -> None:
         """Append user-entered text to the Console draft as literal text."""
         if not text:
+            self._sync_interaction_classes()
             return
         if not self._segments_initialized:
             existing = self.draft_text()
@@ -384,10 +398,12 @@ class ConsoleComposerBar(Horizontal):
         self._append_literal_segment(text)
         self._sync_hidden_input()
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
 
     def insert_pasted_text(self, text: str) -> None:
         """Append pasted text, collapsing only large inserted chunks for display."""
         if not text:
+            self._sync_interaction_classes()
             return
         if not self._segments_initialized:
             existing = self.draft_text()
@@ -404,6 +420,7 @@ class ConsoleComposerBar(Horizontal):
             self._append_literal_segment(text)
         self._sync_hidden_input()
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
 
     def delete_left(self) -> None:
         """Delete the last draft character for simple terminal-style editing."""
@@ -411,6 +428,7 @@ class ConsoleComposerBar(Horizontal):
             self.load_draft(self.draft_text()[:-1])
             return
         if not self._segments:
+            self._sync_interaction_classes()
             return
 
         last_segment = self._segments[-1]
@@ -418,6 +436,7 @@ class ConsoleComposerBar(Horizontal):
             self._segments.pop()
             self._sync_hidden_input()
             self._refresh_visible_draft()
+            self._sync_interaction_classes()
             return
 
         last_segment.text = last_segment.text[:-1]
@@ -425,6 +444,7 @@ class ConsoleComposerBar(Horizontal):
             self._segments.pop()
         self._sync_hidden_input()
         self._refresh_visible_draft()
+        self._sync_interaction_classes()
 
     def _reset_pending_unfurl_state(self) -> bool:
         """Reset pending paste unfurl confirmations without refreshing display."""
