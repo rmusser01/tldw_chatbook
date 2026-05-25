@@ -210,17 +210,21 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             return
 
-        send_button.disabled = False
-        send_button.variant = "primary" if has_draft else "default"
-        send_button.tooltip = (
-            "Send the active Console session draft."
-            if has_draft
-            else "Type a message before sending."
-        )
-        send_button.set_class(has_draft, "console-action-primary")
-        send_button.set_class(not has_draft, "console-action-subdued")
-        send_button.set_class(has_draft, "console-send-ready")
+        send_ready = has_draft and not run_active
+        send_button.disabled = run_active
+        send_button.variant = "primary" if send_ready else "default"
+        if run_active:
+            send_button.tooltip = "Wait for the active Console run to finish before sending."
+        elif has_draft:
+            send_button.tooltip = "Send the active Console session draft."
+        else:
+            send_button.tooltip = "Type a message before sending."
+        send_button.set_class(send_ready, "console-action-primary")
+        send_button.set_class(not send_ready, "console-action-subdued")
+        send_button.set_class(run_active, "console-action-disabled")
+        send_button.set_class(send_ready, "console-send-ready")
         send_button.set_class(not has_draft, "console-send-inactive")
+        send_button.set_class(run_active, "console-send-blocked")
 
         stop_button.disabled = not run_active
         stop_button.variant = "warning" if run_active else "default"
@@ -233,17 +237,18 @@ class ConsoleComposerBar(Horizontal):
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
 
-        save_button.disabled = False
+        save_button.disabled = not can_save_chatbook
         save_button.variant = "default"
         save_button.tooltip = (
-            "Save the available Chatbook artifact."
+            "Open the available Chatbook artifact in Artifacts."
             if can_save_chatbook
-            else "Compatibility adapter: save Chatbook export is still owned by Artifacts/Chatbooks."
+            else "No Chatbook artifact is available to save yet."
         )
         save_button.set_class(True, "console-action-secondary")
         save_button.set_class(True, "console-save-chatbook-secondary")
         save_button.set_class(can_save_chatbook, "console-save-chatbook-ready")
         save_button.set_class(not can_save_chatbook, "console-action-subdued")
+        save_button.set_class(not can_save_chatbook, "console-action-disabled")
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:

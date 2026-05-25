@@ -464,10 +464,11 @@ async def test_console_composer_save_chatbook_is_secondary():
         send_button = composer.query_one("#console-send-message", Button)
         save_button = composer.query_one("#console-save-chatbook", Button)
 
-        assert save_button.disabled is False
+        assert save_button.disabled is True
         assert save_button.has_class("console-action-secondary")
         assert save_button.has_class("console-save-chatbook-secondary")
         assert save_button.has_class("console-action-subdued")
+        assert save_button.has_class("console-action-disabled")
         assert not save_button.has_class("console-action-primary")
 
         composer.sync_action_state(
@@ -482,7 +483,37 @@ async def test_console_composer_save_chatbook_is_secondary():
         assert save_button.has_class("console-action-secondary")
         assert save_button.has_class("console-save-chatbook-secondary")
         assert save_button.has_class("console-save-chatbook-ready")
+        assert not save_button.has_class("console-action-disabled")
+        assert not save_button.has_class("console-action-subdued")
         assert not save_button.has_class("console-action-primary")
+
+
+@pytest.mark.asyncio
+async def test_console_composer_save_chatbook_routes_available_artifact_action():
+    app = _build_test_app()
+    handled_launches = []
+    app.pending_console_launch = {
+        "source": "artifacts",
+        "title": "Grounded Answer Chatbook",
+        "status": "ready",
+        "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
+        "action_label": "Open Chatbook artifact",
+    }
+    app.open_console_live_work_primary_action = lambda launch: handled_launches.append(launch) or True
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        save_button = console.query_one("#console-save-chatbook", Button)
+
+        assert save_button.disabled is False
+        save_button.press()
+        await pilot.pause(0.1)
+
+    assert len(handled_launches) == 1
+    assert handled_launches[0].payload["target_id"] == "local:chatbook:77"
 
 
 @pytest.mark.asyncio

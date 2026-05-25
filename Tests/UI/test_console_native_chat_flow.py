@@ -271,6 +271,7 @@ async def test_console_composer_stop_is_disabled_when_idle():
         _select_llamacpp_console(console)
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
 
         assert stop_button.disabled is True
@@ -283,6 +284,10 @@ async def test_console_composer_stop_is_disabled_when_idle():
         await asyncio.wait_for(gateway.started.wait(), timeout=1)
         await _wait_for_text(console, pilot, "partial")
 
+        assert send_button.disabled is True
+        assert send_button.has_class("console-action-disabled")
+        assert send_button.has_class("console-send-blocked")
+        assert not send_button.has_class("console-action-primary")
         assert stop_button.disabled is False
         assert stop_button.has_class("console-stop-active")
         assert not stop_button.has_class("console-action-disabled")
@@ -313,7 +318,10 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         await _wait_for_text(console, pilot, "partial")
 
         composer.load_draft("second send")
-        console.query_one("#console-send-message", Button).press()
+        send_button = console.query_one("#console-send-message", Button)
+        assert send_button.disabled is True
+        assert send_button.has_class("console-send-blocked")
+        send_button.press()
         await pilot.pause(0.1)
         assert console._ensure_console_chat_controller().run_state.status.value == "streaming"
 

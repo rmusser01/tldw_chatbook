@@ -2305,11 +2305,16 @@ class ChatScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#console-save-chatbook")
     def handle_console_save_chatbook(self, event: Button.Pressed) -> None:
-        """Expose the current Chatbook save seam without inventing export behavior."""
+        """Route available Chatbook artifacts through the existing Artifacts handoff."""
         event.stop()
+        launch = self._consume_pending_console_launch()
+        if self._launch_targets_chatbook_artifact(launch):
+            handler = getattr(self.app_instance, "open_console_live_work_primary_action", None)
+            if callable(handler) and bool(handler(launch)):
+                return
         self.app_instance.notify(
-            "Save Chatbook is still owned by Artifacts/Chatbooks; this Console button is a compatibility adapter.",
-            severity="information",
+            "No Chatbook artifact is available to save yet.",
+            severity="warning",
         )
 
     @on(Button.Pressed, "#console-open-provider-settings")
@@ -2521,8 +2526,18 @@ class ChatScreen(BaseAppScreen):
             inspector.sync_state(inspector_state)
         self._sync_console_composer_action_state(
             can_save_chatbook=inspector_state.can_save_chatbook
+            and self._console_chatbook_action_available()
         )
         self._sync_console_rail_visibility(self._current_console_rail_state())
+
+    def _console_chatbook_action_available(self) -> bool:
+        """Return True when the composer Chatbook action has a real target."""
+        return (
+            self._launch_targets_chatbook_artifact(self._pending_console_launch_context)
+            and callable(
+                getattr(self.app_instance, "open_console_live_work_primary_action", None)
+            )
+        )
 
     def _sync_console_composer_action_state(
         self,
