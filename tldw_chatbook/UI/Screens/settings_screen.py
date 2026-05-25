@@ -18,6 +18,7 @@ from ...Sync_Interop.sync_promotion_state import SyncPromotionState, build_sync_
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...config import DEFAULT_CONFIG_PATH, coerce_bool_setting, save_setting_to_cli_config
+from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
 from .provider_model_resolution import resolve_effective_provider_model
@@ -28,19 +29,7 @@ from ..Navigation.main_navigation import NavigateToScreen
 
 logger = logging.getLogger(__name__)
 
-
-class SettingsCategorySearchInput(Input):
-    """Settings category filter input with deterministic Enter submission."""
-
-    async def _on_key(self, event: Key) -> None:
-        if event.key in {"enter", "return"}:
-            submit = getattr(self.screen, "_submit_category_search", None)
-            if callable(submit):
-                submit(self.value)
-            event.stop()
-            event.prevent_default()
-            return
-        await super()._on_key(event)
+MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 
 
 class SettingsScreen(BaseAppScreen):
@@ -239,9 +228,23 @@ class SettingsScreen(BaseAppScreen):
                 return summary
         return self._category_summaries()[0]
 
+    def _sanitize_category_search_query(self, query_text: str | None) -> str:
+        raw_query = "" if query_text is None else str(query_text)
+        sanitized_query = sanitize_string(
+            raw_query,
+            max_length=MAX_CATEGORY_SEARCH_QUERY_CHARS,
+        )
+        if validate_text_input(
+            sanitized_query,
+            max_length=MAX_CATEGORY_SEARCH_QUERY_CHARS,
+            allow_html=False,
+        ):
+            return sanitized_query
+        return ""
+
     def _category_search_text(self, query_text: str | None = None) -> str:
         raw_query = self.category_search_query if query_text is None else query_text
-        return raw_query.strip()
+        return raw_query.strip() if isinstance(raw_query, str) else ""
 
     def _category_search_rank(
         self,
@@ -348,6 +351,7 @@ class SettingsScreen(BaseAppScreen):
         empty_state.display = bool(query and visible_count == 0)
 
     def _submit_category_search(self, query_text: str) -> None:
+        query_text = self._sanitize_category_search_query(query_text)
         self.category_search_query = query_text
         self._apply_category_search_filter()
         category_values = self._filtered_category_values(query_text)
@@ -880,8 +884,6 @@ class SettingsScreen(BaseAppScreen):
                 for category_id in category_ids
                 if self._category_matches_search(summaries_by_id[category_id])
             )
-            if not visible_categories:
-                visible_categories = ()
             group_heading = Static(
                 group_title,
                 id=self._category_group_dom_id(group_title),
@@ -923,6 +925,7 @@ class SettingsScreen(BaseAppScreen):
             f"No Settings categories match: {self._category_search_text()}",
             id="settings-category-search-empty",
             classes="settings-search-empty",
+            markup=False,
         )
         empty_state.display = bool(self._category_search_text() and visible_count == 0)
         yield empty_state
@@ -1244,7 +1247,7 @@ class SettingsScreen(BaseAppScreen):
             with Horizontal(id="settings-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(id="settings-category-pane", classes="destination-workbench-pane"):
                     yield Static("Settings Sections", classes="destination-section settings-column-title")
-                    yield SettingsCategorySearchInput(
+                    yield Input(
                         value=self.category_search_query,
                         placeholder="Filter settings (/)",
                         id="settings-category-search",
@@ -1259,6 +1262,7 @@ class SettingsScreen(BaseAppScreen):
                         self._category_search_status_text(),
                         id="settings-category-search-status",
                         classes="settings-category-search-status",
+                        markup=False,
                     )
                     yield from self._render_category_buttons()
                 yield self._column_divider("settings-category-detail-divider")
@@ -1333,7 +1337,10 @@ class SettingsScreen(BaseAppScreen):
     @on(Input.Changed, "#settings-category-search")
     def handle_category_search_changed(self, event: Input.Changed) -> None:
         event.stop()
-        self.category_search_query = event.value
+        query_text = self._sanitize_category_search_query(event.value)
+        self.category_search_query = query_text
+        if query_text != event.value:
+            event.input.value = query_text
         self._apply_category_search_filter()
 
     @on(Input.Submitted, "#settings-category-search")
@@ -1566,13 +1573,6 @@ class SettingsScreen(BaseAppScreen):
             event.prevent_default()
             return
         if event.key == "enter":
-            if self._category_search_has_focus():
-                query_text = focused.value if isinstance(focused, Input) else None
-                if query_text is not None:
-                    self._submit_category_search(query_text)
-                event.stop()
-                event.prevent_default()
-                return
             if isinstance(focused, Button) and focused.id in {
                 "settings-console-collapse-large-pastes-toggle",
                 "settings-test-provider",

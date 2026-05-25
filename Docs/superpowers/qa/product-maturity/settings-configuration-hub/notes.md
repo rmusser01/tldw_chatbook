@@ -48,7 +48,7 @@ python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short
 git diff --check
 ```
 
-Result: `56 passed`, one existing requests dependency warning, and `git diff --check` clean.
+Result: `58 passed`, one existing requests dependency warning, and `git diff --check` clean.
 
 ## Residual Risks
 

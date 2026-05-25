@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Input, Select, TextArea
+from textual.widgets import Input, Select, Static, TextArea
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -515,6 +515,31 @@ async def test_settings_category_search_reports_ranked_matches_and_enter_target(
         assert screen.query_one("#settings-category-overview").has_class(
             "settings-secondary-search-match"
         )
+
+
+@pytest.mark.asyncio
+async def test_settings_category_search_uses_plain_standard_input_widgets():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+
+        search = screen.query_one("#settings-category-search", Input)
+        assert type(search) is Input
+        assert not screen.query_one("#settings-category-search-status", Static)._render_markup
+        assert not screen.query_one("#settings-category-search-empty", Static)._render_markup
+
+
+def test_settings_category_search_normalizes_oversized_control_input():
+    screen = SettingsScreen(_build_test_app())
+
+    normalized = screen._sanitize_category_search_query("[" + ("x" * 120) + "\x00")
+
+    assert len(normalized) == 80
+    assert normalized == "[" + ("x" * 79)
+    assert "\x00" not in normalized
 
 
 @pytest.mark.asyncio
