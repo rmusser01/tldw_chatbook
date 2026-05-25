@@ -68,6 +68,15 @@ async def _wait_for_main_column_width_change(
     )
 
 
+async def _wait_for_native_console_session(screen, pilot):
+    for _ in range(20):
+        store = getattr(screen, "_console_chat_store", None)
+        if store is not None and store.active_session_id is not None:
+            return store.ensure_session(workspace_id=store.workspace_context.active_workspace_id)
+        await pilot.pause(0.05)
+    raise AssertionError("native Console store did not expose an active session")
+
+
 def test_generated_console_stylesheet_includes_rail_rules():
     stylesheet = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
     css = stylesheet.read_text(encoding="utf-8")
@@ -181,6 +190,7 @@ async def test_console_inspector_rail_open_restores_right_rail_and_narrows_main_
 
         await _wait_for_displayed(console, pilot, "#console-right-rail")
         assert _is_displayed(console.query_one("#console-run-inspector-state"))
+        assert _is_displayed(console.query_one("#console-live-work-source-readiness"))
         await _wait_for_hidden(console, pilot, "#console-inspector-rail-handle")
         assert (
             await _wait_for_main_column_width_change(
@@ -212,6 +222,7 @@ async def test_console_rail_state_persists_by_workspace_session_key(monkeypatch)
 
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
+        session = await _wait_for_native_console_session(console, pilot)
         await _wait_for_selector(console, pilot, "#console-context-rail-collapse")
         await pilot.click("#console-context-rail-collapse")
         await _wait_for_hidden(console, pilot, "#console-left-rail")
@@ -219,16 +230,18 @@ async def test_console_rail_state_persists_by_workspace_session_key(monkeypatch)
         await _wait_for_displayed(console, pilot, "#console-right-rail")
 
     rail_state = app.app_config["console"]["rail_state"]
-    assert rail_state["console_rail_state:global:global"] == {
+    expected_key = f"console_rail_state:global:{session.id}"
+    assert rail_state[expected_key] == {
         "left_open": False,
         "right_open": True,
     }
     assert saved_settings[-1] == (
         "console.rail_state",
-        "console_rail_state:global:global",
+        expected_key,
         {"left_open": False, "right_open": True},
     )
 
+    app.console_rail_session_id = session.id
     remounted_host = ConsoleHarness(app)
     async with remounted_host.run_test(size=(180, 48)) as pilot:
         console = remounted_host.screen_stack[-1]
@@ -307,17 +320,6 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
     }
 
     monkeypatch.setattr(
-        ChatScreen,
-        "_current_console_session_id",
-        lambda self: "session-1",
-        raising=False,
-    )
-    monkeypatch.setattr(
-        ChatScreen,
-        "_current_console_conversation_id",
-        lambda self, session_data=None: "conv-1",
-    )
-    monkeypatch.setattr(
         chat_screen_module,
         "save_setting_to_cli_config",
         lambda section, key, value: True,
@@ -327,6 +329,17 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
 
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(workspace_id="global")
+        old_session_id = session.id
+        session.id = "session-1"
+        store._sessions["session-1"] = store._sessions.pop(old_session_id)
+        store._messages_by_session["session-1"] = store._messages_by_session.pop(
+            old_session_id
+        )
+        store.active_session_id = "session-1"
+        session.persisted_conversation_id = "conv-1"
+        console._sync_console_rail_visibility(console._current_console_rail_state())
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
 
     rail_state = app.app_config["console"]["rail_state"]

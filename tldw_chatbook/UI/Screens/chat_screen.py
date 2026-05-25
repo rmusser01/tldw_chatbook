@@ -563,6 +563,20 @@ class ChatScreen(BaseAppScreen):
         if conversation_id:
             return str(conversation_id)
 
+        console_store = self._console_chat_store
+        active_session_id = (
+            console_store.active_session_id
+            if console_store is not None
+            else None
+        )
+        if console_store is not None and active_session_id is not None:
+            for console_session in console_store.sessions():
+                if console_session.id == active_session_id:
+                    conversation_id = console_session.persisted_conversation_id
+                    if conversation_id:
+                        return str(conversation_id)
+                    break
+
         session = self._get_active_chat_session()
         session_data = getattr(session, "session_data", None)
         conversation_id = getattr(session_data, "conversation_id", None)
@@ -668,6 +682,9 @@ class ChatScreen(BaseAppScreen):
         session_id = getattr(self.app_instance, "console_rail_session_id", None)
         if session_id:
             return str(session_id)
+        console_store = self._console_chat_store
+        if console_store is not None and console_store.active_session_id is not None:
+            return str(console_store.active_session_id)
         return None
 
     def _console_rail_available_columns(self) -> int | None:
