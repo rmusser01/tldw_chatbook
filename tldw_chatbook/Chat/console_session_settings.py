@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 from urllib.parse import urlparse
 
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -15,13 +15,11 @@ from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
 )
-from tldw_chatbook.Utils.token_counter import (
-    count_tokens_chat_history,
-    get_model_token_limit,
-)
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
+TokenCounter = Callable[[Sequence[Mapping[str, str]], str, str], int]
+TokenLimitResolver = Callable[[str, str], int]
 URL_BASED_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
@@ -39,6 +37,38 @@ URL_BASED_PROVIDER_KEYS = frozenset(
         "vllm",
     }
 )
+CONSOLE_MODEL_TOKEN_LIMITS = {
+    "gpt-4": 8192,
+    "gpt-4-32k": 32768,
+    "gpt-4-turbo": 128000,
+    "gpt-4-turbo-preview": 128000,
+    "gpt-3.5-turbo": 4096,
+    "gpt-3.5-turbo-16k": 16384,
+    "claude-3-opus-20240229": 200000,
+    "claude-3-sonnet-20240229": 200000,
+    "claude-3-haiku-20240307": 200000,
+    "claude-2.1": 200000,
+    "claude-2": 100000,
+    "claude-instant-1.2": 100000,
+    "gemini-pro": 30720,
+    "gemini-pro-vision": 12288,
+    "mistral-large": 32000,
+    "mistral-medium": 32000,
+    "mistral-small": 32000,
+    "mixtral-8x7b": 32000,
+    "default": 4096,
+}
+CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS = {
+    "anthropic": 100000,
+    "google": 30720,
+    "openai": 4096,
+    "mistral": 32000,
+}
+CONSOLE_TOKEN_CHAR_RATIOS = {
+    "google": 0.3,
+    "huggingface": 0.3,
+    "default": 0.25,
+}
 
 
 @dataclass(frozen=True)
@@ -258,6 +288,9 @@ def build_console_context_estimate(
     staged_context_summary: str = "",
     max_tokens_response: int | None = None,
     system_prompt: str | None = None,
+    *,
+    token_counter: TokenCounter | None = None,
+    token_limit_resolver: TokenLimitResolver | None = None,
 ) -> ConsoleSettingsContextEstimate:
     """Estimate current context tokens for display in Console settings."""
     model_name = _string_value(model)
@@ -277,8 +310,10 @@ def build_console_context_estimate(
     estimate_messages.extend(messages)
 
     try:
-        used_tokens = count_tokens_chat_history(list(estimate_messages), model_name, provider_key)
-        token_limit = get_model_token_limit(model_name, provider_key)
+        counter = token_counter or _estimate_tokens_locally
+        limit_resolver = token_limit_resolver or _resolve_token_limit_locally
+        used_tokens = counter(list(estimate_messages), model_name, provider_key)
+        token_limit = limit_resolver(model_name, provider_key)
     except Exception:
         return ConsoleSettingsContextEstimate(
             used_tokens=None,
@@ -336,13 +371,31 @@ def _is_url_based_provider(provider_key: str) -> bool:
 
 
 def _valid_base_url(provider_key: str, base_url: str) -> bool:
-    candidate = normalize_llamacpp_base_url(base_url) if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS else base_url
+    try:
+        candidate = normalize_llamacpp_base_url(base_url) if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS else base_url
+    except ValueError:
+        return False
     return _is_valid_http_url(candidate)
 
 
 def _is_valid_http_url(url: str) -> bool:
-    parsed = urlparse(url)
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    if _has_unsafe_url_chars(url):
+        return False
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in {"http", "https"}
+        and bool(parsed.netloc)
+        and bool(hostname)
+        and not _has_unsafe_url_chars(hostname)
+    )
+
+
+def _has_unsafe_url_chars(value: str) -> bool:
+    return any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
 
 
 def _float_in_range(value: object, minimum: float, maximum: float) -> bool:
@@ -410,10 +463,42 @@ def _optional_int_setting(
         value = fallback.get(key)
     if _is_blank_value(value):
         return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
     try:
-        return int(value)
+        return int(value) if isinstance(value, str) else None
     except (TypeError, ValueError):
         return None
+
+
+def _estimate_tokens_locally(
+    messages: Sequence[Mapping[str, str]],
+    model: str,
+    provider: str,
+) -> int:
+    del model
+    ratio = CONSOLE_TOKEN_CHAR_RATIOS.get(provider, CONSOLE_TOKEN_CHAR_RATIOS["default"])
+    total_chars = 0
+    for message in messages:
+        total_chars += len(str(message.get("role", "")))
+        total_chars += len(str(message.get("content", "")))
+    message_overhead = len(messages) * 10
+    return int((total_chars + message_overhead) * ratio)
+
+
+def _resolve_token_limit_locally(model: str, provider: str) -> int:
+    if model in CONSOLE_MODEL_TOKEN_LIMITS:
+        return CONSOLE_MODEL_TOKEN_LIMITS[model]
+
+    for model_prefix, limit in CONSOLE_MODEL_TOKEN_LIMITS.items():
+        if model_prefix != "default" and model.startswith(model_prefix):
+            return limit
+
+    return CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS.get(provider, CONSOLE_MODEL_TOKEN_LIMITS["default"])
 
 
 def _bool_setting(

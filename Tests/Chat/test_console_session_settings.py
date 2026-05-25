@@ -1,4 +1,3 @@
-import tldw_chatbook.Chat.console_session_settings as session_settings
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     build_console_context_estimate,
@@ -143,12 +142,18 @@ def test_invalid_url_precedes_wip_for_url_provider() -> None:
     assert readiness.label == "Invalid URL"
 
 
-def test_invalid_url_validation_does_not_call_impure_validate_url(monkeypatch) -> None:
-    def impure_validate_url(_url: str) -> bool:
-        raise AssertionError("validate_url should not be called by pure settings helpers")
+def test_malformed_ipv6_url_returns_validation_and_readiness_errors() -> None:
+    settings = ConsoleSessionSettings(provider="vllm", model="m", base_url="http://[::1")
 
-    monkeypatch.setattr(session_settings, "validate_url", impure_validate_url, raising=False)
-    settings = ConsoleSessionSettings(provider="vllm", model="m", base_url="file:///tmp/x")
+    readiness = build_console_settings_readiness(settings, app_config={})
+    errors = validate_console_session_settings(settings, app_config={})
+
+    assert readiness.label == "Invalid URL"
+    assert "Base URL must be a valid http(s) URL." in errors
+
+
+def test_whitespace_host_url_returns_validation_and_readiness_errors() -> None:
+    settings = ConsoleSessionSettings(provider="vllm", model="m", base_url="http://exa mple.com")
 
     readiness = build_console_settings_readiness(settings, app_config={})
     errors = validate_console_session_settings(settings, app_config={})
@@ -220,18 +225,63 @@ def test_context_estimate_counts_messages_and_staged_sources() -> None:
     assert estimate.staged_context_summary == "2 staged sources"
 
 
-def test_context_estimate_token_counter_failure_uses_unknown_copy(monkeypatch) -> None:
-    def fail_count(*_args: object, **_kwargs: object) -> int:
-        raise RuntimeError("tokenizer unavailable")
+def test_context_estimate_uses_injected_counter_and_limit_resolver() -> None:
+    seen = {}
 
-    monkeypatch.setattr(session_settings, "count_tokens_chat_history", fail_count)
+    def token_counter(messages: list[dict[str, str]], model: str, provider: str) -> int:
+        seen["messages"] = messages
+        seen["model"] = model
+        seen["provider"] = provider
+        return 123
+
+    def token_limit_resolver(model: str, provider: str) -> int:
+        seen["limit_model"] = model
+        seen["limit_provider"] = provider
+        return 456
 
     estimate = build_console_context_estimate(
         messages=[{"role": "user", "content": "hello world"}],
         provider="openai",
         model="gpt-3.5-turbo",
+        token_counter=token_counter,
+        token_limit_resolver=token_limit_resolver,
+    )
+
+    assert estimate.used_tokens == 123
+    assert estimate.token_limit == 456
+    assert estimate.label == "123 / 456 tokens"
+    assert seen == {
+        "messages": [{"role": "user", "content": "hello world"}],
+        "model": "gpt-3.5-turbo",
+        "provider": "openai",
+        "limit_model": "gpt-3.5-turbo",
+        "limit_provider": "openai",
+    }
+
+
+def test_context_estimate_token_counter_failure_uses_unknown_copy() -> None:
+    def fail_count(*_args: object, **_kwargs: object) -> int:
+        raise RuntimeError("tokenizer unavailable")
+
+    estimate = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hello world"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        token_counter=fail_count,
     )
 
     assert estimate.used_tokens is None
     assert estimate.token_limit is None
     assert estimate.label == "Context: unknown"
+
+
+def test_default_settings_rejects_bool_and_fractional_optional_ints() -> None:
+    settings = build_default_console_session_settings(
+        {
+            "chat_defaults": {"provider": "llama_cpp"},
+            "api_settings": {"llama_cpp": {"top_k": True, "max_tokens": 1.5}},
+        },
+    )
+
+    assert settings.top_k is None
+    assert settings.max_tokens is None
