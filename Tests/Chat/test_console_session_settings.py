@@ -1,3 +1,6 @@
+import inspect
+
+import tldw_chatbook.Chat.console_session_settings as session_settings
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     build_console_context_estimate,
@@ -7,6 +10,12 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_provider_options,
     validate_console_session_settings,
 )
+
+
+def test_session_settings_does_not_depend_on_provider_gateway() -> None:
+    source = inspect.getsource(session_settings)
+
+    assert "console_provider_gateway" not in source
 
 
 def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:

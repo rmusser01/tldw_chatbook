@@ -4,13 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
-from tldw_chatbook.Chat.console_provider_gateway import (
-    DEFAULT_LLAMACPP_BASE_URL,
-    INVALID_LLAMACPP_BASE_URL_COPY,
-    normalize_llamacpp_base_url,
-)
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
@@ -18,6 +13,11 @@ from tldw_chatbook.Chat.provider_readiness import (
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
+DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
+INVALID_LLAMACPP_BASE_URL_COPY = (
+    "Provider blocked: invalid llama.cpp base URL. "
+    "Use an http(s) URL such as http://127.0.0.1:9099."
+)
 TokenCounter = Callable[[Sequence[Mapping[str, str]], str, str], int]
 TokenLimitResolver = Callable[[str, str], int]
 URL_BASED_PROVIDER_KEYS = frozenset(
@@ -69,6 +69,36 @@ CONSOLE_TOKEN_CHAR_RATIOS = {
     "huggingface": 0.3,
     "default": 0.25,
 }
+
+
+def normalize_llamacpp_base_url(api_url: str | None) -> str:
+    """Return the llama.cpp origin root used before appending OpenAI paths."""
+    raw_url = str(api_url or "").strip()
+    if not raw_url:
+        return DEFAULT_LLAMACPP_BASE_URL
+
+    candidate = raw_url if "://" in raw_url else f"http://{raw_url}"
+    try:
+        parsed = urlparse(candidate)
+    except ValueError:
+        return raw_url.rstrip("/")
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return raw_url.rstrip("/")
+
+    path = parsed.path.rstrip("/")
+    normalized_endpoint_paths = {
+        "/v1",
+        "/v1/models",
+        "/models",
+        "/v1/chat/completions",
+        "/chat/completions",
+        "/completion",
+        "/completions",
+    }
+    if path.lower() in normalized_endpoint_paths:
+        path = ""
+    normalized = urlunparse((parsed.scheme, parsed.netloc, path, "", "", "")).rstrip("/")
+    return normalized or DEFAULT_LLAMACPP_BASE_URL
 
 
 @dataclass(frozen=True)
