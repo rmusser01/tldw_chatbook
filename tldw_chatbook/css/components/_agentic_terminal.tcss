@@ -211,12 +211,12 @@
 }
 
 #settings-category-pane {
-    width: 1fr;
+    width: 3fr;
 }
 
 #settings-detail-pane,
 #settings-impact-pane {
-    width: 2fr;
+    width: 4fr;
 }
 
 #home-dashboard-grid {
@@ -1125,6 +1125,68 @@ Button.settings-category-button.settings-active-section:focus {
     background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold underline;
+}
+
+Button.settings-category-button.settings-primary-search-match {
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+Button.settings-category-button.settings-secondary-search-match {
+    color: $ds-text-muted;
+}
+
+#settings-category-search {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#settings-category-search:focus {
+    border: solid $ds-action-focus;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+    outline: none;
+}
+
+#settings-category-search.settings-category-search-active {
+    border: solid $ds-action-focus;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.settings-category-search-help {
+    width: 100%;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+.settings-category-search-status {
+    width: 100%;
+    min-height: 2;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    color: $ds-text-primary;
+    background: $ds-surface-panel;
+}
+
+.settings-search-empty {
+    width: 100%;
+    min-height: 3;
+    padding: 1;
+    margin: 1 0 0 0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
 }
 
 #settings-shell Button:focus,
