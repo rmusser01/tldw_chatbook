@@ -1632,25 +1632,57 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
 
 
 @pytest.mark.asyncio
-async def test_console_empty_staged_context_recovery_fits_tray():
+async def test_console_empty_staged_context_action_fits_tray():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-staged-context-recovery")
+        await _wait_for_selector(console, pilot, "#console-staged-context-attach")
 
         summary = console.query_one("#console-staged-context-summary")
-        recovery = console.query_one("#console-staged-context-recovery")
+        attach_button = console.query_one("#console-staged-context-attach", Button)
         summary_plain = getattr(summary.render(), "plain", str(summary.render()))
-        rendered = recovery.render()
-        plain = getattr(rendered, "plain", str(rendered))
 
         assert summary_plain == "No staged work."
-        assert plain == "Attach sources."
-        visible_text_width = max(0, recovery.region.width - 2)
+        assert str(attach_button.label) == "Attach"
+        visible_text_width = max(0, summary.region.width - 2)
         assert all(len(line) <= visible_text_width for line in summary_plain.splitlines())
-        assert all(len(line) <= visible_text_width for line in plain.splitlines())
+        assert len(str(attach_button.label)) <= max(0, attach_button.region.width - 2)
+
+
+@pytest.mark.asyncio
+async def test_console_empty_staged_context_exposes_attach_action():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.attach_events = []
+
+        def handle_attach_button(self, event) -> None:
+            self.attach_events.append(event)
+
+    fake_session = FakeSession()
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        console._get_active_chat_session = lambda: fake_session
+        await _wait_for_selector(console, pilot, "#console-staged-context-attach")
+
+        summary = console.query_one("#console-staged-context-summary", Static)
+        attach_button = console.query_one("#console-staged-context-attach", Button)
+        tray_text = _visible_text(console.query_one("#console-staged-context-tray"))
+
+        assert getattr(summary.render(), "plain", str(summary.render())) == "No staged work."
+        assert str(attach_button.label) == "Attach"
+        assert attach_button.compact is True
+        assert "Attach sources." not in tray_text
+
+        await pilot.click("#console-staged-context-attach")
+        await pilot.pause()
+
+        assert len(fake_session.attach_events) == 1
 
 
 @pytest.mark.asyncio

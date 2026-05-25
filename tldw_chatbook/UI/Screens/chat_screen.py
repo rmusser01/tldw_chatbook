@@ -2281,6 +2281,15 @@ class ChatScreen(BaseAppScreen):
     @on(Button.Pressed, "#console-attach-context")
     async def handle_console_attach_context(self, event: Button.Pressed) -> None:
         """Route the Console attach affordance through the active chat session adapter."""
+        await self._handle_console_attach_context(event)
+
+    @on(Button.Pressed, "#console-staged-context-attach")
+    async def handle_console_staged_context_attach(self, event: Button.Pressed) -> None:
+        """Route the staged-context empty-state attach action through the same adapter."""
+        await self._handle_console_attach_context(event)
+
+    async def _handle_console_attach_context(self, event: Button.Pressed) -> None:
+        """Route Console attach actions through the active chat session adapter."""
         event.stop()
         session = self._get_active_chat_session()
         if session is None:

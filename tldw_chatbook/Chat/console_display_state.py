@@ -290,7 +290,6 @@ class ConsoleStagedContextState:
         return cls(
             heading="Staged Context",
             summary="No staged work.",
-            recovery="Attach sources.",
         )
 
 

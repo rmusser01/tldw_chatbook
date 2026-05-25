@@ -6,7 +6,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleStagedContextState
 
@@ -46,6 +46,13 @@ class ConsoleStagedContextTray(Vertical):
                 id=f"console-staged-context-row-{index}",
                 classes="console-staged-context-row",
                 markup=False,
+            )
+        if self.state.summary == "No staged work." and not self.state.rows:
+            yield Button(
+                "Attach",
+                id="console-staged-context-attach",
+                classes="console-staged-context-attach",
+                compact=True,
             )
         if self.state.recovery:
             yield Static(
