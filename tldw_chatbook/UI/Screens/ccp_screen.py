@@ -87,6 +87,41 @@ CCP_MODE_PLACEHOLDERS = {
     ),
 }
 
+CCP_ACTION_BUTTON_TOOLTIPS = {
+    "continue-conversation-btn": "Continue the loaded conversation from CCP.",
+    "export-conversation-btn": "Export the loaded conversation from CCP.",
+    "clear-conversation-btn": "Clear the loaded CCP conversation history.",
+    "ccp-attach-selected-to-console": "Select a character before attaching it to Console.",
+    "ccp-start-selected-chat": "Select a character before starting a Console chat.",
+    "ccp-import-character-native": "Import a local character card into CCP.",
+    "ccp-export-character-native": "Select a character before exporting it from CCP.",
+    "start-chat-btn": "Start a Console chat with this character.",
+    "edit-character-btn": "Open this character in the CCP editor.",
+    "clone-character-btn": "Create a copy of this character.",
+    "export-character-btn": "Export this character card.",
+    "delete-character-btn": "Delete this character card.",
+    "ccp-persona-start-chat-button": "Start a Console chat with this persona.",
+    "ccp-persona-edit-button": "Open this persona in the CCP editor.",
+    "ccp-persona-save-button": "Save the current persona profile.",
+}
+
+CCP_ACTION_TOOLTIP_PREFIXES = (
+    ("generate-", "Generate AI-assisted content for this CCP field."),
+    ("add-", "Add a new item or value to this CCP editor."),
+    ("remove-", "Remove this item or value from the CCP editor."),
+    ("save-", "Save the current CCP edits."),
+    ("reset-", "Reset unsaved changes in this CCP editor."),
+    ("cancel-", "Cancel editing and return to the previous CCP view."),
+    ("delete-", "Delete the selected CCP item."),
+    ("edit-", "Open the selected CCP item for editing."),
+    ("clone-", "Create a copy of the selected CCP item."),
+    ("export-", "Export the selected CCP item."),
+    ("import-", "Import content into this CCP editor."),
+    ("test-", "Test the current CCP prompt configuration."),
+    ("clear-", "Clear the current CCP search or editor value."),
+    ("update-", "Update the selected CCP entry."),
+)
+
 
 # ========== Custom Messages ==========
 
@@ -722,7 +757,9 @@ class CCPScreen(BaseAppScreen):
                     ("ccp-import-export-mode-button", "Import/Export"),
                 ):
                     classes = "ccp-mode-button"
-                    yield Button(label, id=button_id, classes=classes)
+                    button = Button(label, id=button_id, classes=classes)
+                    button.tooltip = f"Switch CCP workbench to {label} mode."
+                    yield button
 
             with Horizontal(id="ccp-workbench", classes="ds-panel destination-workbench"):
                 with Vertical(
@@ -816,6 +853,7 @@ class CCPScreen(BaseAppScreen):
         
         # Initialize UI state
         await self._initialize_ui_state()
+        self._ensure_action_button_tooltips()
         
         logger.debug("CCPScreen mounted and initialized with enhancements")
     def _cache_widget_references(self) -> None:
@@ -915,11 +953,57 @@ class CCPScreen(BaseAppScreen):
             except NoMatches:
                 continue
 
-        for selector in ("#ccp-attach-selected-to-console", "#ccp-start-selected-chat", "#ccp-export-character-native"):
+        action_tooltips = {
+            "#ccp-attach-selected-to-console": (
+                "Attach the selected character to Console context."
+                if has_selection
+                else "Select a character before attaching it to Console."
+            ),
+            "#ccp-start-selected-chat": (
+                "Start a Console chat with the selected character."
+                if has_selection
+                else "Select a character before starting a Console chat."
+            ),
+            "#ccp-export-character-native": (
+                "Export the selected local character card."
+                if has_selection
+                else "Select a character before exporting it from CCP."
+            ),
+        }
+        for selector, tooltip in action_tooltips.items():
             try:
-                self.query_one(selector, Button).disabled = not has_selection
+                button = self.query_one(selector, Button)
+                button.disabled = not has_selection
+                button.tooltip = tooltip
             except NoMatches:
                 continue
+
+    def _ensure_action_button_tooltips(self) -> None:
+        """Fill missing CCP action tooltips after legacy child widgets compose."""
+        for button in self.query(Button):
+            tooltip = getattr(button, "tooltip", None)
+            if tooltip is not None and str(tooltip).strip().lower() not in {"", "none"}:
+                continue
+            button.tooltip = self._default_button_tooltip(button)
+
+    def _default_button_tooltip(self, button: Button) -> str:
+        button_id = str(button.id or "")
+        if button_id in CCP_ACTION_BUTTON_TOOLTIPS:
+            return CCP_ACTION_BUTTON_TOOLTIPS[button_id]
+        for prefix, tooltip in CCP_ACTION_TOOLTIP_PREFIXES:
+            if button_id.startswith(prefix):
+                return tooltip
+        label = self._button_label_text(button)
+        if label:
+            return f"{label} in the CCP workbench."
+        return "Run this CCP workbench action."
+
+    @staticmethod
+    def _button_label_text(button: Button) -> str:
+        label = getattr(button.label, "plain", None)
+        if label is None:
+            label = str(button.label or "")
+        return " ".join(str(label).split())
 
     # ===== Event Handlers using @on decorators =====
     
