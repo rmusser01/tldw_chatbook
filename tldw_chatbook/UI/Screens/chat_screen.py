@@ -1431,6 +1431,9 @@ class ChatScreen(BaseAppScreen):
                     side="left",
                     id="console-context-rail-handle",
                 )
+                left_handle.styles.width = 10
+                left_handle.styles.min_width = 10
+                left_handle.styles.max_width = 10
                 if rail_state.left_open:
                     left_handle.styles.display = "none"
                 yield left_handle
@@ -1581,6 +1584,9 @@ class ChatScreen(BaseAppScreen):
                     side="right",
                     id="console-inspector-rail-handle",
                 )
+                right_handle.styles.width = 10
+                right_handle.styles.min_width = 10
+                right_handle.styles.max_width = 10
                 if rail_state.right_open:
                     right_handle.styles.display = "none"
                 yield right_handle

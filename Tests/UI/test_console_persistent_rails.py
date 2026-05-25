@@ -15,6 +15,9 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Chat import console_chat_store as console_chat_store_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_rail_state import (
+    CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS,
+)
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TabState
@@ -37,6 +40,30 @@ def _assert_selector_hidden_or_absent(screen, selector: str) -> None:
 def _static_text(widget) -> str:
     renderable = getattr(widget, "renderable", "")
     return getattr(renderable, "plain", str(renderable))
+
+
+def _button_text(widget) -> str:
+    label = getattr(widget, "label", "")
+    return str(label) if label is not None else ""
+
+
+def _assert_handle_visible_text_fits(handle) -> None:
+    handle_width = handle.region.width
+    visible_chunks = [
+        _button_text(widget)
+        for widget in handle.query(Button)
+        if _is_displayed(widget) and _button_text(widget)
+    ]
+    visible_chunks.extend(
+        _static_text(widget)
+        for widget in handle.query("Static")
+        if _is_displayed(widget) and _static_text(widget)
+    )
+    assert visible_chunks
+    for text in visible_chunks:
+        assert len(text) <= handle_width, (
+            f"handle text {text!r} exceeds handle width {handle_width}"
+        )
 
 
 async def _wait_for_badge(screen, pilot, selector: str, expected: str) -> str:
@@ -704,3 +731,85 @@ async def test_console_badge_state_update_after_mount_does_not_auto_open_inspect
             "#console-inspector-rail-badge",
             "1 approval",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("columns", [100, 120, 140])
+async def test_console_compact_width_preserves_main_column_and_forces_right_collapse(
+    columns: int,
+):
+    assert columns < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS
+    session_id = f"compact-{columns}"
+    preference_key = f"console_rail_state:global:{session_id}"
+    app = _build_test_app()
+    app.console_rail_session_id = session_id
+    app.app_config = {
+        "console": {
+            "rail_state": {
+                preference_key: {
+                    "left_open": False,
+                    "right_open": True,
+                }
+            }
+        }
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(columns, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
+        await pilot.pause(0.05)
+
+        main_column = console.query_one("#console-main-column")
+        workspace_grid = console.query_one("#console-workspace-grid")
+        composer = console.query_one("#console-native-composer")
+        right_handle = console.query_one("#console-inspector-rail-handle")
+
+        assert main_column.region.width >= 52
+        assert composer.region.width >= workspace_grid.region.width - 2
+        _assert_selector_hidden_or_absent(console, "#console-right-rail")
+        assert _is_displayed(right_handle)
+        assert right_handle.region.width == 10
+        _assert_handle_visible_text_fits(right_handle)
+
+    assert app.app_config["console"]["rail_state"][preference_key]["right_open"] is True
+
+
+@pytest.mark.asyncio
+async def test_console_desktop_composer_span_ignores_rail_width_changes():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
+        await pilot.pause(0.05)
+
+        workspace_grid = console.query_one("#console-workspace-grid")
+        composer = console.query_one("#console-native-composer")
+        first_start_composer_width = composer.region.width
+        first_start_main_width = console.query_one("#console-main-column").region.width
+
+        assert first_start_composer_width >= workspace_grid.region.width - 2
+
+        await pilot.click("#console-context-rail-collapse")
+        await _wait_for_hidden(console, pilot, "#console-left-rail")
+        left_collapsed_main_width = await _wait_for_main_column_width_change(
+            console,
+            pilot,
+            original_width=first_start_main_width,
+            direction="increase",
+        )
+        assert composer.region.width == first_start_composer_width
+
+        await pilot.click("#console-inspector-rail-open")
+        await _wait_for_displayed(console, pilot, "#console-right-rail")
+        right_open_main_width = await _wait_for_main_column_width_change(
+            console,
+            pilot,
+            original_width=left_collapsed_main_width,
+            direction="decrease",
+        )
+
+        assert right_open_main_width < left_collapsed_main_width
+        assert composer.region.width == first_start_composer_width

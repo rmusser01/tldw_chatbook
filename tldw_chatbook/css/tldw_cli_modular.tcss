@@ -1843,6 +1843,7 @@ ChatMessage.-ai .message-actions.-generating {
 .console-rail-handle {
     width: 10;
     min-width: 10;
+    max-width: 10;
     height: 100%;
     min-height: 20;
     padding: 0;
