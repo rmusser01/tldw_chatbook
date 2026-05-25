@@ -893,6 +893,7 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
         assert blocker_text == "Provider setup needed: OpenAI missing API key"
         assert console.query_one("#console-inspector-rail-handle").display is True
         assert console.query_one("#console-right-rail").display is False
+        assert text.lower().count("missing api key") == 1
 
 
 @pytest.mark.asyncio
@@ -936,6 +937,7 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         assert "Open Settings" in text
         assert console.query_one("#console-inspector-rail-handle").display is True
         assert console.query_one("#console-right-rail").display is False
+        assert text.lower().count("missing api key") == 1
 
 
 @pytest.mark.asyncio
@@ -1677,8 +1679,9 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
     host = ConsoleHarness(app)
     query = "Why did the incident happen?"
 
-    async with host.run_test(size=(140, 42)) as pilot:
+    async with host.run_test(size=(196, 48)) as pilot:
         console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
         assert "Scope: notes, media, conversations" in _visible_text(console)
@@ -1814,8 +1817,9 @@ async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet(
     app.library_rag_search_service = service
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
+    async with host.run_test(size=(196, 48)) as pilot:
         console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
         console.query_one("#console-library-rag-query-input", Input).value = (
@@ -1827,6 +1831,8 @@ async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet(
             disabled=False,
         )
         console.query_one("#console-run-library-rag", Button).press()
+        await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-evidence")
 
         text = _visible_text(console)
@@ -1870,8 +1876,9 @@ async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligi
     app.library_rag_search_service = service
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
+    async with host.run_test(size=(196, 48)) as pilot:
         console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
         console.query_one("#console-library-rag-query-input", Input).value = (
@@ -1883,6 +1890,8 @@ async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligi
             disabled=False,
         )
         console.query_one("#console-run-library-rag", Button).press()
+        await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-evidence")
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
@@ -1909,8 +1918,9 @@ async def test_console_rag_query_validation_blocks_unsafe_markup():
     app.library_rag_search_service = service
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
+    async with host.run_test(size=(196, 48)) as pilot:
         console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
         console.query_one("#console-library-rag-query-input", Input).value = (
@@ -1932,8 +1942,9 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
+    async with host.run_test(size=(196, 48)) as pilot:
         console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
         console.query_one("#console-library-rag-query-input", Input).value = "What changed?"

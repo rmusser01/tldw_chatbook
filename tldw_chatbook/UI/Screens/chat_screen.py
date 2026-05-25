@@ -832,8 +832,27 @@ class ChatScreen(BaseAppScreen):
                 continue
             widget.styles.display = "block" if visible else "none"
             widget.display = visible
+            self._sync_console_rail_descendant_visibility(widget, visible)
 
         self.refresh(layout=True)
+
+    @staticmethod
+    def _sync_console_rail_descendant_visibility(widget: Any, visible: bool) -> None:
+        """Cascade rail display state while preserving child display preferences."""
+        for child in widget.query("*"):
+            if visible:
+                prior_display = getattr(child, "_console_rail_prior_display", None)
+                if prior_display is None:
+                    continue
+                child.display = bool(prior_display)
+                child.styles.display = "block" if prior_display else "none"
+                delattr(child, "_console_rail_prior_display")
+                continue
+
+            if not hasattr(child, "_console_rail_prior_display"):
+                setattr(child, "_console_rail_prior_display", bool(child.display))
+            child.display = False
+            child.styles.display = "none"
 
     def _current_console_rail_state(self) -> ConsoleRailState:
         """Build the current effective rail state from mounted Console context."""
