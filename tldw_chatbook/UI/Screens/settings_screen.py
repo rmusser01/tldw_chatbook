@@ -177,9 +177,14 @@ class SettingsScreen(BaseAppScreen):
             pass
         try:
             category_status = "Unsaved" if has_unsaved_changes else self._category_summary_by_id(category).status
-            self.query_one(f"#settings-category-{category.value}-status", Static).update(
-                f"Status: {category_status}"
+            category_status_widget = self.query_one(
+                f"#settings-category-{category.value}-status", Static
             )
+            category_status_widget.update(f"Status: {category_status}")
+            if has_unsaved_changes:
+                category_status_widget.add_class("settings-dirty-category")
+            else:
+                category_status_widget.remove_class("settings-dirty-category")
         except QueryError:
             pass
 
@@ -518,11 +523,14 @@ class SettingsScreen(BaseAppScreen):
             yield button
             yield Static(summary.description, classes="destination-section")
             if summary.status:
-                yield Static(
+                status = Static(
                     f"Status: {self._category_status(summary)}",
                     id=f"settings-category-{summary.category.value}-status",
-                    classes="destination-section",
+                    classes="destination-section settings-status-row",
                 )
+                if self._category_has_unsaved_changes(summary.category):
+                    status.add_class("settings-dirty-category")
+                yield status
 
     def _render_overview_detail(self) -> ComposeResult:
         yield Static("Overview", classes="destination-section settings-column-title")
@@ -654,23 +662,26 @@ class SettingsScreen(BaseAppScreen):
                 yield Static(f"Config path: {self._config_path()}")
                 yield Static("Raw TOML validation is available before applying advanced edits.")
                 yield Static("Logs and troubleshooting should expose actionable errors without secrets.")
-                yield Button(
-                    "Validate Config",
-                    id="settings-validate-config",
-                    tooltip="Validate the current Settings config file.",
-                )
-                yield Button(
-                    "Reload Config",
-                    id="settings-reload-config",
-                    tooltip="Reload the current Settings config into the running app.",
-                )
+                with Horizontal(id="settings-diagnostics-actions", classes="settings-action-row"):
+                    yield Button(
+                        "Validate Config",
+                        id="settings-validate-config",
+                        tooltip="Validate the current Settings config file.",
+                    )
+                    yield Button(
+                        "Reload Config",
+                        id="settings-reload-config",
+                        tooltip="Reload the current Settings config into the running app.",
+                    )
                 yield Static(
                     self._diagnostics_validation_result,
                     id="settings-diagnostics-validation-result",
+                    classes="settings-status-row",
                 )
                 yield Static(
                     self._diagnostics_reload_result,
                     id="settings-diagnostics-reload-result",
+                    classes="settings-status-row",
                 )
         else:
             yield Static("Advanced Config", classes="destination-section settings-column-title")
@@ -683,17 +694,22 @@ class SettingsScreen(BaseAppScreen):
                     self._raw_config_text(),
                     id="settings-advanced-config-editor",
                 )
-                yield Button(
-                    "Validate Raw TOML",
-                    id="settings-advanced-validate-config",
-                    tooltip="Validate raw TOML before writing it to disk.",
+                with Horizontal(id="settings-advanced-config-actions", classes="settings-action-row"):
+                    yield Button(
+                        "Validate Raw TOML",
+                        id="settings-advanced-validate-config",
+                        tooltip="Validate raw TOML before writing it to disk.",
+                    )
+                    yield Button(
+                        "Save Raw TOML",
+                        id="settings-advanced-save-config",
+                        tooltip="Atomically save raw TOML after validation.",
+                    )
+                yield Static(
+                    self._advanced_config_result,
+                    id="settings-advanced-config-result",
+                    classes="settings-status-row",
                 )
-                yield Button(
-                    "Save Raw TOML",
-                    id="settings-advanced-save-config",
-                    tooltip="Atomically save raw TOML after validation.",
-                )
-                yield Static(self._advanced_config_result, id="settings-advanced-config-result")
 
     def _render_impact_pane(self) -> ComposeResult:
         summary = self._active_summary()
