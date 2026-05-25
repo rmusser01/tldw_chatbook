@@ -582,6 +582,33 @@ class ChatScreen(BaseAppScreen):
         conversation_id = getattr(session_data, "conversation_id", None)
         return str(conversation_id) if conversation_id else None
 
+    def _active_native_console_session(self) -> Any | None:
+        """Return the active native Console session without creating the store."""
+        console_store = self._console_chat_store
+        active_session_id = (
+            console_store.active_session_id
+            if console_store is not None
+            else None
+        )
+        if console_store is None or active_session_id is None:
+            return None
+        for console_session in console_store.sessions():
+            if console_session.id == active_session_id:
+                return console_session
+        return None
+
+    def _current_console_rail_conversation_id(self) -> Optional[str]:
+        """Return the conversation scope used only for Console rail persistence."""
+        native_session = self._active_native_console_session()
+        if native_session is not None:
+            conversation_id = getattr(
+                native_session,
+                "persisted_conversation_id",
+                None,
+            )
+            return str(conversation_id) if conversation_id else None
+        return self._current_console_conversation_id()
+
     def _build_console_workspace_context_state(
         self,
         session_data: Optional[ChatSessionData] = None,
@@ -666,7 +693,15 @@ class ChatScreen(BaseAppScreen):
         """Copy temporary session rail preferences to a durable key when needed."""
         if not fallback_key:
             return
-        rail_state_config = self._console_rail_state_config()
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return
+        console_config = app_config.get("console")
+        if not isinstance(console_config, dict):
+            return
+        rail_state_config = console_config.get("rail_state")
+        if not isinstance(rail_state_config, dict):
+            return
         if key in rail_state_config or fallback_key not in rail_state_config:
             return
         preferences = coerce_console_rail_preferences(rail_state_config[fallback_key])
@@ -727,7 +762,7 @@ class ChatScreen(BaseAppScreen):
                     break
         preference_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
-            conversation_id=self._current_console_conversation_id(),
+            conversation_id=self._current_console_rail_conversation_id(),
             session_id=self._current_console_session_id(),
         )
         self._migrate_console_rail_fallback_preferences(
@@ -793,7 +828,7 @@ class ChatScreen(BaseAppScreen):
         workspace_context = self._current_console_workspace_context()
         preference_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
-            conversation_id=self._current_console_conversation_id(),
+            conversation_id=self._current_console_rail_conversation_id(),
             session_id=self._current_console_session_id(),
         )
         self._migrate_console_rail_fallback_preferences(

@@ -12,9 +12,11 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
+from tldw_chatbook.Chat import console_chat_store as console_chat_store_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen_state import TabState
 
 
 def _is_displayed(widget) -> bool:
@@ -75,6 +77,14 @@ async def _wait_for_native_console_session(screen, pilot):
             return store.ensure_session(workspace_id=store.workspace_context.active_workspace_id)
         await pilot.pause(0.05)
     raise AssertionError("native Console store did not expose an active session")
+
+
+class _FixedUuid:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def __str__(self) -> str:
+        return self.value
 
 
 def test_generated_console_stylesheet_includes_rail_rules():
@@ -325,19 +335,17 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
         lambda section, key, value: True,
         raising=False,
     )
+    monkeypatch.setattr(
+        console_chat_store_module,
+        "uuid4",
+        lambda: _FixedUuid("session-1"),
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
-        store = console._ensure_console_chat_store()
-        session = store.ensure_session(workspace_id="global")
-        old_session_id = session.id
-        session.id = "session-1"
-        store._sessions["session-1"] = store._sessions.pop(old_session_id)
-        store._messages_by_session["session-1"] = store._messages_by_session.pop(
-            old_session_id
-        )
-        store.active_session_id = "session-1"
+        session = await _wait_for_native_console_session(console, pilot)
+        assert session.id == "session-1"
         session.persisted_conversation_id = "conv-1"
         console._sync_console_rail_visibility(console._current_console_rail_state())
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
@@ -351,3 +359,80 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
         "left_open": False,
         "right_open": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_console_rail_key_prefers_native_session_over_legacy_conversation(monkeypatch):
+    app = _build_test_app()
+    app.app_config = {"console": {"rail_state": {}}}
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        console_chat_store_module,
+        "uuid4",
+        lambda: _FixedUuid("session-native"),
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        console.chat_state.add_tab(
+            TabState(
+                tab_id="legacy",
+                title="Legacy",
+                conversation_id="legacy-conv",
+                is_active=True,
+            )
+        )
+        console.chat_state.active_tab_id = "legacy"
+        session = await _wait_for_native_console_session(console, pilot)
+        assert session.persisted_conversation_id is None
+
+        await pilot.click("#console-context-rail-collapse")
+        await _wait_for_hidden(console, pilot, "#console-left-rail")
+
+        rail_state = app.app_config["console"]["rail_state"]
+        assert rail_state["console_rail_state:global:session-native"] == {
+            "left_open": False,
+            "right_open": False,
+        }
+        assert "console_rail_state:global:legacy-conv" not in rail_state
+
+        session.persisted_conversation_id = "native-conv"
+        console._sync_console_rail_visibility(console._current_console_rail_state())
+
+    rail_state = app.app_config["console"]["rail_state"]
+    assert rail_state["console_rail_state:global:native-conv"] == {
+        "left_open": False,
+        "right_open": False,
+    }
+    assert "console_rail_state:global:legacy-conv" not in rail_state
+
+
+@pytest.mark.asyncio
+async def test_console_rail_fallback_migration_read_path_does_not_create_empty_state(
+    monkeypatch,
+):
+    app = _build_test_app()
+    console_config = app.app_config.setdefault("console", {})
+    console_config.pop("rail_state", None)
+
+    monkeypatch.setattr(
+        console_chat_store_module,
+        "uuid4",
+        lambda: _FixedUuid("session-no-fallback"),
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        session = await _wait_for_native_console_session(console, pilot)
+        session.persisted_conversation_id = "conv-no-fallback"
+        console._current_console_rail_state()
+
+    assert "rail_state" not in console_config
