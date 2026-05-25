@@ -1213,6 +1213,27 @@ async def test_console_native_transcript_is_visible_transcript_surface():
 
 
 @pytest.mark.asyncio
+async def test_console_empty_transcript_uses_compact_ready_state():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        tab_strip = console.query_one("#console-native-tab-strip")
+        transcript = console.query_one("#console-native-transcript")
+        empty_rows = list(transcript.query(".console-transcript-empty-state"))
+
+        assert len(empty_rows) == 1
+        empty_row = empty_rows[0]
+        empty_text = getattr(empty_row.render(), "plain", str(empty_row.render()))
+        assert empty_text == "No messages yet. Composer ready."
+        assert "No messages yet. Send a prompt or attach context." not in empty_text
+        assert empty_row.region.y == tab_strip.region.y + tab_strip.region.height
+
+
+@pytest.mark.asyncio
 async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
     app = _build_test_app()
     host = ConsoleHarness(app)

@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, Con
 
 CONSOLE_TRANSCRIPT_ACTION_ROW = "Copy | Edit | Save as... | ♻ | ---> | 👍/👎                 🗑"
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
+EMPTY_TRANSCRIPT_COPY = "No messages yet. Composer ready."
 _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "edit": "Edit this message before continuing the thread.",
@@ -223,7 +224,7 @@ class ConsoleTranscript(VerticalScroll):
         else:
             widgets.append(
                 Static(
-                    "No messages yet.",
+                    EMPTY_TRANSCRIPT_COPY,
                     classes="console-transcript-empty-state",
                 )
             )
