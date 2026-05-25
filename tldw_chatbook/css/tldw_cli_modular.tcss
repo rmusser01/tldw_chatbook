@@ -2097,10 +2097,24 @@ ChatMessage.-ai .message-actions.-generating {
     scrollbar-size: 1 1;
 }
 
-#console-native-tab-strip {
+#console-transcript-title,
+.console-transcript-title {
     height: 1;
     min-height: 1;
+    max-height: 1;
     margin: 0;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+    text-style: none;
+}
+
+#console-native-tab-strip,
+.console-session-tab-strip {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    background: $ds-surface-panel;
 }
 
 .console-session-tab,
@@ -2127,6 +2141,7 @@ ChatMessage.-ai .message-actions.-generating {
 .console-session-tab-active {
     background: $ds-action-focus;
     color: $ds-text-primary;
+    text-style: bold;
 }
 
 #console-native-transcript:focus {

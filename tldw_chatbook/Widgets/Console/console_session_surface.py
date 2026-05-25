@@ -33,13 +33,16 @@ class ConsoleSessionSurface(Vertical):
         title = Static(
             CONSOLE_TRANSCRIPT_TITLE,
             id="console-transcript-title",
-            classes="destination-section",
+            classes="destination-section console-transcript-title",
         )
         title.styles.height = 1
         title.styles.min_height = 1
         yield title
 
-        tab_strip = Horizontal(id="console-native-tab-strip")
+        tab_strip = Horizontal(
+            id="console-native-tab-strip",
+            classes="console-session-tab-strip",
+        )
         tab_strip.styles.height = 1
         tab_strip.styles.min_height = 1
         tab_strip.styles.max_height = 1

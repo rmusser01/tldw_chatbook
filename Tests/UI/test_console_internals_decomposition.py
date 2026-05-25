@@ -175,9 +175,21 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    border: none;"
         ) in css
         assert (
-            "#console-native-tab-strip {\n"
+            "#console-transcript-title,\n"
+            ".console-transcript-title {\n"
             "    height: 1;\n"
             "    min-height: 1;\n"
+            "    max-height: 1;\n"
+            "    margin: 0;\n"
+            "    background: $ds-surface-panel;\n"
+            "    color: $ds-text-muted;"
+        ) in css
+        assert (
+            "#console-native-tab-strip,\n"
+            ".console-session-tab-strip {\n"
+            "    height: 1;\n"
+            "    min-height: 1;\n"
+            "    max-height: 1;\n"
             "    margin: 0;"
         ) in css
         assert (
@@ -1265,6 +1277,44 @@ async def test_console_transcript_header_sits_at_top_of_center_panel():
         assert transcript_title.region.y == transcript_region.region.y
         assert tab_strip.region.y == transcript_title.region.y + transcript_title.region.height
         assert transcript.region.y == tab_strip.region.y + tab_strip.region.height
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-transcript-title")
+        await _wait_for_selector(console, pilot, "#console-native-tab-strip")
+        await _wait_for_selector(console, pilot, ".console-session-tab-active")
+
+        transcript_title = console.query_one("#console-transcript-title", Static)
+        tab_strip = console.query_one("#console-native-tab-strip")
+        active_tab = console.query_one(".console-session-tab-active", Button)
+        transcript = console.query_one("#console-native-transcript")
+
+        assert transcript_title.has_class("console-transcript-title")
+        assert tab_strip.has_class("console-session-tab-strip")
+        assert transcript_title.region.height == 1
+        assert tab_strip.region.height == 1
+        assert transcript_title.styles.height.value == 1
+        assert tab_strip.styles.height.value == 1
+        assert tab_strip.region.y == transcript_title.region.y + 1
+        assert transcript.region.y == tab_strip.region.y + 1
+        assert transcript_title.styles.color != active_tab.styles.color
+        assert active_tab.styles.background != tab_strip.styles.background
+        assert active_tab.has_class("console-session-tab-active")
 
 
 @pytest.mark.asyncio
