@@ -2013,7 +2013,7 @@ ChatMessage.-ai .message-actions.-generating {
 }
 
 #console-native-composer.console-composer-focused {
-    border: thick $ds-action-focus;
+    border: heavy $ds-action-focus;
     background: $ds-surface-raised;
 }
 

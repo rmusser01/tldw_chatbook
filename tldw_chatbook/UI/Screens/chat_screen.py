@@ -666,8 +666,24 @@ class ChatScreen(BaseAppScreen):
         *,
         notify_on_failure: bool = False,
     ) -> bool:
-        """Best-effort persistence for an already-updated in-memory preference."""
+        """Queue best-effort persistence for an already-updated in-memory preference."""
         serialized = serialize_console_rail_preferences(preferences)
+        self._save_console_rail_preferences(
+            key,
+            serialized,
+            notify_on_failure=notify_on_failure,
+        )
+        return True
+
+    @work(thread=True)
+    def _save_console_rail_preferences(
+        self,
+        key: str,
+        serialized: dict[str, bool],
+        *,
+        notify_on_failure: bool = False,
+    ) -> None:
+        """Persist Console rail preferences without blocking the UI thread."""
         try:
             saved = save_setting_to_cli_config(
                 "console.rail_state",
@@ -678,11 +694,14 @@ class ChatScreen(BaseAppScreen):
             logger.warning("Failed to persist Console rail preference: {}", exc)
             saved = False
         if not saved and notify_on_failure:
-            self.app_instance.notify(
-                "Console rail preference is saved for this session only.",
-                severity="warning",
-            )
-        return bool(saved)
+            self.call_from_thread(self._notify_console_rail_preference_save_failure)
+
+    def _notify_console_rail_preference_save_failure(self) -> None:
+        """Notify from the UI thread when background preference persistence fails."""
+        self.app_instance.notify(
+            "Console rail preference is saved for this session only.",
+            severity="warning",
+        )
 
     def _migrate_console_rail_fallback_preferences(
         self,

@@ -74,6 +74,15 @@ def test_console_rail_state_invalid_stored_preferences_fall_back_to_defaults():
         assert state.right_open is False
 
 
+def test_console_rail_state_coerces_integer_preferences():
+    preferences = coerce_console_rail_preferences(
+        {"left_open": 0, "right_open": 1},
+    )
+
+    assert preferences.left_open is False
+    assert preferences.right_open is True
+
+
 def test_console_rail_preference_key_prefers_conversation_then_session_fallback():
     key = build_console_rail_preference_key(
         workspace_id="workspace 1",

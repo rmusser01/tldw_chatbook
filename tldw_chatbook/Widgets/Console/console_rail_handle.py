@@ -58,4 +58,4 @@ class ConsoleRailHandle(Vertical):
             return
         self.label = label
         self.badge = badge
-        self.refresh(recompose=True)
+        self.call_later(self.recompose)

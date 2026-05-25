@@ -165,6 +165,16 @@ async def _wait_for_native_console_session(screen, pilot):
     raise AssertionError("native Console store did not expose an active session")
 
 
+async def _wait_for_saved_settings(pilot, saved_settings, expected_count: int) -> None:
+    for _ in range(40):
+        if len(saved_settings) >= expected_count:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"expected at least {expected_count} saved settings, saw {len(saved_settings)}"
+    )
+
+
 class _FixedUuid:
     def __init__(self, value: str) -> None:
         self.value = value
@@ -186,6 +196,8 @@ def test_generated_console_stylesheet_includes_rail_rules():
     ):
         assert selector in css
     assert "content-align: left middle;" in css
+    assert "border: heavy $ds-action-focus;" in css
+    assert "border: thick $ds-action-focus;" not in css
 
 
 @pytest.mark.asyncio
@@ -392,6 +404,7 @@ async def test_console_rail_state_persists_by_workspace_session_key(monkeypatch)
         await _wait_for_hidden(console, pilot, "#console-left-rail")
         await pilot.click("#console-inspector-rail-open")
         await _wait_for_displayed(console, pilot, "#console-right-rail")
+        await _wait_for_saved_settings(pilot, saved_settings, 2)
 
     rail_state = app.app_config["console"]["rail_state"]
     expected_key = f"console_rail_state:global:{session.id}"

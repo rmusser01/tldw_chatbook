@@ -147,6 +147,8 @@ def build_console_rail_preference_key(
 def _coerce_bool(value: Any, fallback: bool) -> bool:
     if isinstance(value, bool):
         return value
+    if isinstance(value, int):
+        return value != 0
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in _TRUE_STRINGS:
