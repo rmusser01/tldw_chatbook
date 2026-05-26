@@ -7,6 +7,10 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Mapping, Optional, Sequence
 
+from loguru import logger
+
+from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+
 
 class ScopeType(str, Enum):
     LOCAL_NOTE = "local_note"
@@ -443,6 +447,7 @@ class NotesScopeService:
                         title=title,
                         content=content,
                         status="active",
+                        tag_ids=self._tag_ids_for_sync_v2(keywords),
                         base_version=version,
                         entity_version=(version + 1) if version is not None else None,
                     )
@@ -475,6 +480,7 @@ class NotesScopeService:
                 title=title,
                 content=content,
                 status="active",
+                tag_ids=self._tag_ids_for_sync_v2(keywords),
                 base_version=None,
                 entity_version=1,
             )
@@ -552,23 +558,36 @@ class NotesScopeService:
         title: str,
         content: str,
         status: str,
+        tag_ids: Optional[list[str]],
         base_version: Optional[int],
         entity_version: Optional[int],
     ) -> None:
         profile_scope = self._sync_v2_profile_scope(sync_v2_profile)
         if self.sync_v2_notes_producer is None or profile_scope is None:
             return
-        self.sync_v2_notes_producer.enqueue_note_upsert(
-            server_profile_id=profile_scope["server_profile_id"],
-            authenticated_principal_id=profile_scope["authenticated_principal_id"],
-            workspace_scope=profile_scope["workspace_scope"],
-            note_id=note_id,
-            title=title,
-            content=content,
-            status=status,
-            base_version=base_version,
-            entity_version=entity_version,
-        )
+        try:
+            self.sync_v2_notes_producer.enqueue_note_upsert(
+                server_profile_id=profile_scope["server_profile_id"],
+                authenticated_principal_id=profile_scope["authenticated_principal_id"],
+                workspace_scope=profile_scope["workspace_scope"],
+                note_id=note_id,
+                title=title,
+                content=content,
+                status=status,
+                tag_ids=tag_ids,
+                base_version=base_version,
+                entity_version=entity_version,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to enqueue Sync v2 note upsert after local mutation",
+                server_profile_id=profile_scope["server_profile_id"],
+                authenticated_principal_id=profile_scope["authenticated_principal_id"],
+                workspace_scope=profile_scope["workspace_scope"],
+                note_id=note_id,
+                base_version=base_version,
+                entity_version=entity_version,
+            )
 
     def _enqueue_local_note_delete(
         self,
@@ -581,14 +600,25 @@ class NotesScopeService:
         profile_scope = self._sync_v2_profile_scope(sync_v2_profile)
         if self.sync_v2_notes_producer is None or profile_scope is None:
             return
-        self.sync_v2_notes_producer.enqueue_note_delete(
-            server_profile_id=profile_scope["server_profile_id"],
-            authenticated_principal_id=profile_scope["authenticated_principal_id"],
-            workspace_scope=profile_scope["workspace_scope"],
-            note_id=note_id,
-            base_version=base_version,
-            entity_version=entity_version,
-        )
+        try:
+            self.sync_v2_notes_producer.enqueue_note_delete(
+                server_profile_id=profile_scope["server_profile_id"],
+                authenticated_principal_id=profile_scope["authenticated_principal_id"],
+                workspace_scope=profile_scope["workspace_scope"],
+                note_id=note_id,
+                base_version=base_version,
+                entity_version=entity_version,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to enqueue Sync v2 note delete after local mutation",
+                server_profile_id=profile_scope["server_profile_id"],
+                authenticated_principal_id=profile_scope["authenticated_principal_id"],
+                workspace_scope=profile_scope["workspace_scope"],
+                note_id=note_id,
+                base_version=base_version,
+                entity_version=entity_version,
+            )
 
     @staticmethod
     def _sync_v2_profile_scope(
@@ -596,14 +626,53 @@ class NotesScopeService:
     ) -> dict[str, Any] | None:
         if not sync_v2_profile:
             return None
-        server_profile_id = sync_v2_profile.get("server_profile_id")
+        server_profile_id = NotesScopeService._validated_sync_v2_scope_text(
+            sync_v2_profile.get("server_profile_id")
+        )
         if not server_profile_id:
             return None
+        authenticated_principal_id = NotesScopeService._validated_sync_v2_scope_text(
+            sync_v2_profile.get("authenticated_principal_id"),
+            allow_none=True,
+        )
+        workspace_scope = NotesScopeService._validated_sync_v2_scope_text(
+            sync_v2_profile.get("workspace_scope"),
+            allow_none=True,
+        )
+        if sync_v2_profile.get("authenticated_principal_id") and authenticated_principal_id is None:
+            return None
+        if sync_v2_profile.get("workspace_scope") and workspace_scope is None:
+            return None
         return {
-            "server_profile_id": str(server_profile_id),
-            "authenticated_principal_id": sync_v2_profile.get("authenticated_principal_id"),
-            "workspace_scope": sync_v2_profile.get("workspace_scope"),
+            "server_profile_id": server_profile_id,
+            "authenticated_principal_id": authenticated_principal_id,
+            "workspace_scope": workspace_scope,
         }
+
+    @staticmethod
+    def _validated_sync_v2_scope_text(
+        value: Any,
+        *,
+        allow_none: bool = False,
+    ) -> str | None:
+        if value is None:
+            return None if allow_none else ""
+        raw = str(value)
+        stripped = raw.strip()
+        if not stripped:
+            return None if allow_none else ""
+        sanitized = sanitize_string(stripped, max_length=200).strip()
+        if sanitized != stripped:
+            return None if allow_none else ""
+        if not validate_text_input(sanitized, max_length=200, allow_html=False):
+            return None if allow_none else ""
+        return sanitized
+
+    @staticmethod
+    def _tag_ids_for_sync_v2(keywords: Optional[Sequence[str]]) -> Optional[list[str]]:
+        if keywords is None:
+            return None
+        return NotesScopeService._normalize_keywords(keywords)
 
     async def search_notes(
         self,

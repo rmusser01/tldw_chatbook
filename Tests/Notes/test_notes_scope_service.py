@@ -167,6 +167,14 @@ class FakeNotesSyncV2Producer:
         return {"status": "enqueued"}
 
 
+class FailingNotesSyncV2Producer:
+    def enqueue_note_upsert(self, **kwargs):
+        raise RuntimeError("outbox unavailable")
+
+    def enqueue_note_delete(self, **kwargs):
+        raise RuntimeError("outbox unavailable")
+
+
 class FakeServerNotes:
     def __init__(self):
         self.saved_ids = []
@@ -562,6 +570,7 @@ async def test_scope_service_enqueues_local_note_upsert_after_successful_save():
             "title": "Local",
             "content": "Body",
             "status": "active",
+            "tag_ids": None,
             "base_version": 3,
             "entity_version": 4,
         }
@@ -601,6 +610,31 @@ async def test_scope_service_does_not_enqueue_local_note_upsert_after_failed_sav
 
 
 @pytest.mark.asyncio
+async def test_scope_service_local_save_survives_sync_v2_enqueue_failure():
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+        sync_v2_notes_producer=FailingNotesSyncV2Producer(),
+    )
+
+    result = await scope_service.save_note(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        note_id="local-1",
+        title="Local",
+        content="Body",
+        version=3,
+        sync_v2_profile={
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": None,
+        },
+    )
+
+    assert result is True
+
+
+@pytest.mark.asyncio
 async def test_scope_service_does_not_enqueue_local_note_upsert_after_failed_create():
     class FailingCreateLocalNotes(FakeLocalNotes):
         def add_note(self, user_id, title, content, note_id=None):
@@ -631,6 +665,34 @@ async def test_scope_service_does_not_enqueue_local_note_upsert_after_failed_cre
 
 
 @pytest.mark.asyncio
+async def test_scope_service_passes_keywords_to_sync_v2_note_upsert():
+    producer = FakeNotesSyncV2Producer()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+        sync_v2_notes_producer=producer,
+    )
+
+    result = await scope_service.save_note(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        note_id="local-1",
+        title="Local",
+        content="Body",
+        version=3,
+        keywords=["project", "draft"],
+        sync_v2_profile={
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": None,
+        },
+    )
+
+    assert result["keywords"] == ["project", "draft"]
+    assert producer.upserts[0]["tag_ids"] == ["project", "draft"]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_ignores_incomplete_sync_v2_profile_after_local_save():
     producer = FakeNotesSyncV2Producer()
     scope_service = NotesScopeService(
@@ -647,6 +709,33 @@ async def test_scope_service_ignores_incomplete_sync_v2_profile_after_local_save
         content="Body",
         version=3,
         sync_v2_profile={"authenticated_principal_id": "user-a"},
+    )
+
+    assert result is True
+    assert producer.upserts == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_ignores_invalid_sync_v2_profile_after_local_save():
+    producer = FakeNotesSyncV2Producer()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+        sync_v2_notes_producer=producer,
+    )
+
+    result = await scope_service.save_note(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        note_id="local-1",
+        title="Local",
+        content="Body",
+        version=3,
+        sync_v2_profile={
+            "server_profile_id": "server-a\x00",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": None,
+        },
     )
 
     assert result is True
@@ -686,6 +775,29 @@ async def test_scope_service_enqueues_local_note_delete_after_successful_delete(
             "entity_version": 4,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_local_delete_survives_sync_v2_enqueue_failure():
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+        sync_v2_notes_producer=FailingNotesSyncV2Producer(),
+    )
+
+    result = await scope_service.delete_note(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        note_id="local-1",
+        version=3,
+        sync_v2_profile={
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": None,
+        },
+    )
+
+    assert result is True
 
 
 @pytest.mark.asyncio

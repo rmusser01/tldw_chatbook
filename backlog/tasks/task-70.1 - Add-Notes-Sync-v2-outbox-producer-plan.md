@@ -51,13 +51,17 @@ Added `NotesSyncV2OutboxProducer` as the first content-producing Notes Sync v2 b
 
 Extended `SyncEnvelopeBuilder` with `build_note_delete()` and wired `NotesScopeService` local save/delete paths to call an injected producer only after successful local mutations. The hook is opt-in, preserves existing local note behavior by default, and does not add background sync, automatic push/pull, or broad domain sync.
 
+PR review follow-up isolated best-effort enqueue failures from primary local note operations, validated Sync v2 profile scope strings through centralized text validation/sanitization utilities, propagated note keywords to outbox `tag_ids`, and expanded public producer docstrings to Google-style `Args`/`Returns` coverage.
+
 Verification:
 - Red tests failed on the missing producer module and missing `NotesScopeService` producer injection.
 - `../../.venv/bin/python -m pytest -q Tests/Sync_Interop/test_notes_outbox_producer.py Tests/Notes/test_notes_scope_service.py::test_scope_service_enqueues_local_note_upsert_after_successful_save Tests/Notes/test_notes_scope_service.py::test_scope_service_does_not_enqueue_local_note_upsert_after_failed_save Tests/Notes/test_notes_scope_service.py::test_scope_service_does_not_enqueue_local_note_upsert_after_failed_create Tests/Notes/test_notes_scope_service.py::test_scope_service_ignores_incomplete_sync_v2_profile_after_local_save Tests/Notes/test_notes_scope_service.py::test_scope_service_enqueues_local_note_delete_after_successful_delete --tb=short` passed with 8 tests.
-- `../../.venv/bin/python -m pytest -q Tests/Sync_Interop/test_notes_outbox_producer.py Tests/Sync_Interop/test_envelope_builder.py Tests/Sync_Interop/test_sync_state_repository.py Tests/Notes/test_notes_scope_service.py --tb=short` passed with 52 tests.
+- `../../.venv/bin/python -m pytest -q Tests/Sync_Interop/test_notes_outbox_producer.py Tests/Sync_Interop/test_envelope_builder.py Tests/Sync_Interop/test_sync_state_repository.py Tests/Notes/test_notes_scope_service.py --tb=short` passed with 56 tests.
 - `../../.venv/bin/python -m pytest -q Tests/Sync_Interop/test_local_first_sync_service.py Tests/Sync_Interop/test_restore_service.py --tb=short` passed with 42 tests.
 - `../../.venv/bin/python -m pytest -q Tests/UI/test_product_maturity_phase1_harness.py::test_backlog_task_frontmatter_ids_are_unique --tb=short` passed with 1 test.
 - `../../.venv/bin/python -m compileall tldw_chatbook/Sync_Interop/notes_outbox_producer.py tldw_chatbook/Sync_Interop/envelope_builder.py tldw_chatbook/Notes/notes_scope_service.py` passed.
+- `../../.venv/bin/python -m pytest -q Tests/Notes/test_notes_scope_service.py::test_scope_service_local_save_survives_sync_v2_enqueue_failure Tests/Notes/test_notes_scope_service.py::test_scope_service_passes_keywords_to_sync_v2_note_upsert Tests/Notes/test_notes_scope_service.py::test_scope_service_ignores_invalid_sync_v2_profile_after_local_save Tests/Notes/test_notes_scope_service.py::test_scope_service_local_delete_survives_sync_v2_enqueue_failure --tb=short` passed with 4 tests.
+- `../../.venv/bin/python -m pytest -q Tests/Sync_Interop/test_notes_outbox_producer.py Tests/Notes/test_notes_scope_service.py --tb=short` passed with 33 tests.
 - `git diff --check` passed.
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

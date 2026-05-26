@@ -9,7 +9,14 @@ from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mo
 
 
 class NotesSyncV2OutboxProducer:
-    """Convert successful local Notes writes into durable Sync v2 outbox entries."""
+    """Convert successful local Notes writes into durable Sync v2 outbox entries.
+
+    Args:
+        state_repository: Repository that owns Sync v2 profile state and durable
+            local outbox persistence.
+        dataset_keys: Mapping of dataset IDs to in-memory dataset keys used to
+            encrypt private Notes payloads before persistence.
+    """
 
     def __init__(
         self,
@@ -34,6 +41,25 @@ class NotesSyncV2OutboxProducer:
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
     ) -> dict[str, Any]:
+        """Persist an encrypted Notes upsert envelope when Sync v2 is ready.
+
+        Args:
+            server_profile_id: Server profile that owns the outbox source scope.
+            authenticated_principal_id: Optional authenticated principal scope.
+            workspace_scope: Optional workspace scope for scoped outbox entries.
+            note_id: Local Notes entity ID.
+            title: Note title to encrypt into the payload.
+            content: Note body to encrypt into the payload.
+            status: Optional clear-text note status metadata.
+            tag_ids: Optional clear-text tag identifiers for routing/metadata.
+            base_version: Optional source entity version before the mutation.
+            entity_version: Optional source entity version after the mutation.
+
+        Returns:
+            A status mapping. Enqueued results include the durable outbox entry;
+            skipped results include a reason describing the missing prerequisite.
+        """
+
         profile = self._sync_ready_profile(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
@@ -70,6 +96,21 @@ class NotesSyncV2OutboxProducer:
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
     ) -> dict[str, Any]:
+        """Persist a Notes delete tombstone envelope when Sync v2 is ready.
+
+        Args:
+            server_profile_id: Server profile that owns the outbox source scope.
+            authenticated_principal_id: Optional authenticated principal scope.
+            workspace_scope: Optional workspace scope for scoped outbox entries.
+            note_id: Local Notes entity ID.
+            base_version: Optional source entity version before the delete.
+            entity_version: Optional source entity version after the delete.
+
+        Returns:
+            A status mapping. Enqueued results include the durable outbox entry;
+            skipped results include a reason describing the missing prerequisite.
+        """
+
         profile = self._sync_ready_profile(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
