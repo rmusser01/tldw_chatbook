@@ -10,12 +10,16 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+    DEFAULT_LLAMACPP_BASE_URL,
+    URL_BASED_PROVIDER_KEYS,
     build_console_model_options,
     build_console_provider_options,
     build_console_settings_readiness,
+    normalize_llamacpp_base_url,
     validate_console_session_settings,
 )
 
@@ -44,11 +48,16 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._provider_model_drafts: dict[str, str] = {
             settings.provider: settings.model or "",
         }
+        self._provider_base_url_drafts: dict[str, str] = {
+            settings.provider: settings.base_url or "",
+        }
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
         has_model_options = bool(self._configured_model_select_options(self._settings.provider))
         selected_model = self._model_for_provider(self._settings.provider)
+        base_url = self._base_url_for_provider(self._settings.provider)
+        uses_base_url = self._provider_uses_base_url(self._settings.provider)
         model_options = (
             self._model_select_options(self._settings.provider, selected_model)
             if has_model_options
@@ -95,7 +104,13 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                     yield model_input
                 with Horizontal(classes="console-settings-modal-row"):
                     yield Static("Base URL", classes="console-settings-modal-label")
-                    yield Input(value=self._settings.base_url or "", id="console-settings-base-url")
+                    base_url_input = Input(
+                        value=base_url or "",
+                        id="console-settings-base-url",
+                        disabled=not uses_base_url,
+                    )
+                    base_url_input.display = uses_base_url
+                    yield base_url_input
 
             with Vertical(classes="console-settings-modal-section"):
                 yield Static("Sampling", classes="destination-section")
@@ -195,13 +210,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     @on(Select.Changed, "#console-settings-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
         self._store_current_model_for_provider(self._active_provider)
+        self._store_current_base_url_for_provider(self._active_provider)
         provider = str(event.value or "")
         model = self._model_for_provider(provider)
+        base_url = self._base_url_for_provider(provider)
         self._active_provider = provider
         draft = ConsoleSessionSettings(
             provider=provider,
             model=model,
-            base_url=self.query_one("#console-settings-base-url", Input).value.strip() or None,
+            base_url=base_url if self._provider_uses_base_url(provider) else None,
             temperature=self._settings.temperature,
             top_p=self._settings.top_p,
             min_p=self._settings.min_p,
@@ -214,13 +231,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         readiness = build_console_settings_readiness(draft, app_config=self._app_config)
         self.query_one("#console-settings-readiness", Static).update(readiness.detail)
         self._sync_model_controls(provider, model)
+        self._sync_base_url_control(provider, base_url)
 
     def _build_draft(self) -> ConsoleSessionSettings:
         provider = str(self.query_one("#console-settings-provider", Select).value or "")
         return ConsoleSessionSettings(
             provider=provider,
             model=self._current_model_value(),
-            base_url=self.query_one("#console-settings-base-url", Input).value.strip() or None,
+            base_url=self._current_base_url_value(provider),
             temperature=self._parse_float_input("console-settings-temperature", self._settings.temperature),
             top_p=self._parse_float_input("console-settings-top-p", self._settings.top_p),
             min_p=self._parse_optional_float_input("console-settings-min-p"),
@@ -276,12 +294,18 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         if provider:
             self._provider_model_drafts[provider] = self._current_model_value() or ""
 
+    def _store_current_base_url_for_provider(self, provider: str) -> None:
+        if provider and self._provider_uses_base_url(provider):
+            self._provider_base_url_drafts[provider] = (
+                self.query_one("#console-settings-base-url", Input).value.strip()
+            )
+
     def _model_for_provider(self, provider: str) -> str | None:
         configured_model_options = self._configured_model_select_options(provider)
         if configured_model_options:
             configured_model_values = [value for _, value in configured_model_options]
             stored_model = self._provider_model_drafts.get(provider, "")
-            if stored_model in configured_model_values:
+            if stored_model:
                 return stored_model
             return configured_model_values[0]
 
@@ -289,6 +313,65 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             return self._provider_model_drafts[provider] or None
         if provider == self._settings.provider:
             return self._settings.model or None
+        return None
+
+    def _sync_base_url_control(self, provider: str, base_url: str | None) -> None:
+        base_url_input = self.query_one("#console-settings-base-url", Input)
+        uses_base_url = self._provider_uses_base_url(provider)
+        base_url_input.value = base_url or ""
+        base_url_input.disabled = not uses_base_url
+        base_url_input.display = uses_base_url
+
+    def _current_base_url_value(self, provider: str) -> str | None:
+        if not self._provider_uses_base_url(provider):
+            return None
+        return self.query_one("#console-settings-base-url", Input).value.strip() or None
+
+    def _base_url_for_provider(self, provider: str) -> str | None:
+        if not self._provider_uses_base_url(provider):
+            return None
+        if provider in self._provider_base_url_drafts:
+            return self._provider_base_url_drafts[provider] or None
+        if provider == self._settings.provider:
+            return self._settings.base_url or None
+        return self._default_base_url_for_provider(provider)
+
+    def _provider_uses_base_url(self, provider: str) -> bool:
+        provider_key = provider_config_key(provider)
+        provider_settings = self._provider_settings(provider_key)
+        return provider_key in URL_BASED_PROVIDER_KEYS or any(
+            key in provider_settings for key in ("api_url", "base_url", "api_base")
+        )
+
+    def _provider_settings(self, provider_key: str) -> Mapping[str, object]:
+        api_settings = self._app_config.get("api_settings", {})
+        if not isinstance(api_settings, Mapping):
+            return {}
+        for configured_provider, configured_settings in api_settings.items():
+            if (
+                provider_config_key(str(configured_provider)) == provider_key
+                and isinstance(configured_settings, Mapping)
+            ):
+                return configured_settings
+        return {}
+
+    def _default_base_url_for_provider(self, provider: str) -> str | None:
+        provider_key = provider_config_key(provider)
+        provider_settings = self._provider_settings(provider_key)
+        base_url = self._first_string(
+            provider_settings.get("api_url"),
+            provider_settings.get("base_url"),
+            provider_settings.get("api_base"),
+        )
+        if provider_key in {"llama_cpp", "local_llamacpp"}:
+            return normalize_llamacpp_base_url(base_url or DEFAULT_LLAMACPP_BASE_URL)
+        return base_url
+
+    @staticmethod
+    def _first_string(*values: object) -> str | None:
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
         return None
 
     def _current_model_value(self) -> str | None:

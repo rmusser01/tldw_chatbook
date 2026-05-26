@@ -190,6 +190,29 @@ async def test_console_settings_modal_cancel_discards_draft() -> None:
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_escape_dismisses_none() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    app.saved_settings = ConsoleSessionSettings(provider="openai", model="should-clear")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        await pilot.press("escape")
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_save_returns_validated_settings() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
@@ -441,6 +464,35 @@ async def test_console_settings_modal_uses_first_model_when_initial_model_missin
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_preserves_missing_registry_model_for_current_provider() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model="custom-openai-model")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.disabled is False
+        assert model_select.value == "custom-openai-model"
+        assert {"custom-openai-model", "gpt-4.1"}.issubset(_select_values(model_select))
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "openai"
+    assert app.saved_settings.model == "custom-openai-model"
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_provider_change_to_no_models_switches_to_input() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
@@ -497,6 +549,39 @@ async def test_console_settings_modal_provider_change_uses_target_provider_model
     assert app.saved_settings is not None
     assert app.saved_settings.provider == "openai"
     assert app.saved_settings.model == "gpt-4.1"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_change_does_not_carry_base_url_to_non_url_provider() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-provider", Select).value = "openai"
+        await pilot.pause()
+
+        base_url_input = app.screen.query_one("#console-settings-base-url", Input)
+        assert base_url_input.disabled is True or base_url_input.display is False
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "openai"
+    assert app.saved_settings.base_url is None
 
 
 @pytest.mark.asyncio
