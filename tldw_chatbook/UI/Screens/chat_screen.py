@@ -2427,15 +2427,6 @@ class ChatScreen(BaseAppScreen):
 
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
-        settings = self._ensure_active_console_session_settings()
-        if not _has_selected_text(settings.model):
-            return "Console send blocked: Select a model before sending."
-        readiness = build_console_settings_readiness(
-            settings,
-            app_config=getattr(self.app_instance, "app_config", {}) or {},
-        )
-        if not readiness.native_send_supported:
-            return f"Console send blocked: {readiness.detail}"
         pending_launch = self._consume_pending_console_launch()
         if pending_launch is not None and _source_mentions_rag(pending_launch.source):
             evidence_state = build_console_evidence_display_state(pending_launch)
@@ -2444,6 +2435,18 @@ class ChatScreen(BaseAppScreen):
                     "Console send blocked: Library Search/RAG has no available evidence. "
                     "Review source authority before sending."
                 )
+        settings = self._ensure_active_console_session_settings()
+        selection = self._build_console_provider_selection()
+        selected_model = selection.explicit_model or selection.configured_model
+        if not _has_selected_text(selected_model):
+            return "Console send blocked: Select a model before sending."
+        readiness_settings = replace(settings, model=selected_model)
+        readiness = build_console_settings_readiness(
+            readiness_settings,
+            app_config=getattr(self.app_instance, "app_config", {}) or {},
+        )
+        if not readiness.native_send_supported:
+            return f"Console send blocked: {readiness.detail}"
         return ""
 
     async def handle_console_send_message(self, event: Button.Pressed) -> None:
@@ -2458,12 +2461,10 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
             return
         self._dismiss_console_guidance()
-        selection = self._build_console_provider_selection()
-        if selection.provider not in {"llama_cpp", "local_llamacpp"}:
-            if blocked_reason := self._console_send_blocked_reason():
-                await self._append_native_console_system_message(blocked_reason)
-                self._focus_console_composer_if_needed(force=True)
-                return
+        if blocked_reason := self._console_send_blocked_reason():
+            await self._append_native_console_system_message(blocked_reason)
+            self._focus_console_composer_if_needed(force=True)
+            return
         controller = self._ensure_console_chat_controller()
         if not controller.run_state.is_send_allowed:
             self.app_instance.notify("A Console run is already running.", severity="warning")

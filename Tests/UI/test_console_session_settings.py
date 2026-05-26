@@ -821,3 +821,33 @@ async def test_console_send_blocker_uses_saved_session_provider() -> None:
             await pilot.pause(0.05)
 
         assert "Console native provider 'openai' is not wired yet" in _screen_visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "local-model"
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model=None))
+        await console._sync_native_console_chat_ui()
+
+        composer = console.query_one("#console-native-composer")
+        composer.load_draft("hello")
+        console.query_one("#console-send-message", Button).press()
+        for _ in range(40):
+            if "Select a model before sending" in _screen_visible_text(console):
+                break
+            await pilot.pause(0.05)
+
+        assert "Console send blocked: Select a model before sending." in _screen_visible_text(console)
+        assert composer.draft_text() == "hello"
