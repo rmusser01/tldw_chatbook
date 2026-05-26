@@ -330,9 +330,15 @@ def build_console_settings_summary_state(
 ) -> ConsoleSettingsSummaryState:
     """Build compact display rows for the Console settings summary widget."""
     provider_label = _string_value(settings.provider) or "Unknown"
-    model_label = _string_value(settings.model) or "Default"
+    model_value = _string_value(settings.model)
     readiness_label = _string_value(readiness.label) or ""
-    readiness_suffix = "" if readiness_label in {"", "Ready"} else f" ({readiness_label})"
+    model_is_missing = not model_value and readiness_label == "Missing model"
+    model_label = model_value or ("Missing" if model_is_missing else "Default")
+    readiness_suffix = (
+        ""
+        if readiness_label in {"", "Ready"} or model_is_missing
+        else f" ({readiness_label})"
+    )
 
     sampling_parts = [
         f"T {_format_summary_float(settings.temperature)}",

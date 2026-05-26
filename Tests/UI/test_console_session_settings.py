@@ -158,7 +158,7 @@ async def test_console_settings_summary_renders_four_rows_and_button() -> None:
 @pytest.mark.asyncio
 async def test_console_settings_summary_keeps_configure_button_when_setup_blocked() -> None:
     state = ConsoleSettingsSummaryState(
-        model_row="Model: llama.cpp / Default (Missing model)",
+        model_row="Model: llama.cpp / Missing",
         context_row="Context: unavailable",
         sampling_row="Sampling: T 0.70, P 0.95",
         identity_row="Persona: General",
@@ -169,7 +169,7 @@ async def test_console_settings_summary_keeps_configure_button_when_setup_blocke
     async with app.run_test(size=(80, 20)) as pilot:
         await pilot.pause()
 
-        assert "Missing model" in _visible_text(app)
+        assert "Model: llama.cpp / Missing" in _visible_text(app)
         button = app.query_one("#console-settings-open", Button)
         assert str(button.label) == "Configure"
         assert button.tooltip == "Configure Console settings"
@@ -184,6 +184,21 @@ def test_summary_state_appends_non_ready_readiness_to_model_row() -> None:
 
     assert state.model_row == "Model: llama_cpp / model-a (WIP)"
     assert state.readiness_label == "WIP"
+
+
+def test_summary_state_keeps_missing_model_row_compact() -> None:
+    state = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="llama_cpp", model=None),
+        ConsoleSettingsContextEstimate(used_tokens=None, token_limit=None, label="unknown"),
+        ConsoleSettingsReadiness(
+            label="Missing model",
+            detail="Select a model before sending.",
+            native_send_supported=False,
+        ),
+    )
+
+    assert state.model_row == "Model: llama_cpp / Missing"
+    assert state.readiness_label == "Missing model"
 
 
 def test_summary_state_appends_optional_sampling_fields_only_when_set() -> None:
@@ -1057,7 +1072,7 @@ def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallb
     summary_state = screen._build_console_settings_summary_state()
 
     assert summary_state.readiness_label != "Ready"
-    assert "Missing model" in summary_state.model_row
+    assert summary_state.model_row == "Model: llama_cpp / Missing"
     assert screen._console_send_blocked_reason() == "Console send blocked: Select a model before sending."
 
 
