@@ -1286,6 +1286,39 @@ Button.settings-category-button.settings-secondary-search-match {
     color: $ds-text-primary;
 }
 
+.settings-input-row {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.settings-input-label {
+    width: 9;
+    min-width: 9;
+    height: 1;
+    min-height: 1;
+    padding: 0;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.settings-compact-input {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-compact-input:focus {
+    outline: heavy $ds-action-focus;
+}
+
 .settings-status-row {
     width: 100%;
     min-height: 1;

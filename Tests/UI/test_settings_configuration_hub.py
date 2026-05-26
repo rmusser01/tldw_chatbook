@@ -803,6 +803,112 @@ async def test_settings_provider_category_saves_only_dirty_provider_fields(monke
 
 
 @pytest.mark.asyncio
+async def test_settings_provider_category_saves_llamacpp_endpoint(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "model-a",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:8080/v1"}
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        assert endpoint.value == "http://127.0.0.1:8080/v1"
+        endpoint.value = "http://127.0.0.1:9099/v1"
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [
+        ("api_settings.llama_cpp", "api_url", "http://127.0.0.1:9099/v1"),
+    ]
+    assert app.app_config["api_settings"]["llama_cpp"]["api_url"] == "http://127.0.0.1:9099/v1"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_preserves_existing_endpoint_key(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    app.app_config["api_settings"] = {
+        "openai": {"api_base_url": "https://api.openai.com/v1"}
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        assert endpoint.value == "https://api.openai.com/v1"
+        endpoint.value = "https://proxy.example/v1"
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [
+        ("api_settings.openai", "api_base_url", "https://proxy.example/v1"),
+    ]
+    assert app.app_config["api_settings"]["openai"]["api_base_url"] == "https://proxy.example/v1"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "model-a",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:8080/v1"}
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-provider-endpoint-value", Input).value = "javascript:alert(1)"
+
+        await pilot.click("#settings-save-category")
+        text = _visible_text(screen)
+
+        assert "Endpoint must start with http:// or https://" in text
+
+    assert saved == []
+    assert app.app_config["api_settings"]["llama_cpp"]["api_url"] == "http://127.0.0.1:8080/v1"
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_test_blocks_unknown_provider():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAi Typo", "model": "fake-model"}
