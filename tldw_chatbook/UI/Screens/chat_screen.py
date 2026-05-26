@@ -37,6 +37,7 @@ from ...Chat.console_chat_models import (
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+    ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
     build_console_context_estimate,
     build_default_console_session_settings,
@@ -510,11 +511,7 @@ class ChatScreen(BaseAppScreen):
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
         """Build compact summary state for the active Console session settings."""
-        settings = self._ensure_active_console_session_settings()
-        readiness = build_console_settings_readiness(
-            settings,
-            app_config=getattr(self.app_instance, "app_config", {}) or {},
-        )
+        settings, readiness = self._active_console_settings_readiness()
         return build_console_settings_summary_state(
             settings,
             self._active_console_settings_context_estimate(),
@@ -634,6 +631,24 @@ class ChatScreen(BaseAppScreen):
             provider_display = str(legacy_provider).strip()
         selected_model = selection.explicit_model or selection.configured_model
         return provider_display, selected_model, settings
+
+    def _active_console_settings_readiness(self) -> tuple[ConsoleSessionSettings, ConsoleSettingsReadiness]:
+        """Return effective settings plus Console-native readiness for display/send surfaces."""
+        settings = self._ensure_active_console_session_settings()
+        selection = self._build_console_provider_selection()
+        selected_model = selection.explicit_model or selection.configured_model
+        effective_settings = replace(settings, model=selected_model)
+        if not _has_selected_text(selected_model):
+            return effective_settings, ConsoleSettingsReadiness(
+                label="Missing model",
+                detail="Select a model before sending.",
+                native_send_supported=False,
+            )
+        readiness = build_console_settings_readiness(
+            effective_settings,
+            app_config=getattr(self.app_instance, "app_config", {}) or {},
+        )
+        return effective_settings, readiness
 
     def _ensure_console_chat_store(self) -> ConsoleChatStore:
         """Return the native Console chat store, creating it lazily."""
@@ -1190,16 +1205,13 @@ class ChatScreen(BaseAppScreen):
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleInspectorState:
         _provider_display, model, settings = self._active_console_provider_model_display()
+        _effective_settings, settings_readiness = self._active_console_settings_readiness()
         explicit_provider_ready = getattr(self.app_instance, "console_provider_ready", None)
-        readiness = get_provider_readiness(
+        provider_readiness = get_provider_readiness(
             settings.provider,
             getattr(self.app_instance, "app_config", {}) or {},
         )
-        provider_runtime_ready = (
-            bool(explicit_provider_ready)
-            if explicit_provider_ready is not None
-            else readiness.ready
-        )
+        provider_runtime_ready = settings_readiness.native_send_supported and explicit_provider_ready is not False
         model_selected = _has_selected_text(model)
         provider_ready = (
             provider_runtime_ready
@@ -1212,7 +1224,9 @@ class ChatScreen(BaseAppScreen):
                 if provider_runtime_ready and not model_selected
                 else "Select a provider and model before sending."
                 if explicit_provider_ready is False
-                else readiness.user_message
+                else provider_readiness.user_message
+                if provider_readiness.reason == "Missing API key"
+                else settings_readiness.detail
             )
         can_save_chatbook = bool(
             getattr(self.app_instance, "console_chatbook_artifact_available", False)
@@ -1301,12 +1315,6 @@ class ChatScreen(BaseAppScreen):
             f"Approvals {readiness_count(control_state.approvals_label)}"
         )
 
-    @staticmethod
-    def _lower_first_char(text: str) -> str:
-        if not text or (len(text) > 1 and text[0].isupper() and text[1].isupper()):
-            return text
-        return f"{text[0].lower()}{text[1:]}"
-
     def _console_provider_blocker_copy(self) -> str:
         """Return concise Console recovery copy for provider/model setup gaps."""
         provider, model, settings = self._active_console_provider_model_display()
@@ -1315,14 +1323,16 @@ class ChatScreen(BaseAppScreen):
         if not _has_selected_text(model):
             return "Provider setup needed: select a model -> Settings"
 
-        readiness = get_provider_readiness(
+        _effective_settings, settings_readiness = self._active_console_settings_readiness()
+        if settings_readiness.native_send_supported:
+            return ""
+        provider_readiness = get_provider_readiness(
             settings.provider,
             getattr(self.app_instance, "app_config", {}) or {},
         )
-        if readiness.ready:
-            return ""
-        reason = self._lower_first_char(readiness.reason)
-        return f"Provider setup needed: {provider} {reason}"
+        if provider_readiness.reason == "Missing API key":
+            return f"Provider setup needed: {provider} missing API key"
+        return f"Provider setup needed: {settings_readiness.detail}"
 
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
@@ -2448,16 +2458,7 @@ class ChatScreen(BaseAppScreen):
                     "Console send blocked: Library Search/RAG has no available evidence. "
                     "Review source authority before sending."
                 )
-        settings = self._ensure_active_console_session_settings()
-        selection = self._build_console_provider_selection()
-        selected_model = selection.explicit_model or selection.configured_model
-        if not _has_selected_text(selected_model):
-            return "Console send blocked: Select a model before sending."
-        readiness_settings = replace(settings, model=selected_model)
-        readiness = build_console_settings_readiness(
-            readiness_settings,
-            app_config=getattr(self.app_instance, "app_config", {}) or {},
-        )
+        _readiness_settings, readiness = self._active_console_settings_readiness()
         if not readiness.native_send_supported:
             return f"Console send blocked: {readiness.detail}"
         return ""

@@ -90,6 +90,17 @@ async def _wait_for_console_top_screen(host: ConsoleHarness, console, pilot) -> 
     raise AssertionError("Console settings modal did not dismiss")
 
 
+async def _press_new_console_tab(console, store, pilot) -> str:
+    previous_session_id = store.active_session_id
+    console.query_one("#console-new-chat-tab", Button).press()
+    for _ in range(40):
+        active_session_id = store.active_session_id
+        if active_session_id is not None and active_session_id != previous_session_id:
+            return active_session_id
+        await pilot.pause(0.05)
+    raise AssertionError("New Console tab did not activate")
+
+
 def _select_values(select: Select) -> set[str]:
     options = getattr(select, "options", None)
     if options is None:
@@ -691,9 +702,7 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
         store.replace_session_settings(first.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
         await console._sync_native_console_chat_ui()
 
-        await pilot.click("#console-new-chat-tab")
-        second_id = store.active_session_id
-        assert second_id is not None and second_id != first.id
+        second_id = await _press_new_console_tab(console, store, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
 
         console.query_one("#console-settings-open", Button).press()
@@ -730,9 +739,7 @@ async def test_console_settings_are_isolated_between_native_tabs() -> None:
         store.replace_session_settings(first.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
         await console._sync_native_console_chat_ui()
 
-        await pilot.click("#console-new-chat-tab")
-        second_id = store.active_session_id
-        assert second_id is not None and second_id != first.id
+        second_id = await _press_new_console_tab(console, store, pilot)
         console.query_one("#console-settings-open", Button).press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
         modal_screen.dismiss(ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
@@ -897,6 +904,72 @@ def test_console_readiness_uses_saved_session_settings_over_stale_global_provide
     assert provider_row.recovery == ""
 
 
+def test_console_saved_openai_with_key_still_shows_native_wip_readiness() -> None:
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "openai": {"api_key": "test-key", "model": "gpt-4.1"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+
+    summary_state = screen._build_console_settings_summary_state()
+    inspector_state = screen._build_console_inspector_state(None)
+    provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
+    blocker_copy = screen._console_provider_blocker_copy()
+
+    assert summary_state.readiness_label == "WIP"
+    assert provider_row.value == "blocked"
+    assert "Console native provider 'openai' is not wired yet." in provider_row.recovery
+    assert "Console native provider 'openai' is not wired yet." in blocker_copy
+    assert screen._console_send_blocked_reason() == (
+        "Console send blocked: Console native provider 'openai' is not wired yet."
+    )
+
+
+def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallback() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = None
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model=None))
+
+    summary_state = screen._build_console_settings_summary_state()
+
+    assert summary_state.readiness_label != "Ready"
+    assert "Missing model" in summary_state.model_row
+    assert screen._console_send_blocked_reason() == "Console send blocked: Select a model before sending."
+
+
+def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fallback() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = None
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099",
+            "model": "configured-model",
+        },
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model=None))
+
+    summary_state = screen._build_console_settings_summary_state()
+
+    assert summary_state.readiness_label == "Ready"
+    assert "Select a model before sending" not in summary_state.model_row
+
+
 @pytest.mark.asyncio
 async def test_console_new_native_tab_receives_default_settings_snapshot() -> None:
     app = _build_test_app()
@@ -917,11 +990,10 @@ async def test_console_new_native_tab_receives_default_settings_snapshot() -> No
         store = console._ensure_console_chat_store()
         first_id = store.ensure_session().id
 
-        await pilot.click("#console-new-chat-tab")
+        second_id = await _press_new_console_tab(console, store, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
 
-        second_id = store.active_session_id
-        assert second_id is not None and second_id != first_id
+        assert second_id != first_id
         settings = store.session_settings(second_id)
         assert settings is not None
         assert settings.provider == "llama_cpp"
