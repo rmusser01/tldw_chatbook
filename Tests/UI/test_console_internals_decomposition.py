@@ -1306,7 +1306,7 @@ async def test_console_provider_settings_action_hidden_when_provider_ready(monke
 
 
 @pytest.mark.asyncio
-async def test_console_provider_blocker_updates_without_transcript_recompose(monkeypatch):
+async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1318,13 +1318,18 @@ async def test_console_provider_blocker_updates_without_transcript_recompose(mon
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-provider-blocker")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        strip = console.query_one("#console-provider-recovery-strip")
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         await pilot.pause()
         blocker = console.query_one("#console-provider-blocker", Static)
 
-        assert blocker.styles.display != "none"
-        assert "choose a model" in str(blocker.renderable)
+        assert strip.styles.display == "none"
+        assert blocker.styles.display == "none"
+        assert str(blocker.renderable) == ""
+        assert "Provider setup needed: choose a model" not in _visible_text(console)
+        assert "Choose model" not in _visible_text(console)
 
         store.replace_session_settings(
             session.id,
@@ -1335,6 +1340,7 @@ async def test_console_provider_blocker_updates_without_transcript_recompose(mon
 
         assert blocker.styles.display == "none"
         assert str(blocker.renderable) == ""
+        assert strip.styles.display == "none"
 
         store.replace_session_settings(
             session.id,
@@ -1343,8 +1349,10 @@ async def test_console_provider_blocker_updates_without_transcript_recompose(mon
         console._sync_console_control_bar()
         await pilot.pause()
 
-        assert blocker.styles.display != "none"
-        assert "choose a model" in str(blocker.renderable)
+        assert blocker.styles.display == "none"
+        assert str(blocker.renderable) == ""
+        assert strip.styles.display == "none"
+        assert "Provider setup needed: choose a model" not in _visible_text(console)
 
 
 @pytest.mark.asyncio

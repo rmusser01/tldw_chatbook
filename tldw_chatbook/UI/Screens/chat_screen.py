@@ -1371,6 +1371,13 @@ class ChatScreen(BaseAppScreen):
             return ("Open Settings", "settings", f"Add an API key for {provider}")
         return ("Review settings", "console", "Review this Console session's settings")
 
+    def _console_provider_recovery_strip_visible(self, blocker_copy: str) -> bool:
+        """Return whether provider recovery needs a persistent transcript row."""
+        if not blocker_copy:
+            return False
+        action_label, _action_target, _action_tooltip = self._console_provider_recovery_action()
+        return action_label not in {"Choose provider", "Choose model"}
+
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
         if self._console_chat_store is not None:
@@ -1473,11 +1480,12 @@ class ChatScreen(BaseAppScreen):
             provider_blocker = self.query_one("#console-provider-blocker", Static)
         except QueryError:
             return
+        recovery_visible = self._console_provider_recovery_strip_visible(blocker_copy)
         self._configure_console_provider_recovery_strip(
             provider_strip,
             provider_blocker,
             blocker_copy,
-            visible=bool(blocker_copy),
+            visible=recovery_visible,
         )
         try:
             settings_button = self.query_one("#console-open-provider-settings", Button)
@@ -1486,7 +1494,7 @@ class ChatScreen(BaseAppScreen):
         action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
         self._configure_console_provider_settings_action(
             settings_button,
-            visible=bool(blocker_copy),
+            visible=recovery_visible,
             label=action_label,
             tooltip=action_tooltip,
         )
@@ -1874,6 +1882,9 @@ class ChatScreen(BaseAppScreen):
                     with transcript_region:
                         provider_blocker_copy = self._console_provider_blocker_copy()
                         guidance_visible = self._console_guidance_visible(provider_blocker_copy)
+                        recovery_visible = self._console_provider_recovery_strip_visible(
+                            provider_blocker_copy
+                        )
                         provider_action_label, _provider_action_target, provider_action_tooltip = (
                             self._console_provider_recovery_action()
                         )
@@ -1891,20 +1902,20 @@ class ChatScreen(BaseAppScreen):
                                 provider_recovery_strip,
                                 blocker,
                                 provider_blocker_copy,
-                                visible=bool(provider_blocker_copy),
+                                visible=recovery_visible,
                             )
                             yield blocker
                             provider_settings_action = Button(
                                 provider_action_label,
                                 id="console-open-provider-settings",
                                 classes="destination-action-button console-provider-settings-action",
-                                disabled=not bool(provider_blocker_copy),
+                                disabled=not recovery_visible,
                                 compact=True,
                                 variant="primary",
                             )
                             self._configure_console_provider_settings_action(
                                 provider_settings_action,
-                                visible=bool(provider_blocker_copy),
+                                visible=recovery_visible,
                                 label=provider_action_label,
                                 tooltip=provider_action_tooltip,
                             )

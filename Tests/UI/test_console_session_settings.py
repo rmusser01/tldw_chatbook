@@ -156,7 +156,7 @@ async def test_console_settings_summary_renders_four_rows_and_button() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_settings_summary_hides_button_when_setup_blocked() -> None:
+async def test_console_settings_summary_keeps_configure_button_when_setup_blocked() -> None:
     state = ConsoleSettingsSummaryState(
         model_row="Model: llama.cpp / Default (Missing model)",
         context_row="Context: unavailable",
@@ -170,7 +170,9 @@ async def test_console_settings_summary_hides_button_when_setup_blocked() -> Non
         await pilot.pause()
 
         assert "Missing model" in _visible_text(app)
-        assert not list(app.query("#console-settings-open"))
+        button = app.query_one("#console-settings-open", Button)
+        assert str(button.label) == "Configure"
+        assert button.tooltip == "Configure Console settings"
 
 
 def test_summary_state_appends_non_ready_readiness_to_model_row() -> None:
@@ -916,7 +918,7 @@ async def test_console_send_blocker_uses_saved_session_provider() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_missing_model_blocker_opens_console_settings_modal() -> None:
+async def test_console_missing_model_opens_console_settings_from_summary() -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = None
@@ -929,11 +931,14 @@ async def test_console_missing_model_blocker_opens_console_settings_modal() -> N
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-open")
         await _wait_for_selector(console, pilot, "#console-open-provider-settings")
 
-        button = console.query_one("#console-open-provider-settings", Button)
-        assert str(button.label) == "Choose model"
-        button.press()
+        recovery_button = console.query_one("#console-open-provider-settings", Button)
+        assert str(recovery_button.label) == "Choose model"
+        assert recovery_button.display is False
+
+        console.query_one("#console-settings-open", Button).press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
 
         assert modal_screen.query_one("#console-settings-provider", Select).value == "llama_cpp"
