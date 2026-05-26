@@ -86,7 +86,7 @@ def test_summary_state_appends_optional_sampling_fields_only_when_set() -> None:
     )
 
     assert without_optional.sampling_row == "Sampling: T 0.70, P 0.95"
-    assert with_optional.sampling_row == "Sampling: T 0.70, P 0.95, min_p 0.05, top_k 40, max 512"
+    assert with_optional.sampling_row == "Sampling: T 0.70, P 0.95, min_p 0.05, top_k 40, max_tokens 512"
 
 
 def test_summary_state_prefers_character_label_over_persona_label() -> None:

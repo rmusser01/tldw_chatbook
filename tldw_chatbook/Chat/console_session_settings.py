@@ -342,7 +342,7 @@ def build_console_settings_summary_state(
     if settings.top_k is not None:
         sampling_parts.append(f"top_k {settings.top_k}")
     if settings.max_tokens is not None:
-        sampling_parts.append(f"max {settings.max_tokens}")
+        sampling_parts.append(f"max_tokens {settings.max_tokens}")
 
     character_label = _string_value(settings.character_label)
     persona_label = _string_value(settings.persona_label) or "General"
