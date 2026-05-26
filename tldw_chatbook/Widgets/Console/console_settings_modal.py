@@ -43,8 +43,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
-        model_options = self._model_select_options(self._settings.provider, self._settings.model)
-        has_model_options = bool(model_options)
+        has_model_options = bool(self._configured_model_select_options(self._settings.provider))
+        model_options = (
+            self._model_select_options(self._settings.provider, self._settings.model)
+            if has_model_options
+            else []
+        )
         readiness = build_console_settings_readiness(self._settings, app_config=self._app_config)
 
         with Vertical(id="console-settings-modal"):
@@ -68,13 +72,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                     )
                 with Horizontal(classes="console-settings-modal-row"):
                     yield Static("Model", classes="console-settings-modal-label")
-                    yield Select(
+                    model_select = Select(
                         model_options or [(self._settings.model or "", self._settings.model or "")],
                         value=self._settings.model or "",
                         allow_blank=False,
                         id="console-settings-model-select",
                         disabled=not has_model_options,
                     )
+                    model_select.display = has_model_options
+                    yield model_select
                     model_input = Input(
                         value=self._settings.model or "",
                         id="console-settings-model-input",
@@ -197,7 +203,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         )
         readiness = build_console_settings_readiness(draft, app_config=self._app_config)
         self.query_one("#console-settings-readiness", Static).update(readiness.detail)
-        self._sync_model_controls(provider, model)
+        current_model = (
+            model
+            if self._configured_model_select_options(provider) or provider == self._settings.provider
+            else None
+        )
+        self._sync_model_controls(provider, current_model)
 
     def _build_draft(self) -> ConsoleSessionSettings:
         provider = str(self.query_one("#console-settings-provider", Select).value or "")
@@ -218,8 +229,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _sync_model_controls(self, provider: str, current_model: str | None) -> None:
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
-        model_options = self._model_select_options(provider, current_model)
-        if model_options:
+        if self._configured_model_select_options(provider):
+            model_options = self._model_select_options(provider, current_model)
             model_select.set_options(model_options)
             selected = current_model or str(model_options[0][1])
             model_select.value = selected
@@ -230,9 +241,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             return
 
         fallback = current_model or ""
-        model_select.set_options([(fallback, fallback)])
-        model_select.value = fallback
+        model_select.set_options([("", "")])
+        model_select.value = ""
         model_select.disabled = True
+        model_select.display = False
         model_input.value = fallback
         model_input.disabled = False
         model_input.display = True
@@ -247,6 +259,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         return [
             (option.label, option.value)
             for option in build_console_model_options(provider, self._providers_models, current_model)
+        ]
+
+    def _configured_model_select_options(self, provider: str) -> list[tuple[str, str]]:
+        return [
+            (option.label, option.value)
+            for option in build_console_model_options(provider, self._providers_models, None)
         ]
 
     def _current_model_value(self) -> str | None:

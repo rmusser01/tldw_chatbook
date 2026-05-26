@@ -329,3 +329,56 @@ async def test_console_settings_modal_provider_select_lists_all_configured_provi
 
         provider_values = _select_values(app.screen.query_one("#console-settings-provider", Select))
         assert {"custom", "llama_cpp", "openai"}.issubset(provider_values)
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_uses_model_input_without_configured_models() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="custom", model="freeform-model")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"custom": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_select.disabled is True
+        assert model_input.display is True
+        assert model_input.disabled is False
+        assert model_input.value == "freeform-model"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_change_to_no_models_switches_to_input() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"], "custom": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-provider", Select).value = "custom"
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_select.disabled is True
+        assert "model-a" not in _select_values(model_select)
+        assert model_input.display is True
+        assert model_input.disabled is False
+        assert model_input.value == ""
