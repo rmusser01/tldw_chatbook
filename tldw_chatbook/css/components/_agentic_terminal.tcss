@@ -103,6 +103,35 @@
     color: $ds-text-primary;
 }
 
+ConsoleSettingsModal {
+    align: center middle;
+}
+
+#console-settings-modal {
+    width: 92;
+    max-width: 95%;
+    height: auto;
+    max-height: 95%;
+    border: tall gray;
+    background: black;
+    padding: 1 2;
+}
+
+.console-settings-modal-section {
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+.console-settings-modal-row {
+    height: auto;
+    min-height: 1;
+}
+
+.console-settings-error {
+    height: auto;
+    color: red;
+}
+
 #home-dashboard,
 #console-shell,
 #library-shell,

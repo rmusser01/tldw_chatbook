@@ -1,0 +1,308 @@
+"""Console session settings modal."""
+
+from __future__ import annotations
+
+from typing import Mapping
+
+from textual import on
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Button, Checkbox, Input, Select, Static
+
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
+    build_console_model_options,
+    build_console_provider_options,
+    build_console_settings_readiness,
+    validate_console_session_settings,
+)
+
+
+class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
+    """Edit a draft of the current Console session settings."""
+
+    BINDINGS = [("escape", "dismiss", "Cancel")]
+
+    def __init__(
+        self,
+        *,
+        settings: ConsoleSessionSettings,
+        app_config: Mapping[str, object],
+        providers_models: Mapping[str, list[str]],
+        context_estimate: ConsoleSettingsContextEstimate,
+        can_save: bool,
+    ) -> None:
+        super().__init__()
+        self._settings = settings
+        self._app_config = app_config
+        self._providers_models = providers_models
+        self._context_estimate = context_estimate
+        self._can_save = can_save
+
+    def compose(self) -> ComposeResult:
+        provider_options = self._provider_select_options()
+        model_options = self._model_select_options(self._settings.provider, self._settings.model)
+        has_model_options = bool(model_options)
+        readiness = build_console_settings_readiness(self._settings, app_config=self._app_config)
+
+        with Vertical(id="console-settings-modal"):
+            yield Static("Console Settings", classes="console-transcript-action-row")
+            yield Static(
+                readiness.detail,
+                id="console-settings-readiness",
+                classes="console-settings-modal-row",
+                markup=False,
+            )
+
+            with Vertical(classes="console-settings-modal-section"):
+                yield Static("Provider and model", classes="destination-section")
+                with Horizontal(classes="console-settings-modal-row"):
+                    yield Static("Provider", classes="console-settings-modal-label")
+                    yield Select(
+                        provider_options,
+                        value=self._settings.provider,
+                        allow_blank=False,
+                        id="console-settings-provider",
+                    )
+                with Horizontal(classes="console-settings-modal-row"):
+                    yield Static("Model", classes="console-settings-modal-label")
+                    yield Select(
+                        model_options or [(self._settings.model or "", self._settings.model or "")],
+                        value=self._settings.model or "",
+                        allow_blank=False,
+                        id="console-settings-model-select",
+                        disabled=not has_model_options,
+                    )
+                    model_input = Input(
+                        value=self._settings.model or "",
+                        id="console-settings-model-input",
+                        disabled=has_model_options,
+                    )
+                    model_input.display = not has_model_options
+                    yield model_input
+                with Horizontal(classes="console-settings-modal-row"):
+                    yield Static("Base URL", classes="console-settings-modal-label")
+                    yield Input(value=self._settings.base_url or "", id="console-settings-base-url")
+
+            with Vertical(classes="console-settings-modal-section"):
+                yield Static("Sampling", classes="destination-section")
+                with Horizontal(classes="console-settings-modal-row"):
+                    yield Static("Temperature", classes="console-settings-modal-label")
+                    yield Input(
+                        value=self._format_value(self._settings.temperature),
+                        id="console-settings-temperature",
+                    )
+                with Horizontal(classes="console-settings-modal-row"):
+                    yield Static("Top P", classes="console-settings-modal-label")
+                    yield Input(value=self._format_value(self._settings.top_p), id="console-settings-top-p")
+                with Horizontal(classes="console-settings-modal-row"):
+                    yield Static("Min P", classes="console-settings-modal-label")
+                    yield Input(value=self._format_value(self._settings.min_p), id="console-settings-min-p")
+                with Horizontal(classes="console-settings-modal-row"):
+                    yield Static("Top K", classes="console-settings-modal-label")
+                    yield Input(value=self._format_value(self._settings.top_k), id="console-settings-top-k")
+                with Horizontal(classes="console-settings-modal-row"):
+                    yield Static("Max tokens", classes="console-settings-modal-label")
+                    yield Input(
+                        value=self._format_value(self._settings.max_tokens),
+                        id="console-settings-max-tokens",
+                    )
+                with Horizontal(classes="console-settings-modal-row"):
+                    yield Static("Streaming", classes="console-settings-modal-label")
+                    yield Checkbox(value=self._settings.streaming, id="console-settings-streaming")
+
+            with Vertical(classes="console-settings-modal-section"):
+                yield Static("Context", classes="destination-section")
+                yield Static(
+                    f"Current         {self._context_label()}",
+                    id="console-settings-context-current",
+                    classes="console-settings-modal-row",
+                    markup=False,
+                )
+                yield Static(
+                    f"Sources         {self._sources_label()}",
+                    id="console-settings-context-sources",
+                    classes="console-settings-modal-row",
+                    markup=False,
+                )
+                yield Static(
+                    "Estimate only; no truncation changes in this version.",
+                    id="console-settings-context-note",
+                    classes="console-settings-modal-row",
+                    markup=False,
+                )
+
+            with Vertical(classes="console-settings-modal-section"):
+                yield Static("Identity", classes="destination-section")
+                yield Static(
+                    f"Current         {self._identity_current_label()}",
+                    id="console-settings-identity-current",
+                    classes="console-settings-modal-row",
+                    markup=False,
+                )
+                yield Static(
+                    f"Persona         {self._persona_label()} [read-only]",
+                    id="console-settings-persona-readonly",
+                    classes="console-settings-modal-row",
+                    markup=False,
+                )
+                yield Static(
+                    f"Character       {self._character_label()} [read-only]",
+                    id="console-settings-character-readonly",
+                    classes="console-settings-modal-row",
+                    markup=False,
+                )
+
+            yield Static("", id="console-settings-error", classes="console-settings-error", markup=False)
+            with Horizontal(classes="console-settings-modal-row"):
+                yield Button("Cancel", id="console-settings-cancel")
+                yield Button("Save", id="console-settings-save", variant="primary", disabled=not self._can_save)
+
+    def action_dismiss(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#console-settings-cancel")
+    def _cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#console-settings-save")
+    def _save(self, event: Button.Pressed) -> None:
+        event.stop()
+        draft = self._build_draft()
+        errors = validate_console_session_settings(draft, app_config=self._app_config)
+        if errors:
+            self.query_one("#console-settings-error", Static).update("\n".join(errors))
+            return
+        self.dismiss(draft)
+
+    @on(Select.Changed, "#console-settings-provider")
+    def _provider_changed(self, event: Select.Changed) -> None:
+        provider = str(event.value or "")
+        model = self._current_model_value()
+        draft = ConsoleSessionSettings(
+            provider=provider,
+            model=model,
+            base_url=self.query_one("#console-settings-base-url", Input).value.strip() or None,
+            temperature=self._settings.temperature,
+            top_p=self._settings.top_p,
+            min_p=self._settings.min_p,
+            top_k=self._settings.top_k,
+            max_tokens=self._settings.max_tokens,
+            streaming=self.query_one("#console-settings-streaming", Checkbox).value,
+            persona_label=self._settings.persona_label,
+            character_label=self._settings.character_label,
+        )
+        readiness = build_console_settings_readiness(draft, app_config=self._app_config)
+        self.query_one("#console-settings-readiness", Static).update(readiness.detail)
+        self._sync_model_controls(provider, model)
+
+    def _build_draft(self) -> ConsoleSessionSettings:
+        provider = str(self.query_one("#console-settings-provider", Select).value or "")
+        return ConsoleSessionSettings(
+            provider=provider,
+            model=self._current_model_value(),
+            base_url=self.query_one("#console-settings-base-url", Input).value.strip() or None,
+            temperature=self._parse_float_input("console-settings-temperature", self._settings.temperature),
+            top_p=self._parse_float_input("console-settings-top-p", self._settings.top_p),
+            min_p=self._parse_optional_float_input("console-settings-min-p"),
+            top_k=self._parse_optional_int_input("console-settings-top-k"),
+            max_tokens=self._parse_optional_int_input("console-settings-max-tokens"),
+            streaming=self.query_one("#console-settings-streaming", Checkbox).value,
+            persona_label=self._settings.persona_label,
+            character_label=self._settings.character_label,
+        )
+
+    def _sync_model_controls(self, provider: str, current_model: str | None) -> None:
+        model_select = self.query_one("#console-settings-model-select", Select)
+        model_input = self.query_one("#console-settings-model-input", Input)
+        model_options = self._model_select_options(provider, current_model)
+        if model_options:
+            model_select.set_options(model_options)
+            selected = current_model or str(model_options[0][1])
+            model_select.value = selected
+            model_select.disabled = False
+            model_select.display = True
+            model_input.disabled = True
+            model_input.display = False
+            return
+
+        fallback = current_model or ""
+        model_select.set_options([(fallback, fallback)])
+        model_select.value = fallback
+        model_select.disabled = True
+        model_input.value = fallback
+        model_input.disabled = False
+        model_input.display = True
+
+    def _provider_select_options(self) -> list[tuple[str, str]]:
+        options = [(option.label, option.value) for option in build_console_provider_options(self._providers_models)]
+        if self._settings.provider and self._settings.provider not in {value for _, value in options}:
+            options.append((self._settings.provider, self._settings.provider))
+        return options or [(self._settings.provider, self._settings.provider)]
+
+    def _model_select_options(self, provider: str, current_model: str | None) -> list[tuple[str, str]]:
+        return [
+            (option.label, option.value)
+            for option in build_console_model_options(provider, self._providers_models, current_model)
+        ]
+
+    def _current_model_value(self) -> str | None:
+        model_select = self.query_one("#console-settings-model-select", Select)
+        model_input = self.query_one("#console-settings-model-input", Input)
+        if model_select.display and not model_select.disabled:
+            return str(model_select.value or "").strip() or None
+        return model_input.value.strip() or None
+
+    def _context_label(self) -> str:
+        label = self._context_estimate.label.strip() or "unknown"
+        return label if "token" in label.lower() else f"{label} tokens"
+
+    def _sources_label(self) -> str:
+        if self._context_estimate.staged_context_summary.strip():
+            return self._context_estimate.staged_context_summary.strip()
+        return "None"
+
+    def _identity_current_label(self) -> str:
+        persona = self._persona_label()
+        character = self._settings.character_label.strip()
+        return f"{persona} / {character}" if character else persona
+
+    def _persona_label(self) -> str:
+        return self._settings.persona_label.strip() or "General"
+
+    def _character_label(self) -> str:
+        return self._settings.character_label.strip() or "None"
+
+    @staticmethod
+    def _format_value(value: object) -> str:
+        return "" if value is None else str(value)
+
+    def _parse_float_input(self, input_id: str, fallback: float) -> object:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        if not raw_value:
+            return fallback
+        try:
+            return float(raw_value)
+        except ValueError:
+            return raw_value
+
+    def _parse_optional_float_input(self, input_id: str) -> object:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        if not raw_value:
+            return None
+        try:
+            return float(raw_value)
+        except ValueError:
+            return raw_value
+
+    def _parse_optional_int_input(self, input_id: str) -> object:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        if not raw_value:
+            return None
+        try:
+            return int(raw_value)
+        except ValueError:
+            return raw_value
