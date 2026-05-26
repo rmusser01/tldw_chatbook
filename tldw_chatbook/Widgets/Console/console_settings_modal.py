@@ -203,9 +203,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         )
         readiness = build_console_settings_readiness(draft, app_config=self._app_config)
         self.query_one("#console-settings-readiness", Static).update(readiness.detail)
+        configured_model_options = self._configured_model_select_options(provider)
+        configured_model_values = {value for _, value in configured_model_options}
         current_model = (
             model
-            if self._configured_model_select_options(provider) or provider == self._settings.provider
+            if (model and model in configured_model_values)
+            or (not configured_model_options and provider == self._settings.provider)
             else None
         )
         self._sync_model_controls(provider, current_model)

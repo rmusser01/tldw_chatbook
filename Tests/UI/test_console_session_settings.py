@@ -382,3 +382,34 @@ async def test_console_settings_modal_provider_change_to_no_models_switches_to_i
         assert model_input.display is True
         assert model_input.disabled is False
         assert model_input.value == ""
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_change_uses_target_provider_model() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-provider", Select).value = "openai"
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.disabled is False
+        assert model_select.value == "gpt-4.1"
+        assert "model-a" not in _select_values(model_select)
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "openai"
+    assert app.saved_settings.model == "gpt-4.1"
