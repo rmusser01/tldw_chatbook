@@ -33,6 +33,10 @@ from ...Chat.console_chat_models import (
     ConsoleWorkspaceContext,
     ConsoleStagedSource,
 )
+from ...Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    build_default_console_session_settings,
+)
 from ...Chat.console_chat_store import ConsoleChatStore
 from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
@@ -380,6 +384,16 @@ class ChatScreen(BaseAppScreen):
         value = config.get(key, {})
         return value if isinstance(value, dict) else {}
 
+    def _active_console_session_settings(self) -> ConsoleSessionSettings | None:
+        """Return settings for the active native Console session, if one exists."""
+        store = self._console_chat_store
+        if store is None or store.active_session_id is None:
+            return None
+        try:
+            return store.session_settings(store.active_session_id)
+        except KeyError:
+            return None
+
     def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
         """Return explicit workspace policy context for native Console sends."""
         workspace_id = "global"
@@ -424,6 +438,20 @@ class ChatScreen(BaseAppScreen):
         provider = provider_config_key(str(provider_value or "").strip()) or "llama_cpp"
         explicit_model = str(model_value).strip() if _has_selected_text(model_value) else None
         app_config = getattr(self.app_instance, "app_config", {}) or {}
+        active_settings = self._active_console_session_settings()
+        default_settings = build_default_console_session_settings(
+            app_config,
+            provider,
+            explicit_model,
+        )
+        selection_settings = active_settings or default_settings
+        if active_settings is not None:
+            provider = provider_config_key(active_settings.provider) or provider
+            explicit_model = (
+                str(active_settings.model).strip()
+                if _has_selected_text(active_settings.model)
+                else None
+            )
         api_settings = self._config_section(app_config, "api_settings")
         provider_config = self._config_section(api_settings, provider)
         console_config = self._config_section(app_config, "console")
@@ -440,7 +468,7 @@ class ChatScreen(BaseAppScreen):
 
         base_url: str | None = None
         if provider in {"llama_cpp", "local_llamacpp"}:
-            override_url = (
+            override_url = active_settings.base_url if active_settings is not None else (
                 os.environ.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
                 or console_config.get("llama_cpp_base_url_override")
                 or provider_config.get("api_url")
@@ -450,12 +478,20 @@ class ChatScreen(BaseAppScreen):
             base_url = self._normalize_llamacpp_base_url(
                 str(override_url) if override_url is not None else None
             )
+        elif active_settings is not None and _has_selected_text(active_settings.base_url):
+            base_url = str(active_settings.base_url).strip()
 
         return ConsoleProviderSelection(
             provider=provider,
             base_url=base_url,
             explicit_model=explicit_model,
             configured_model=configured_model,
+            temperature=selection_settings.temperature,
+            top_p=selection_settings.top_p,
+            min_p=selection_settings.min_p,
+            top_k=selection_settings.top_k,
+            max_tokens=selection_settings.max_tokens,
+            streaming=selection_settings.streaming,
             workspace_context=self._current_console_workspace_context(),
         )
 
@@ -492,6 +528,12 @@ class ChatScreen(BaseAppScreen):
                 model=selection.explicit_model,
                 configured_model=selection.configured_model,
                 base_url=selection.base_url,
+                temperature=selection.temperature,
+                top_p=selection.top_p,
+                min_p=selection.min_p,
+                top_k=selection.top_k,
+                max_tokens=selection.max_tokens,
+                streaming=selection.streaming,
             )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
@@ -501,10 +543,24 @@ class ChatScreen(BaseAppScreen):
         selection = self._build_console_provider_selection()
         self._ensure_console_chat_store().set_workspace_context(selection.workspace_context)
         if self._console_chat_controller is not None:
-            self._console_chat_controller.provider = selection.provider
-            self._console_chat_controller.model = selection.explicit_model
-            self._console_chat_controller.configured_model = selection.configured_model
-            self._console_chat_controller.base_url = selection.base_url
+            update_selection = getattr(
+                self._console_chat_controller,
+                "update_provider_selection",
+                None,
+            )
+            if callable(update_selection):
+                update_selection(selection)
+            else:
+                self._console_chat_controller.provider = selection.provider
+                self._console_chat_controller.model = selection.explicit_model
+                self._console_chat_controller.configured_model = selection.configured_model
+                self._console_chat_controller.base_url = selection.base_url
+                self._console_chat_controller.temperature = selection.temperature
+                self._console_chat_controller.top_p = selection.top_p
+                self._console_chat_controller.min_p = selection.min_p
+                self._console_chat_controller.top_k = selection.top_k
+                self._console_chat_controller.max_tokens = selection.max_tokens
+                self._console_chat_controller.streaming = selection.streaming
         return selection
 
     def _build_console_control_state(

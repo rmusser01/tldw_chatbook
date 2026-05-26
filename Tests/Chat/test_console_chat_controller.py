@@ -5,6 +5,7 @@ import pytest
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
+    ConsoleProviderSelection,
     ConsoleRunStatus,
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
@@ -170,6 +171,38 @@ def test_controller_creates_and_switches_sessions():
     controller.switch_session(first.id)
 
     assert store.active_session_id == first.id
+
+
+def test_update_provider_selection_updates_all_selection_fields() -> None:
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=StreamingGateway(),
+    )
+    selection = ConsoleProviderSelection(
+        provider="local_llamacpp",
+        base_url="http://127.0.0.1:9099",
+        explicit_model="runtime-model",
+        configured_model="configured-model",
+        temperature=0.2,
+        top_p=0.6,
+        min_p=0.04,
+        top_k=35,
+        max_tokens=256,
+        streaming=False,
+    )
+
+    controller.update_provider_selection(selection)
+
+    assert controller.provider == "local_llamacpp"
+    assert controller.model == "runtime-model"
+    assert controller.configured_model == "configured-model"
+    assert controller.base_url == "http://127.0.0.1:9099"
+    assert controller.temperature == 0.2
+    assert controller.top_p == 0.6
+    assert controller.min_p == 0.04
+    assert controller.top_k == 35
+    assert controller.max_tokens == 256
+    assert controller.streaming is False
 
 
 @pytest.mark.asyncio
