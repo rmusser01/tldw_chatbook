@@ -146,6 +146,17 @@ class ConsoleSettingsContextEstimate:
     staged_context_summary: str = ""
 
 
+@dataclass(frozen=True)
+class ConsoleSettingsSummaryState:
+    """Compact Console settings summary rows for right-rail display."""
+
+    model_row: str
+    context_row: str
+    sampling_row: str
+    identity_row: str
+    readiness_label: str = ""
+
+
 def build_console_provider_options(
     providers_models: Mapping[str, Sequence[str]],
 ) -> list[ConsoleSettingsOption]:
@@ -308,6 +319,41 @@ def build_console_settings_readiness(
         label="Not ready",
         detail=readiness.user_message,
         native_send_supported=False,
+    )
+
+
+def build_console_settings_summary_state(
+    settings: ConsoleSessionSettings,
+    context_estimate: ConsoleSettingsContextEstimate,
+    readiness: ConsoleSettingsReadiness,
+) -> ConsoleSettingsSummaryState:
+    """Build compact display rows for the Console settings summary widget."""
+    provider_label = _string_value(settings.provider) or "Unknown"
+    model_label = _string_value(settings.model) or "Default"
+    readiness_label = _string_value(readiness.label) or ""
+    readiness_suffix = "" if readiness_label in {"", "Ready"} else f" ({readiness_label})"
+
+    sampling_parts = [
+        f"T {_format_summary_float(settings.temperature)}",
+        f"P {_format_summary_float(settings.top_p)}",
+    ]
+    if settings.min_p is not None:
+        sampling_parts.append(f"min_p {_format_summary_float(settings.min_p)}")
+    if settings.top_k is not None:
+        sampling_parts.append(f"top_k {settings.top_k}")
+    if settings.max_tokens is not None:
+        sampling_parts.append(f"max {settings.max_tokens}")
+
+    character_label = _string_value(settings.character_label)
+    persona_label = _string_value(settings.persona_label) or "General"
+    identity_row = f"Character: {character_label}" if character_label else f"Persona: {persona_label}"
+
+    return ConsoleSettingsSummaryState(
+        model_row=f"Model: {provider_label} / {model_label}{readiness_suffix}",
+        context_row=f"Context: {context_estimate.label}",
+        sampling_row=f"Sampling: {', '.join(sampling_parts)}",
+        identity_row=identity_row,
+        readiness_label=readiness_label,
     )
 
 
@@ -573,3 +619,7 @@ def _string_value(value: object) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _format_summary_float(value: float) -> str:
+    return f"{float(value):.2f}"

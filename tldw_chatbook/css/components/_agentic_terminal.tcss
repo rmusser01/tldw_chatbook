@@ -490,6 +490,24 @@
     min-height: 1;
 }
 
+.console-settings-summary {
+    height: auto;
+    min-height: 7;
+    padding: 0 1;
+}
+
+.console-settings-row {
+    height: 1;
+    min-height: 1;
+    text-overflow: ellipsis;
+}
+
+#console-settings-open {
+    width: 100%;
+    height: 1;
+    margin: 1 0 0 0;
+}
+
 #console-transcript-region,
 #console-session-surface {
     height: 1fr;
