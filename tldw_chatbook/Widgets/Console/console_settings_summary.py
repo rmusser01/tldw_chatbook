@@ -56,8 +56,8 @@ class ConsoleSettingsSummary(Vertical):
         )
         if self.state.readiness_label in {"", "Ready"}:
             yield Button(
-                "Settings",
+                "Configure",
                 id="console-settings-open",
-                tooltip="Open Console settings",
+                tooltip="Configure Console settings",
                 compact=True,
             )

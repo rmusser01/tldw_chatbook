@@ -121,13 +121,9 @@ class ConsoleSessionSurface(Vertical):
             await tab_strip.mount(self._build_new_tab_button())
 
     def sync_inline_guidance(self, *, visible: bool, copy: str = "") -> None:
-        """Render compact first-run guidance without adding a separate row."""
+        """Keep guidance out of the persistent transcript title."""
         try:
             title = self.query_one("#console-transcript-title", Static)
         except Exception:
-            return
-        guidance = " ".join(str(copy or "").split())
-        if visible and guidance:
-            title.update(f"{CONSOLE_TRANSCRIPT_TITLE} | {guidance}")
             return
         title.update(CONSOLE_TRANSCRIPT_TITLE)

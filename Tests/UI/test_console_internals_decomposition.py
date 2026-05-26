@@ -223,6 +223,17 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    height: 0;\n"
             "    min-height: 0;"
         ) in css
+        assert (
+            ".console-left-rail-section.console-settings-summary {\n"
+            "    margin: 1 0;\n"
+            "    padding: 1 1;\n"
+            "    border-top: solid $ds-grid-line;\n"
+            "    border-bottom: solid $ds-grid-line;"
+        ) in css
+        assert (
+            "#console-composer-actions {\n"
+            "    width: 37;"
+        ) in css
 
 
 @pytest.mark.asyncio
@@ -279,7 +290,7 @@ async def test_console_mode_bar_groups_location_mode_and_readiness():
         assert title_plain == "Console | Live agent control, chat, RAG, tools, approvals | Local"
         assert (
             mode_plain
-            == "Mode: Chat / RAG / Run Follow | Assistant: General | Readiness: Sources 0, Tools 0, Approvals 0"
+            == "Chat | RAG | Run Follow | Assistant General | Sources 0 | Tools 0 | Approvals 0"
         )
 
 
@@ -296,7 +307,7 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         assert "Send" in text
         assert "Stop" in text
         assert "Attach" in text
-        assert "Save Chatbook" in text
+        assert "Save" in text
         send_controls = [
             button
             for button in console.query(Button)
@@ -352,8 +363,8 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert str(send_button.label) == "Send"
         assert str(stop_button.label) == "Stop"
         assert str(attach_button.label) == "Attach"
-        assert str(save_button.label) == "Save Chatbook"
-        assert save_button.region.width >= 20
+        assert str(save_button.label) == "Save"
+        assert save_button.region.width >= len("Save")
         assert legacy_inputs == []
 
 
@@ -516,6 +527,36 @@ async def test_console_composer_ranks_actions_by_current_availability():
         assert not save_button.has_class("console-action-disabled")
         assert not save_button.has_class("console-action-subdued")
         assert not save_button.has_class("console-action-primary")
+
+
+@pytest.mark.asyncio
+async def test_console_composer_actions_remain_visible_inside_composer_bounds():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.pause(0.1)
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        actions = composer.query_one("#console-composer-actions")
+        send_button = composer.query_one("#console-send-message", Button)
+        stop_button = composer.query_one("#console-stop-generation", Button)
+        attach_button = composer.query_one("#console-attach-context", Button)
+        save_button = composer.query_one("#console-save-chatbook", Button)
+
+        composer_right = composer.region.x + composer.region.width
+        assert actions.region.x > visible_draft.region.x
+        assert actions.region.x + actions.region.width <= composer_right
+        for button in (send_button, stop_button, attach_button, save_button):
+            assert button.display is True
+            assert button.region.x + button.region.width <= composer_right
+
+        assert str(save_button.label) == "Save"
+        assert save_button.tooltip == "No Chatbook artifact is available to save yet."
 
 
 @pytest.mark.asyncio
@@ -1159,7 +1200,7 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "Provider setup needed",
             "OpenAI missing API key",
             "Settings",
-            "No messages yet.",
+            "Ready. Ask a question, run a command, or attach context.",
             "Ask, command, or paste task...",
         ):
             assert expected in text
@@ -1327,7 +1368,7 @@ async def test_console_inline_guidance_does_not_reserve_transcript_space():
         start_copy = getattr(start_here.render(), "plain", str(start_here.render()))
         title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
         assert start_copy == ""
-        assert title_copy == "Transcript / Event Stream | Ask in Composer. Attach as needed."
+        assert title_copy == "Transcript / Event Stream"
 
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
@@ -1356,7 +1397,7 @@ async def test_console_inline_guidance_disappears_after_user_starts_typing():
         transcript_title = console.query_one("#console-transcript-title", Static)
 
         title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
-        assert title_copy == "Transcript / Event Stream | Ask in Composer. Attach as needed."
+        assert title_copy == "Transcript / Event Stream"
 
         await pilot.press("h")
         await pilot.pause(0.1)
@@ -1452,7 +1493,7 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         assert transcript.region.height > 0
         assert transcript.styles.display != "none"
         text = _visible_text(console)
-        assert "No messages yet." in text
+        assert "Ready. Ask a question, run a command, or attach context." in text
         assert "No messages yet. Send a prompt or attach context." not in text
 
 
@@ -1472,7 +1513,7 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         assert len(empty_rows) == 1
         empty_row = empty_rows[0]
         empty_text = getattr(empty_row.render(), "plain", str(empty_row.render()))
-        assert empty_text == "No messages yet. Composer ready."
+        assert empty_text == "Ready. Ask a question, run a command, or attach context."
         assert "No messages yet. Send a prompt or attach context." not in empty_text
         assert empty_row.region.y == tab_strip.region.y + tab_strip.region.height
 

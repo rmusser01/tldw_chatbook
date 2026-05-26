@@ -660,6 +660,8 @@ class ConsoleComposerBar(Horizontal):
             classes="console-command-visible-text",
         )
         visible_draft.can_focus = True
+        visible_draft.styles.width = "1fr"
+        visible_draft.styles.min_width = 0
         yield visible_draft
         command_input = Input(
             value="",
@@ -687,32 +689,40 @@ class ConsoleComposerBar(Horizontal):
         status.styles.height = 0
         status.styles.min_height = 0
         yield status
-        yield self._bounded_button(
-            "Send",
-            width=8,
-            id="console-send-message",
-            classes="destination-action-button console-send-button",
-            variant="primary",
-            tooltip="Send the active Console session draft.",
-        )
-        yield self._bounded_button(
-            "Stop",
-            width=8,
-            id="console-stop-generation",
-            classes="destination-action-button console-stop-button",
-            tooltip="Stop generation in the active Console session.",
-        )
-        yield self._bounded_button(
-            "Attach",
-            width=10,
-            id="console-attach-context",
-            classes="destination-action-button console-attach-button",
-            tooltip="Attach files or context through the active Console session.",
-        )
-        yield self._bounded_button(
-            "Save Chatbook",
-            width=22,
-            id="console-save-chatbook",
-            classes="destination-action-button console-save-chatbook-button",
-            tooltip="Compatibility adapter: save Chatbook export is still owned by Artifacts/Chatbooks.",
-        )
+        actions = Horizontal(id="console-composer-actions", classes="console-composer-actions")
+        actions.styles.width = 37
+        actions.styles.min_width = 37
+        actions.styles.max_width = 37
+        actions.styles.height = 1
+        actions.styles.min_height = 1
+        actions.styles.max_height = 1
+        with actions:
+            yield self._bounded_button(
+                "Send",
+                width=8,
+                id="console-send-message",
+                classes="destination-action-button console-send-button",
+                variant="primary",
+                tooltip="Send the active Console session draft.",
+            )
+            yield self._bounded_button(
+                "Stop",
+                width=8,
+                id="console-stop-generation",
+                classes="destination-action-button console-stop-button",
+                tooltip="Stop generation in the active Console session.",
+            )
+            yield self._bounded_button(
+                "Attach",
+                width=10,
+                id="console-attach-context",
+                classes="destination-action-button console-attach-button",
+                tooltip="Attach files or context through the active Console session.",
+            )
+            yield self._bounded_button(
+                "Save",
+                width=8,
+                id="console-save-chatbook",
+                classes="destination-action-button console-save-chatbook-button",
+                tooltip="Open the available Chatbook artifact in Artifacts.",
+            )

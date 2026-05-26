@@ -611,6 +611,14 @@ ConsoleSettingsModal Select {
     padding: 0 1;
 }
 
+.console-left-rail-section.console-settings-summary {
+    margin: 1 0;
+    padding: 1 1;
+    border-top: solid $ds-grid-line;
+    border-bottom: solid $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
 .console-settings-row {
     height: 1;
     min-height: 1;
@@ -734,6 +742,16 @@ ConsoleSettingsModal Select {
 #console-command-visible-text:focus {
     background: $ds-surface-raised;
     color: $ds-text-primary;
+}
+
+#console-composer-actions {
+    width: 37;
+    min-width: 37;
+    max-width: 37;
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    align: right middle;
 }
 
 #console-command-input {
@@ -945,8 +963,8 @@ ConsoleSettingsModal Select {
 }
 
 #console-save-chatbook {
-    width: 22;
-    min-width: 22;
+    width: 8;
+    min-width: 8;
 }
 
 .console-action-primary {

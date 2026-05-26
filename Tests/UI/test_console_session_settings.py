@@ -150,7 +150,9 @@ async def test_console_settings_summary_renders_four_rows_and_button() -> None:
         assert "Context: 12 / 4k" in text
         assert "Sampling: T 0.70, P 0.95" in text
         assert "Persona: General" in text
-        assert app.query_one("#console-settings-open", Button).tooltip == "Open Console settings"
+        button = app.query_one("#console-settings-open", Button)
+        assert str(button.label) == "Configure"
+        assert button.tooltip == "Configure Console settings"
 
 
 @pytest.mark.asyncio
