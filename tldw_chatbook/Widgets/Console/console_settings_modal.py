@@ -182,7 +182,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _save(self, event: Button.Pressed) -> None:
         event.stop()
         draft = self._build_draft()
-        errors = validate_console_session_settings(draft, app_config=self._app_config)
+        errors = [
+            *self._required_sampling_errors(),
+            *validate_console_session_settings(draft, app_config=self._app_config),
+        ]
         if errors:
             self.query_one("#console-settings-error", Static).update("\n".join(errors))
             return
@@ -326,6 +329,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             return float(raw_value)
         except ValueError:
             return raw_value
+
+    def _required_sampling_errors(self) -> list[str]:
+        errors: list[str] = []
+        if not self.query_one("#console-settings-temperature", Input).value.strip():
+            errors.append("Temperature is required.")
+        if not self.query_one("#console-settings-top-p", Input).value.strip():
+            errors.append("Top P is required.")
+        return errors
 
     def _parse_optional_float_input(self, input_id: str) -> object:
         raw_value = self.query_one(f"#{input_id}", Input).value.strip()

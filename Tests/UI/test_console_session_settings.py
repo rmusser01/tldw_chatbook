@@ -245,6 +245,60 @@ async def test_console_settings_modal_invalid_temperature_stays_open_and_renders
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_blank_temperature_stays_open_and_renders_error() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a", temperature=0.7)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-temperature", Input).value = ""
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert app.screen.query_one("#console-settings-modal") is not None
+        assert "Temperature is required." in str(app.screen.query_one("#console-settings-error", Static).renderable)
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_blank_top_p_stays_open_and_renders_error() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a", top_p=0.95)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-top-p", Input).value = ""
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert app.screen.query_one("#console-settings-modal") is not None
+        assert "Top P is required." in str(app.screen.query_one("#console-settings-error", Static).renderable)
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_save_disabled_when_cannot_save() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
