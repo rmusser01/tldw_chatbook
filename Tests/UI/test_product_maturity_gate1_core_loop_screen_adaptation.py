@@ -208,9 +208,10 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
         assert len(console.query("#chat-window")) == 0
         text = _visible_text(console)
         assert "Console" in text
-        assert "Live work" in text
+        assert "Transcript / Event Stream" in text
         assert "Staged Context" in text
-        assert "Run Inspector" in text
+        assert "Console Settings" in text
+        assert "Inspector" in text
 
 
 @pytest.mark.asyncio
