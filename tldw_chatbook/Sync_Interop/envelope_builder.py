@@ -79,6 +79,26 @@ class SyncEnvelopeBuilder:
             entity_version=entity_version,
         )
 
+    def build_note_delete(
+        self,
+        *,
+        note_id: str,
+        base_version: str | int | None = None,
+        entity_version: str | int | None = None,
+    ) -> SyncV2Envelope:
+        clear = {"deleted": True}
+        return self._clear_envelope(
+            domain="notes",
+            entity_id=note_id,
+            operation="delete",
+            stable_key=note_id,
+            payload_clear=clear,
+            routing_metadata={"entity_kind": "note"},
+            payload_hash=self._payload_hash(clear),
+            base_version=base_version,
+            entity_version=entity_version,
+        )
+
     def build_chat_message(
         self,
         *,
@@ -204,6 +224,7 @@ class SyncEnvelopeBuilder:
         payload_clear: Mapping[str, Any],
         routing_metadata: Mapping[str, Any],
         payload_hash: str,
+        base_version: str | int | None = None,
         entity_version: str | int | None = None,
         encryption_policy: str = "client_private_v1",
     ) -> SyncV2Envelope:
@@ -216,6 +237,7 @@ class SyncEnvelopeBuilder:
             operation=operation,
             adapter_version=self.adapter_version,
             stable_key=stable_key,
+            base_version=base_version,
             entity_version=entity_version or payload_hash,
             routing_metadata=dict(routing_metadata),
             payload_clear=dict(payload_clear),
