@@ -449,7 +449,6 @@ class ChatScreen(BaseAppScreen):
         provider_key = provider_config_key(settings.provider)
         return replace(
             settings,
-            model=settings.model if _has_selected_text(model) else None,
             base_url=None if provider_key in {"llama_cpp", "local_llamacpp"} else settings.base_url,
         )
 
@@ -572,6 +571,7 @@ class ChatScreen(BaseAppScreen):
         """Return the effective native Console provider selection for sends."""
         app_config = getattr(self.app_instance, "app_config", {}) or {}
         selection_settings = self._ensure_active_console_session_settings()
+        _legacy_provider, legacy_model = self._effective_console_provider_model()
         provider = provider_config_key(selection_settings.provider) or "llama_cpp"
         explicit_model = (
             str(selection_settings.model).strip()
@@ -591,6 +591,8 @@ class ChatScreen(BaseAppScreen):
             if _has_selected_text(configured_model_value)
             else None
         )
+        if not _has_selected_text(legacy_model) and explicit_model == configured_model:
+            explicit_model = None
 
         base_url: str | None = None
         if provider in {"llama_cpp", "local_llamacpp"}:
@@ -621,6 +623,17 @@ class ChatScreen(BaseAppScreen):
             streaming=selection_settings.streaming,
             workspace_context=self._current_console_workspace_context(),
         )
+
+    def _active_console_provider_model_display(self) -> tuple[str, str | None, ConsoleSessionSettings]:
+        """Return provider/model labels backed by active session settings."""
+        settings = self._ensure_active_console_session_settings()
+        selection = self._build_console_provider_selection()
+        legacy_provider, _legacy_model = self._effective_console_provider_model()
+        provider_display = selection.provider
+        if provider_config_key(str(legacy_provider or "")) == selection.provider and _has_selected_text(legacy_provider):
+            provider_display = str(legacy_provider).strip()
+        selected_model = selection.explicit_model or selection.configured_model
+        return provider_display, selected_model, settings
 
     def _ensure_console_chat_store(self) -> ConsoleChatStore:
         """Return the native Console chat store, creating it lazily."""
@@ -695,7 +708,7 @@ class ChatScreen(BaseAppScreen):
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleControlState:
         """Build Console-owned control/readiness labels."""
-        provider, model = self._effective_console_provider_model()
+        provider, model, _settings = self._active_console_provider_model_display()
         source = pending_launch.source if pending_launch else None
         return ConsoleControlState.from_values(
             provider=provider,
@@ -1176,10 +1189,10 @@ class ChatScreen(BaseAppScreen):
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleInspectorState:
-        provider, model = self._effective_console_provider_model()
+        _provider_display, model, settings = self._active_console_provider_model_display()
         explicit_provider_ready = getattr(self.app_instance, "console_provider_ready", None)
         readiness = get_provider_readiness(
-            str(provider or ""),
+            settings.provider,
             getattr(self.app_instance, "app_config", {}) or {},
         )
         provider_runtime_ready = (
@@ -1296,20 +1309,20 @@ class ChatScreen(BaseAppScreen):
 
     def _console_provider_blocker_copy(self) -> str:
         """Return concise Console recovery copy for provider/model setup gaps."""
-        provider, model = self._effective_console_provider_model()
+        provider, model, settings = self._active_console_provider_model_display()
         if not _has_selected_text(provider):
             return "Provider setup needed: select a provider -> Settings"
         if not _has_selected_text(model):
             return "Provider setup needed: select a model -> Settings"
 
         readiness = get_provider_readiness(
-            str(provider),
+            settings.provider,
             getattr(self.app_instance, "app_config", {}) or {},
         )
         if readiness.ready:
             return ""
         reason = self._lower_first_char(readiness.reason)
-        return f"Provider setup needed: {readiness.provider} {reason}"
+        return f"Provider setup needed: {provider} {reason}"
 
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
@@ -3719,7 +3732,9 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-new-chat-tab":
             event.stop()
-            self._ensure_console_chat_controller().new_session()
+            self._ensure_console_chat_controller().new_session(
+                settings=self._default_console_session_settings(),
+            )
             await self._sync_native_console_chat_ui()
             return
         if button_id and button_id.startswith("console-close-session-tab-"):

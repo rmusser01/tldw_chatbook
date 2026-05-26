@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
 
@@ -115,10 +116,18 @@ class ConsoleChatController:
             assistant_message_id=assistant.id,
         )
 
-    def new_session(self, *, title: str | None = None) -> ConsoleChatSession:
+    def new_session(
+        self,
+        *,
+        title: str | None = None,
+        settings: ConsoleSessionSettings | None = None,
+    ) -> ConsoleChatSession:
         """Create and activate a new native Console session."""
         next_number = len(self.store.sessions()) + 1
-        return self.store.create_session(title=title or f"Chat {next_number}")
+        return self.store.create_session(
+            title=title or f"Chat {next_number}",
+            settings=settings,
+        )
 
     def update_provider_selection(self, selection: ConsoleProviderSelection) -> None:
         """Sync controller provider settings from a Console selection."""

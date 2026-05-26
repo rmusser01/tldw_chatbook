@@ -10,6 +10,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
 
@@ -171,6 +172,17 @@ def test_controller_creates_and_switches_sessions():
     controller.switch_session(first.id)
 
     assert store.active_session_id == first.id
+
+
+def test_controller_new_session_accepts_settings_snapshot() -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="configured-model")
+
+    session = controller.new_session(title="Configured", settings=settings)
+
+    assert store.active_session_id == session.id
+    assert store.session_settings(session.id) == settings
 
 
 def test_update_provider_selection_updates_all_selection_fields() -> None:

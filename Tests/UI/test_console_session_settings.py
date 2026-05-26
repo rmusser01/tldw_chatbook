@@ -15,6 +15,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsSummaryState,
     build_console_settings_summary_state,
 )
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
 from tldw_chatbook.Widgets.Console.console_settings_summary import ConsoleSettingsSummary
 
@@ -851,3 +852,77 @@ async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None
 
         assert "Console send blocked: Select a model before sending." in _screen_visible_text(console)
         assert composer.draft_text() == "hello"
+
+
+def test_console_default_settings_keep_configured_model_without_legacy_model() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = None
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099/v1",
+            "model": "configured-model",
+        },
+    }
+    screen = ChatScreen(app)
+
+    settings = screen._default_console_session_settings()
+
+    assert settings.provider == "llama_cpp"
+    assert settings.model == "configured-model"
+
+
+def test_console_readiness_uses_saved_session_settings_over_stale_global_provider() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-4.1"
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099/v1", "model": "local-model"},
+        "openai": {},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model="local-model"))
+
+    control_state = screen._build_console_control_state(None)
+    inspector_state = screen._build_console_inspector_state(None)
+    provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
+
+    assert screen._console_provider_blocker_copy() == ""
+    assert control_state.provider_label == "Provider: llama_cpp"
+    assert control_state.model_label == "Model: local-model"
+    assert provider_row.value == "ready"
+    assert provider_row.recovery == ""
+
+
+@pytest.mark.asyncio
+async def test_console_new_native_tab_receives_default_settings_snapshot() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = None
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099/v1",
+            "model": "configured-model",
+        },
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-chat-tab")
+        store = console._ensure_console_chat_store()
+        first_id = store.ensure_session().id
+
+        await pilot.click("#console-new-chat-tab")
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        second_id = store.active_session_id
+        assert second_id is not None and second_id != first_id
+        settings = store.session_settings(second_id)
+        assert settings is not None
+        assert settings.provider == "llama_cpp"
+        assert settings.model == "configured-model"
