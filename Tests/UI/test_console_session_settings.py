@@ -1,0 +1,1000 @@
+import pytest
+from textual.app import App, ComposeResult
+from textual.widgets import Button, Input, Select, Static
+
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+    _visible_text as _screen_visible_text,
+)
+from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
+    ConsoleSettingsReadiness,
+    ConsoleSettingsSummaryState,
+    build_console_settings_summary_state,
+)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+from tldw_chatbook.Widgets.Console.console_settings_summary import ConsoleSettingsSummary
+
+
+class SummaryHarness(App[None]):
+    CSS = """
+    Screen {
+        layout: vertical;
+    }
+    """
+
+    def __init__(self, state: ConsoleSettingsSummaryState) -> None:
+        super().__init__()
+        self.state = state
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleSettingsSummary(self.state)
+
+
+class ModalHarness(App[None]):
+    CSS = """
+    Screen {
+        layout: vertical;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.app_config = {
+            "api_settings": {
+                "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+                "openai": {"api_key": "test-key"},
+            },
+        }
+        self.saved_settings: ConsoleSessionSettings | None = None
+
+    def capture_saved_settings(self, settings: ConsoleSessionSettings | None) -> None:
+        self.saved_settings = settings
+
+
+def _visible_text(app: App[None]) -> str:
+    return " ".join(str(widget.renderable) for widget in app.screen.query(Static))
+
+
+def _summary_text(console) -> str:
+    summary = console.query_one("#console-settings-summary")
+    return " ".join(
+        getattr(widget.renderable, "plain", str(widget.renderable))
+        for widget in summary.query(Static)
+        if widget.display and hasattr(widget, "renderable")
+    )
+
+
+async def _wait_for_console_settings_modal(host: ConsoleHarness, pilot):
+    for _ in range(40):
+        if (
+            host.screen_stack
+            and host.screen_stack[-1].query("#console-settings-modal")
+            and host.screen_stack[-1].query("#console-settings-provider")
+        ):
+            await pilot.pause()
+            return host.screen_stack[-1]
+        await pilot.pause(0.05)
+    raise AssertionError("Console settings modal did not open")
+
+
+async def _wait_for_console_top_screen(host: ConsoleHarness, console, pilot) -> None:
+    for _ in range(40):
+        if host.screen_stack and host.screen_stack[-1] is console:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("Console settings modal did not dismiss")
+
+
+async def _press_new_console_tab(console, store, pilot) -> str:
+    previous_session_id = store.active_session_id
+    console.query_one("#console-new-chat-tab", Button).press()
+    for _ in range(40):
+        active_session_id = store.active_session_id
+        if active_session_id is not None and active_session_id != previous_session_id:
+            return active_session_id
+        await pilot.pause(0.05)
+    raise AssertionError("New Console tab did not activate")
+
+
+def _select_values(select: Select) -> set[str]:
+    options = getattr(select, "options", None)
+    if options is None:
+        options = getattr(select, "_options", [])
+    values: set[str] = set()
+    for option in options:
+        value = getattr(option, "value", None)
+        if value is None and isinstance(option, tuple) and len(option) >= 2:
+            value = option[1]
+        if value is not None:
+            values.add(str(value))
+    return values
+
+
+@pytest.mark.asyncio
+async def test_console_settings_summary_renders_four_rows_and_button() -> None:
+    state = ConsoleSettingsSummaryState(
+        model_row="Model: llama.cpp / model-a",
+        context_row="Context: 12 / 4k",
+        sampling_row="Sampling: T 0.70, P 0.95",
+        identity_row="Persona: General",
+        readiness_label="Ready",
+    )
+
+    app = SummaryHarness(state)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+
+        text = _visible_text(app)
+        assert "Console Settings" in text
+        assert "Model: llama.cpp / model-a" in text
+        assert "Context: 12 / 4k" in text
+        assert "Sampling: T 0.70, P 0.95" in text
+        assert "Persona: General" in text
+        assert app.query_one("#console-settings-open", Button).tooltip == "Open Console settings"
+
+
+def test_summary_state_appends_non_ready_readiness_to_model_row() -> None:
+    state = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsReadiness(label="WIP", detail="Provider not wired yet.", native_send_supported=False),
+    )
+
+    assert state.model_row == "Model: llama_cpp / model-a (WIP)"
+    assert state.readiness_label == "WIP"
+
+
+def test_summary_state_appends_optional_sampling_fields_only_when_set() -> None:
+    without_optional = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a", temperature=0.7, top_p=0.95),
+        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+    )
+    with_optional = build_console_settings_summary_state(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            temperature=0.7,
+            top_p=0.95,
+            min_p=0.05,
+            top_k=40,
+            max_tokens=512,
+        ),
+        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+    )
+
+    assert without_optional.sampling_row == "Sampling: T 0.70, P 0.95"
+    assert with_optional.sampling_row == "Sampling: T 0.70, P 0.95, min_p 0.05, top_k 40, max_tokens 512"
+
+
+def test_summary_state_preserves_prefixed_context_label() -> None:
+    state = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        ConsoleSettingsContextEstimate(used_tokens=None, token_limit=None, label="Context: unknown"),
+        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+    )
+
+    assert state.context_row == "Context: unknown"
+
+
+def test_summary_state_prefers_character_label_over_persona_label() -> None:
+    character = build_console_settings_summary_state(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="model-a",
+            persona_label="General",
+            character_label="Ada",
+        ),
+        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+    )
+    persona = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a", persona_label="Mentor"),
+        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+    )
+    fallback = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a", persona_label=""),
+        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+    )
+
+    assert character.identity_row == "Character: Ada"
+    assert persona.identity_row == "Persona: Mentor"
+    assert fallback.identity_row == "Persona: General"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_cancel_discards_draft() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    app.saved_settings = ConsoleSessionSettings(provider="openai", model="should-clear")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a", "model-b"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    used_tokens=10,
+                    token_limit=4096,
+                    label="10 / 4k",
+                ),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        await pilot.click("#console-settings-cancel")
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_escape_dismisses_none() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    app.saved_settings = ConsoleSessionSettings(provider="openai", model="should-clear")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        await pilot.press("escape")
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_save_returns_validated_settings() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleSettingsModal(
+            settings=settings,
+            app_config=app.app_config,
+            providers_models={"llama_cpp": ["model-a", "model-b"]},
+            context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+            can_save=True,
+        )
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+        app.screen.query_one("#console-settings-temperature", Input).value = "0.42"
+        app.screen.query_one("#console-settings-top-p", Input).value = "0.88"
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "llama_cpp"
+    assert app.saved_settings.model == "model-a"
+    assert app.saved_settings.temperature == 0.42
+    assert app.saved_settings.top_p == 0.88
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_invalid_temperature_stays_open_and_renders_error() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-temperature", Input).value = "3.0"
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert app.screen.query_one("#console-settings-modal") is not None
+        assert "Temperature must be between 0 and 2." in str(
+            app.screen.query_one("#console-settings-error", Static).renderable
+        )
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_blank_temperature_stays_open_and_renders_error() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a", temperature=0.7)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-temperature", Input).value = ""
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert app.screen.query_one("#console-settings-modal") is not None
+        assert "Temperature is required." in str(app.screen.query_one("#console-settings-error", Static).renderable)
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_blank_top_p_stays_open_and_renders_error() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a", top_p=0.95)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-top-p", Input).value = ""
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert app.screen.query_one("#console-settings-modal") is not None
+        assert "Top P is required." in str(app.screen.query_one("#console-settings-error", Static).renderable)
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_save_disabled_when_cannot_save() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=False,
+            )
+        )
+        await pilot.pause()
+
+        assert app.screen.query_one("#console-settings-save", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_renders_context_and_identity_read_only_rows() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        persona_label="Planner",
+        character_label="Ada",
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    10,
+                    4096,
+                    "10 / 4k",
+                    staged_source_count=2,
+                    staged_context_summary="2 staged sources",
+                ),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        text = _visible_text(app)
+        assert "Current" in str(app.screen.query_one("#console-settings-context-current", Static).renderable)
+        assert "10 / 4k tokens" in text
+        assert "2 staged sources" in str(app.screen.query_one("#console-settings-context-sources", Static).renderable)
+        assert "Estimate only; no truncation changes in this version." in str(
+            app.screen.query_one("#console-settings-context-note", Static).renderable
+        )
+        assert "Planner / Ada" in str(app.screen.query_one("#console-settings-identity-current", Static).renderable)
+        assert "Planner [read-only]" in str(
+            app.screen.query_one("#console-settings-persona-readonly", Static).renderable
+        )
+        assert "Ada [read-only]" in str(app.screen.query_one("#console-settings-character-readonly", Static).renderable)
+        assert not app.screen.query("#console-settings-persona-input")
+        assert not app.screen.query("#console-settings-character-input")
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_select_lists_all_configured_providers() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "openai": ["gpt-4"],
+                    "custom": [],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        provider_values = _select_values(app.screen.query_one("#console-settings-provider", Select))
+        assert {"custom", "llama_cpp", "openai"}.issubset(provider_values)
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_uses_model_input_without_configured_models() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="custom", model="freeform-model")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"custom": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_select.disabled is True
+        assert model_input.display is True
+        assert model_input.disabled is False
+        assert model_input.value == "freeform-model"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_uses_first_model_when_initial_model_missing() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model=None)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.disabled is False
+        assert model_select.value == "gpt-4.1"
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "openai"
+    assert app.saved_settings.model == "gpt-4.1"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_preserves_missing_registry_model_for_current_provider() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model="custom-openai-model")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.disabled is False
+        assert model_select.value == "custom-openai-model"
+        assert {"custom-openai-model", "gpt-4.1"}.issubset(_select_values(model_select))
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "openai"
+    assert app.saved_settings.model == "custom-openai-model"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_change_to_no_models_switches_to_input() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"], "custom": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-provider", Select).value = "custom"
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_select.disabled is True
+        assert "model-a" not in _select_values(model_select)
+        assert model_input.display is True
+        assert model_input.disabled is False
+        assert model_input.value == ""
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_change_uses_target_provider_model() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-provider", Select).value = "openai"
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.disabled is False
+        assert model_select.value == "gpt-4.1"
+        assert "model-a" not in _select_values(model_select)
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "openai"
+    assert app.saved_settings.model == "gpt-4.1"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_change_does_not_carry_base_url_to_non_url_provider() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-provider", Select).value = "openai"
+        await pilot.pause()
+
+        base_url_input = app.screen.query_one("#console-settings-base-url", Input)
+        assert base_url_input.disabled is True or base_url_input.display is False
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "openai"
+    assert app.saved_settings.base_url is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_restores_freeform_model_after_provider_round_trip() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="custom", model="freeform-model")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"custom": [], "llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
+        await pilot.pause()
+        assert app.screen.query_one("#console-settings-model-select", Select).value == "model-a"
+
+        app.screen.query_one("#console-settings-provider", Select).value = "custom"
+        await pilot.pause()
+
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_input.display is True
+        assert model_input.disabled is False
+        assert model_input.value == "freeform-model"
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "custom"
+    assert app.saved_settings.model == "freeform-model"
+
+
+@pytest.mark.asyncio
+async def test_console_left_rail_renders_settings_below_staged_context() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        staged_context = console.query_one("#console-staged-context-tray")
+        settings = console.query_one("#console-settings-summary")
+        workspace_context = console.query_one("#console-workspace-context")
+
+        assert staged_context.region.y < settings.region.y < workspace_context.region.y
+        assert settings.region.width == staged_context.region.width
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_save_updates_active_summary_only() -> None:
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+        "openai": {"api_key": "test-key", "model": "gpt-4.1"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        store.replace_session_settings(first.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
+        await console._sync_native_console_chat_ui()
+
+        second_id = await _press_new_console_tab(console, store, pilot)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        console.query_one("#console-settings-open", Button).press()
+        modal_screen = await _wait_for_console_settings_modal(host, pilot)
+        modal_screen.dismiss(ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+        await _wait_for_console_top_screen(host, console, pilot)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        assert "Model: openai / gpt-4.1" in _summary_text(console)
+        assert store.session_settings(second_id).provider == "openai"
+        assert store.session_settings(first.id).provider == "llama_cpp"
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        assert "Model: llama_cpp / model-a" in _summary_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_settings_are_isolated_between_native_tabs() -> None:
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+        "openai": {"api_key": "test-key", "model": "gpt-4.1"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        store.replace_session_settings(first.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
+        await console._sync_native_console_chat_ui()
+
+        second_id = await _press_new_console_tab(console, store, pilot)
+        console.query_one("#console-settings-open", Button).press()
+        modal_screen = await _wait_for_console_settings_modal(host, pilot)
+        modal_screen.dismiss(ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+        await _wait_for_console_top_screen(host, console, pilot)
+        await pilot.click(f"#console-session-tab-{first.id}")
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        assert console._build_console_provider_selection().provider == "llama_cpp"
+        await pilot.click(f"#console-session-tab-{second_id}")
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        assert console._build_console_provider_selection().provider == "openai"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_cancel_keeps_original_summary() -> None:
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+        "openai": {"api_key": "test-key", "model": "gpt-4.1"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
+        await console._sync_native_console_chat_ui()
+        original_summary = _summary_text(console)
+
+        console.query_one("#console-settings-open", Button).press()
+        modal_screen = await _wait_for_console_settings_modal(host, pilot)
+        modal_screen.dismiss(None)
+        await _wait_for_console_top_screen(host, console, pilot)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        assert _summary_text(console) == original_summary
+        assert store.session_settings(session.id).provider == "llama_cpp"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_save_disabled_during_active_run() -> None:
+    app = _build_test_app()
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"}}
+    app.providers_models = {"llama_cpp": ["model-a"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        controller = console._ensure_console_chat_controller()
+        controller.run_state = ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+
+        console.query_one("#console-settings-open", Button).press()
+        modal_screen = await _wait_for_console_settings_modal(host, pilot)
+
+        assert modal_screen.query_one("#console-settings-save", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_console_send_blocker_uses_saved_session_provider() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "local-model"
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "local-model"},
+        "openai": {"api_key": "test-key", "model": "gpt-4.1"},
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+        await console._sync_native_console_chat_ui()
+
+        composer = console.query_one("#console-native-composer")
+        composer.load_draft("hello")
+        console.query_one("#console-send-message", Button).press()
+        for _ in range(40):
+            if "not wired yet" in _screen_visible_text(console):
+                break
+            await pilot.pause(0.05)
+
+        assert "Console native provider 'openai' is not wired yet" in _screen_visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "local-model"
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model=None))
+        await console._sync_native_console_chat_ui()
+
+        composer = console.query_one("#console-native-composer")
+        composer.load_draft("hello")
+        console.query_one("#console-send-message", Button).press()
+        for _ in range(40):
+            if "Select a model before sending" in _screen_visible_text(console):
+                break
+            await pilot.pause(0.05)
+
+        assert "Console send blocked: Select a model before sending." in _screen_visible_text(console)
+        assert composer.draft_text() == "hello"
+
+
+def test_console_default_settings_keep_configured_model_without_legacy_model() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = None
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099/v1",
+            "model": "configured-model",
+        },
+    }
+    screen = ChatScreen(app)
+
+    settings = screen._default_console_session_settings()
+
+    assert settings.provider == "llama_cpp"
+    assert settings.model == "configured-model"
+
+
+def test_console_readiness_uses_saved_session_settings_over_stale_global_provider() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-4.1"
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099/v1", "model": "local-model"},
+        "openai": {},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model="local-model"))
+
+    control_state = screen._build_console_control_state(None)
+    inspector_state = screen._build_console_inspector_state(None)
+    provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
+
+    assert screen._console_provider_blocker_copy() == ""
+    assert control_state.provider_label == "Provider: llama_cpp"
+    assert control_state.model_label == "Model: local-model"
+    assert provider_row.value == "ready"
+    assert provider_row.recovery == ""
+
+
+def test_console_saved_openai_with_key_still_shows_native_wip_readiness() -> None:
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "openai": {"api_key": "test-key", "model": "gpt-4.1"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+
+    summary_state = screen._build_console_settings_summary_state()
+    inspector_state = screen._build_console_inspector_state(None)
+    provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
+    blocker_copy = screen._console_provider_blocker_copy()
+
+    assert summary_state.readiness_label == "WIP"
+    assert provider_row.value == "blocked"
+    assert "Console native provider 'openai' is not wired yet." in provider_row.recovery
+    assert "Console native provider 'openai' is not wired yet." in blocker_copy
+    assert screen._console_send_blocked_reason() == (
+        "Console send blocked: Console native provider 'openai' is not wired yet."
+    )
+
+
+def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallback() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = None
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model=None))
+
+    summary_state = screen._build_console_settings_summary_state()
+
+    assert summary_state.readiness_label != "Ready"
+    assert "Missing model" in summary_state.model_row
+    assert screen._console_send_blocked_reason() == "Console send blocked: Select a model before sending."
+
+
+def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fallback() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = None
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099",
+            "model": "configured-model",
+        },
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model=None))
+
+    summary_state = screen._build_console_settings_summary_state()
+
+    assert summary_state.readiness_label == "Ready"
+    assert "Select a model before sending" not in summary_state.model_row
+
+
+@pytest.mark.asyncio
+async def test_console_new_native_tab_receives_default_settings_snapshot() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = None
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099/v1",
+            "model": "configured-model",
+        },
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-chat-tab")
+        store = console._ensure_console_chat_store()
+        first_id = store.ensure_session().id
+
+        second_id = await _press_new_console_tab(console, store, pilot)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        assert second_id != first_id
+        settings = store.session_settings(second_id)
+        assert settings is not None
+        assert settings.provider == "llama_cpp"
+        assert settings.model == "configured-model"

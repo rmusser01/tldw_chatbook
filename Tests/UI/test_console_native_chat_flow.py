@@ -12,6 +12,8 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from textual.widgets import Button
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -224,6 +226,64 @@ def test_console_llamacpp_env_url_wins_over_provider_api_url(monkeypatch):
     selection = screen._build_console_provider_selection()
 
     assert selection.base_url == "http://127.0.0.1:9099"
+
+
+def test_console_session_settings_blank_base_url_keeps_llamacpp_fallback(monkeypatch):
+    monkeypatch.setenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", "http://127.0.0.1:9099/v1")
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "runtime-model"
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://localhost:8080/v1",
+            "model": "fallback-model",
+        }
+    }
+    screen = ChatScreen(app)
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="settings-model",
+            base_url=None,
+        )
+    )
+    store.switch_session(session.id)
+    screen._console_chat_store = store
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.base_url == "http://127.0.0.1:9099"
+    assert selection.explicit_model == "settings-model"
+
+
+def test_console_session_settings_base_url_wins_over_llamacpp_fallback(monkeypatch):
+    monkeypatch.setenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", "http://127.0.0.1:9099/v1")
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "runtime-model"
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://localhost:8080/v1",
+            "model": "fallback-model",
+        }
+    }
+    screen = ChatScreen(app)
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="settings-model",
+            base_url="http://127.0.0.1:9999/v1",
+        )
+    )
+    store.switch_session(session.id)
+    screen._console_chat_store = store
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.base_url == "http://127.0.0.1:9999"
+    assert selection.explicit_model == "settings-model"
 
 
 @pytest.mark.asyncio

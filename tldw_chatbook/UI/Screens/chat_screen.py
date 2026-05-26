@@ -1,5 +1,6 @@
 """Chat screen implementation with comprehensive state management."""
 
+from dataclasses import replace
 from datetime import datetime
 import inspect
 import os
@@ -32,6 +33,16 @@ from ...Chat.console_chat_models import (
     ConsoleRunStatus,
     ConsoleWorkspaceContext,
     ConsoleStagedSource,
+)
+from ...Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
+    ConsoleSettingsReadiness,
+    ConsoleSettingsSummaryState,
+    build_console_context_estimate,
+    build_default_console_session_settings,
+    build_console_settings_readiness,
+    build_console_settings_summary_state,
 )
 from ...Chat.console_chat_store import ConsoleChatStore
 from ...Chat.console_provider_gateway import (
@@ -68,7 +79,7 @@ from ...Chat.console_rail_state import (
     coerce_console_rail_preferences,
     serialize_console_rail_preferences,
 )
-from ...config import coerce_bool_setting, save_setting_to_cli_config
+from ...config import coerce_bool_setting, get_cli_providers_and_models, save_setting_to_cli_config
 from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
@@ -86,6 +97,8 @@ from ...Widgets.Console import (
     ConsoleRunInspector,
     ConsoleSaveAsModal,
     ConsoleSessionSurface,
+    ConsoleSettingsModal,
+    ConsoleSettingsSummary,
     ConsoleStagedContextTray,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
@@ -292,6 +305,27 @@ class ChatScreen(BaseAppScreen):
         """Open the Console inspector rail and persist the preference."""
         event.stop()
         self._set_console_rail_preference(right_open=True)
+
+    async def on_console_settings_open(self, event: Button.Pressed) -> None:
+        """Open Console session settings for the active native session."""
+        event.stop()
+        settings = self._ensure_active_console_session_settings()
+        controller = self._ensure_console_chat_controller()
+        modal = ConsoleSettingsModal(
+            settings=settings,
+            app_config=getattr(self.app_instance, "app_config", {}) or {},
+            providers_models=self._providers_models(),
+            context_estimate=self._active_console_settings_context_estimate(),
+            can_save=controller.run_state.is_send_allowed,
+        )
+
+        def _apply_modal_result(result: ConsoleSessionSettings | None) -> None:
+            if not isinstance(result, ConsoleSessionSettings):
+                return
+            self._replace_active_console_session_settings(result)
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+
+        self.app.push_screen(modal, callback=_apply_modal_result)
     
     
     # Reactive property for sidebar state persistence
@@ -380,6 +414,118 @@ class ChatScreen(BaseAppScreen):
         value = config.get(key, {})
         return value if isinstance(value, dict) else {}
 
+    def _active_console_session_settings(self) -> ConsoleSessionSettings | None:
+        """Return settings for the active native Console session, if one exists."""
+        store = self._console_chat_store
+        if store is None or store.active_session_id is None:
+            return None
+        try:
+            return store.session_settings(store.active_session_id)
+        except KeyError:
+            return None
+
+    def _providers_models(self) -> dict[str, list[str]]:
+        """Return configured provider/model options for Console settings."""
+        providers_models = getattr(self.app_instance, "providers_models", None)
+        if isinstance(providers_models, dict):
+            return {
+                str(provider): [str(model) for model in models]
+                for provider, models in providers_models.items()
+                if isinstance(models, (list, tuple))
+            }
+        try:
+            return get_cli_providers_and_models()
+        except Exception:
+            logger.debug("Unable to load CLI provider/model registry for Console settings")
+            return {}
+
+    def _default_console_session_settings(self) -> ConsoleSessionSettings:
+        """Build the default settings snapshot for a new native Console session."""
+        provider, model = self._effective_console_provider_model()
+        settings = build_default_console_session_settings(
+            getattr(self.app_instance, "app_config", {}) or {},
+            str(provider).strip() if _has_selected_text(provider) else None,
+            str(model).strip() if _has_selected_text(model) else None,
+        )
+        provider_key = provider_config_key(settings.provider)
+        return replace(
+            settings,
+            base_url=None if provider_key in {"llama_cpp", "local_llamacpp"} else settings.base_url,
+        )
+
+    def _ensure_active_console_session_settings(self) -> ConsoleSessionSettings:
+        """Ensure the active native Console session owns a settings snapshot."""
+        store = self._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=self._default_console_session_settings(),
+        )
+        if session.settings is None:
+            settings = self._default_console_session_settings()
+            store.replace_session_settings(session.id, settings)
+            return settings
+        return session.settings
+
+    def _replace_active_console_session_settings(
+        self,
+        settings: ConsoleSessionSettings,
+    ) -> None:
+        """Replace settings for only the active native Console session."""
+        store = self._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=self._default_console_session_settings(),
+        )
+        store.replace_session_settings(session.id, settings)
+        self._sync_console_chat_core_state()
+        self._sync_console_settings_summary()
+
+    def _active_console_settings_context_estimate(self) -> ConsoleSettingsContextEstimate:
+        """Return context usage for the active native Console settings snapshot."""
+        settings = self._ensure_active_console_session_settings()
+        workspace_context = self._current_console_workspace_context()
+        staged_context_state = self._build_console_staged_context_state(
+            self._pending_console_launch_context
+        )
+        messages: list[dict[str, str]] = []
+        store = self._console_chat_store
+        if store is not None and store.active_session_id is not None:
+            try:
+                messages = [
+                    {
+                        "role": str(message.role.value if hasattr(message.role, "value") else message.role),
+                        "content": message.content,
+                    }
+                    for message in store.messages_for_session(store.active_session_id)
+                ]
+            except KeyError:
+                messages = []
+        return build_console_context_estimate(
+            messages,
+            settings.provider,
+            settings.model,
+            staged_source_count=len(workspace_context.staged_sources),
+            staged_context_summary=staged_context_state.summary,
+            max_tokens_response=settings.max_tokens,
+        )
+
+    def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
+        """Build compact summary state for the active Console session settings."""
+        settings, readiness = self._active_console_settings_readiness()
+        return build_console_settings_summary_state(
+            settings,
+            self._active_console_settings_context_estimate(),
+            readiness,
+        )
+
+    def _sync_console_settings_summary(self) -> None:
+        """Refresh the mounted Console settings summary if present."""
+        try:
+            summary = self.query_one("#console-settings-summary", ConsoleSettingsSummary)
+        except (NoMatches, QueryError):
+            return
+        summary.sync_state(self._build_console_settings_summary_state())
+
     def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
         """Return explicit workspace policy context for native Console sends."""
         workspace_id = "global"
@@ -420,10 +566,15 @@ class ChatScreen(BaseAppScreen):
 
     def _build_console_provider_selection(self) -> ConsoleProviderSelection:
         """Return the effective native Console provider selection for sends."""
-        provider_value, model_value = self._effective_console_provider_model()
-        provider = provider_config_key(str(provider_value or "").strip()) or "llama_cpp"
-        explicit_model = str(model_value).strip() if _has_selected_text(model_value) else None
         app_config = getattr(self.app_instance, "app_config", {}) or {}
+        selection_settings = self._ensure_active_console_session_settings()
+        _legacy_provider, legacy_model = self._effective_console_provider_model()
+        provider = provider_config_key(selection_settings.provider) or "llama_cpp"
+        explicit_model = (
+            str(selection_settings.model).strip()
+            if _has_selected_text(selection_settings.model)
+            else None
+        )
         api_settings = self._config_section(app_config, "api_settings")
         provider_config = self._config_section(api_settings, provider)
         console_config = self._config_section(app_config, "console")
@@ -437,27 +588,74 @@ class ChatScreen(BaseAppScreen):
             if _has_selected_text(configured_model_value)
             else None
         )
+        if not _has_selected_text(legacy_model) and explicit_model == configured_model:
+            explicit_model = None
 
         base_url: str | None = None
         if provider in {"llama_cpp", "local_llamacpp"}:
-            override_url = (
+            fallback_url = (
                 os.environ.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
                 or console_config.get("llama_cpp_base_url_override")
                 or provider_config.get("api_url")
                 or provider_config.get("base_url")
                 or provider_config.get("api_base")
             )
+            override_url = (
+                selection_settings.base_url
+                if _has_selected_text(selection_settings.base_url)
+                else fallback_url
+            )
             base_url = self._normalize_llamacpp_base_url(
                 str(override_url) if override_url is not None else None
             )
+        elif _has_selected_text(selection_settings.base_url):
+            base_url = str(selection_settings.base_url).strip()
 
         return ConsoleProviderSelection(
             provider=provider,
             base_url=base_url,
             explicit_model=explicit_model,
             configured_model=configured_model,
+            temperature=selection_settings.temperature,
+            top_p=selection_settings.top_p,
+            min_p=selection_settings.min_p,
+            top_k=selection_settings.top_k,
+            max_tokens=selection_settings.max_tokens,
+            streaming=selection_settings.streaming,
             workspace_context=self._current_console_workspace_context(),
         )
+
+    def _active_console_provider_model_display(self) -> tuple[str, str | None, ConsoleSessionSettings]:
+        """Return provider/model labels backed by active session settings."""
+        settings = self._ensure_active_console_session_settings()
+        selection = self._build_console_provider_selection()
+        legacy_provider, _legacy_model = self._effective_console_provider_model()
+        provider_display = selection.provider
+        is_matching_provider = (
+            provider_config_key(str(legacy_provider or "")) == selection.provider
+        )
+        if is_matching_provider and _has_selected_text(legacy_provider):
+            provider_display = str(legacy_provider).strip()
+        selected_model = selection.explicit_model or selection.configured_model
+        return provider_display, selected_model, settings
+
+    def _active_console_settings_readiness(self) -> tuple[ConsoleSessionSettings, ConsoleSettingsReadiness]:
+        """Return effective settings plus Console-native readiness for display/send surfaces."""
+        settings = self._ensure_active_console_session_settings()
+        selection = self._build_console_provider_selection()
+        selected_model = selection.explicit_model or selection.configured_model
+        effective_settings = replace(settings, model=selected_model)
+        if not _has_selected_text(selected_model):
+            return effective_settings, ConsoleSettingsReadiness(
+                label="Missing model",
+                detail="Select a model before sending.",
+                native_send_supported=False,
+            )
+        readiness = build_console_settings_readiness(
+            effective_settings,
+            app_config=getattr(self.app_instance, "app_config", {}) or {},
+        )
+        return effective_settings, readiness
 
     def _ensure_console_chat_store(self) -> ConsoleChatStore:
         """Return the native Console chat store, creating it lazily."""
@@ -492,6 +690,12 @@ class ChatScreen(BaseAppScreen):
                 model=selection.explicit_model,
                 configured_model=selection.configured_model,
                 base_url=selection.base_url,
+                temperature=selection.temperature,
+                top_p=selection.top_p,
+                min_p=selection.min_p,
+                top_k=selection.top_k,
+                max_tokens=selection.max_tokens,
+                streaming=selection.streaming,
             )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
@@ -501,10 +705,24 @@ class ChatScreen(BaseAppScreen):
         selection = self._build_console_provider_selection()
         self._ensure_console_chat_store().set_workspace_context(selection.workspace_context)
         if self._console_chat_controller is not None:
-            self._console_chat_controller.provider = selection.provider
-            self._console_chat_controller.model = selection.explicit_model
-            self._console_chat_controller.configured_model = selection.configured_model
-            self._console_chat_controller.base_url = selection.base_url
+            update_selection = getattr(
+                self._console_chat_controller,
+                "update_provider_selection",
+                None,
+            )
+            if callable(update_selection):
+                update_selection(selection)
+            else:
+                self._console_chat_controller.provider = selection.provider
+                self._console_chat_controller.model = selection.explicit_model
+                self._console_chat_controller.configured_model = selection.configured_model
+                self._console_chat_controller.base_url = selection.base_url
+                self._console_chat_controller.temperature = selection.temperature
+                self._console_chat_controller.top_p = selection.top_p
+                self._console_chat_controller.min_p = selection.min_p
+                self._console_chat_controller.top_k = selection.top_k
+                self._console_chat_controller.max_tokens = selection.max_tokens
+                self._console_chat_controller.streaming = selection.streaming
         return selection
 
     def _build_console_control_state(
@@ -512,7 +730,7 @@ class ChatScreen(BaseAppScreen):
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleControlState:
         """Build Console-owned control/readiness labels."""
-        provider, model = self._effective_console_provider_model()
+        provider, model, _settings = self._active_console_provider_model_display()
         source = pending_launch.source if pending_launch else None
         return ConsoleControlState.from_values(
             provider=provider,
@@ -678,7 +896,7 @@ class ChatScreen(BaseAppScreen):
             logger.warning("Failed to persist Console rail preference: {}", exc)
             saved = False
         if not saved and notify_on_failure:
-            self.call_from_thread(self._notify_console_rail_preference_save_failure)
+            self.app.call_from_thread(self._notify_console_rail_preference_save_failure)
 
     def _notify_console_rail_preference_save_failure(self) -> None:
         """Notify from the UI thread when background preference persistence fails."""
@@ -993,17 +1211,14 @@ class ChatScreen(BaseAppScreen):
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleInspectorState:
-        provider, model = self._effective_console_provider_model()
+        _provider_display, model, settings = self._active_console_provider_model_display()
+        _effective_settings, settings_readiness = self._active_console_settings_readiness()
         explicit_provider_ready = getattr(self.app_instance, "console_provider_ready", None)
-        readiness = get_provider_readiness(
-            str(provider or ""),
+        provider_readiness = get_provider_readiness(
+            settings.provider,
             getattr(self.app_instance, "app_config", {}) or {},
         )
-        provider_runtime_ready = (
-            bool(explicit_provider_ready)
-            if explicit_provider_ready is not None
-            else readiness.ready
-        )
+        provider_runtime_ready = settings_readiness.native_send_supported and explicit_provider_ready is not False
         model_selected = _has_selected_text(model)
         provider_ready = (
             provider_runtime_ready
@@ -1016,7 +1231,9 @@ class ChatScreen(BaseAppScreen):
                 if provider_runtime_ready and not model_selected
                 else "Select a provider and model before sending."
                 if explicit_provider_ready is False
-                else readiness.user_message
+                else provider_readiness.user_message
+                if provider_readiness.reason == "Missing API key"
+                else settings_readiness.detail
             )
         can_save_chatbook = bool(
             getattr(self.app_instance, "console_chatbook_artifact_available", False)
@@ -1105,28 +1322,24 @@ class ChatScreen(BaseAppScreen):
             f"Approvals {readiness_count(control_state.approvals_label)}"
         )
 
-    @staticmethod
-    def _lower_first_char(text: str) -> str:
-        if not text or (len(text) > 1 and text[0].isupper() and text[1].isupper()):
-            return text
-        return f"{text[0].lower()}{text[1:]}"
-
     def _console_provider_blocker_copy(self) -> str:
         """Return concise Console recovery copy for provider/model setup gaps."""
-        provider, model = self._effective_console_provider_model()
+        provider, model, settings = self._active_console_provider_model_display()
         if not _has_selected_text(provider):
             return "Provider setup needed: select a provider -> Settings"
         if not _has_selected_text(model):
             return "Provider setup needed: select a model -> Settings"
 
-        readiness = get_provider_readiness(
-            str(provider),
+        _effective_settings, settings_readiness = self._active_console_settings_readiness()
+        if settings_readiness.native_send_supported:
+            return ""
+        provider_readiness = get_provider_readiness(
+            settings.provider,
             getattr(self.app_instance, "app_config", {}) or {},
         )
-        if readiness.ready:
-            return ""
-        reason = self._lower_first_char(readiness.reason)
-        return f"Provider setup needed: {readiness.provider} {reason}"
+        if provider_readiness.reason == "Missing API key":
+            return f"Provider setup needed: {provider} missing API key"
+        return f"Provider setup needed: {settings_readiness.detail}"
 
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
@@ -1567,6 +1780,15 @@ class ChatScreen(BaseAppScreen):
                         staged_context_tray,
                         variant=self._staged_context_frame_variant(staged_context_state),
                     )
+
+                    settings_summary = ConsoleSettingsSummary(
+                        self._build_console_settings_summary_state(),
+                        id="console-settings-summary",
+                        classes="console-left-rail-section console-settings-summary",
+                    )
+                    settings_summary.styles.width = "100%"
+                    settings_summary.styles.min_width = 0
+                    yield self._frame_console_region(settings_summary, variant="quiet")
 
                     workspace_context_tray = ConsoleWorkspaceContextTray(
                         workspace_context_state,
@@ -2158,6 +2380,7 @@ class ChatScreen(BaseAppScreen):
         try:
             self._sync_console_chat_core_state()
             self._sync_console_control_bar()
+            self._sync_console_settings_summary()
             self._sync_console_mode_bar()
             await self._sync_console_native_session_tabs()
             await self._sync_native_console_transcript_to_legacy_surface()
@@ -2172,7 +2395,11 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         store = self._ensure_console_chat_store()
-        store.ensure_session(workspace_id=store.workspace_context.active_workspace_id)
+        store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=self._default_console_session_settings(),
+        )
+        self._ensure_active_console_session_settings()
         await surface.sync_sessions(
             sessions=store.sessions(),
             active_session_id=store.active_session_id,
@@ -2230,15 +2457,6 @@ class ChatScreen(BaseAppScreen):
 
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
-        provider, model = self._effective_console_provider_model()
-        readiness = get_provider_readiness(
-            str(provider or ""),
-            getattr(self.app_instance, "app_config", {}) or {},
-        )
-        if not readiness.ready:
-            return f"Console send blocked: {readiness.user_message}"
-        if not _has_selected_text(model):
-            return "Console send blocked: Select a model before sending."
         pending_launch = self._consume_pending_console_launch()
         if pending_launch is not None and _source_mentions_rag(pending_launch.source):
             evidence_state = build_console_evidence_display_state(pending_launch)
@@ -2247,6 +2465,9 @@ class ChatScreen(BaseAppScreen):
                     "Console send blocked: Library Search/RAG has no available evidence. "
                     "Review source authority before sending."
                 )
+        _readiness_settings, readiness = self._active_console_settings_readiness()
+        if not readiness.native_send_supported:
+            return f"Console send blocked: {readiness.detail}"
         return ""
 
     async def handle_console_send_message(self, event: Button.Pressed) -> None:
@@ -2261,12 +2482,10 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
             return
         self._dismiss_console_guidance()
-        selection = self._build_console_provider_selection()
-        if selection.provider not in {"llama_cpp", "local_llamacpp"}:
-            if blocked_reason := self._console_send_blocked_reason():
-                await self._append_native_console_system_message(blocked_reason)
-                self._focus_console_composer_if_needed(force=True)
-                return
+        if blocked_reason := self._console_send_blocked_reason():
+            await self._append_native_console_system_message(blocked_reason)
+            self._focus_console_composer_if_needed(force=True)
+            return
         controller = self._ensure_console_chat_controller()
         if not controller.run_state.is_send_allowed:
             self.app_instance.notify("A Console run is already running.", severity="warning")
@@ -3516,9 +3735,14 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-stop-generation":
             await self.handle_console_stop_generation(event)
             return
+        if button_id == "console-settings-open":
+            await self.on_console_settings_open(event)
+            return
         if button_id == "console-new-chat-tab":
             event.stop()
-            self._ensure_console_chat_controller().new_session()
+            self._ensure_console_chat_controller().new_session(
+                settings=self._default_console_session_settings(),
+            )
             await self._sync_native_console_chat_ui()
             return
         if button_id and button_id.startswith("console-close-session-tab-"):

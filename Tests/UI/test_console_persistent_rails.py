@@ -431,6 +431,48 @@ async def test_console_rail_state_persists_by_workspace_session_key(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_console_rail_preference_save_failure_notifies_without_worker_crash(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config = {"console": {"rail_state": {}}}
+    notifications = []
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append((message, kwargs)),
+        raising=False,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-context-rail-collapse")
+
+        await pilot.click("#console-context-rail-collapse")
+
+        await _wait_for_hidden(console, pilot, "#console-left-rail")
+        for _ in range(40):
+            if notifications:
+                break
+            await pilot.pause(0.05)
+
+    assert notifications == [
+        (
+            "Console rail preference is saved for this session only.",
+            {"severity": "warning"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_console_rail_state_uses_workspace_session_specific_keys(monkeypatch):
     app = _build_test_app()
     app.app_config = {

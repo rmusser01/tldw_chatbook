@@ -1,11 +1,65 @@
+import json
+
 import httpx
 import pytest
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
+    ConsoleProviderResolution,
     LlamaCppProviderConfig,
+    build_llamacpp_chat_payload,
 )
+
+
+def test_llamacpp_payload_includes_supported_sampling_params() -> None:
+    payload = build_llamacpp_chat_payload(
+        model="m",
+        messages=[{"role": "user", "content": "hello"}],
+        stream=True,
+        temperature=0.4,
+        top_p=0.7,
+        min_p=0.03,
+        top_k=20,
+        max_tokens=300,
+    )
+
+    assert payload == {
+        "model": "m",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": True,
+        "temperature": 0.4,
+        "top_p": 0.7,
+        "min_p": 0.03,
+        "top_k": 20,
+        "max_tokens": 300,
+    }
+
+
+def test_llamacpp_payload_omits_blank_provider_defaults() -> None:
+    payload = build_llamacpp_chat_payload(
+        model="m",
+        messages=[],
+        stream=False,
+        temperature=None,
+        top_p=None,
+        min_p=None,
+        top_k=None,
+        max_tokens=None,
+    )
+
+    assert payload == {"model": "m", "messages": [], "stream": False}
+
+
+def test_llamacpp_payload_includes_explicit_top_k_zero() -> None:
+    payload = build_llamacpp_chat_payload(
+        model="m",
+        messages=[],
+        stream=False,
+        top_k=0,
+    )
+
+    assert payload == {"model": "m", "messages": [], "stream": False, "top_k": 0}
 
 
 @pytest.mark.asyncio
@@ -175,6 +229,40 @@ async def test_resolve_for_send_dispatches_llamacpp_selection():
 
 
 @pytest.mark.asyncio
+async def test_resolve_for_send_copies_sampling_fields_to_llamacpp_resolution():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="http://127.0.0.1:9099",
+        )
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="llama_cpp",
+            base_url="http://127.0.0.1:9099",
+            temperature=0.4,
+            top_p=0.8,
+            min_p=0.05,
+            top_k=30,
+            max_tokens=500,
+            streaming=False,
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.temperature == 0.4
+    assert resolved.top_p == 0.8
+    assert resolved.min_p == 0.05
+    assert resolved.top_k == 30
+    assert resolved.max_tokens == 500
+    assert resolved.streaming is False
+
+
+@pytest.mark.asyncio
 async def test_resolve_for_send_normalizes_scheme_less_llamacpp_base_url_before_http():
     seen_urls = []
 
@@ -219,10 +307,26 @@ async def test_resolve_for_send_blocks_unsupported_provider_with_wip_copy():
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
     )
 
-    resolved = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai"))
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="openai",
+            temperature=0.3,
+            top_p=0.9,
+            min_p=0.02,
+            top_k=40,
+            max_tokens=600,
+            streaming=False,
+        )
+    )
 
     assert resolved.ready is False
     assert resolved.provider == "openai"
+    assert resolved.temperature == 0.3
+    assert resolved.top_p == 0.9
+    assert resolved.min_p == 0.02
+    assert resolved.top_k == 40
+    assert resolved.max_tokens == 600
+    assert resolved.streaming is False
     assert resolved.visible_copy == "WIP: Console native provider 'openai' is not wired yet. Select llama.cpp for this slice."
 
 
@@ -382,6 +486,37 @@ async def test_stream_chat_dispatches_llamacpp_resolution():
     chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hello"}])]
 
     assert chunks == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_non_streaming_resolution_yields_completion_once() -> None:
+    seen_payloads = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_payloads.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]})
+
+    gateway = ConsoleProviderGateway(http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        model="m",
+        ready=True,
+        streaming=False,
+        temperature=0.2,
+    )
+
+    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    assert chunks == ["done"]
+    assert seen_payloads == [
+        {
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": False,
+            "temperature": 0.2,
+        }
+    ]
 
 
 @pytest.mark.asyncio

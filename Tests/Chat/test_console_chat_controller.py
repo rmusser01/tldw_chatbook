@@ -5,10 +5,12 @@ import pytest
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
+    ConsoleProviderSelection,
     ConsoleRunStatus,
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
 
@@ -50,6 +52,15 @@ class RecordingStreamingGateway(StreamingGateway):
     async def stream_chat(self, resolution, messages):
         self.messages_seen = messages
         yield "ok"
+
+
+class CapturingGateway(StreamingGateway):
+    def __init__(self):
+        self.selection = None
+
+    async def resolve_for_send(self, selection):
+        self.selection = selection
+        return await super().resolve_for_send(selection)
 
 
 class WipBlockedGateway:
@@ -163,6 +174,49 @@ def test_controller_creates_and_switches_sessions():
     assert store.active_session_id == first.id
 
 
+def test_controller_new_session_accepts_settings_snapshot() -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="configured-model")
+
+    session = controller.new_session(title="Configured", settings=settings)
+
+    assert store.active_session_id == session.id
+    assert store.session_settings(session.id) == settings
+
+
+def test_update_provider_selection_updates_all_selection_fields() -> None:
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=StreamingGateway(),
+    )
+    selection = ConsoleProviderSelection(
+        provider="local_llamacpp",
+        base_url="http://127.0.0.1:9099",
+        explicit_model="runtime-model",
+        configured_model="configured-model",
+        temperature=0.2,
+        top_p=0.6,
+        min_p=0.04,
+        top_k=35,
+        max_tokens=256,
+        streaming=False,
+    )
+
+    controller.update_provider_selection(selection)
+
+    assert controller.provider == "local_llamacpp"
+    assert controller.model == "runtime-model"
+    assert controller.configured_model == "configured-model"
+    assert controller.base_url == "http://127.0.0.1:9099"
+    assert controller.temperature == 0.2
+    assert controller.top_p == 0.6
+    assert controller.min_p == 0.04
+    assert controller.top_k == 35
+    assert controller.max_tokens == 256
+    assert controller.streaming is False
+
+
 @pytest.mark.asyncio
 async def test_blocked_send_preserves_draft_and_adds_recovery_message():
     store = ConsoleChatStore()
@@ -238,6 +292,33 @@ async def test_submit_draft_sanitizes_user_text_before_storage_and_provider_send
     assert result.accepted is True
     assert messages[-2].content == "hello"
     assert gateway.messages_seen == [{"role": "user", "content": "hello"}]
+
+
+@pytest.mark.asyncio
+async def test_controller_provider_selection_includes_sampling_settings() -> None:
+    gateway = CapturingGateway()
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="m",
+        temperature=0.4,
+        top_p=0.7,
+        min_p=0.03,
+        top_k=20,
+        max_tokens=300,
+        streaming=False,
+    )
+
+    await controller.submit_draft("hello")
+
+    assert gateway.selection.temperature == 0.4
+    assert gateway.selection.top_p == 0.7
+    assert gateway.selection.min_p == 0.03
+    assert gateway.selection.top_k == 20
+    assert gateway.selection.max_tokens == 300
+    assert gateway.selection.streaming is False
 
 
 @pytest.mark.asyncio

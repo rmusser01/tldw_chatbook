@@ -63,6 +63,12 @@ class LlamaCppProviderConfig:
     base_url: str = DEFAULT_LLAMACPP_BASE_URL
     explicit_model: str | None = None
     configured_model: str | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    min_p: float | None = None
+    top_k: int | None = None
+    max_tokens: int | None = None
+    streaming: bool = True
 
 
 @dataclass(frozen=True)
@@ -74,6 +80,42 @@ class ConsoleProviderResolution:
     model: str | None
     ready: bool
     visible_copy: str = ""
+    temperature: float | None = None
+    top_p: float | None = None
+    min_p: float | None = None
+    top_k: int | None = None
+    max_tokens: int | None = None
+    streaming: bool = True
+
+
+def build_llamacpp_chat_payload(
+    *,
+    model: str,
+    messages: list[Mapping[str, Any]],
+    stream: bool,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    min_p: float | None = None,
+    top_k: int | None = None,
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
+    """Build the OpenAI-compatible llama.cpp chat completion payload."""
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": list(messages),
+        "stream": stream,
+    }
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if top_p is not None:
+        payload["top_p"] = top_p
+    if min_p is not None:
+        payload["min_p"] = min_p
+    if top_k is not None:
+        payload["top_k"] = top_k
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    return payload
 
 
 class ConsoleProviderGateway:
@@ -99,6 +141,7 @@ class ConsoleProviderGateway:
                 model=model,
                 ready=False,
                 visible_copy=INVALID_LLAMACPP_BASE_URL_COPY,
+                **self._resolution_settings(config),
             )
 
         if model is not None:
@@ -108,6 +151,7 @@ class ConsoleProviderGateway:
                     base_url=base_url,
                     model=model,
                     ready=True,
+                    **self._resolution_settings(config),
                 )
             return ConsoleProviderResolution(
                 provider="llama_cpp",
@@ -115,6 +159,7 @@ class ConsoleProviderGateway:
                 model=model,
                 ready=False,
                 visible_copy=self._unreachable_copy(base_url),
+                **self._resolution_settings(config),
             )
 
         try:
@@ -126,6 +171,7 @@ class ConsoleProviderGateway:
                 model=None,
                 ready=False,
                 visible_copy=self._unreachable_copy(base_url),
+                **self._resolution_settings(config),
             )
 
         model = self._first_model_id(response)
@@ -136,12 +182,14 @@ class ConsoleProviderGateway:
                 model=None,
                 ready=False,
                 visible_copy="Provider blocked: select or configure a llama.cpp model.",
+                **self._resolution_settings(config),
             )
         return ConsoleProviderResolution(
             provider="llama_cpp",
             base_url=base_url,
             model=model,
             ready=True,
+            **self._resolution_settings(config),
         )
 
     async def resolve_for_send(self, selection: ConsoleProviderSelection) -> ConsoleProviderResolution:
@@ -152,6 +200,12 @@ class ConsoleProviderGateway:
                     base_url=selection.base_url or DEFAULT_LLAMACPP_BASE_URL,
                     explicit_model=selection.explicit_model,
                     configured_model=selection.configured_model,
+                    temperature=selection.temperature,
+                    top_p=selection.top_p,
+                    min_p=selection.min_p,
+                    top_k=selection.top_k,
+                    max_tokens=selection.max_tokens,
+                    streaming=selection.streaming,
                 )
             )
 
@@ -164,6 +218,12 @@ class ConsoleProviderGateway:
                 f"WIP: Console native provider '{selection.provider}' is not wired yet. "
                 "Select llama.cpp for this slice."
             ),
+            temperature=selection.temperature,
+            top_p=selection.top_p,
+            min_p=selection.min_p,
+            top_k=selection.top_k,
+            max_tokens=selection.max_tokens,
+            streaming=selection.streaming,
         )
 
     async def stream_llamacpp_chat(
@@ -172,17 +232,27 @@ class ConsoleProviderGateway:
         base_url: str,
         model: str,
         messages: list[Mapping[str, Any]],
+        temperature: float | None = None,
+        top_p: float | None = None,
+        min_p: float | None = None,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
         """Stream OpenAI-compatible chat completion content chunks from llama.cpp."""
         normalized_base_url = normalize_llamacpp_base_url(base_url)
         if not validate_url(normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
-        payload = {
-            "model": model,
-            "messages": list(messages),
-            "stream": True,
-        }
+        payload = build_llamacpp_chat_payload(
+            model=model,
+            messages=messages,
+            stream=True,
+            temperature=temperature,
+            top_p=top_p,
+            min_p=min_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
+        )
         emitted_content = False
         stream_error: httpx.HTTPError | None = None
         try:
@@ -209,6 +279,11 @@ class ConsoleProviderGateway:
             base_url=normalized_base_url,
             model=model,
             messages=messages,
+            temperature=temperature,
+            top_p=top_p,
+            min_p=min_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
         )
         if fallback:
             yield fallback
@@ -222,6 +297,11 @@ class ConsoleProviderGateway:
         base_url: str,
         model: str,
         messages: list[Mapping[str, Any]],
+        temperature: float | None = None,
+        top_p: float | None = None,
+        min_p: float | None = None,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Request a non-streaming OpenAI-compatible chat completion."""
         normalized_base_url = normalize_llamacpp_base_url(base_url)
@@ -230,11 +310,16 @@ class ConsoleProviderGateway:
 
         response = await self.http_client.post(
             f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
-            json={
-                "model": model,
-                "messages": list(messages),
-                "stream": False,
-            },
+            json=build_llamacpp_chat_payload(
+                model=model,
+                messages=messages,
+                stream=False,
+                temperature=temperature,
+                top_p=top_p,
+                min_p=min_p,
+                top_k=top_k,
+                max_tokens=max_tokens,
+            ),
         )
         response.raise_for_status()
         return self._content_from_completion_response(response) or ""
@@ -248,13 +333,43 @@ class ConsoleProviderGateway:
         if not resolution.ready or not resolution.model:
             return
         if resolution.provider in {"llama_cpp", "local_llamacpp"}:
+            if not resolution.streaming:
+                completion = await self.complete_llamacpp_chat(
+                    base_url=resolution.base_url,
+                    model=resolution.model,
+                    messages=messages,
+                    temperature=resolution.temperature,
+                    top_p=resolution.top_p,
+                    min_p=resolution.min_p,
+                    top_k=resolution.top_k,
+                    max_tokens=resolution.max_tokens,
+                )
+                if completion:
+                    yield completion
+                return
             async for chunk in self.stream_llamacpp_chat(
                 base_url=resolution.base_url,
                 model=resolution.model,
                 messages=messages,
+                temperature=resolution.temperature,
+                top_p=resolution.top_p,
+                min_p=resolution.min_p,
+                top_k=resolution.top_k,
+                max_tokens=resolution.max_tokens,
             ):
                 yield chunk
             return
+
+    @staticmethod
+    def _resolution_settings(config: LlamaCppProviderConfig) -> dict[str, Any]:
+        return {
+            "temperature": config.temperature,
+            "top_p": config.top_p,
+            "min_p": config.min_p,
+            "top_k": config.top_k,
+            "max_tokens": config.max_tokens,
+            "streaming": config.streaming,
+        }
 
     async def _is_reachable(self, base_url: str) -> bool:
         try:

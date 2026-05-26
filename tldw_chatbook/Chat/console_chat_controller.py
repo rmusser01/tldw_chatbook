@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
 
@@ -50,6 +51,12 @@ class ConsoleChatController:
         model: str | None = None,
         configured_model: str | None = None,
         base_url: str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        min_p: float | None = None,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
+        streaming: bool = True,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -57,6 +64,12 @@ class ConsoleChatController:
         self.model = model
         self.configured_model = configured_model
         self.base_url = base_url
+        self.temperature = temperature
+        self.top_p = top_p
+        self.min_p = min_p
+        self.top_k = top_k
+        self.max_tokens = max_tokens
+        self.streaming = streaming
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
         self._active_assistant_message_id: str | None = None
@@ -103,10 +116,31 @@ class ConsoleChatController:
             assistant_message_id=assistant.id,
         )
 
-    def new_session(self, *, title: str | None = None) -> ConsoleChatSession:
+    def new_session(
+        self,
+        *,
+        title: str | None = None,
+        settings: ConsoleSessionSettings | None = None,
+    ) -> ConsoleChatSession:
         """Create and activate a new native Console session."""
         next_number = len(self.store.sessions()) + 1
-        return self.store.create_session(title=title or f"Chat {next_number}")
+        return self.store.create_session(
+            title=title or f"Chat {next_number}",
+            settings=settings,
+        )
+
+    def update_provider_selection(self, selection: ConsoleProviderSelection) -> None:
+        """Sync controller provider settings from a Console selection."""
+        self.provider = selection.provider
+        self.model = selection.explicit_model
+        self.configured_model = selection.configured_model
+        self.base_url = selection.base_url
+        self.temperature = selection.temperature
+        self.top_p = selection.top_p
+        self.min_p = selection.min_p
+        self.top_k = selection.top_k
+        self.max_tokens = selection.max_tokens
+        self.streaming = selection.streaming
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing native Console session."""
@@ -271,6 +305,12 @@ class ConsoleChatController:
             base_url=self.base_url,
             explicit_model=self.model,
             configured_model=self.configured_model,
+            temperature=self.temperature,
+            top_p=self.top_p,
+            min_p=self.min_p,
+            top_k=self.top_k,
+            max_tokens=self.max_tokens,
+            streaming=self.streaming,
             workspace_context=self.store.workspace_context,
         )
 
