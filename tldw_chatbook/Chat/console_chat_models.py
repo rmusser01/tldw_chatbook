@@ -87,6 +87,12 @@ class ConsoleProviderSelection:
     base_url: str | None = None
     explicit_model: str | None = None
     configured_model: str | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    min_p: float | None = None
+    top_k: int | None = None
+    max_tokens: int | None = None
+    streaming: bool = True
     workspace_context: ConsoleWorkspaceContext = field(default_factory=ConsoleWorkspaceContext)
 
 

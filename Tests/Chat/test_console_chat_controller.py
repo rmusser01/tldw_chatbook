@@ -52,6 +52,15 @@ class RecordingStreamingGateway(StreamingGateway):
         yield "ok"
 
 
+class CapturingGateway(StreamingGateway):
+    def __init__(self):
+        self.selection = None
+
+    async def resolve_for_send(self, selection):
+        self.selection = selection
+        return await super().resolve_for_send(selection)
+
+
 class WipBlockedGateway:
     async def resolve_for_send(self, selection):
         return type(
@@ -238,6 +247,33 @@ async def test_submit_draft_sanitizes_user_text_before_storage_and_provider_send
     assert result.accepted is True
     assert messages[-2].content == "hello"
     assert gateway.messages_seen == [{"role": "user", "content": "hello"}]
+
+
+@pytest.mark.asyncio
+async def test_controller_provider_selection_includes_sampling_settings() -> None:
+    gateway = CapturingGateway()
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="m",
+        temperature=0.4,
+        top_p=0.7,
+        min_p=0.03,
+        top_k=20,
+        max_tokens=300,
+        streaming=False,
+    )
+
+    await controller.submit_draft("hello")
+
+    assert gateway.selection.temperature == 0.4
+    assert gateway.selection.top_p == 0.7
+    assert gateway.selection.min_p == 0.03
+    assert gateway.selection.top_k == 20
+    assert gateway.selection.max_tokens == 300
+    assert gateway.selection.streaming is False
 
 
 @pytest.mark.asyncio

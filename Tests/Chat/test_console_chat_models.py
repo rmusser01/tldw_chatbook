@@ -89,6 +89,22 @@ def test_provider_selection_carries_workspace_context():
     assert selection.workspace_context.active_workspace_id == "workspace-a"
 
 
+def test_console_provider_selection_carries_sampling_settings() -> None:
+    selection = ConsoleProviderSelection(
+        provider="llama_cpp",
+        explicit_model="m",
+        temperature=0.3,
+        top_p=0.8,
+        min_p=0.05,
+        top_k=40,
+        max_tokens=512,
+        streaming=False,
+    )
+
+    assert selection.temperature == 0.3
+    assert selection.streaming is False
+
+
 def test_chat_message_defaults_to_complete_status():
     message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hello")
 
