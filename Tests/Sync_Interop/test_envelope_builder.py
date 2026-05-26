@@ -52,6 +52,45 @@ def test_chat_message_uses_stable_message_identity() -> None:
     }
 
 
+def test_chat_message_preserves_restore_metadata_without_plaintext_leak() -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-2",
+        role="assistant",
+        content="private regenerated answer",
+        parent_message_id="message-1",
+        sequence=2,
+        variant_turn_id="turn-1",
+        variant_index=1,
+        variant_count=2,
+        selected_variant_id="variant-2",
+        base_version="v1",
+        entity_version="v2",
+    )
+
+    serialized = envelope.model_dump_json()
+    assert "private regenerated answer" not in serialized
+    assert envelope.base_version == "v1"
+    assert envelope.entity_version == "v2"
+    assert envelope.routing_metadata == {
+        "conversation_id": "conversation-1",
+        "entity_kind": "message",
+        "parent_message_id": "message-1",
+        "selected_variant_id": "variant-2",
+        "sequence": 2,
+        "variant_count": 2,
+        "variant_index": 1,
+        "variant_turn_id": "turn-1",
+    }
+    assert decrypt_sync_payload_json(envelope.payload_ciphertext, dataset_key) == {
+        "content": "private regenerated answer",
+        "role": "assistant",
+    }
+
+
 def test_workspace_source_ref_add_remove_maps_to_link_unlink() -> None:
     builder = SyncEnvelopeBuilder(
         dataset_id="dataset-1",

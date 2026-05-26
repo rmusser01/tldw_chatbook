@@ -106,10 +106,32 @@ class SyncEnvelopeBuilder:
         message_id: str,
         role: str,
         content: str,
+        parent_message_id: str | None = None,
+        sequence: int | None = None,
+        variant_turn_id: str | None = None,
+        variant_index: int | None = None,
+        variant_count: int | None = None,
+        selected_variant_id: str | None = None,
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
     ) -> SyncV2Envelope:
         stable_key = f"{conversation_id}:{message_id}"
+        routing_metadata: dict[str, Any] = {
+            "conversation_id": conversation_id,
+            "entity_kind": "message",
+        }
+        if parent_message_id is not None:
+            routing_metadata["parent_message_id"] = parent_message_id
+        if sequence is not None:
+            routing_metadata["sequence"] = sequence
+        if variant_turn_id is not None:
+            routing_metadata["variant_turn_id"] = variant_turn_id
+        if variant_index is not None:
+            routing_metadata["variant_index"] = variant_index
+        if variant_count is not None:
+            routing_metadata["variant_count"] = variant_count
+        if selected_variant_id is not None:
+            routing_metadata["selected_variant_id"] = selected_variant_id
         return self._encrypted_envelope(
             domain="chat",
             entity_id=message_id,
@@ -117,7 +139,7 @@ class SyncEnvelopeBuilder:
             stable_key=stable_key,
             payload={"content": content, "role": role},
             payload_clear={},
-            routing_metadata={"conversation_id": conversation_id, "entity_kind": "message"},
+            routing_metadata=routing_metadata,
             base_version=base_version,
             entity_version=entity_version,
         )
