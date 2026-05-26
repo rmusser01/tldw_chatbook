@@ -111,7 +111,7 @@ def build_llamacpp_chat_payload(
         payload["top_p"] = top_p
     if min_p is not None:
         payload["min_p"] = min_p
-    if top_k is not None and top_k > 0:
+    if top_k is not None:
         payload["top_k"] = top_k
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens

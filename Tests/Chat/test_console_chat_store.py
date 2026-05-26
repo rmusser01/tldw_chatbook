@@ -101,6 +101,19 @@ def test_replacing_session_settings_does_not_mutate_other_sessions() -> None:
     assert store.session_settings(second.id).model == "b"
 
 
+def test_replace_session_settings_returns_stored_session_instance() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(settings=ConsoleSessionSettings(provider="llama_cpp", model="a"))
+
+    returned = store.replace_session_settings(
+        session.id,
+        ConsoleSessionSettings(provider="llama_cpp", model="changed"),
+    )
+
+    assert returned is store.switch_session(session.id)
+    assert returned.settings.model == "changed"
+
+
 def test_ensure_session_applies_settings_only_when_creating_session() -> None:
     store = ConsoleChatStore()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="new")

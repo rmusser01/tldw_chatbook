@@ -169,7 +169,7 @@ class ConsoleChatStore:
         """Replace in-memory settings for a native Console session."""
         session = self._session_or_raise(session_id)
         session.settings = settings
-        return replace(session)
+        return session
 
     def set_workspace_context(self, workspace_context: ConsoleWorkspaceContext) -> None:
         """Replace the active workspace context."""

@@ -44,11 +44,22 @@ def test_llamacpp_payload_omits_blank_provider_defaults() -> None:
         temperature=None,
         top_p=None,
         min_p=None,
-        top_k=0,
+        top_k=None,
         max_tokens=None,
     )
 
     assert payload == {"model": "m", "messages": [], "stream": False}
+
+
+def test_llamacpp_payload_includes_explicit_top_k_zero() -> None:
+    payload = build_llamacpp_chat_payload(
+        model="m",
+        messages=[],
+        stream=False,
+        top_k=0,
+    )
+
+    assert payload == {"model": "m", "messages": [], "stream": False, "top_k": 0}
 
 
 @pytest.mark.asyncio

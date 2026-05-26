@@ -600,7 +600,11 @@ class ChatScreen(BaseAppScreen):
                 or provider_config.get("base_url")
                 or provider_config.get("api_base")
             )
-            override_url = selection_settings.base_url if _has_selected_text(selection_settings.base_url) else fallback_url
+            override_url = (
+                selection_settings.base_url
+                if _has_selected_text(selection_settings.base_url)
+                else fallback_url
+            )
             base_url = self._normalize_llamacpp_base_url(
                 str(override_url) if override_url is not None else None
             )
@@ -627,7 +631,10 @@ class ChatScreen(BaseAppScreen):
         selection = self._build_console_provider_selection()
         legacy_provider, _legacy_model = self._effective_console_provider_model()
         provider_display = selection.provider
-        if provider_config_key(str(legacy_provider or "")) == selection.provider and _has_selected_text(legacy_provider):
+        is_matching_provider = (
+            provider_config_key(str(legacy_provider or "")) == selection.provider
+        )
+        if is_matching_provider and _has_selected_text(legacy_provider):
             provider_display = str(legacy_provider).strip()
         selected_model = selection.explicit_model or selection.configured_model
         return provider_display, selected_model, settings

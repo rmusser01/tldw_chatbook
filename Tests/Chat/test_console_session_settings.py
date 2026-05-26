@@ -12,14 +12,12 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 
 
-def test_session_settings_does_not_depend_on_impure_helpers() -> None:
+def test_session_settings_keeps_gateway_runtime_dependencies_out() -> None:
     source = inspect.getsource(session_settings)
 
     forbidden_dependencies = {
         "console_provider_gateway",
         "httpx",
-        "validate_url",
-        "input_validation",
         "custom_tokenizers",
         "count_tokens_chat_history",
     }

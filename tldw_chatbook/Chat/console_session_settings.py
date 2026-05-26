@@ -10,6 +10,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
 )
+from tldw_chatbook.Utils.input_validation import validate_url
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
@@ -455,31 +456,23 @@ def _is_url_based_provider(provider_key: str, provider_settings: Mapping[str, ob
 
 def _valid_base_url(provider_key: str, base_url: str) -> bool:
     try:
-        candidate = normalize_llamacpp_base_url(base_url) if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS else base_url
+        candidate = (
+            normalize_llamacpp_base_url(base_url)
+            if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
+            else base_url
+        )
     except ValueError:
         return False
-    return _is_valid_http_url(candidate)
+    return validate_url(candidate) and _has_valid_url_port(candidate)
 
 
-def _is_valid_http_url(url: str) -> bool:
-    if _has_unsafe_url_chars(url):
-        return False
+def _has_valid_url_port(url: str) -> bool:
     try:
         parsed = urlparse(url)
-        hostname = parsed.hostname
         parsed.port
     except ValueError:
         return False
-    return (
-        parsed.scheme in {"http", "https"}
-        and bool(parsed.netloc)
-        and bool(hostname)
-        and not _has_unsafe_url_chars(hostname)
-    )
-
-
-def _has_unsafe_url_chars(value: str) -> bool:
-    return any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
+    return parsed.port is None or 0 < parsed.port <= 65535
 
 
 def _float_in_range(value: object, minimum: float, maximum: float) -> bool:
