@@ -166,6 +166,7 @@ def test_summary_state_prefers_character_label_over_persona_label() -> None:
 async def test_console_settings_modal_cancel_discards_draft() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    app.saved_settings = ConsoleSessionSettings(provider="openai", model="should-clear")
 
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(
@@ -179,7 +180,8 @@ async def test_console_settings_modal_cancel_discards_draft() -> None:
                     label="10 / 4k",
                 ),
                 can_save=True,
-            )
+            ),
+            callback=app.capture_saved_settings,
         )
         await pilot.pause()
         await pilot.click("#console-settings-cancel")
@@ -413,3 +415,38 @@ async def test_console_settings_modal_provider_change_uses_target_provider_model
     assert app.saved_settings is not None
     assert app.saved_settings.provider == "openai"
     assert app.saved_settings.model == "gpt-4.1"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_restores_freeform_model_after_provider_round_trip() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="custom", model="freeform-model")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"custom": [], "llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
+        await pilot.pause()
+        assert app.screen.query_one("#console-settings-model-select", Select).value == "model-a"
+
+        app.screen.query_one("#console-settings-provider", Select).value = "custom"
+        await pilot.pause()
+
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_input.display is True
+        assert model_input.disabled is False
+        assert model_input.value == "freeform-model"
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "custom"
+    assert app.saved_settings.model == "freeform-model"

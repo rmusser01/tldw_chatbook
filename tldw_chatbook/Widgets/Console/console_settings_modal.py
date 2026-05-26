@@ -40,6 +40,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._providers_models = providers_models
         self._context_estimate = context_estimate
         self._can_save = can_save
+        self._active_provider = settings.provider
+        self._provider_model_drafts: dict[str, str] = {
+            settings.provider: settings.model or "",
+        }
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
@@ -186,8 +190,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     @on(Select.Changed, "#console-settings-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
+        self._store_current_model_for_provider(self._active_provider)
         provider = str(event.value or "")
-        model = self._current_model_value()
+        model = self._model_for_provider(provider)
+        self._active_provider = provider
         draft = ConsoleSessionSettings(
             provider=provider,
             model=model,
@@ -203,15 +209,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         )
         readiness = build_console_settings_readiness(draft, app_config=self._app_config)
         self.query_one("#console-settings-readiness", Static).update(readiness.detail)
-        configured_model_options = self._configured_model_select_options(provider)
-        configured_model_values = {value for _, value in configured_model_options}
-        current_model = (
-            model
-            if (model and model in configured_model_values)
-            or (not configured_model_options and provider == self._settings.provider)
-            else None
-        )
-        self._sync_model_controls(provider, current_model)
+        self._sync_model_controls(provider, model)
 
     def _build_draft(self) -> ConsoleSessionSettings:
         provider = str(self.query_one("#console-settings-provider", Select).value or "")
@@ -269,6 +267,25 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             (option.label, option.value)
             for option in build_console_model_options(provider, self._providers_models, None)
         ]
+
+    def _store_current_model_for_provider(self, provider: str) -> None:
+        if provider:
+            self._provider_model_drafts[provider] = self._current_model_value() or ""
+
+    def _model_for_provider(self, provider: str) -> str | None:
+        configured_model_options = self._configured_model_select_options(provider)
+        if configured_model_options:
+            configured_model_values = [value for _, value in configured_model_options]
+            stored_model = self._provider_model_drafts.get(provider, "")
+            if stored_model in configured_model_values:
+                return stored_model
+            return configured_model_values[0]
+
+        if provider in self._provider_model_drafts:
+            return self._provider_model_drafts[provider] or None
+        if provider == self._settings.provider:
+            return self._settings.model or None
+        return None
 
     def _current_model_value(self) -> str | None:
         model_select = self.query_one("#console-settings-model-select", Select)
