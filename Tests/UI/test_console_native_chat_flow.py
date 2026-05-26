@@ -9,7 +9,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -768,6 +768,87 @@ async def test_console_native_tab_strip_keeps_compact_close_x():
 
         assert store.active_session_id == first.id
         assert second not in {session.id for session in store.sessions()}
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_title_has_stable_visible_label_region():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.rename_session(session.id, "Planning session with a long descriptive name")
+        await console._sync_native_console_chat_ui()
+
+        tab_selector = f"#console-session-tab-{session.id}"
+        await _wait_for_selector(console, pilot, tab_selector)
+        tab = console.query_one(tab_selector, Button)
+
+        assert tab.tooltip == "Planning session with a long descriptive name"
+        assert str(tab.label) == "Planning session..."
+        assert tab.region.width >= 18
+        assert "Planning session" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_can_be_renamed_inline():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        rename_selector = f"#console-rename-session-tab-{session.id}"
+        await _wait_for_selector(console, pilot, rename_selector)
+        await pilot.click(rename_selector)
+
+        input_selector = f"#console-session-rename-input-{session.id}"
+        await _wait_for_selector(console, pilot, input_selector)
+        rename_input = console.query_one(input_selector, Input)
+        assert rename_input.value == "Chat 1"
+        assert getattr(console.app.focused, "id", None) == rename_input.id
+
+        await pilot.press(*"Planning")
+        await pilot.press("enter")
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{session.id}")
+
+        assert store.sessions()[0].title == "Planning"
+        assert "Planning" in _visible_text(console)
+        assert len(console.query(input_selector)) == 0
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_rename_escape_restores_existing_title():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        rename_selector = f"#console-rename-session-tab-{session.id}"
+        await _wait_for_selector(console, pilot, rename_selector)
+        await pilot.click(rename_selector)
+
+        input_selector = f"#console-session-rename-input-{session.id}"
+        await _wait_for_selector(console, pilot, input_selector)
+        await pilot.press(*"Discarded")
+        await pilot.press("escape")
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{session.id}")
+
+        assert store.sessions()[0].title == "Chat 1"
+        assert "Chat 1" in _visible_text(console)
+        assert len(console.query(input_selector)) == 0
 
 
 @pytest.mark.asyncio

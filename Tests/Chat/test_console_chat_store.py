@@ -75,6 +75,26 @@ def test_store_creates_and_switches_sessions():
     assert store.messages_for_session(first.id)[0].content == "first"
 
 
+def test_store_renames_session_with_trimmed_title():
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+
+    renamed = store.rename_session(session.id, "  Planning tab  ")
+
+    assert renamed is session
+    assert store.sessions()[0].title == "Planning tab"
+
+
+def test_store_rejects_blank_session_title_without_mutating_existing_title():
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+
+    with pytest.raises(ValueError):
+        store.rename_session(session.id, "   ")
+
+    assert store.sessions()[0].title == "Chat 1"
+
+
 def test_console_sessions_store_independent_settings_snapshots() -> None:
     store = ConsoleChatStore()
     first_settings = ConsoleSessionSettings(provider="llama_cpp", model="a", temperature=0.1)
