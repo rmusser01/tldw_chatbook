@@ -148,7 +148,7 @@ class ConsoleSettingsContextEstimate:
 
 @dataclass(frozen=True)
 class ConsoleSettingsSummaryState:
-    """Compact Console settings summary rows for right-rail display."""
+    """Compact Console settings summary rows for rail display."""
 
     model_row: str
     context_row: str
