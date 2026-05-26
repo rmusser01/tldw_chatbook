@@ -233,7 +233,7 @@ Every implementation child task should use:
 Recommended common commands:
 
 ```bash
-python -m pytest -q Tests/Sync_Interop --tb=short
+python -m pytest -q Tests/Sync_Tests --tb=short
 python -m pytest -q Tests/UI/test_product_maturity_phase1_harness.py::test_backlog_task_frontmatter_ids_are_unique --tb=short
 git diff --check
 ```
