@@ -110,14 +110,25 @@ ConsoleSettingsModal {
 #console-settings-modal {
     width: 92;
     max-width: 95%;
-    height: auto;
+    height: 90%;
     max-height: 95%;
+    overflow: hidden;
+    scrollbar-size: 1 1;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+#console-settings-body {
+    height: 1fr;
+    min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-size: 1 1;
-    border: tall gray;
-    background: black;
-    padding: 1 2;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
 }
 
 .console-settings-modal-section {
@@ -130,9 +141,56 @@ ConsoleSettingsModal {
     min-height: 1;
 }
 
+.console-settings-modal-label {
+    width: 16;
+    min-width: 16;
+    max-width: 16;
+    height: 1;
+    min-height: 1;
+    content-align: left middle;
+}
+
+.console-settings-control {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+}
+
+ConsoleSettingsModal Input,
+ConsoleSettingsModal Select {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-settings-modal-actions {
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
+    align-horizontal: right;
+}
+
+#console-settings-cancel,
+#console-settings-save {
+    width: 12;
+    min-width: 12;
+    height: 1;
+    min-height: 1;
+}
+
 .console-settings-error {
     height: auto;
-    color: red;
+    min-height: 1;
+    max-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    background: $ds-status-error 10%;
+    color: $ds-text-primary;
 }
 
 #home-dashboard,
@@ -445,6 +503,17 @@ ConsoleSettingsModal {
     background: $ds-surface-panel;
 }
 
+.console-rail-handle-right {
+    width: 9;
+    min-width: 9;
+    max-width: 9;
+    height: auto;
+    min-height: 3;
+    max-height: 6;
+    border: none;
+    background: transparent;
+}
+
 .console-rail-handle-button {
     width: 11;
     min-width: 0;
@@ -454,6 +523,14 @@ ConsoleSettingsModal {
     max-height: 100%;
     text-align: center;
     content-align: center middle;
+}
+
+.console-rail-handle-button-right {
+    width: 7;
+    max-width: 7;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
 }
 
 .console-rail-collapse-button {

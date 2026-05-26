@@ -334,7 +334,7 @@ async def test_console_composer_stop_is_disabled_when_idle():
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
 
-        assert stop_button.disabled is False
+        assert stop_button.disabled is True
         assert stop_button.has_class("console-action-disabled")
         assert stop_button.has_class("console-stop-idle")
         assert not stop_button.has_class("console-stop-active")
@@ -344,7 +344,7 @@ async def test_console_composer_stop_is_disabled_when_idle():
         await asyncio.wait_for(gateway.started.wait(), timeout=1)
         await _wait_for_text(console, pilot, "partial")
 
-        assert send_button.disabled is False
+        assert send_button.disabled is True
         assert send_button.has_class("console-action-disabled")
         assert send_button.has_class("console-send-blocked")
         assert not send_button.has_class("console-action-primary")
@@ -379,9 +379,9 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
 
         composer.load_draft("second send")
         send_button = console.query_one("#console-send-message", Button)
-        assert send_button.disabled is False
+        assert send_button.disabled is True
         assert send_button.has_class("console-send-blocked")
-        send_button.press()
+        await console.handle_console_send_message(Button.Pressed(send_button))
         await pilot.pause(0.1)
         assert console._ensure_console_chat_controller().run_state.status.value == "streaming"
 
@@ -417,11 +417,11 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
         send_button = console.query_one("#console-send-message", Button)
         stop_button = console.query_one("#console-stop-generation", Button)
 
-        assert send_button.disabled is False
+        assert send_button.disabled is True
         assert send_button.has_class("console-action-disabled")
         assert send_button.has_class("console-send-blocked")
         assert not send_button.has_class("console-action-primary")
-        assert stop_button.disabled is False
+        assert stop_button.disabled is True
         assert stop_button.has_class("console-stop-idle")
 
         await asyncio.wait_for(gateway.started.wait(), timeout=1)

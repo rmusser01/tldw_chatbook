@@ -363,7 +363,7 @@ def test_context_estimate_uses_injected_counter_and_limit_resolver() -> None:
     }
 
 
-def test_context_estimate_token_counter_failure_uses_unknown_copy() -> None:
+def test_context_estimate_token_counter_failure_uses_unavailable_copy() -> None:
     def fail_count(*_args: object, **_kwargs: object) -> int:
         raise RuntimeError("tokenizer unavailable")
 
@@ -376,7 +376,7 @@ def test_context_estimate_token_counter_failure_uses_unknown_copy() -> None:
 
     assert estimate.used_tokens is None
     assert estimate.token_limit is None
-    assert estimate.label == "Context: unknown"
+    assert estimate.label == "Context: unavailable"
 
 
 def test_default_settings_rejects_bool_and_fractional_optional_ints() -> None:

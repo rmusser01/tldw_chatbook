@@ -1326,9 +1326,9 @@ class ChatScreen(BaseAppScreen):
         """Return concise Console recovery copy for provider/model setup gaps."""
         provider, model, settings = self._active_console_provider_model_display()
         if not _has_selected_text(provider):
-            return "Provider setup needed: select a provider -> Settings"
+            return "Provider setup needed: choose a provider"
         if not _has_selected_text(model):
-            return "Provider setup needed: select a model -> Settings"
+            return "Provider setup needed: choose a model"
 
         _effective_settings, settings_readiness = self._active_console_settings_readiness()
         if settings_readiness.native_send_supported:
@@ -1340,6 +1340,34 @@ class ChatScreen(BaseAppScreen):
         if provider_readiness.reason == "Missing API key":
             return f"Provider setup needed: {provider} missing API key"
         return f"Provider setup needed: {settings_readiness.detail}"
+
+    def _console_provider_recovery_action(self) -> tuple[str, str, str]:
+        """Return the label, target, and tooltip for Console provider recovery."""
+        provider, model, settings = self._active_console_provider_model_display()
+        if not _has_selected_text(provider):
+            return (
+                "Choose provider",
+                "console",
+                "Choose a provider for this Console session",
+            )
+        if not _has_selected_text(model):
+            return (
+                "Choose model",
+                "console",
+                "Choose a model for this Console session",
+            )
+
+        _effective_settings, settings_readiness = self._active_console_settings_readiness()
+        if settings_readiness.native_send_supported:
+            return ("Open Settings", "hidden", "Open provider settings")
+
+        provider_readiness = get_provider_readiness(
+            settings.provider,
+            getattr(self.app_instance, "app_config", {}) or {},
+        )
+        if provider_readiness.reason == "Missing API key":
+            return ("Open Settings", "settings", f"Add an API key for {provider}")
+        return ("Review settings", "console", "Review this Console session's settings")
 
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
@@ -1453,9 +1481,12 @@ class ChatScreen(BaseAppScreen):
             settings_button = self.query_one("#console-open-provider-settings", Button)
         except QueryError:
             return
+        action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
         self._configure_console_provider_settings_action(
             settings_button,
             visible=bool(blocker_copy),
+            label=action_label,
+            tooltip=action_tooltip,
         )
 
     @staticmethod
@@ -1482,8 +1513,12 @@ class ChatScreen(BaseAppScreen):
         button: Button,
         *,
         visible: bool,
+        label: str = "Open Settings",
+        tooltip: str = "Open provider settings",
     ) -> None:
         """Show or hide the provider recovery action with the blocker copy."""
+        button.label = label or "Open Settings"
+        button.tooltip = tooltip
         button.disabled = not visible
         if visible:
             button.styles.display = "block"
@@ -1814,6 +1849,9 @@ class ChatScreen(BaseAppScreen):
                     with transcript_region:
                         provider_blocker_copy = self._console_provider_blocker_copy()
                         guidance_visible = self._console_guidance_visible(provider_blocker_copy)
+                        provider_action_label, _provider_action_target, provider_action_tooltip = (
+                            self._console_provider_recovery_action()
+                        )
                         provider_recovery_strip = Horizontal(
                             id="console-provider-recovery-strip",
                             classes="console-provider-recovery-strip",
@@ -1832,7 +1870,7 @@ class ChatScreen(BaseAppScreen):
                             )
                             yield blocker
                             provider_settings_action = Button(
-                                "Open Settings",
+                                provider_action_label,
                                 id="console-open-provider-settings",
                                 classes="destination-action-button console-provider-settings-action",
                                 disabled=not bool(provider_blocker_copy),
@@ -1842,6 +1880,8 @@ class ChatScreen(BaseAppScreen):
                             self._configure_console_provider_settings_action(
                                 provider_settings_action,
                                 visible=bool(provider_blocker_copy),
+                                label=provider_action_label,
+                                tooltip=provider_action_tooltip,
                             )
                             yield provider_settings_action
                         start_here = Static(
@@ -1914,12 +1954,12 @@ class ChatScreen(BaseAppScreen):
                     side="right",
                     id="console-inspector-rail-handle",
                 )
-                right_handle.styles.width = 13
-                right_handle.styles.min_width = 13
-                right_handle.styles.max_width = 13
+                right_handle.styles.width = 9
+                right_handle.styles.min_width = 9
+                right_handle.styles.max_width = 9
                 if rail_state.right_open:
                     right_handle.styles.display = "none"
-                yield self._frame_console_region(right_handle)
+                yield self._frame_console_region(right_handle, variant="quiet")
             yield self._frame_console_region(
                 ConsoleComposerBar(
                     id="console-native-composer",
@@ -2541,8 +2581,12 @@ class ChatScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#console-open-provider-settings")
     async def handle_console_open_provider_settings(self, event: Button.Pressed) -> None:
-        """Route provider setup recovery to the Settings destination."""
+        """Route provider setup recovery to the smallest relevant settings surface."""
         event.stop()
+        _label, target, _tooltip = self._console_provider_recovery_action()
+        if target == "console" and getattr(self, "is_mounted", False):
+            await self.on_console_settings_open(event)
+            return
         self.post_message(NavigateToScreen(TAB_SETTINGS))
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
@@ -2925,6 +2969,27 @@ class ChatScreen(BaseAppScreen):
 
         if not updates:
             return
+
+        try:
+            settings = self._ensure_active_console_session_settings()
+            next_settings = settings
+            if provider is not None:
+                next_settings = replace(next_settings, provider=str(provider).strip())
+            if model is not None:
+                model_value = str(model).strip() if _has_selected_text(model) else None
+                next_settings = replace(next_settings, model=model_value)
+            if temperature is not None:
+                try:
+                    next_settings = replace(
+                        next_settings,
+                        temperature=float(str(temperature).strip()),
+                    )
+                except (TypeError, ValueError):
+                    logger.debug("Ignoring invalid Console temperature sync value")
+            if next_settings != settings:
+                self._replace_active_console_session_settings(next_settings)
+        except Exception as e:
+            logger.debug(f"Unable to sync compact controls into Console session settings: {e}")
 
         compact_bar = self._get_compact_model_bar()
         if compact_bar:

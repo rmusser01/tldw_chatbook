@@ -376,7 +376,7 @@ def build_console_context_estimate(
         return ConsoleSettingsContextEstimate(
             used_tokens=None,
             token_limit=None,
-            label="Context: unknown",
+            label="Context: unavailable",
             staged_source_count=staged_source_count,
             staged_context_summary=staged_context_summary,
         )
@@ -396,7 +396,7 @@ def build_console_context_estimate(
         return ConsoleSettingsContextEstimate(
             used_tokens=None,
             token_limit=None,
-            label="Context: unknown",
+            label="Context: unavailable",
             staged_source_count=staged_source_count,
             staged_context_summary=staged_context_summary,
         )
@@ -619,5 +619,7 @@ def _format_summary_float(value: float) -> str:
 
 
 def _format_context_summary_row(label: str) -> str:
-    label_text = _string_value(label) or "unknown"
+    label_text = _string_value(label) or "unavailable"
+    if label_text.lower() in {"unknown", "context: unknown"}:
+        label_text = "Context: unavailable"
     return label_text if label_text.startswith("Context: ") else f"Context: {label_text}"

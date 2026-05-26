@@ -170,17 +170,38 @@ class ConsoleChatController:
     def stop_active_run(self) -> bool:
         """Request the active stream to stop at the next safe boundary."""
         if self.run_state.status is not ConsoleRunStatus.STREAMING:
-            return False
-        if self._active_assistant_message_id is None:
+            assistant_message_id = self._active_streaming_assistant_message_id()
+            if assistant_message_id is None:
+                return False
+        else:
+            assistant_message_id = (
+                self._active_assistant_message_id
+                or self._active_streaming_assistant_message_id()
+            )
+        if assistant_message_id is None:
             return False
         self._stop_requested = True
         self._mark_stream_stopped(
-            self._active_assistant_message_id,
+            assistant_message_id,
             visible_copy="Response stopped.",
         )
         if self._active_stream_task is not None and self._active_stream_task is not asyncio.current_task():
             self._active_stream_task.cancel()
         return True
+
+    def _active_streaming_assistant_message_id(self) -> str | None:
+        """Return the visible streaming assistant message for the active session."""
+        session_id = self.store.active_session_id
+        if session_id is None:
+            return None
+        try:
+            messages = self.store.messages_for_session(session_id)
+        except KeyError:
+            return None
+        for message in reversed(messages):
+            if message.role is ConsoleMessageRole.ASSISTANT and message.status == "streaming":
+                return message.id
+        return None
 
     async def retry_message(self, message_id: str) -> ConsoleSubmitResult:
         """Retry a failed assistant message using the original turn context."""
