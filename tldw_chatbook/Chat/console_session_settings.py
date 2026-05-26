@@ -350,7 +350,7 @@ def build_console_settings_summary_state(
 
     return ConsoleSettingsSummaryState(
         model_row=f"Model: {provider_label} / {model_label}{readiness_suffix}",
-        context_row=f"Context: {context_estimate.label}",
+        context_row=_format_context_summary_row(context_estimate.label),
         sampling_row=f"Sampling: {', '.join(sampling_parts)}",
         identity_row=identity_row,
         readiness_label=readiness_label,
@@ -623,3 +623,8 @@ def _string_value(value: object) -> str | None:
 
 def _format_summary_float(value: float) -> str:
     return f"{float(value):.2f}"
+
+
+def _format_context_summary_row(label: str) -> str:
+    label_text = _string_value(label) or "unknown"
+    return label_text if label_text.startswith("Context: ") else f"Context: {label_text}"
