@@ -39,7 +39,29 @@ class ChatSyncV2OutboxProducer:
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
     ) -> dict[str, Any]:
-        """Persist an encrypted Chat message envelope when Sync v2 is ready."""
+        """Persist an encrypted Chat message envelope when Sync v2 is ready.
+
+        Args:
+            server_profile_id: Server profile that owns the outbox source scope.
+            authenticated_principal_id: Optional authenticated principal scope.
+            workspace_scope: Optional workspace scope for scoped outbox entries.
+            conversation_id: Durable local conversation ID that owns the message.
+            message_id: Durable local message ID.
+            role: Chat role for the message, such as ``user`` or ``assistant``.
+            content: Message content encrypted into the envelope payload.
+            parent_message_id: Optional previous durable message ID for restore continuity.
+            sequence: Optional 1-based order among sync-eligible messages.
+            variant_turn_id: Optional turn ID shared by regenerated variants.
+            variant_index: Optional selected variant index.
+            variant_count: Optional total available variant count for the turn.
+            selected_variant_id: Optional selected variant ID.
+            base_version: Optional previous payload hash for versioned updates.
+            entity_version: Optional explicit entity version after the mutation.
+
+        Returns:
+            A status mapping. Enqueued results include the durable outbox entry;
+            skipped results include a reason describing the missing prerequisite.
+        """
 
         profile = self._sync_ready_profile(
             server_profile_id=server_profile_id,

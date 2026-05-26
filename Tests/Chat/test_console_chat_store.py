@@ -185,7 +185,15 @@ class FakeChatSyncProducer:
 
     def enqueue_chat_message(self, **kwargs):
         self.enqueued.append(kwargs)
-        return {"status": "enqueued", "outbox_entry": {"outbox_id": len(self.enqueued)}}
+        return {
+            "status": "enqueued",
+            "outbox_entry": {
+                "outbox_id": len(self.enqueued),
+                "envelope": {
+                    "payload_hash": f"hash:{kwargs['role']}:{kwargs['content']}",
+                },
+            },
+        }
 
 
 class FailingChatSyncProducer:
@@ -351,11 +359,54 @@ def test_store_enqueues_selected_variant_with_restore_metadata():
     assert updated.variants is not None
     assert sync_producer.enqueued[-1]["message_id"] == "msg-1"
     assert sync_producer.enqueued[-1]["content"] == "second"
+    assert sync_producer.enqueued[-1]["base_version"] == "hash:assistant:first"
     assert sync_producer.enqueued[-1]["sequence"] == 1
     assert sync_producer.enqueued[-1]["variant_turn_id"] == updated.variants.turn_id
     assert sync_producer.enqueued[-1]["variant_index"] == 1
     assert sync_producer.enqueued[-1]["variant_count"] == 2
     assert sync_producer.enqueued[-1]["selected_variant_id"] == updated.variants.current.id
+
+
+def test_store_sequences_only_sync_eligible_messages():
+    persistence = FakePersistence()
+    sync_producer = FakeChatSyncProducer()
+    store = ConsoleChatStore(
+        persistence=persistence,
+        sync_v2_chat_producer=sync_producer,
+        sync_v2_server_profile_id="server-a",
+    )
+    session = store.ensure_session(title="Chat 1")
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.SYSTEM,
+        content="visible only",
+        persist=False,
+    )
+    failed = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+    )
+    store.append_stream_chunk(failed.id, "partial")
+    store.mark_message_failed(failed.id)
+
+    first_synced = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="hello",
+        persist=True,
+    )
+    second_synced = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="again",
+        persist=True,
+    )
+
+    assert first_synced.persisted_message_id == "msg-2"
+    assert second_synced.persisted_message_id == "msg-3"
+    assert [entry["sequence"] for entry in sync_producer.enqueued] == [1, 2]
 
 
 def test_store_updates_persisted_streaming_assistant_content_and_status():

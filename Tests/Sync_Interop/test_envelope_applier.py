@@ -109,6 +109,38 @@ def test_chat_applier_appends_by_stable_id_and_conflicts_on_hash_mismatch() -> N
     assert store.conflicts[-1]["domain"] == "chat"
 
 
+def test_chat_applier_allows_versioned_message_update() -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    store = RecordingLocalStore()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
+
+    original = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="first",
+    )
+    updated = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="second",
+        base_version=original.payload_hash,
+    )
+
+    first = applier.apply(original)
+    second = applier.apply(updated)
+
+    assert first["status"] == "applied"
+    assert second["status"] == "applied"
+    assert store.chat_messages["conversation-1:message-1"] == {
+        "content": "second",
+        "role": "assistant",
+    }
+    assert store.conflicts == []
+
+
 def test_workspace_and_source_cache_appliers_route_to_local_store() -> None:
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)

@@ -14,10 +14,12 @@ documentation:
 modified_files:
 - tldw_chatbook/Sync_Interop/chat_outbox_producer.py
 - tldw_chatbook/Sync_Interop/envelope_builder.py
+- tldw_chatbook/Sync_Interop/domain_adapters/chat.py
 - tldw_chatbook/Sync_Interop/__init__.py
 - tldw_chatbook/Chat/console_chat_store.py
 - Tests/Sync_Interop/test_chat_outbox_producer.py
 - Tests/Sync_Interop/test_envelope_builder.py
+- Tests/Sync_Interop/test_envelope_applier.py
 - Tests/Chat/test_console_chat_store.py
 ---
 
@@ -54,6 +56,8 @@ Extended `SyncEnvelopeBuilder.build_chat_message()` with restore-compatible clea
 
 Wired `ConsoleChatStore` to an optional injected Chat producer after durable local persistence succeeds. User messages enqueue immediately after persistence; assistant messages enqueue only when complete. Streaming chunks, failed assistant sends, stopped assistant sends, empty/pending messages, and producer exceptions do not block local chat persistence or create misleading final-message envelopes. Regenerated variants enqueue the selected variant content with variant metadata.
 
+PR review follow-up added Google-style public API docstrings, preserved Loguru structured exception context with `logger.bind()`, made sequence metadata count only sync-eligible persisted complete messages, and added versioned Chat message update semantics. The store now tracks the last enqueued payload hash per stable message key and passes it as `base_version` for changed content, while `ChatSyncAdapter` applies updates when `base_version` matches the current local hash and still conflicts on divergent changes.
+
 Verification:
 - Red tests failed on the missing Chat producer module and missing ConsoleChatStore Sync v2 enqueue contract.
 - `../../.venv/bin/python -m pytest -q Tests/Sync_Interop/test_chat_outbox_producer.py Tests/Sync_Interop/test_envelope_builder.py Tests/Chat/test_console_chat_store.py --tb=short` passed with 27 tests.
@@ -62,6 +66,13 @@ Verification:
 - `../../.venv/bin/python -m pytest -q Tests/UI/test_product_maturity_phase1_harness.py::test_backlog_task_frontmatter_ids_are_unique --tb=short` passed with 1 test.
 - `../../.venv/bin/python -m compileall tldw_chatbook/Sync_Interop/chat_outbox_producer.py tldw_chatbook/Sync_Interop/envelope_builder.py tldw_chatbook/Chat/console_chat_store.py` passed.
 - `git diff --check` passed.
+- `git rebase origin/dev` reported the branch was up to date because `origin/dev` is already an ancestor of the stacked roadmap branch.
+- `../../.venv/bin/python -m pytest -q Tests/Sync_Interop/test_chat_outbox_producer.py Tests/Sync_Interop/test_envelope_builder.py Tests/Sync_Interop/test_envelope_applier.py Tests/Chat/test_console_chat_store.py --tb=short` passed with 33 tests after PR review fixes.
+- `../../.venv/bin/python -m pytest -q Tests/Sync_Interop/test_local_first_sync_service.py Tests/Sync_Interop/test_restore_service.py Tests/Sync_Interop/test_sync_state_repository.py --tb=short` passed with 61 tests after PR review fixes.
+- `../../.venv/bin/python -m pytest -q Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store.py --tb=short` passed with 44 tests after PR review fixes.
+- `../../.venv/bin/python -m pytest -q Tests/UI/test_product_maturity_phase1_harness.py::test_backlog_task_frontmatter_ids_are_unique --tb=short` passed with 1 test after PR review fixes.
+- `../../.venv/bin/python -m compileall tldw_chatbook/Sync_Interop/chat_outbox_producer.py tldw_chatbook/Sync_Interop/envelope_builder.py tldw_chatbook/Sync_Interop/domain_adapters/chat.py tldw_chatbook/Chat/console_chat_store.py` passed after PR review fixes.
+- `git diff --check` passed after PR review fixes.
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 

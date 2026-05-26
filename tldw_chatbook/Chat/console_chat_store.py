@@ -83,6 +83,19 @@ class ConsoleChatStore:
         sync_v2_authenticated_principal_id: str | None = None,
         sync_v2_workspace_scope: str | None = None,
     ) -> None:
+        """Initialize the Console chat store.
+
+        Args:
+            persistence: Optional durable Chat persistence adapter.
+            workspace_context: Current workspace and staged-source policy context.
+            sync_v2_chat_producer: Optional Sync v2 producer called after durable,
+                complete local Chat message writes.
+            sync_v2_server_profile_id: Optional server profile scope for Chat outbox
+                entries. If missing, Sync v2 enqueue is disabled.
+            sync_v2_authenticated_principal_id: Optional authenticated principal scope
+                for Chat outbox entries.
+            sync_v2_workspace_scope: Optional workspace scope for Chat outbox entries.
+        """
         self.persistence = persistence
         self.workspace_context = workspace_context or ConsoleWorkspaceContext()
         self.sync_v2_chat_producer = sync_v2_chat_producer
@@ -96,6 +109,7 @@ class ConsoleChatStore:
         self._pending_persistence_message_ids: set[str] = set()
         self._stream_chunks_by_message: dict[str, list[str]] = {}
         self._stream_materialized_counts: dict[str, int] = {}
+        self._sync_v2_message_versions: dict[str, str] = {}
 
     def ensure_session(
         self,
@@ -387,8 +401,9 @@ class ConsoleChatStore:
         if conversation_id is None:
             return
         variant_metadata = self._sync_variant_metadata(message)
+        stable_key = f"{conversation_id}:{message.persisted_message_id}"
         try:
-            self.sync_v2_chat_producer.enqueue_chat_message(
+            result = self.sync_v2_chat_producer.enqueue_chat_message(
                 server_profile_id=self.sync_v2_server_profile_id,
                 authenticated_principal_id=self.sync_v2_authenticated_principal_id,
                 workspace_scope=self.sync_v2_workspace_scope,
@@ -402,27 +417,38 @@ class ConsoleChatStore:
                 variant_index=variant_metadata["variant_index"],
                 variant_count=variant_metadata["variant_count"],
                 selected_variant_id=variant_metadata["selected_variant_id"],
-                base_version=None,
+                base_version=self._sync_v2_message_versions.get(stable_key),
                 entity_version=None,
             )
+            self._record_sync_v2_message_version(stable_key, result)
         except Exception:
-            logger.exception(
-                "Failed to enqueue Sync v2 chat message after local mutation",
+            logger.bind(
                 server_profile_id=self.sync_v2_server_profile_id,
                 authenticated_principal_id=self.sync_v2_authenticated_principal_id,
                 workspace_scope=self.sync_v2_workspace_scope,
                 conversation_id=conversation_id,
                 message_id=message.persisted_message_id,
-            )
+            ).exception("Failed to enqueue Sync v2 chat message after local mutation")
 
     def _sync_message_sequence(self, message: ConsoleChatMessage) -> int | None:
         session_id = self._message_session_index.get(message.id)
         if session_id is None:
             return None
-        for index, candidate in enumerate(self._messages_by_session.get(session_id, []), start=1):
+        sequence = 0
+        for candidate in self._messages_by_session.get(session_id, []):
+            if self._is_sync_eligible_message(candidate):
+                sequence += 1
             if candidate.id == message.id:
-                return index
+                return sequence if self._is_sync_eligible_message(candidate) else None
         return None
+
+    @staticmethod
+    def _is_sync_eligible_message(message: ConsoleChatMessage) -> bool:
+        return (
+            message.persisted_message_id is not None
+            and message.status == "complete"
+            and bool(message.content)
+        )
 
     def _previous_persisted_message_id(self, message: ConsoleChatMessage) -> str | None:
         session_id = self._message_session_index.get(message.id)
@@ -451,6 +477,19 @@ class ConsoleChatStore:
             "variant_count": len(message.variants.variants),
             "selected_variant_id": message.variants.current.id,
         }
+
+    def _record_sync_v2_message_version(self, stable_key: str, result: dict[str, Any]) -> None:
+        if result.get("status") != "enqueued":
+            return
+        entry = result.get("outbox_entry")
+        if not isinstance(entry, dict):
+            return
+        envelope = entry.get("envelope")
+        if not isinstance(envelope, dict):
+            return
+        payload_hash = envelope.get("payload_hash")
+        if isinstance(payload_hash, str) and payload_hash:
+            self._sync_v2_message_versions[stable_key] = payload_hash
 
     def _session_or_raise(self, session_id: str) -> ConsoleChatSession:
         try:
