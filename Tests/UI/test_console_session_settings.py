@@ -413,6 +413,34 @@ async def test_console_settings_modal_uses_model_input_without_configured_models
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_uses_first_model_when_initial_model_missing() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model=None)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.disabled is False
+        assert model_select.value == "gpt-4.1"
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "openai"
+    assert app.saved_settings.model == "gpt-4.1"
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_provider_change_to_no_models_switches_to_input() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")

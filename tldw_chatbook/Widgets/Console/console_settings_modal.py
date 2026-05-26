@@ -48,8 +48,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
         has_model_options = bool(self._configured_model_select_options(self._settings.provider))
+        selected_model = self._model_for_provider(self._settings.provider)
         model_options = (
-            self._model_select_options(self._settings.provider, self._settings.model)
+            self._model_select_options(self._settings.provider, selected_model)
             if has_model_options
             else []
         )
@@ -77,8 +78,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 with Horizontal(classes="console-settings-modal-row"):
                     yield Static("Model", classes="console-settings-modal-label")
                     model_select = Select(
-                        model_options or [(self._settings.model or "", self._settings.model or "")],
-                        value=self._settings.model or "",
+                        model_options or [(selected_model or "", selected_model or "")],
+                        value=selected_model or "",
                         allow_blank=False,
                         id="console-settings-model-select",
                         disabled=not has_model_options,
@@ -86,7 +87,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                     model_select.display = has_model_options
                     yield model_select
                     model_input = Input(
-                        value=self._settings.model or "",
+                        value=selected_model or "",
                         id="console-settings-model-input",
                         disabled=has_model_options,
                     )
