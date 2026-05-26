@@ -10,7 +10,7 @@ from ._helpers import call_if_present, decrypt_envelope_payload
 
 
 class ChatSyncAdapter:
-    """Apply append-only chat message envelopes."""
+    """Apply versioned chat message envelopes."""
 
     def apply(
         self,
@@ -25,11 +25,12 @@ class ChatSyncAdapter:
         if current_hash == envelope.payload_hash:
             return {"status": "noop"}
         if current_hash and current_hash != envelope.payload_hash:
-            return record_conflict(
-                envelope,
-                conflict_type="chat_message_hash_mismatch",
-                message="A chat message with this stable ID already has different content.",
-            )
+            if envelope.base_version != current_hash:
+                return record_conflict(
+                    envelope,
+                    conflict_type="chat_message_hash_mismatch",
+                    message="A chat message with this stable ID already has different content.",
+                )
         payload = decrypt_envelope_payload(envelope, dataset_key=dataset_key)
         call_if_present(local_store, "append_chat_message", stable_key, payload, envelope.payload_hash)
         return {"status": "applied"}

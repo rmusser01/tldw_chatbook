@@ -1,5 +1,5 @@
 ---
-id: TASK-69
+id: TASK-71
 title: Console native chat core
 status: Done
 assignee: []
