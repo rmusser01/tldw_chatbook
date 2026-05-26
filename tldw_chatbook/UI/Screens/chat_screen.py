@@ -468,12 +468,18 @@ class ChatScreen(BaseAppScreen):
 
         base_url: str | None = None
         if provider in {"llama_cpp", "local_llamacpp"}:
-            override_url = active_settings.base_url if active_settings is not None else (
+            fallback_url = (
                 os.environ.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
                 or console_config.get("llama_cpp_base_url_override")
                 or provider_config.get("api_url")
                 or provider_config.get("base_url")
                 or provider_config.get("api_base")
+            )
+            override_url = (
+                active_settings.base_url
+                if active_settings is not None
+                and _has_selected_text(active_settings.base_url)
+                else fallback_url
             )
             base_url = self._normalize_llamacpp_base_url(
                 str(override_url) if override_url is not None else None
