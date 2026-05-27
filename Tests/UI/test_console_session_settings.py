@@ -158,7 +158,7 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_settings_summary_keeps_configure_button_when_setup_blocked() -> None:
+async def test_console_settings_summary_uses_direct_choose_model_action_when_setup_blocked() -> None:
     state = ConsoleSettingsSummaryState(
         provider_row="Provider: llama.cpp",
         model_row="Model: Missing",
@@ -166,6 +166,8 @@ async def test_console_settings_summary_keeps_configure_button_when_setup_blocke
         sampling_row="Sampling: T 0.70, P 0.95",
         identity_row="Persona: General",
         readiness_label="Missing model",
+        action_label="Choose Model",
+        action_tooltip="Choose a model for this Console session",
     )
 
     app = SummaryHarness(state)
@@ -176,8 +178,8 @@ async def test_console_settings_summary_keeps_configure_button_when_setup_blocke
         assert "Provider: llama.cpp" in text
         assert "Model: Missing" in text
         button = app.query_one("#console-settings-open", Button)
-        assert str(button.label) == "Configure"
-        assert button.tooltip == "Configure Console settings"
+        assert str(button.label) == "Choose Model"
+        assert button.tooltip == "Choose a model for this Console session"
 
 
 def test_summary_state_appends_non_ready_readiness_to_model_row() -> None:
@@ -206,6 +208,8 @@ def test_summary_state_keeps_missing_model_row_compact() -> None:
     assert state.provider_row == "Provider: llama_cpp"
     assert state.model_row == "Model: Missing"
     assert state.readiness_label == "Missing model"
+    assert state.action_label == "Choose Model"
+    assert state.action_tooltip == "Choose a model for this Console session"
 
 
 def test_summary_state_appends_optional_sampling_fields_only_when_set() -> None:

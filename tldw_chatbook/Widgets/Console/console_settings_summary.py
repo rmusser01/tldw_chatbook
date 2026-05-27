@@ -62,8 +62,8 @@ class ConsoleSettingsSummary(Vertical):
             markup=False,
         )
         yield Button(
-            "Configure",
+            self.state.action_label,
             id="console-settings-open",
-            tooltip="Configure Console settings",
+            tooltip=self.state.action_tooltip,
             compact=True,
         )

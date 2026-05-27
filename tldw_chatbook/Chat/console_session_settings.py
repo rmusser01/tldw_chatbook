@@ -157,6 +157,8 @@ class ConsoleSettingsSummaryState:
     identity_row: str
     readiness_label: str = ""
     provider_row: str = ""
+    action_label: str = "Configure"
+    action_tooltip: str = "Configure Console settings"
 
 
 def build_console_provider_options(
@@ -340,6 +342,11 @@ def build_console_settings_summary_state(
         if readiness_label in {"", "Ready"} or model_is_missing
         else f" ({readiness_label})"
     )
+    action_label = "Configure"
+    action_tooltip = "Configure Console settings"
+    if model_is_missing:
+        action_label = "Choose Model"
+        action_tooltip = "Choose a model for this Console session"
 
     sampling_parts = [
         f"T {_format_summary_float(settings.temperature)}",
@@ -363,6 +370,8 @@ def build_console_settings_summary_state(
         identity_row=identity_row,
         readiness_label=readiness_label,
         provider_row=f"Provider: {provider_label}",
+        action_label=action_label,
+        action_tooltip=action_tooltip,
     )
 
 
