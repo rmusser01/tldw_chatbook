@@ -119,6 +119,7 @@ def _assert_right_handle_lightweight(screen) -> None:
     assert button.region.x >= handle.region.x
     assert button.region.x + button.region.width <= handle.region.x + handle.region.width
     assert button.region.width >= len(button_label)
+    assert button.region.width >= len(button_label) + 2
     assert button.region.y >= handle.region.y
     assert button.region.y + button.region.height <= handle.region.y + handle.region.height
     assert 1 <= button.region.height <= 4
@@ -244,10 +245,10 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
         assert _is_displayed(console.query_one("#console-inspector-rail-handle"))
         right_handle = console.query_one("#console-inspector-rail-handle")
         assert right_handle.has_class("console-rail-handle-right")
-        assert right_handle.region.width == 9
+        assert right_handle.region.width == 11
         _assert_right_handle_lightweight(console)
         open_button = console.query_one("#console-inspector-rail-open", Button)
-        assert str(open_button.label) == "< Insp"
+        assert str(open_button.label) == "Inspect"
         assert open_button.tooltip == "Open Inspector rail"
 
 
@@ -690,11 +691,11 @@ async def test_console_provider_blocked_badge_does_not_auto_open_inspector():
         await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
 
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
-        assert "blocked" in await _wait_for_badge(
+        assert "setup" in await _wait_for_badge(
             console,
             pilot,
             "#console-inspector-rail-badge",
-            "blocked",
+            "setup",
         )
         assert _is_displayed(console.query_one("#console-provider-recovery-strip"))
         settings_button = console.query_one("#console-open-provider-settings", Button)
@@ -947,7 +948,7 @@ async def test_console_compact_width_preserves_main_column_and_forces_right_coll
         assert composer.region.width >= workspace_grid.region.width - 2
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
         assert _is_displayed(right_handle)
-        assert right_handle.region.width == 9
+        assert right_handle.region.width == 11
         _assert_right_handle_lightweight(console)
         _assert_handle_visible_text_fits(right_handle)
 

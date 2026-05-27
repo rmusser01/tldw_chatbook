@@ -1997,9 +1997,9 @@ class ChatScreen(BaseAppScreen):
                     side="right",
                     id="console-inspector-rail-handle",
                 )
-                right_handle.styles.width = 9
-                right_handle.styles.min_width = 9
-                right_handle.styles.max_width = 9
+                right_handle.styles.width = 11
+                right_handle.styles.min_width = 11
+                right_handle.styles.max_width = 11
                 if rail_state.right_open:
                     right_handle.styles.display = "none"
                 yield self._frame_console_region(right_handle, variant="quiet")
