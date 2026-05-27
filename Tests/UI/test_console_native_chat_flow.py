@@ -106,6 +106,28 @@ async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 80) ->
     raise AssertionError(f"Text not found: {expected!r}. Visible text: {_visible_text(screen)!r}")
 
 
+async def _wait_for_console_rename_modal(host: ConsoleHarness, pilot):
+    for _ in range(40):
+        if (
+            host.screen_stack
+            and host.screen_stack[-1].query("#console-rename-session-modal")
+            and host.screen_stack[-1].query("#console-rename-session-title")
+        ):
+            await pilot.pause()
+            return host.screen_stack[-1]
+        await pilot.pause(0.05)
+    raise AssertionError("Console rename modal did not open")
+
+
+async def _wait_for_console_screen(host: ConsoleHarness, console, pilot) -> None:
+    for _ in range(40):
+        if host.screen_stack and host.screen_stack[-1] is console:
+            await pilot.pause()
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("Console modal did not dismiss")
+
+
 def _select_llamacpp_console(console: ChatScreen) -> None:
     """Select the native llama.cpp path after mounted controls initialize."""
     console._console_control_provider = "llama_cpp"
@@ -787,14 +809,16 @@ async def test_console_native_tab_title_has_stable_visible_label_region():
         await _wait_for_selector(console, pilot, tab_selector)
         tab = console.query_one(tab_selector, Button)
 
-        assert tab.tooltip == "Planning session with a long descriptive name"
+        assert tab.tooltip == (
+            "Rename Console tab: Planning session with a long descriptive name"
+        )
         assert str(tab.label) == "Planning session..."
         assert tab.region.width >= 18
         assert "Planning session" in _visible_text(console)
 
 
 @pytest.mark.asyncio
-async def test_console_native_tab_can_be_renamed_inline():
+async def test_console_native_active_tab_title_opens_rename_modal():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -805,23 +829,23 @@ async def test_console_native_tab_can_be_renamed_inline():
         session = store.ensure_session(title="Chat 1")
         await console._sync_native_console_chat_ui()
 
-        rename_selector = f"#console-rename-session-tab-{session.id}"
-        await _wait_for_selector(console, pilot, rename_selector)
-        await pilot.click(rename_selector)
+        assert not list(console.query(f"#console-rename-session-tab-{session.id}"))
 
-        input_selector = f"#console-session-rename-input-{session.id}"
-        await _wait_for_selector(console, pilot, input_selector)
-        rename_input = console.query_one(input_selector, Input)
+        await pilot.click(f"#console-session-tab-{session.id}")
+        modal_screen = await _wait_for_console_rename_modal(host, pilot)
+
+        rename_input = modal_screen.query_one("#console-rename-session-title", Input)
         assert rename_input.value == "Chat 1"
         assert getattr(console.app.focused, "id", None) == rename_input.id
 
         await pilot.press(*"Planning")
-        await pilot.press("enter")
+        modal_screen.query_one("#console-rename-session-save", Button).press()
+        await _wait_for_console_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, f"#console-session-tab-{session.id}")
 
         assert store.sessions()[0].title == "Planning"
         assert "Planning" in _visible_text(console)
-        assert len(console.query(input_selector)) == 0
+        assert not list(console.query(f"#console-session-rename-input-{session.id}"))
 
 
 @pytest.mark.asyncio
@@ -836,19 +860,19 @@ async def test_console_native_tab_rename_escape_restores_existing_title():
         session = store.ensure_session(title="Chat 1")
         await console._sync_native_console_chat_ui()
 
-        rename_selector = f"#console-rename-session-tab-{session.id}"
-        await _wait_for_selector(console, pilot, rename_selector)
-        await pilot.click(rename_selector)
+        await pilot.click(f"#console-session-tab-{session.id}")
 
-        input_selector = f"#console-session-rename-input-{session.id}"
-        await _wait_for_selector(console, pilot, input_selector)
+        modal_screen = await _wait_for_console_rename_modal(host, pilot)
+        rename_input = modal_screen.query_one("#console-rename-session-title", Input)
+        assert rename_input.value == "Chat 1"
         await pilot.press(*"Discarded")
         await pilot.press("escape")
+        await _wait_for_console_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, f"#console-session-tab-{session.id}")
 
         assert store.sessions()[0].title == "Chat 1"
         assert "Chat 1" in _visible_text(console)
-        assert len(console.query(input_selector)) == 0
+        assert not list(console.query(f"#console-session-rename-input-{session.id}"))
 
 
 @pytest.mark.asyncio

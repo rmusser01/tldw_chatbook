@@ -94,6 +94,7 @@ from ...Widgets.Console import (
     ConsoleComposerBar,
     ConsoleControlBar,
     ConsoleRailHandle,
+    ConsoleRenameSessionModal,
     ConsoleRunInspector,
     ConsoleSaveAsModal,
     ConsoleSessionSurface,
@@ -326,6 +327,35 @@ class ChatScreen(BaseAppScreen):
             self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
         self.app.push_screen(modal, callback=_apply_modal_result)
+
+    def _open_console_session_rename_modal(self, session_id: str) -> None:
+        """Open a modal for viewing and editing the active Console tab title."""
+        store = self._ensure_console_chat_store()
+        session = next(
+            (candidate for candidate in store.sessions() if candidate.id == session_id),
+            None,
+        )
+        if session is None:
+            self.app_instance.notify("Console tab is no longer available.", severity="error")
+            return
+
+        def _apply_rename(result: str | None) -> None:
+            if result is None:
+                return
+            try:
+                store.rename_session(session_id, result)
+            except ValueError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except KeyError:
+                self.app_instance.notify("Console tab is no longer available.", severity="error")
+                return
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+
+        self.app.push_screen(
+            ConsoleRenameSessionModal(title=session.title),
+            callback=_apply_rename,
+        )
     
     
     # Reactive property for sidebar state persistence
@@ -1638,29 +1668,6 @@ class ChatScreen(BaseAppScreen):
         run_button.disabled = not query_ready
         run_button.tooltip = ""
 
-    @on(Input.Submitted)
-    async def handle_console_tab_rename_submitted(self, event: Input.Submitted) -> None:
-        """Commit inline Console tab rename submissions."""
-        input_id = getattr(event.input, "id", None) or ""
-        prefix = "console-session-rename-input-"
-        if not input_id.startswith(prefix):
-            return
-
-        event.stop()
-        session_id = input_id.removeprefix(prefix)
-        try:
-            self._ensure_console_chat_store().rename_session(session_id, event.value)
-        except ValueError as exc:
-            self.app_instance.notify(str(exc), severity="warning")
-        except KeyError:
-            self.app_instance.notify("Console tab is no longer available.", severity="error")
-
-        try:
-            self.query_one("#console-session-surface", ConsoleSessionSurface).cancel_renaming_session()
-        except QueryError:
-            pass
-        await self._sync_native_console_chat_ui()
-
     @on(Button.Pressed, "#console-run-library-rag")
     def handle_console_run_library_rag(self, event: Button.Pressed) -> None:
         """Request Library retrieval from the Console source-readiness seam."""
@@ -2930,25 +2937,8 @@ class ChatScreen(BaseAppScreen):
             composer,
         ) or self._is_legacy_chat_input_focus(focused)
 
-    def _cancel_console_tab_rename_if_focused(self) -> bool:
-        """Cancel inline Console tab rename when Esc is pressed in the rename input."""
-        focused_id = getattr(self.app.focused, "id", None) or ""
-        if not focused_id.startswith("console-session-rename-input-"):
-            return False
-        try:
-            surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
-        except QueryError:
-            return False
-        surface.cancel_renaming_session()
-        self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
-        return True
-
     def on_key(self, event: Key) -> None:
         """Treat the Console composer as the default printable text target."""
-        if event.key == "escape" and self._cancel_console_tab_rename_if_focused():
-            event.stop()
-            event.prevent_default()
-            return
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
@@ -3863,19 +3853,6 @@ class ChatScreen(BaseAppScreen):
             )
             await self._sync_native_console_chat_ui()
             return
-        if button_id and button_id.startswith("console-rename-session-tab-"):
-            event.stop()
-            session_id = button_id.removeprefix("console-rename-session-tab-")
-            try:
-                self._ensure_console_chat_controller().switch_session(session_id)
-                surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
-            except (KeyError, QueryError):
-                self.app_instance.notify("Console tab is no longer available.", severity="error")
-                return
-            surface.start_renaming_session(session_id)
-            await self._sync_native_console_chat_ui()
-            surface.focus_rename_input()
-            return
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()
             session_id = button_id.removeprefix("console-close-session-tab-")
@@ -3906,7 +3883,11 @@ class ChatScreen(BaseAppScreen):
         if button_id and button_id.startswith("console-session-tab-"):
             event.stop()
             session_id = button_id.removeprefix("console-session-tab-")
-            self._ensure_console_chat_controller().switch_session(session_id)
+            controller = self._ensure_console_chat_controller()
+            if controller.store.active_session_id == session_id:
+                self._open_console_session_rename_modal(session_id)
+                return
+            controller.switch_session(session_id)
             await self._sync_native_console_chat_ui()
             return
         if button_id and button_id.startswith("console-message-action-"):

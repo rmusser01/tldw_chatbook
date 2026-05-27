@@ -822,20 +822,9 @@ ConsoleSettingsModal Select {
 }
 
 .console-session-tab,
-.console-session-rename-button,
 #console-new-chat-tab {
     width: auto;
     min-width: 8;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    border: none;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-.console-session-rename-input {
     height: 1;
     min-height: 1;
     padding: 0 1;
