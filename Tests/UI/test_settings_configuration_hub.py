@@ -12,6 +12,7 @@ from Tests.UI.test_destination_shells import (
     _build_test_app,
     _visible_text,
 )
+import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
 )
@@ -23,6 +24,7 @@ from tldw_chatbook.UI.Screens.settings_config_adapter import (
 from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
+    SettingsValidationResult,
 )
 
 
@@ -1144,6 +1146,79 @@ async def test_settings_diagnostics_validate_and_reload_config_actions():
 
         assert "Config validation: valid" in text
         assert "Config reload: loaded" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_diagnostics_test_shortcut_runs_validate_and_reload():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-diagnostics")
+        await pilot.press("t")
+        screen = _active_destination_screen(host)
+        await _wait_for_settings_text(screen, pilot, "Config reload: loaded")
+        text = _visible_text(screen)
+
+        assert "Config validation: valid" in text
+        assert "Config reload: loaded" in text
+        assert "No test action is available" not in text
+
+
+def test_settings_diagnostics_combined_helper_validates_once(monkeypatch, tmp_path):
+    class FakeAdapter:
+        validate_calls = 0
+        load_calls = 0
+
+        def validate_config_file(self, path):
+            FakeAdapter.validate_calls += 1
+            return SettingsValidationResult(True, "valid once")
+
+        def load(self, *, force_reload: bool = False):
+            FakeAdapter.load_calls += 1
+            return {"chat_defaults": {"provider": "OpenAI"}}
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[chat_defaults]\nprovider = \"OpenAI\"\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+
+    screen = SettingsScreen(_build_test_app())
+    validation_result, reload_result, loaded_config = screen._diagnostics_validation_and_reload_results()
+
+    assert FakeAdapter.validate_calls == 1
+    assert FakeAdapter.load_calls == 1
+    assert validation_result == "Config validation: valid - valid once"
+    assert reload_result == "Config reload: loaded"
+    assert loaded_config == {"chat_defaults": {"provider": "OpenAI"}}
+
+
+def test_settings_diagnostics_combined_helper_skips_reload_when_invalid(monkeypatch, tmp_path):
+    class FakeAdapter:
+        validate_calls = 0
+        load_calls = 0
+
+        def validate_config_file(self, path):
+            FakeAdapter.validate_calls += 1
+            return SettingsValidationResult(False, "broken TOML")
+
+        def load(self, *, force_reload: bool = False):
+            FakeAdapter.load_calls += 1
+            return {"chat_defaults": {"provider": "OpenAI"}}
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[chat_defaults\nprovider = \"OpenAI\"\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+
+    screen = SettingsScreen(_build_test_app())
+    validation_result, reload_result, loaded_config = screen._diagnostics_validation_and_reload_results()
+
+    assert FakeAdapter.validate_calls == 1
+    assert FakeAdapter.load_calls == 0
+    assert validation_result == "Config validation: invalid - broken TOML"
+    assert reload_result == "Config reload: failed - broken TOML"
+    assert loaded_config is None
 
 
 def test_settings_diagnostics_strictly_reports_corrupt_toml(monkeypatch, tmp_path):
