@@ -7,6 +7,7 @@ from typing import Mapping
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
@@ -226,8 +227,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         if self._focus_model:
             self._focus_model_control()
 
+    def _has_selected_model(self) -> bool:
+        try:
+            return bool(self._current_model_value())
+        except (NoMatches, QueryError):
+            return bool(self._model_for_provider(self._active_provider))
+
     def _is_model_setup_mode(self) -> bool:
-        return self._focus_model
+        return self._focus_model and not self._has_selected_model()
 
     def _readiness_detail(self, default_detail: str) -> str:
         if self._is_model_setup_mode():
@@ -269,25 +276,32 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model = self._model_for_provider(provider)
         base_url = self._base_url_for_provider(provider)
         self._active_provider = provider
-        draft = ConsoleSessionSettings(
-            provider=provider,
-            model=model,
-            base_url=base_url if self._provider_uses_base_url(provider) else None,
-            temperature=self._settings.temperature,
-            top_p=self._settings.top_p,
-            min_p=self._settings.min_p,
-            top_k=self._settings.top_k,
-            max_tokens=self._settings.max_tokens,
-            streaming=self.query_one("#console-settings-streaming", Checkbox).value,
-            persona_label=self._settings.persona_label,
-            character_label=self._settings.character_label,
-        )
+        self._sync_model_controls(provider, model)
+        self._sync_base_url_control(provider, base_url)
+        self._sync_readiness_display()
+
+    @on(Select.Changed, "#console-settings-model-select")
+    def _model_select_changed(self, event: Select.Changed) -> None:
+        self._sync_readiness_display()
+
+    @on(Input.Changed, "#console-settings-model-input")
+    def _model_input_changed(self, event: Input.Changed) -> None:
+        self._sync_readiness_display()
+
+    def _sync_readiness_display(self) -> None:
+        draft = self._build_draft()
         readiness = build_console_settings_readiness(draft, app_config=self._app_config)
         self.query_one("#console-settings-readiness", Static).update(
             self._readiness_detail(readiness.detail)
         )
-        self._sync_model_controls(provider, model)
-        self._sync_base_url_control(provider, base_url)
+        self._sync_provider_model_section_emphasis()
+
+    def _sync_provider_model_section_emphasis(self) -> None:
+        section = self.query_one("#console-settings-provider-model-section", Vertical)
+        if self._is_model_setup_mode():
+            section.add_class("console-settings-primary-section")
+        else:
+            section.remove_class("console-settings-primary-section")
 
     def _build_draft(self) -> ConsoleSessionSettings:
         provider = str(self.query_one("#console-settings-provider", Select).value or "")

@@ -312,9 +312,7 @@ class ChatScreen(BaseAppScreen):
         settings = self._ensure_active_console_session_settings()
         controller = self._ensure_console_chat_controller()
         summary_state = self._build_console_settings_summary_state()
-        action_label = str(event.button.label).strip().lower()
         recovery_label, _recovery_target, _recovery_tooltip = self._console_provider_recovery_action()
-        recovery_action_label = recovery_label.strip().lower()
         modal = ConsoleSettingsModal(
             settings=settings,
             app_config=getattr(self.app_instance, "app_config", {}) or {},
@@ -322,9 +320,9 @@ class ChatScreen(BaseAppScreen):
             context_estimate=self._active_console_settings_context_estimate(),
             can_save=controller.run_state.is_send_allowed,
             focus_model=(
-                summary_state.action_label == "Choose Model"
-                or action_label == "choose model"
-                or recovery_action_label == "choose model"
+                self._is_console_choose_model_action(summary_state.action_label)
+                or self._is_console_choose_model_action(event.button.label)
+                or self._is_console_choose_model_action(recovery_label)
             ),
         )
 
@@ -427,6 +425,11 @@ class ChatScreen(BaseAppScreen):
         config = getattr(self.app_instance, "app_config", {}) or {}
         defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
         return defaults.get(key) if isinstance(defaults, dict) else None
+
+    @staticmethod
+    def _is_console_choose_model_action(label: object) -> bool:
+        """Return whether a button/action label is the Console model setup action."""
+        return str(label).strip().lower() == "choose model"
 
     def _effective_console_provider_model(self) -> tuple[Any, Any]:
         """Return the canonical Console provider/model selection.

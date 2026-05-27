@@ -282,6 +282,13 @@ def test_summary_state_prefers_character_label_over_persona_label() -> None:
     assert fallback.identity_row == "Persona: General"
 
 
+def test_choose_model_action_label_normalization() -> None:
+    assert ChatScreen._is_console_choose_model_action(" Choose Model ")
+    assert ChatScreen._is_console_choose_model_action("choose model")
+    assert ChatScreen._is_console_choose_model_action("CHOOSE MODEL")
+    assert not ChatScreen._is_console_choose_model_action("Configure")
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_cancel_discards_draft() -> None:
     app = ModalHarness()
@@ -360,6 +367,62 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
     assert app.saved_settings.model == "model-a"
     assert app.saved_settings.temperature == 0.42
     assert app.saved_settings.top_p == 0.88
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_focus_mode_uses_ready_copy_when_model_selected() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                focus_model=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        readiness = app.screen.query_one("#console-settings-readiness", Static)
+        provider_model_section = app.screen.query_one("#console-settings-provider-model-section")
+        assert str(readiness.renderable) == "llama_cpp is ready. No API key is required."
+        assert provider_model_section.has_class("console-settings-primary-section") is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_clears_setup_copy_when_freeform_model_is_entered() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="custom", model=None)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"custom": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                focus_model=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        readiness = app.screen.query_one("#console-settings-readiness", Static)
+        provider_model_section = app.screen.query_one("#console-settings-provider-model-section")
+        assert str(readiness.renderable) == "Choose a model to enable sending."
+        assert provider_model_section.has_class("console-settings-primary-section") is True
+
+        app.screen.query_one("#console-settings-model-input", Input).value = "freeform-model"
+        await pilot.pause()
+
+        assert str(readiness.renderable) != "Choose a model to enable sending."
+        assert provider_model_section.has_class("console-settings-primary-section") is False
 
 
 @pytest.mark.asyncio
@@ -989,8 +1052,8 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
         assert modal_screen.query_one("#console-settings-model-select", Select).value == "model-a"
         readiness = modal_screen.query_one("#console-settings-readiness", Static)
         provider_model_section = modal_screen.query_one("#console-settings-provider-model-section")
-        assert str(readiness.renderable) == "Choose a model to enable sending."
-        assert provider_model_section.has_class("console-settings-primary-section") is True
+        assert str(readiness.renderable) == "llama_cpp is ready. No API key is required."
+        assert provider_model_section.has_class("console-settings-primary-section") is False
 
         await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
