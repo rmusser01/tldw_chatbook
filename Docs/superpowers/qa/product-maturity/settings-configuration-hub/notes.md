@@ -19,6 +19,7 @@ Evidence method: actual textual-web/CDP screenshots driven with Playwright brows
 - Focused Settings button final fix: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/11-focused-settings-button-no-heavy-outline.png`
 - Category search polish: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/13-category-search-polish.png`
 - Diagnostics shortcut validation: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/16-diagnostics-shortcut-cdp.png`
+- Diagnostics worker shortcut validation: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/17-diagnostics-worker-cdp.png`
 
 User approval: approved after actual rendered screenshot review.
 
@@ -129,3 +130,27 @@ git diff --check
 ```
 
 Result: `1 passed` for the red/green Diagnostics shortcut regression, `67 passed` for the full Settings configuration hub suite, one existing requests dependency warning, and `git diff --check` clean.
+
+## 2026-05-27 Diagnostics Shortcut Review Fix
+
+Branch: `codex/settings-next-ux-polish`
+
+Approved screenshot:
+
+- Diagnostics worker shortcut validation: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/17-diagnostics-worker-cdp.png`
+
+Coverage added:
+
+- The Diagnostics `t` shortcut now dispatches validation/reload through an exclusive Textual thread worker instead of running config IO on the UI thread.
+- The combined shortcut path validates the config file once, reloads only after a valid result, and applies config mutation/status rows back on the UI thread.
+- Invalid config validation skips reload and reports the same validation failure in the reload status row.
+
+Focused verification:
+
+```bash
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py::test_settings_diagnostics_combined_helper_validates_once Tests/UI/test_settings_configuration_hub.py::test_settings_diagnostics_combined_helper_skips_reload_when_invalid Tests/UI/test_settings_configuration_hub.py::test_settings_diagnostics_test_shortcut_runs_validate_and_reload --tb=short
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short
+git diff --check
+```
+
+Result: `3 passed` for the focused review-fix regressions, `69 passed` for the full Settings configuration hub suite, one existing requests dependency warning, and `git diff --check` clean.

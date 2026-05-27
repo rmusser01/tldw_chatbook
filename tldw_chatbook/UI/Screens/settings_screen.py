@@ -584,9 +584,77 @@ class SettingsScreen(BaseAppScreen):
             self._diagnostics_reload_result,
         )
 
-    def _run_diagnostics_validation_and_reload(self) -> None:
-        self._run_diagnostics_validation()
-        self._run_diagnostics_reload()
+    def _diagnostics_validation_and_reload_results(self) -> tuple[str, str, dict | None]:
+        adapter = SettingsConfigAdapter()
+        try:
+            validation = adapter.validate_config_file(self._config_path())
+        except Exception as exc:
+            message = redact_secret_text(str(exc))
+            return (
+                f"Config validation: invalid - {message}",
+                f"Config reload: failed - {message}",
+                None,
+            )
+
+        validation_result = (
+            f"Config validation: valid - {redact_secret_text(validation.message)}"
+            if validation.valid
+            else f"Config validation: invalid - {redact_secret_text(validation.message)}"
+        )
+        if not validation.valid:
+            return (
+                validation_result,
+                f"Config reload: failed - {redact_secret_text(validation.message)}",
+                None,
+            )
+
+        try:
+            loaded = adapter.load(force_reload=True)
+        except Exception as exc:
+            return (
+                validation_result,
+                f"Config reload: failed - {redact_secret_text(str(exc))}",
+                None,
+            )
+        if isinstance(loaded, dict):
+            return validation_result, "Config reload: loaded", loaded
+        return (
+            validation_result,
+            "Config reload: failed - loaded config was not a table",
+            None,
+        )
+
+    def _apply_diagnostics_validation_and_reload_result(
+        self,
+        validation_result: str,
+        reload_result: str,
+        loaded_config: dict | None,
+    ) -> None:
+        if loaded_config is not None:
+            self.app_instance.app_config = loaded_config
+        self._diagnostics_validation_result = validation_result
+        self._diagnostics_reload_result = reload_result
+        self._set_static_text(
+            "#settings-diagnostics-validation-result",
+            self._diagnostics_validation_result,
+        )
+        self._set_static_text(
+            "#settings-diagnostics-reload-result",
+            self._diagnostics_reload_result,
+        )
+        self.app.notify("Diagnostics validation and reload finished.", severity="information")
+
+    @work(exclusive=True, thread=True)
+    def _diagnostics_validation_and_reload_worker(self) -> None:
+        validation_result, reload_result, loaded_config = (
+            self._diagnostics_validation_and_reload_results()
+        )
+        self.app.call_from_thread(
+            self._apply_diagnostics_validation_and_reload_result,
+            validation_result,
+            reload_result,
+            loaded_config,
+        )
 
     def _validate_current_config(self) -> str:
         adapter = SettingsConfigAdapter()
@@ -1768,8 +1836,18 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify("Provider test finished.", severity="information")
             return
         if self._active_category_id() is SettingsCategoryId.DIAGNOSTICS:
-            self._run_diagnostics_validation_and_reload()
-            self.app.notify("Diagnostics validation and reload finished.", severity="information")
+            self._diagnostics_validation_result = "Config validation: running"
+            self._diagnostics_reload_result = "Config reload: waiting for validation"
+            self._set_static_text(
+                "#settings-diagnostics-validation-result",
+                self._diagnostics_validation_result,
+            )
+            self._set_static_text(
+                "#settings-diagnostics-reload-result",
+                self._diagnostics_reload_result,
+            )
+            self._diagnostics_validation_and_reload_worker()
+            self.app.notify("Diagnostics validation and reload started.", severity="information")
             return
         self.app.notify("No test action is available for this Settings category yet.", severity="warning")
 
