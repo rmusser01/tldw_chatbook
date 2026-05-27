@@ -48,6 +48,12 @@ API_URL_PROVIDER_KEYS = {
     "tabbyapi",
     "vllm",
 }
+GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
+    {
+        SettingsCategoryId.PROVIDERS_MODELS,
+        SettingsCategoryId.CONSOLE_BEHAVIOR,
+    }
+)
 
 
 class SettingsScreen(BaseAppScreen):
@@ -213,6 +219,37 @@ class SettingsScreen(BaseAppScreen):
         draft = self._settings_drafts.get(category)
         return bool(draft and draft.is_dirty)
 
+    def _guided_action_message(self, category: SettingsCategoryId) -> str:
+        if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            if self._category_has_unsaved_changes(category):
+                return "Guided edits: Save or Revert changes."
+            return "Guided edits: change a field first."
+        messages = {
+            SettingsCategoryId.OVERVIEW: "Guided edits: choose Providers or Console.",
+            SettingsCategoryId.APPEARANCE: "Guided edits: use Open Appearance.",
+            SettingsCategoryId.STORAGE: "Guided edits: Storage is read-only.",
+            SettingsCategoryId.PRIVACY_SECURITY: "Guided edits: Privacy/Security is read-only.",
+            SettingsCategoryId.DIAGNOSTICS: "Guided edits: use Validate/Reload.",
+            SettingsCategoryId.ADVANCED_CONFIG: "Guided edits: use Raw TOML controls.",
+        }
+        return messages.get(category, "Guided edits: read-only.")
+
+    def _guided_actions_enabled(self, category: SettingsCategoryId) -> bool:
+        return (
+            category in GUIDED_SETTINGS_MUTATION_CATEGORIES
+            and self._category_has_unsaved_changes(category)
+        )
+
+    def _update_guided_action_widgets(self) -> None:
+        category = self._active_category_id()
+        actions_enabled = self._guided_actions_enabled(category)
+        self._set_static_text("#settings-guided-action-state", self._guided_action_message(category))
+        for selector in ("#settings-save-category", "#settings-revert-category"):
+            try:
+                self.query_one(selector, Button).disabled = not actions_enabled
+            except QueryError:
+                pass
+
     def _category_status(self, summary: SettingsCategorySummary) -> str:
         if self._category_has_unsaved_changes(summary.category):
             return "Unsaved"
@@ -241,6 +278,8 @@ class SettingsScreen(BaseAppScreen):
                 category_status_widget.remove_class("settings-dirty-category")
         except QueryError:
             pass
+        if category is self._active_category_id():
+            self._update_guided_action_widgets()
 
     def _category_summary_by_id(self, category: SettingsCategoryId) -> SettingsCategorySummary:
         for summary in self._category_summaries():
@@ -1277,6 +1316,25 @@ class SettingsScreen(BaseAppScreen):
             id="settings-selected-category-draft-status",
             classes="destination-section",
         )
+        yield Static(
+            self._guided_action_message(summary.category),
+            id="settings-guided-action-state",
+            classes="settings-status-row",
+        )
+        save_button = Button(
+            "Save",
+            id="settings-save-category",
+            tooltip="Save changes for the selected Settings category.",
+        )
+        save_button.disabled = not self._guided_actions_enabled(summary.category)
+        yield save_button
+        revert_button = Button(
+            "Revert",
+            id="settings-revert-category",
+            tooltip="Discard unsaved changes for the selected Settings category.",
+        )
+        revert_button.disabled = not self._guided_actions_enabled(summary.category)
+        yield revert_button
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Affects Console", classes="destination-section")
             yield Static("Composer paste display, chat-flow defaults, and user input feedback.")
@@ -1310,16 +1368,6 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-open-appearance",
                 tooltip="Open appearance customization settings.",
             )
-        yield Button(
-            "Save",
-            id="settings-save-category",
-            tooltip="Save changes for the selected Settings category.",
-        )
-        yield Button(
-            "Revert",
-            id="settings-revert-category",
-            tooltip="Discard unsaved changes for the selected Settings category.",
-        )
 
     def compose_content(self) -> ComposeResult:
         active_summary = self._active_summary()
@@ -1562,6 +1610,9 @@ class SettingsScreen(BaseAppScreen):
 
     def action_settings_save_category(self) -> None:
         category = self._active_category_id()
+        if category not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            self.app.notify(self._guided_action_message(category), severity="information")
+            return
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             try:
                 values = self._provider_form_values_from_widgets()
@@ -1676,6 +1727,9 @@ class SettingsScreen(BaseAppScreen):
 
     def action_settings_revert_category(self) -> None:
         category = self._active_category_id()
+        if not self._category_has_unsaved_changes(category):
+            self.app.notify("No Settings changes to revert.", severity="information")
+            return
         self._settings_drafts.pop(category, None)
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             self._sync_console_behavior_widgets()
