@@ -239,6 +239,13 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
         ) in css
         assert "    overflow-y: auto;" in css
         assert (
+            "#console-inspector-rail-body {\n"
+            "    width: 100%;\n"
+            "    min-width: 0;\n"
+            "    height: 1fr;\n"
+            "    min-height: 0;"
+        ) in css
+        assert (
             "#console-composer-actions {\n"
             "    width: 37;"
         ) in css
@@ -1701,12 +1708,13 @@ async def test_console_inspector_live_work_sources_stay_near_top():
 
         inspector = console.query_one("#console-run-inspector")
         inspector_state = console.query_one("#console-run-inspector-state")
+        body = console.query_one("#console-inspector-rail-body")
         source_readiness = console.query_one("#console-live-work-source-readiness")
 
         assert inspector_state.region.height <= 14
-        assert source_readiness.region.y >= (
-            inspector_state.region.y + inspector_state.region.height
-        )
+        assert inspector.parent is body
+        assert source_readiness.parent is body
+        assert source_readiness.region.y >= inspector.region.y
         assert source_readiness.region.y <= inspector.region.y + inspector.region.height + 1
         assert source_readiness.region.height <= 18
 
@@ -1758,7 +1766,7 @@ async def test_console_empty_inspector_hides_disabled_actions_until_actionable()
 
 
 @pytest.mark.asyncio
-async def test_console_run_inspector_groups_state_approvals_and_source_readiness():
+async def test_console_run_inspector_orders_state_source_tools_and_approvals():
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -1767,8 +1775,9 @@ async def test_console_run_inspector_groups_state_approvals_and_source_readiness
         console = host.screen_stack[-1]
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-run-state-heading")
-        await _wait_for_selector(console, pilot, "#console-inspector-approvals-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-source-readiness-heading")
+        await _wait_for_selector(console, pilot, "#console-inspector-tools-heading")
+        await _wait_for_selector(console, pilot, "#console-inspector-approvals-heading")
 
         assert (
             getattr(
@@ -1778,6 +1787,7 @@ async def test_console_run_inspector_groups_state_approvals_and_source_readiness
             )
             == "Status: Ready"
         )
+        assert not list(console.query("#console-run-inspector-title"))
         assert (
             getattr(
                 console.query_one("#console-inspector-run-state-heading", Static).render(),
@@ -1801,6 +1811,20 @@ async def test_console_run_inspector_groups_state_approvals_and_source_readiness
                 "",
             )
             == "Source Readiness"
+        )
+        assert (
+            getattr(
+                console.query_one("#console-inspector-tools-heading", Static).render(),
+                "plain",
+                "",
+            )
+            == "Tools"
+        )
+        assert (
+            console.query_one("#console-inspector-run-state-heading").region.y
+            < console.query_one("#console-inspector-source-readiness-heading").region.y
+            < console.query_one("#console-inspector-tools-heading").region.y
+            < console.query_one("#console-inspector-approvals-heading").region.y
         )
 
 
@@ -2324,18 +2348,21 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         assert console.query_one("#console-inspector-review-tool-call", Button).disabled is False
         assert console.query_one("#console-inspector-save-chatbook", Button).disabled is False
         assert (
-            console.query_one("#console-inspector-tools").region.y
+            console.query_one("#console-inspector-source-readiness-heading").region.y
+            < console.query_one("#console-inspector-artifacts").region.y
+            < console.query_one("#console-inspector-save-chatbook").region.y
+            < console.query_one("#console-inspector-tools-heading").region.y
+        )
+        assert (
+            console.query_one("#console-inspector-tools-heading").region.y
+            < console.query_one("#console-inspector-tools").region.y
             < console.query_one("#console-inspector-review-tool-call").region.y
             < console.query_one("#console-inspector-approvals-heading").region.y
         )
         assert (
             console.query_one("#console-inspector-approvals-heading").region.y
+            < console.query_one("#console-inspector-approvals").region.y
             < console.query_one("#console-inspector-review-approval").region.y
-            < console.query_one("#console-inspector-source-readiness-heading").region.y
-        )
-        assert (
-            console.query_one("#console-inspector-artifacts").region.y
-            < console.query_one("#console-inspector-save-chatbook").region.y
         )
         assert console.query_one("#console-live-work-primary-action", Button).disabled is False
 

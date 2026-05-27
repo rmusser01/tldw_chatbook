@@ -480,6 +480,21 @@ ConsoleSettingsModal Select {
     scrollbar-color-active: $ds-action-focus;
 }
 
+#console-inspector-rail-body {
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+    min-height: 0;
+    padding: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 #console-main-column {
     width: 13fr;
     min-width: 60;
@@ -489,6 +504,7 @@ ConsoleSettingsModal Select {
 #console-right-rail {
     width: 4fr;
     min-width: 34;
+    overflow: hidden;
 }
 
 #console-staged-context-tray,
@@ -602,7 +618,7 @@ ConsoleSettingsModal Select {
 .console-inspector-status-summary {
     height: 1;
     min-height: 1;
-    margin: 1 0 0 0;
+    margin: 0 0 1 0;
     padding: 0 1;
     border: none;
     background: $ds-surface-raised;

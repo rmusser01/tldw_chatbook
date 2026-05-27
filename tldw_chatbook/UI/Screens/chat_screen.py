@@ -2012,15 +2012,21 @@ class ChatScreen(BaseAppScreen):
                         collapse_button.styles.min_width = 3
                         collapse_button.styles.max_width = 3
                         yield collapse_button
-                    with Vertical(id="console-run-inspector"):
-                        yield ConsoleRunInspector(
-                            inspector_state,
-                            id="console-run-inspector-state",
-                        )
-                    if pending_launch:
-                        yield from self._render_console_live_work_status_card(pending_launch)
-                    else:
-                        yield from self._render_console_live_work_source_readiness()
+                    with VerticalScroll(
+                        id="console-inspector-rail-body",
+                        classes="console-inspector-rail-body",
+                    ):
+                        with Vertical(id="console-run-inspector"):
+                            yield ConsoleRunInspector(
+                                inspector_state,
+                                id="console-run-inspector-state",
+                            )
+                        if pending_launch:
+                            yield from self._render_console_live_work_status_card(
+                                pending_launch
+                            )
+                        else:
+                            yield from self._render_console_live_work_source_readiness()
 
                 right_handle = ConsoleRailHandle(
                     label=rail_state.right_label,
