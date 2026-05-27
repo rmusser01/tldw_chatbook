@@ -311,12 +311,19 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         settings = self._ensure_active_console_session_settings()
         controller = self._ensure_console_chat_controller()
+        summary_state = self._build_console_settings_summary_state()
+        recovery_label, _recovery_target, _recovery_tooltip = self._console_provider_recovery_action()
         modal = ConsoleSettingsModal(
             settings=settings,
             app_config=getattr(self.app_instance, "app_config", {}) or {},
             providers_models=self._providers_models(),
             context_estimate=self._active_console_settings_context_estimate(),
             can_save=controller.run_state.is_send_allowed,
+            focus_model=(
+                self._is_console_choose_model_action(summary_state.action_label)
+                or self._is_console_choose_model_action(event.button.label)
+                or self._is_console_choose_model_action(recovery_label)
+            ),
         )
 
         def _apply_modal_result(result: ConsoleSessionSettings | None) -> None:
@@ -418,6 +425,11 @@ class ChatScreen(BaseAppScreen):
         config = getattr(self.app_instance, "app_config", {}) or {}
         defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
         return defaults.get(key) if isinstance(defaults, dict) else None
+
+    @staticmethod
+    def _is_console_choose_model_action(label: object) -> bool:
+        """Return whether a button/action label is the Console model setup action."""
+        return str(label).strip().lower() == "choose model"
 
     def _effective_console_provider_model(self) -> tuple[Any, Any]:
         """Return the canonical Console provider/model selection.
@@ -1374,13 +1386,11 @@ class ChatScreen(BaseAppScreen):
 
     @staticmethod
     def _console_empty_transcript_copy(blocker_copy: str) -> str:
-        """Return setup-aware empty transcript copy without repeating details."""
+        """Return compact empty transcript copy while setup details live nearby."""
         blocker = blocker_copy.strip().lower()
         if not blocker:
             return ""
-        if blocker == "provider setup needed: choose a model":
-            return "Choose a model in Console Settings to start chatting."
-        return "Finish provider setup to start chatting."
+        return "No messages yet."
 
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""

@@ -7,6 +7,7 @@ from typing import Mapping
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
@@ -37,6 +38,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         providers_models: Mapping[str, list[str]],
         context_estimate: ConsoleSettingsContextEstimate,
         can_save: bool,
+        focus_model: bool = False,
     ) -> None:
         super().__init__()
         self._settings = settings
@@ -44,6 +46,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._providers_models = providers_models
         self._context_estimate = context_estimate
         self._can_save = can_save
+        self._focus_model = focus_model
         self._active_provider = settings.provider
         self._provider_model_drafts: dict[str, str] = {
             settings.provider: settings.model or "",
@@ -68,7 +71,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         with Vertical(id="console-settings-modal"):
             yield Static("Console Settings", classes="console-transcript-action-row")
             yield Static(
-                readiness.detail,
+                self._readiness_detail(readiness.detail),
                 id="console-settings-readiness",
                 classes="console-settings-modal-row",
                 markup=False,
@@ -81,7 +84,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             )
 
             with Vertical(id="console-settings-body", classes="console-settings-body"):
-                with Vertical(classes="console-settings-modal-section"):
+                with Vertical(
+                    id="console-settings-provider-model-section",
+                    classes=self._provider_model_section_classes(),
+                ):
                     yield Static("Provider and model", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
                         yield Static("Provider", classes="console-settings-modal-label")
@@ -217,6 +223,39 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 yield Button("Cancel", id="console-settings-cancel")
                 yield Button("Save", id="console-settings-save", variant="primary", disabled=not self._can_save)
 
+    def on_mount(self) -> None:
+        if self._focus_model:
+            self._focus_model_control()
+
+    def _has_selected_model(self) -> bool:
+        try:
+            return bool(self._current_model_value())
+        except (NoMatches, QueryError):
+            return bool(self._model_for_provider(self._active_provider))
+
+    def _is_model_setup_mode(self) -> bool:
+        return self._focus_model and not self._has_selected_model()
+
+    def _readiness_detail(self, default_detail: str) -> str:
+        if self._is_model_setup_mode():
+            guidance = "Choose a model to enable sending."
+            detail = default_detail.strip()
+            if detail and not self._is_ready_readiness_detail(detail):
+                return f"{guidance}\n{detail}"
+            return guidance
+        return default_detail
+
+    @staticmethod
+    def _is_ready_readiness_detail(detail: str) -> bool:
+        normalized = detail.strip().lower()
+        return normalized in {"", "ready."} or " is ready" in normalized
+
+    def _provider_model_section_classes(self) -> str:
+        classes = "console-settings-modal-section"
+        if self._is_model_setup_mode():
+            classes += " console-settings-primary-section"
+        return classes
+
     def action_dismiss(self) -> None:
         self.dismiss(None)
 
@@ -246,23 +285,32 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model = self._model_for_provider(provider)
         base_url = self._base_url_for_provider(provider)
         self._active_provider = provider
-        draft = ConsoleSessionSettings(
-            provider=provider,
-            model=model,
-            base_url=base_url if self._provider_uses_base_url(provider) else None,
-            temperature=self._settings.temperature,
-            top_p=self._settings.top_p,
-            min_p=self._settings.min_p,
-            top_k=self._settings.top_k,
-            max_tokens=self._settings.max_tokens,
-            streaming=self.query_one("#console-settings-streaming", Checkbox).value,
-            persona_label=self._settings.persona_label,
-            character_label=self._settings.character_label,
-        )
-        readiness = build_console_settings_readiness(draft, app_config=self._app_config)
-        self.query_one("#console-settings-readiness", Static).update(readiness.detail)
         self._sync_model_controls(provider, model)
         self._sync_base_url_control(provider, base_url)
+        self._sync_readiness_display()
+
+    @on(Select.Changed, "#console-settings-model-select")
+    def _model_select_changed(self, event: Select.Changed) -> None:
+        self._sync_readiness_display()
+
+    @on(Input.Changed, "#console-settings-model-input")
+    def _model_input_changed(self, event: Input.Changed) -> None:
+        self._sync_readiness_display()
+
+    def _sync_readiness_display(self) -> None:
+        draft = self._build_draft()
+        readiness = build_console_settings_readiness(draft, app_config=self._app_config)
+        self.query_one("#console-settings-readiness", Static).update(
+            self._readiness_detail(readiness.detail)
+        )
+        self._sync_provider_model_section_emphasis()
+
+    def _sync_provider_model_section_emphasis(self) -> None:
+        section = self.query_one("#console-settings-provider-model-section", Vertical)
+        if self._is_model_setup_mode():
+            section.add_class("console-settings-primary-section")
+        else:
+            section.remove_class("console-settings-primary-section")
 
     def _build_draft(self) -> ConsoleSessionSettings:
         provider = str(self.query_one("#console-settings-provider", Select).value or "")
@@ -302,6 +350,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model_input.value = fallback
         model_input.disabled = False
         model_input.display = True
+
+    def _focus_model_control(self) -> None:
+        model_select = self.query_one("#console-settings-model-select", Select)
+        if model_select.display and not model_select.disabled:
+            model_select.focus()
+            return
+        model_input = self.query_one("#console-settings-model-input", Input)
+        model_input.focus()
 
     def _provider_select_options(self) -> list[tuple[str, str]]:
         options = [(option.label, option.value) for option in build_console_provider_options(self._providers_models)]
