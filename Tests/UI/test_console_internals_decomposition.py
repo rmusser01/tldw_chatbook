@@ -1266,7 +1266,7 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "Provider setup needed",
             "OpenAI missing API key",
             "Settings",
-            "Finish provider setup to start chatting.",
+            "No messages yet.",
             "Setup required: finish provider setup.",
         ):
             assert expected in text
@@ -1274,6 +1274,7 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "Start here",
             "Run command",
             "Provider setup required before sending.",
+            "Finish provider setup to start chatting.",
             "Enter send",
             "Ctrl+P commands",
             "No messages yet. Send a prompt or attach context.",
@@ -1396,7 +1397,8 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert str(blocker.renderable) == ""
         assert "Provider setup needed: choose a model" not in _visible_text(console)
         assert "Choose model" not in _visible_text(console)
-        assert "Choose a model in Console Settings to start chatting." in _visible_text(console)
+        assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
+        assert "No messages yet." in _visible_text(console)
         assert "Setup required: choose a model in Console Settings." in _visible_text(console)
 
         store.replace_session_settings(
@@ -1423,11 +1425,12 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert str(blocker.renderable) == ""
         assert strip.styles.display == "none"
         assert "Provider setup needed: choose a model" not in _visible_text(console)
-        assert "Choose a model in Console Settings to start chatting." in _visible_text(console)
+        assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
+        assert "No messages yet." in _visible_text(console)
 
 
 @pytest.mark.asyncio
-async def test_console_empty_transcript_names_missing_model_setup_blocker(monkeypatch):
+async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1443,7 +1446,8 @@ async def test_console_empty_transcript_names_missing_model_setup_blocker(monkey
         transcript = console.query_one("#console-native-transcript")
         text = _visible_text(transcript)
 
-        assert "Choose a model in Console Settings to start chatting." in text
+        assert "No messages yet." in text
+        assert "Choose a model in Console Settings to start chatting." not in text
         assert "Ready. Ask a question" not in text
 
 

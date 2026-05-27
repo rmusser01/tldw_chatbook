@@ -1374,13 +1374,11 @@ class ChatScreen(BaseAppScreen):
 
     @staticmethod
     def _console_empty_transcript_copy(blocker_copy: str) -> str:
-        """Return setup-aware empty transcript copy without repeating details."""
+        """Return compact empty transcript copy while setup details live nearby."""
         blocker = blocker_copy.strip().lower()
         if not blocker:
             return ""
-        if blocker == "provider setup needed: choose a model":
-            return "Choose a model in Console Settings to start chatting."
-        return "Finish provider setup to start chatting."
+        return "No messages yet."
 
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""
