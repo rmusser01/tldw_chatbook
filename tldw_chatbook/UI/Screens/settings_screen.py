@@ -232,7 +232,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.DIAGNOSTICS: "Guided edits: use Validate/Reload.",
             SettingsCategoryId.ADVANCED_CONFIG: "Guided edits: use Raw TOML controls.",
         }
-        return messages[category]
+        return messages.get(category, "Guided edits: read-only.")
 
     def _guided_actions_enabled(self, category: SettingsCategoryId) -> bool:
         return (
