@@ -376,6 +376,7 @@ class ChatScreen(BaseAppScreen):
         self._diagnostics_run = False
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
+        self._pending_console_launch_auto_open_inspector = False
         self._console_control_provider: Optional[Any] = None
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
@@ -417,6 +418,7 @@ class ChatScreen(BaseAppScreen):
         pending_launch = getattr(self.app_instance, "pending_console_launch", None)
         if (normalized_launch := ConsoleLiveWorkLaunch.from_pending(pending_launch)) is not None:
             self._pending_console_launch_context = normalized_launch
+            self._pending_console_launch_auto_open_inspector = True
             self.app_instance.pending_console_launch = None
         return self._pending_console_launch_context
 
@@ -1048,6 +1050,20 @@ class ChatScreen(BaseAppScreen):
             available_columns=self._console_rail_available_columns(),
         )
 
+    def _apply_pending_launch_inspector_auto_open(
+        self,
+        rail_state: ConsoleRailState,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> ConsoleRailState:
+        """Keep a newly launched live-work card visible until the user chooses otherwise."""
+        if (
+            pending_launch is not None
+            and self._pending_console_launch_auto_open_inspector
+            and not rail_state.right_forced_collapsed
+        ):
+            return replace(rail_state, right_open=True)
+        return rail_state
+
     @staticmethod
     def _console_badge_inspector_rows(
         inspector_state: ConsoleInspectorState,
@@ -1121,11 +1137,12 @@ class ChatScreen(BaseAppScreen):
         staged_context_state = self._build_console_staged_context_state(pending_launch)
         inspector_state = self._build_console_inspector_state(pending_launch)
         workspace_context_state = self._build_console_workspace_context_state()
-        return self._build_console_rail_state(
+        rail_state = self._build_console_rail_state(
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
             workspace_context_state=workspace_context_state,
         )
+        return self._apply_pending_launch_inspector_auto_open(rail_state, pending_launch)
 
     def _set_console_rail_preference(
         self,
@@ -1161,6 +1178,8 @@ class ChatScreen(BaseAppScreen):
             next_preferences,
             notify_on_failure=notify_on_failure,
         )
+        if right_open is not None:
+            self._pending_console_launch_auto_open_inspector = False
         rail_state = self._current_console_rail_state()
         self._sync_console_rail_visibility(rail_state)
         return rail_state
@@ -1784,6 +1803,7 @@ class ChatScreen(BaseAppScreen):
                 action_label="Resolve Library RAG setup",
             )
         )
+        self._pending_console_launch_auto_open_inspector = True
         
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
@@ -1796,6 +1816,10 @@ class ChatScreen(BaseAppScreen):
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
             workspace_context_state=workspace_context_state,
+        )
+        rail_state = self._apply_pending_launch_inspector_auto_open(
+            rail_state,
+            pending_launch,
         )
         with Vertical(id="console-shell"):
             yield Static(

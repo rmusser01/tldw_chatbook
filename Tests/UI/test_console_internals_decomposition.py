@@ -2,6 +2,7 @@ import time
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 from rich.text import Text
 from textual.events import Paste
 from textual.widgets import Button, Footer, Input, Select, Static
@@ -142,6 +143,12 @@ async def _open_console_inspector(console, pilot) -> None:
             return
         await pilot.pause(0.01)
     raise AssertionError("Timed out waiting for Console Inspector rail to open")
+
+
+def _wrapped_plain_lines(rendered: object, width: int) -> list[str]:
+    rich_text = rendered if isinstance(rendered, Text) else Text(str(rendered))
+    console = Console(width=max(1, width), color_system=None)
+    return [line.plain for line in rich_text.wrap(console, max(1, width))]
 
 
 def _assert_single_style_span(renderable: Text, *, style: str, expected_text: str) -> None:
@@ -1739,9 +1746,10 @@ async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overl
         assert len(scope_plain) <= scope.region.width
         assert rows
         for row in rows:
-            rendered = row.render()
-            plain = getattr(rendered, "plain", str(rendered))
-            assert len(plain) <= row.region.width
+            lines = _wrapped_plain_lines(row.render(), row.region.width)
+            assert lines
+            assert len(lines) <= row.region.height
+            assert all(len(line) <= row.region.width for line in lines)
 
 
 @pytest.mark.asyncio
