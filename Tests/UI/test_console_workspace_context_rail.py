@@ -49,12 +49,33 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         text = _visible_text(console)
         assert "Staged Context" in text
         assert "Convos & Workspaces" in text
-        assert "Workspace: Local Default" in text
-        assert "Workspace: Local Default [read-only]" in text
-        assert "Workspace switching is locked" in text
-        assert text.count("read-only") == 1
+        assert "Local Default" in text
+        assert "Workspace switching: locked" in text
+        assert "until workspace selection is wired" not in text
+        assert "read-only" not in text
         assert "Change workspace" not in text
         assert "New conversation" not in text
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_selector_is_compact_plain_status_row() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-active-workspace")
+
+        active_workspace = console.query_one("#console-active-workspace")
+        rendered_label = str(active_workspace.renderable)
+        border = active_workspace.styles.border
+
+        assert rendered_label == "Local Default"
+        assert active_workspace.region.height == 1
+        assert border.top[0] in {"", "none"}
+        assert border.right[0] in {"", "none"}
+        assert border.bottom[0] in {"", "none"}
+        assert border.left[0] in {"", "none"}
 
 
 @pytest.mark.asyncio
@@ -81,7 +102,7 @@ async def test_console_workspace_context_renders_active_workspace() -> None:
         await _wait_for_selector(console, pilot, "#console-active-workspace")
 
         text = _visible_text(console)
-        assert "Workspace: Research Sprint" in text
+        assert "Research Sprint" in text
         assert "Sync: dry-run only" in text
         assert "Planning thread" in text
 

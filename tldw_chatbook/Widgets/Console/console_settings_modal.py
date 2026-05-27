@@ -73,116 +73,147 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 classes="console-settings-modal-row",
                 markup=False,
             )
+            yield Static(
+                "",
+                id="console-settings-error",
+                classes="console-settings-error console-settings-error-summary",
+                markup=False,
+            )
 
-            with Vertical(classes="console-settings-modal-section"):
-                yield Static("Provider and model", classes="destination-section")
-                with Horizontal(classes="console-settings-modal-row"):
-                    yield Static("Provider", classes="console-settings-modal-label")
-                    yield Select(
-                        provider_options,
-                        value=self._settings.provider,
-                        allow_blank=False,
-                        id="console-settings-provider",
-                    )
-                with Horizontal(classes="console-settings-modal-row"):
-                    yield Static("Model", classes="console-settings-modal-label")
-                    model_select = Select(
-                        model_options or [(selected_model or "", selected_model or "")],
-                        value=selected_model or "",
-                        allow_blank=False,
-                        id="console-settings-model-select",
-                        disabled=not has_model_options,
-                    )
-                    model_select.display = has_model_options
-                    yield model_select
-                    model_input = Input(
-                        value=selected_model or "",
-                        id="console-settings-model-input",
-                        disabled=has_model_options,
-                    )
-                    model_input.display = not has_model_options
-                    yield model_input
-                with Horizontal(classes="console-settings-modal-row"):
-                    yield Static("Base URL", classes="console-settings-modal-label")
-                    base_url_input = Input(
-                        value=base_url or "",
-                        id="console-settings-base-url",
-                        disabled=not uses_base_url,
-                    )
-                    base_url_input.display = uses_base_url
-                    yield base_url_input
+            with Vertical(id="console-settings-body", classes="console-settings-body"):
+                with Vertical(classes="console-settings-modal-section"):
+                    yield Static("Provider and model", classes="destination-section")
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static("Provider", classes="console-settings-modal-label")
+                        yield Select(
+                            provider_options,
+                            value=self._settings.provider,
+                            allow_blank=False,
+                            id="console-settings-provider",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static("Model", classes="console-settings-modal-label")
+                        model_select = Select(
+                            model_options or [(selected_model or "", selected_model or "")],
+                            value=selected_model or "",
+                            allow_blank=False,
+                            id="console-settings-model-select",
+                            disabled=not has_model_options,
+                            classes="console-settings-control",
+                        )
+                        model_select.display = has_model_options
+                        yield model_select
+                        model_input = Input(
+                            value=selected_model or "",
+                            id="console-settings-model-input",
+                            disabled=has_model_options,
+                            classes="console-settings-control",
+                        )
+                        model_input.display = not has_model_options
+                        yield model_input
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static("Base URL", classes="console-settings-modal-label")
+                        base_url_input = Input(
+                            value=base_url or "",
+                            id="console-settings-base-url",
+                            disabled=not uses_base_url,
+                            classes="console-settings-control",
+                        )
+                        base_url_input.display = uses_base_url
+                        yield base_url_input
 
-            with Vertical(classes="console-settings-modal-section"):
-                yield Static("Sampling", classes="destination-section")
-                with Horizontal(classes="console-settings-modal-row"):
-                    yield Static("Temperature", classes="console-settings-modal-label")
-                    yield Input(
-                        value=self._format_value(self._settings.temperature),
-                        id="console-settings-temperature",
+                with Vertical(classes="console-settings-modal-section"):
+                    yield Static("Sampling", classes="destination-section")
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static("Temperature", classes="console-settings-modal-label")
+                        yield Input(
+                            value=self._format_value(self._settings.temperature),
+                            id="console-settings-temperature",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static("Top P", classes="console-settings-modal-label")
+                        yield Input(
+                            value=self._format_value(self._settings.top_p),
+                            id="console-settings-top-p",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static("Min P", classes="console-settings-modal-label")
+                        yield Input(
+                            value=self._format_value(self._settings.min_p),
+                            id="console-settings-min-p",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static("Top K", classes="console-settings-modal-label")
+                        yield Input(
+                            value=self._format_value(self._settings.top_k),
+                            id="console-settings-top-k",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static("Max tokens", classes="console-settings-modal-label")
+                        yield Input(
+                            value=self._format_value(self._settings.max_tokens),
+                            id="console-settings-max-tokens",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield Static("Streaming", classes="console-settings-modal-label")
+                        yield Checkbox(
+                            value=self._settings.streaming,
+                            id="console-settings-streaming",
+                            classes="console-settings-control",
+                        )
+
+                with Vertical(classes="console-settings-modal-section"):
+                    yield Static("Context", classes="destination-section")
+                    yield Static(
+                        f"Current         {self._context_label()}",
+                        id="console-settings-context-current",
+                        classes="console-settings-modal-row",
+                        markup=False,
                     )
-                with Horizontal(classes="console-settings-modal-row"):
-                    yield Static("Top P", classes="console-settings-modal-label")
-                    yield Input(value=self._format_value(self._settings.top_p), id="console-settings-top-p")
-                with Horizontal(classes="console-settings-modal-row"):
-                    yield Static("Min P", classes="console-settings-modal-label")
-                    yield Input(value=self._format_value(self._settings.min_p), id="console-settings-min-p")
-                with Horizontal(classes="console-settings-modal-row"):
-                    yield Static("Top K", classes="console-settings-modal-label")
-                    yield Input(value=self._format_value(self._settings.top_k), id="console-settings-top-k")
-                with Horizontal(classes="console-settings-modal-row"):
-                    yield Static("Max tokens", classes="console-settings-modal-label")
-                    yield Input(
-                        value=self._format_value(self._settings.max_tokens),
-                        id="console-settings-max-tokens",
+                    yield Static(
+                        f"Sources         {self._sources_label()}",
+                        id="console-settings-context-sources",
+                        classes="console-settings-modal-row",
+                        markup=False,
                     )
-                with Horizontal(classes="console-settings-modal-row"):
-                    yield Static("Streaming", classes="console-settings-modal-label")
-                    yield Checkbox(value=self._settings.streaming, id="console-settings-streaming")
+                    yield Static(
+                        "Estimate only; no truncation changes in this version.",
+                        id="console-settings-context-note",
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
 
-            with Vertical(classes="console-settings-modal-section"):
-                yield Static("Context", classes="destination-section")
-                yield Static(
-                    f"Current         {self._context_label()}",
-                    id="console-settings-context-current",
-                    classes="console-settings-modal-row",
-                    markup=False,
-                )
-                yield Static(
-                    f"Sources         {self._sources_label()}",
-                    id="console-settings-context-sources",
-                    classes="console-settings-modal-row",
-                    markup=False,
-                )
-                yield Static(
-                    "Estimate only; no truncation changes in this version.",
-                    id="console-settings-context-note",
-                    classes="console-settings-modal-row",
-                    markup=False,
-                )
+                with Vertical(classes="console-settings-modal-section"):
+                    yield Static("Identity", classes="destination-section")
+                    yield Static(
+                        f"Current         {self._identity_current_label()}",
+                        id="console-settings-identity-current",
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
+                    yield Static(
+                        f"Persona         {self._persona_label()} [read-only]",
+                        id="console-settings-persona-readonly",
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
+                    yield Static(
+                        f"Character       {self._character_label()} [read-only]",
+                        id="console-settings-character-readonly",
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
 
-            with Vertical(classes="console-settings-modal-section"):
-                yield Static("Identity", classes="destination-section")
-                yield Static(
-                    f"Current         {self._identity_current_label()}",
-                    id="console-settings-identity-current",
-                    classes="console-settings-modal-row",
-                    markup=False,
-                )
-                yield Static(
-                    f"Persona         {self._persona_label()} [read-only]",
-                    id="console-settings-persona-readonly",
-                    classes="console-settings-modal-row",
-                    markup=False,
-                )
-                yield Static(
-                    f"Character       {self._character_label()} [read-only]",
-                    id="console-settings-character-readonly",
-                    classes="console-settings-modal-row",
-                    markup=False,
-                )
-
-            yield Static("", id="console-settings-error", classes="console-settings-error", markup=False)
-            with Horizontal(classes="console-settings-modal-row"):
+            with Horizontal(
+                id="console-settings-actions",
+                classes="console-settings-modal-row console-settings-modal-actions",
+            ):
                 yield Button("Cancel", id="console-settings-cancel")
                 yield Button("Save", id="console-settings-save", variant="primary", disabled=not self._can_save)
 

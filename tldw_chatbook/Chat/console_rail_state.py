@@ -47,6 +47,14 @@ _POSITIVE_READINESS_TERMS = {
     "retrieving",
     "staged",
 }
+_SETUP_BLOCKER_LABEL_TERMS = {"model", "provider"}
+_SETUP_BLOCKER_READINESS_TERMS = {
+    "blocked",
+    "invalid",
+    "missing",
+    "unavailable",
+    "unconfigured",
+}
 
 
 @dataclass(frozen=True)
@@ -258,6 +266,24 @@ def _has_row_match(rows: tuple[Any, ...], candidates: set[str]) -> bool:
     return False
 
 
+def _has_setup_blocker_row(rows: tuple[Any, ...]) -> bool:
+    for row in rows:
+        label, status, value, text = _row_text_parts(row)
+        category = label.lower()
+        if not any(term in category for term in _SETUP_BLOCKER_LABEL_TERMS):
+            continue
+
+        readiness = " ".join(
+            part.lower()
+            for part in (status, value, text)
+            if part
+        )
+        if _contains_any_term(readiness, _SETUP_BLOCKER_READINESS_TERMS):
+            return True
+
+    return False
+
+
 def _contains_any_term(text: str, terms: set[str]) -> bool:
     tokens = set(re.findall(r"[a-z0-9]+", text))
     return bool(tokens & terms)
@@ -294,6 +320,9 @@ def build_console_inspector_rail_badge(
     normalized_run_status = _normalized_status(run_status)
     if normalized_run_status == "failed" or _has_row_match(inspector_rows, {"failed"}):
         return "failed"
+
+    if _has_setup_blocker_row(inspector_rows):
+        return "setup"
 
     if normalized_run_status == "blocked" or _has_row_match(
         inspector_rows,

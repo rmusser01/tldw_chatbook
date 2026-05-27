@@ -55,8 +55,8 @@ class ConsoleSettingsSummary(Vertical):
             markup=False,
         )
         yield Button(
-            "Settings",
+            "Configure",
             id="console-settings-open",
-            tooltip="Open Console settings",
+            tooltip="Configure Console settings",
             compact=True,
         )

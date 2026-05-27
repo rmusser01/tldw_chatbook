@@ -170,7 +170,7 @@ def build_console_workspace_state(
             change_workspace_recovery="Workspace switching is read-only in this slice.",
             new_conversation_enabled=False,
             new_conversation_recovery="Conversation creation is read-only until workspace selection is wired.",
-            recovery_copy="Workspace switching is locked until workspace selection is wired.",
+            recovery_copy="Workspace switching: locked",
         )
 
     runtime_bindings = _safe_runtime_bindings(registry_service, active_workspace)

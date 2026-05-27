@@ -53,7 +53,7 @@ def test_console_workspace_state_explains_no_active_workspace(tmp_path: Path) ->
     assert state.authority_label == "Authority: local registry ready"
     assert state.change_workspace_enabled is False
     assert state.new_conversation_enabled is False
-    assert "read-only" in state.recovery_copy.lower()
+    assert state.recovery_copy == "Workspace switching: locked"
 
 
 def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: Path) -> None:

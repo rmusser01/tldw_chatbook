@@ -47,6 +47,12 @@ def _button_text(widget) -> str:
     return str(label) if label is not None else ""
 
 
+def _css_block(css: str, selector: str) -> str:
+    start = css.index(selector)
+    end = css.index("}", start)
+    return css[start:end]
+
+
 def _assert_handle_visible_text_fits(handle) -> None:
     handle_width = handle.region.width
     visible_chunks = [
@@ -100,6 +106,29 @@ def _assert_handle_button_contained(handle) -> None:
     assert button.region.y == usable_y
     assert button_bottom == usable_bottom
     assert button.region.height == usable_height
+
+
+def _assert_right_handle_lightweight(screen) -> None:
+    handle = screen.query_one("#console-inspector-rail-handle")
+    main_column = screen.query_one("#console-main-column")
+    workspace_grid = screen.query_one("#console-workspace-grid")
+    button = handle.query_one(Button)
+    button_label = _button_text(button)
+
+    assert handle.region.y == main_column.region.y
+    assert handle.region.height == main_column.region.height
+    assert handle.has_class("console-frame-quiet")
+    assert handle.region.y >= workspace_grid.region.y
+    assert handle.region.y + handle.region.height <= (
+        workspace_grid.region.y + workspace_grid.region.height
+    )
+    assert button.region.x >= handle.region.x
+    assert button.region.x + button.region.width <= handle.region.x + handle.region.width
+    assert button.region.width >= len(button_label)
+    assert button.region.width >= len(button_label) + 2
+    assert button.region.y >= handle.region.y
+    assert button.region.y + button.region.height <= handle.region.y + handle.region.height
+    assert 1 <= button.region.height <= 4
 
 
 async def _wait_for_badge(screen, pilot, selector: str, expected: str) -> str:
@@ -184,20 +213,32 @@ class _FixedUuid:
 
 
 def test_generated_console_stylesheet_includes_rail_rules():
-    stylesheet = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
-    css = stylesheet.read_text(encoding="utf-8")
+    stylesheets = (
+        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+        Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
+    )
 
-    for selector in (
-        "#console-right-rail",
-        ".console-rail-handle",
-        ".console-rail-header",
-        ".console-rail-title",
-        ".console-rail-collapse-button",
-    ):
-        assert selector in css
-    assert "content-align: left middle;" in css
-    assert "border: heavy $ds-action-focus;" in css
-    assert "border: thick $ds-action-focus;" not in css
+    for stylesheet in stylesheets:
+        css = stylesheet.read_text(encoding="utf-8")
+        for selector in (
+            "#console-right-rail",
+            ".console-rail-handle",
+            ".console-rail-header",
+            ".console-rail-title",
+            ".console-rail-collapse-button",
+        ):
+            assert selector in css
+        assert "content-align: left middle;" in css
+        assert "border: heavy $ds-action-focus;" in css
+        assert "border: thick $ds-action-focus;" not in css
+
+        right_handle = _css_block(css, ".console-rail-handle-right")
+        right_button = _css_block(css, ".console-rail-handle-button-right")
+        assert "width: 11;" in right_handle
+        assert "min-width: 11;" in right_handle
+        assert "max-width: 11;" in right_handle
+        assert "width: 9;" in right_button
+        assert "max-width: 9;" in right_button
 
 
 @pytest.mark.asyncio
@@ -220,15 +261,12 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
             "#console-live-work-source-readiness",
         )
         assert _is_displayed(console.query_one("#console-inspector-rail-handle"))
-        _assert_handle_aligned_with_workbench_frame(
-            console,
-            "#console-inspector-rail-handle",
-        )
         right_handle = console.query_one("#console-inspector-rail-handle")
         assert right_handle.has_class("console-rail-handle-right")
-        _assert_handle_button_contained(right_handle)
+        assert right_handle.region.width == 11
+        _assert_right_handle_lightweight(console)
         open_button = console.query_one("#console-inspector-rail-open", Button)
-        assert str(open_button.label) == "< Inspector"
+        assert str(open_button.label) == "Inspect"
         assert open_button.tooltip == "Open Inspector rail"
 
 
@@ -671,11 +709,11 @@ async def test_console_provider_blocked_badge_does_not_auto_open_inspector():
         await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
 
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
-        assert "blocked" in await _wait_for_badge(
+        assert "setup" in await _wait_for_badge(
             console,
             pilot,
             "#console-inspector-rail-badge",
-            "blocked",
+            "setup",
         )
         assert _is_displayed(console.query_one("#console-provider-recovery-strip"))
         settings_button = console.query_one("#console-open-provider-settings", Button)
@@ -778,11 +816,11 @@ async def test_console_pending_approval_badge_does_not_auto_open_inspector():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
 
-        assert "1 approval" in await _wait_for_badge(
+        assert "1 appr" in await _wait_for_badge(
             console,
             pilot,
             "#console-inspector-rail-badge",
-            "1 approval",
+            "1 appr",
         )
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
 
@@ -884,11 +922,11 @@ async def test_console_badge_state_update_after_mount_does_not_auto_open_inspect
         await pilot.pause(0.05)
 
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
-        assert "1 approval" in await _wait_for_badge(
+        assert "1 appr" in await _wait_for_badge(
             console,
             pilot,
             "#console-inspector-rail-badge",
-            "1 approval",
+            "1 appr",
         )
 
 
@@ -928,12 +966,8 @@ async def test_console_compact_width_preserves_main_column_and_forces_right_coll
         assert composer.region.width >= workspace_grid.region.width - 2
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
         assert _is_displayed(right_handle)
-        assert right_handle.region.width == 13
-        _assert_handle_aligned_with_workbench_frame(
-            console,
-            "#console-inspector-rail-handle",
-        )
-        _assert_handle_button_contained(right_handle)
+        assert right_handle.region.width == 11
+        _assert_right_handle_lightweight(console)
         _assert_handle_visible_text_fits(right_handle)
 
     assert app.app_config["console"]["rail_state"][preference_key]["right_open"] is True

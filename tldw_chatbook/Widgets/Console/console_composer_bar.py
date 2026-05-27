@@ -74,6 +74,7 @@ class ConsoleComposerBar(Horizontal):
         self._segments_initialized = False
         self._run_active = False
         self._send_blocked = False
+        self._setup_blocked_reason = ""
         self._can_save_chatbook = False
 
     @property
@@ -183,6 +184,7 @@ class ConsoleComposerBar(Horizontal):
             run_active=self._run_active,
             can_save_chatbook=self._can_save_chatbook,
             send_blocked=self._send_blocked,
+            setup_blocked_reason=self._setup_blocked_reason,
         )
 
     def sync_action_state(
@@ -192,6 +194,7 @@ class ConsoleComposerBar(Horizontal):
         run_active: bool,
         can_save_chatbook: bool,
         send_blocked: bool = False,
+        setup_blocked_reason: str = "",
     ) -> None:
         """Refresh composer action priority and disabled state.
 
@@ -200,18 +203,23 @@ class ConsoleComposerBar(Horizontal):
             run_active: Whether a Console run is currently stoppable.
             can_save_chatbook: Whether a Chatbook artifact is available to save.
             send_blocked: Whether the current run state blocks new sends.
+            setup_blocked_reason: Provider/model setup copy when setup blocks Send.
         """
         has_draft = bool(has_draft)
         run_active = bool(run_active)
         can_save_chatbook = bool(can_save_chatbook)
         send_blocked = bool(send_blocked)
+        setup_blocked_reason = setup_blocked_reason.strip()
+        setup_reason_changed = self._setup_blocked_reason != setup_blocked_reason
         self._run_active = run_active
         self._send_blocked = send_blocked
+        self._setup_blocked_reason = setup_blocked_reason
         self._can_save_chatbook = can_save_chatbook
 
         try:
             send_button = self.query_one("#console-send-message", Button)
             stop_button = self.query_one("#console-stop-generation", Button)
+            attach_button = self.query_one("#console-attach-context", Button)
             save_button = self.query_one("#console-save-chatbook", Button)
         except NoMatches:
             return
@@ -219,7 +227,9 @@ class ConsoleComposerBar(Horizontal):
         send_ready = has_draft and not send_blocked
         send_button.disabled = False
         send_button.variant = "primary" if send_ready else "default"
-        if send_blocked:
+        if send_blocked and setup_blocked_reason:
+            send_button.tooltip = setup_blocked_reason
+        elif send_blocked:
             send_button.tooltip = "Wait for the active Console run to finish before sending."
         elif has_draft:
             send_button.tooltip = "Send the active Console session draft."
@@ -227,10 +237,14 @@ class ConsoleComposerBar(Horizontal):
             send_button.tooltip = "Type a message before sending."
         send_button.set_class(send_ready, "console-action-primary")
         send_button.set_class(not send_ready, "console-action-subdued")
-        send_button.set_class(send_blocked, "console-action-disabled")
+        send_button.set_class(not send_ready, "console-action-disabled")
         send_button.set_class(send_ready, "console-send-ready")
         send_button.set_class(not has_draft, "console-send-inactive")
         send_button.set_class(send_blocked, "console-send-blocked")
+        self.set_class(
+            send_blocked and bool(setup_blocked_reason),
+            "console-composer-setup-blocked",
+        )
 
         stop_button.disabled = False
         stop_button.variant = "warning" if run_active else "default"
@@ -242,6 +256,13 @@ class ConsoleComposerBar(Horizontal):
         stop_button.set_class(run_active, "console-stop-active")
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
+
+        attach_button.disabled = False
+        attach_button.variant = "default"
+        attach_button.tooltip = "Attach files or context through the active Console session."
+        attach_button.set_class(True, "console-action-secondary")
+        attach_button.set_class(False, "console-action-disabled")
+        attach_button.set_class(False, "console-action-subdued")
 
         save_button.disabled = False
         save_button.variant = "default"
@@ -255,6 +276,9 @@ class ConsoleComposerBar(Horizontal):
         save_button.set_class(can_save_chatbook, "console-save-chatbook-ready")
         save_button.set_class(not can_save_chatbook, "console-action-subdued")
         save_button.set_class(not can_save_chatbook, "console-action-disabled")
+
+        if setup_reason_changed and not self.draft_text().strip():
+            self._refresh_visible_draft()
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
@@ -389,6 +413,17 @@ class ConsoleComposerBar(Horizontal):
             return rendered
         return Text(cls.DRAFT_PLACEHOLDER, style="bright_black")
 
+    def _placeholder_renderable(self, *, width: int) -> Text:
+        """Return setup-aware empty composer placeholder copy."""
+        if self._send_blocked and self._setup_blocked_reason:
+            if "model" in self._setup_blocked_reason.lower():
+                return Text(
+                    "Setup required: choose a model in Console Settings.",
+                    style="bold yellow",
+                )
+            return Text("Setup required: finish provider setup.", style="bold yellow")
+        return self._draft_renderable("", width=width)
+
     @classmethod
     def _visible_draft_row_count(cls, text: str, width: int) -> int:
         if not text:
@@ -434,13 +469,15 @@ class ConsoleComposerBar(Horizontal):
             draft = self._display_draft_text()
             width = self._draft_render_width()
             row_count = self._visible_draft_row_count(draft, width)
-            self.query_one("#console-command-visible-text", Static).update(
-                self._draft_renderable(
+            if draft:
+                renderable = self._draft_renderable(
                     draft,
                     width=width,
                     style_ranges=self._display_draft_style_ranges(),
                 )
-            )
+            else:
+                renderable = self._placeholder_renderable(width=width)
+            self.query_one("#console-command-visible-text", Static).update(renderable)
             self._apply_draft_height(row_count)
         except NoMatches:
             return
@@ -652,6 +689,8 @@ class ConsoleComposerBar(Horizontal):
             classes="console-command-visible-text",
         )
         visible_draft.can_focus = True
+        visible_draft.styles.width = "1fr"
+        visible_draft.styles.min_width = 0
         yield visible_draft
         command_input = Input(
             value="",
@@ -679,32 +718,40 @@ class ConsoleComposerBar(Horizontal):
         status.styles.height = 0
         status.styles.min_height = 0
         yield status
-        yield self._bounded_button(
-            "Send",
-            width=8,
-            id="console-send-message",
-            classes="destination-action-button console-send-button",
-            variant="primary",
-            tooltip="Send the active Console session draft.",
-        )
-        yield self._bounded_button(
-            "Stop",
-            width=8,
-            id="console-stop-generation",
-            classes="destination-action-button console-stop-button",
-            tooltip="Stop generation in the active Console session.",
-        )
-        yield self._bounded_button(
-            "Attach",
-            width=10,
-            id="console-attach-context",
-            classes="destination-action-button console-attach-button",
-            tooltip="Attach files or context through the active Console session.",
-        )
-        yield self._bounded_button(
-            "Save Chatbook",
-            width=22,
-            id="console-save-chatbook",
-            classes="destination-action-button console-save-chatbook-button",
-            tooltip="Compatibility adapter: save Chatbook export is still owned by Artifacts/Chatbooks.",
-        )
+        actions = Horizontal(id="console-composer-actions", classes="console-composer-actions")
+        actions.styles.width = 37
+        actions.styles.min_width = 37
+        actions.styles.max_width = 37
+        actions.styles.height = 1
+        actions.styles.min_height = 1
+        actions.styles.max_height = 1
+        with actions:
+            yield self._bounded_button(
+                "Send",
+                width=8,
+                id="console-send-message",
+                classes="destination-action-button console-send-button",
+                variant="primary",
+                tooltip="Send the active Console session draft.",
+            )
+            yield self._bounded_button(
+                "Stop",
+                width=8,
+                id="console-stop-generation",
+                classes="destination-action-button console-stop-button",
+                tooltip="Stop generation in the active Console session.",
+            )
+            yield self._bounded_button(
+                "Attach",
+                width=10,
+                id="console-attach-context",
+                classes="destination-action-button console-attach-button",
+                tooltip="Attach files or context through the active Console session.",
+            )
+            yield self._bounded_button(
+                "Save",
+                width=8,
+                id="console-save-chatbook",
+                classes="destination-action-button console-save-chatbook-button",
+                tooltip="Open the available Chatbook artifact in Artifacts.",
+            )

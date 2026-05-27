@@ -253,6 +253,22 @@ def test_console_inspector_rail_badge_detects_blocked_from_row_fields():
     )
 
 
+def test_console_inspector_rail_badge_names_provider_setup_blockers():
+    assert (
+        build_console_inspector_rail_badge(
+            run_status="blocked",
+            inspector_rows=(Row("Provider", status="blocked"),),
+        )
+        == "setup"
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("Model", value="Missing", text="blocked"),),
+        )
+        == "setup"
+    )
+
+
 def test_console_inspector_rail_badge_detects_failed_from_row_fields():
     assert (
         build_console_inspector_rail_badge(
@@ -399,7 +415,7 @@ def test_console_rail_badges_do_not_mutate_open_booleans():
     assert state.left_open is False
     assert state.right_open is False
     assert state.left_badge == "2 staged"
-    assert state.right_badge == "blocked"
+    assert state.right_badge == "setup"
 
 
 def test_console_rail_state_compact_width_collapses_right_rail_effectively():

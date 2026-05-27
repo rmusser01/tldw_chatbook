@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.config import resolve_provider_name
@@ -70,6 +71,29 @@ class _PressedEvent:
 
     def stop(self) -> None:
         self.stopped = True
+
+
+def _configure_native_ready_console(app, model: str = "local-model") -> None:
+    app.app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": model},
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": model,
+            },
+        },
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = model
+
+
+def _configure_openai_missing_key_console(app, model: str = "gpt-4.1-2025-04-14") -> None:
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": model},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = model
 
 
 async def _wait_for_console_library_rag_button_state(
@@ -199,6 +223,17 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    height: 0;\n"
             "    min-height: 0;"
         ) in css
+        assert (
+            ".console-left-rail-section.console-settings-summary {\n"
+            "    margin: 1 0;\n"
+            "    padding: 1 1;\n"
+            "    border-top: solid $ds-grid-line;\n"
+            "    border-bottom: solid $ds-grid-line;"
+        ) in css
+        assert (
+            "#console-composer-actions {\n"
+            "    width: 37;"
+        ) in css
 
 
 @pytest.mark.asyncio
@@ -255,7 +290,7 @@ async def test_console_mode_bar_groups_location_mode_and_readiness():
         assert title_plain == "Console | Live agent control, chat, RAG, tools, approvals | Local"
         assert (
             mode_plain
-            == "Mode: Chat / RAG / Run Follow | Assistant: General | Readiness: Sources 0, Tools 0, Approvals 0"
+            == "Chat | RAG | Run Follow | Assistant General | Sources 0 | Tools 0 | Approvals 0"
         )
 
 
@@ -272,7 +307,7 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         assert "Send" in text
         assert "Stop" in text
         assert "Attach" in text
-        assert "Save Chatbook" in text
+        assert "Save" in text
         send_controls = [
             button
             for button in console.query(Button)
@@ -328,8 +363,8 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert str(send_button.label) == "Send"
         assert str(stop_button.label) == "Stop"
         assert str(attach_button.label) == "Attach"
-        assert str(save_button.label) == "Save Chatbook"
-        assert save_button.region.width >= 20
+        assert str(save_button.label) == "Save"
+        assert save_button.region.width >= len("Save")
         assert legacy_inputs == []
 
 
@@ -410,6 +445,7 @@ async def test_console_composer_marks_has_draft_state():
 @pytest.mark.asyncio
 async def test_console_composer_send_is_primary_only_with_draft():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -452,7 +488,7 @@ async def test_console_composer_send_is_primary_only_with_draft():
 
 
 @pytest.mark.asyncio
-async def test_console_composer_save_chatbook_is_secondary():
+async def test_console_composer_ranks_actions_by_current_availability():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -462,9 +498,15 @@ async def test_console_composer_save_chatbook_is_secondary():
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
+        stop_button = composer.query_one("#console-stop-generation", Button)
+        attach_button = composer.query_one("#console-attach-context", Button)
         save_button = composer.query_one("#console-save-chatbook", Button)
 
+        assert send_button.disabled is False
+        assert stop_button.disabled is False
         assert save_button.disabled is False
+        assert attach_button.disabled is False
+        assert attach_button.has_class("console-action-secondary")
         assert save_button.has_class("console-action-secondary")
         assert save_button.has_class("console-save-chatbook-secondary")
         assert save_button.has_class("console-action-subdued")
@@ -486,6 +528,97 @@ async def test_console_composer_save_chatbook_is_secondary():
         assert not save_button.has_class("console-action-disabled")
         assert not save_button.has_class("console-action-subdued")
         assert not save_button.has_class("console-action-primary")
+
+
+@pytest.mark.asyncio
+async def test_console_composer_empty_setup_blocked_state_shows_reason():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        send_button = composer.query_one("#console-send-message", Button)
+
+        composer.sync_action_state(
+            has_draft=False,
+            run_active=False,
+            can_save_chatbook=False,
+            send_blocked=True,
+            setup_blocked_reason="Choose a model in Console Settings before sending.",
+        )
+        await pilot.pause(0.1)
+
+        assert "Setup required: choose a model in Console Settings." in visible_draft.renderable.plain
+        assert send_button.disabled is False
+        assert send_button.tooltip == "Choose a model in Console Settings before sending."
+
+        composer.load_draft("draft despite missing setup")
+        await pilot.pause(0.1)
+
+        assert visible_draft.renderable.plain == "draft despite missing setup"
+        assert send_button.disabled is False
+        assert send_button.tooltip == "Choose a model in Console Settings before sending."
+
+
+@pytest.mark.asyncio
+async def test_console_composer_active_run_blocker_keeps_generic_placeholder():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        send_button = composer.query_one("#console-send-message", Button)
+
+        composer.sync_action_state(
+            has_draft=False,
+            run_active=True,
+            can_save_chatbook=False,
+            send_blocked=True,
+            setup_blocked_reason="",
+        )
+        await pilot.pause(0.1)
+
+        assert "Setup required" not in visible_draft.renderable.plain
+        assert visible_draft.renderable.plain == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        assert send_button.tooltip == "Wait for the active Console run to finish before sending."
+
+
+@pytest.mark.asyncio
+async def test_console_composer_actions_remain_visible_inside_composer_bounds():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.pause(0.1)
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        actions = composer.query_one("#console-composer-actions")
+        send_button = composer.query_one("#console-send-message", Button)
+        stop_button = composer.query_one("#console-stop-generation", Button)
+        attach_button = composer.query_one("#console-attach-context", Button)
+        save_button = composer.query_one("#console-save-chatbook", Button)
+
+        composer_right = composer.region.x + composer.region.width
+        assert actions.region.x > visible_draft.region.x
+        assert actions.region.x + actions.region.width <= composer_right
+        for button in (send_button, stop_button, attach_button, save_button):
+            assert button.display is True
+            assert button.region.x + button.region.width <= composer_right
+
+        assert str(save_button.label) == "Save"
+        assert save_button.tooltip == "No Chatbook artifact is available to save yet."
 
 
 @pytest.mark.asyncio
@@ -634,11 +767,6 @@ def test_console_composer_empty_placeholder_is_task_oriented():
     assert renderable.plain == "Ask, command, or paste task..."
 
 
-def test_console_provider_blocker_reason_lowercases_without_breaking_acronyms():
-    assert ChatScreen._lower_first_char("Missing API key") == "missing API key"
-    assert ChatScreen._lower_first_char("API key missing") == "API key missing"
-
-
 @pytest.mark.asyncio
 async def test_console_paste_under_threshold_remains_literal():
     app = _build_test_app()
@@ -689,6 +817,7 @@ async def test_console_large_paste_collapse_can_be_disabled_from_config(collapse
 @pytest.mark.asyncio
 async def test_console_clear_draft_keeps_canonical_payload_empty():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1040,15 +1169,22 @@ async def test_console_native_composer_does_not_capture_paste_from_select_focus(
 
 
 @pytest.mark.asyncio
-async def test_console_send_without_ready_runtime_shows_native_blocked_event(monkeypatch):
+async def test_console_send_without_ready_runtime_keeps_setup_block_tooltip_only(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
-    app.app_config.setdefault("api_settings", {}).setdefault("openai", {})["api_key"] = ""
+    _configure_openai_missing_key_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="openai", model="gpt-4.1-2025-04-14"),
+        )
+        await console._sync_native_console_chat_ui()
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello console")
@@ -1057,8 +1193,8 @@ async def test_console_send_without_ready_runtime_shows_native_blocked_event(mon
         await pilot.pause(0.2)
 
         text = _visible_text(console)
-        assert "Console send blocked" in text
-        assert "Missing API key" in text
+        assert "Console send blocked" not in text
+        assert "missing API key" in text
         assert "Internal Error" not in text
         assert "Missing UI elements" not in text
         assert composer.draft_text() == "hello console"
@@ -1068,12 +1204,19 @@ async def test_console_send_without_ready_runtime_shows_native_blocked_event(mon
 async def test_console_enter_sends_native_composer_draft(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
-    app.app_config.setdefault("api_settings", {}).setdefault("openai", {})["api_key"] = ""
+    _configure_openai_missing_key_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="openai", model="gpt-4.1-2025-04-14"),
+        )
+        await console._sync_native_console_chat_ui()
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         await pilot.press("h", "e", "l", "l", "o")
@@ -1081,8 +1224,11 @@ async def test_console_enter_sends_native_composer_draft(monkeypatch):
         await pilot.pause(0.2)
 
         text = _visible_text(console)
-        assert "Console send blocked" in text
-        assert "Missing API key" in text
+        send_button = console.query_one("#console-send-message", Button)
+        assert "Console send blocked" not in text
+        assert send_button.disabled is False
+        assert send_button.tooltip == "Finish provider setup before sending."
+        assert "missing API key" in text
         assert "Internal Error" not in text
         assert "Missing UI elements" not in text
         assert composer.draft_text() == "hello"
@@ -1120,8 +1266,8 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "Provider setup needed",
             "OpenAI missing API key",
             "Settings",
-            "No messages yet.",
-            "Ask, command, or paste task...",
+            "Finish provider setup to start chatting.",
+            "Setup required: finish provider setup.",
         ):
             assert expected in text
         for redundant_copy in (
@@ -1209,15 +1355,7 @@ async def test_console_provider_settings_action_posts_navigation_message(monkeyp
 async def test_console_provider_settings_action_hidden_when_provider_ready(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
-    app.app_config = {
-        "chat_defaults": {
-            "provider": "OpenAI",
-            "model": "gpt-4.1-2025-04-14",
-        },
-        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
-    }
-    app.chat_api_provider_value = "OpenAI"
-    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
@@ -1234,55 +1372,85 @@ async def test_console_provider_settings_action_hidden_when_provider_ready(monke
 
 
 @pytest.mark.asyncio
-async def test_console_provider_blocker_updates_without_transcript_recompose(monkeypatch):
+async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
-    app.app_config = {
-        "chat_defaults": {
-            "provider": "OpenAI",
-            "model": "gpt-4.1-2025-04-14",
-        },
-        "api_settings": {"openai": {"api_key": ""}},
-    }
-    app.chat_api_provider_value = "OpenAI"
-    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    _configure_native_ready_console(app)
+    app.app_config["chat_defaults"]["model"] = ""
+    app.app_config["api_settings"]["llama_cpp"].pop("model", None)
+    app.chat_api_model_value = ""
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-provider-blocker")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        strip = console.query_one("#console-provider-recovery-strip")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        await pilot.pause()
         blocker = console.query_one("#console-provider-blocker", Static)
 
-        assert blocker.styles.display != "none"
-        assert "OpenAI missing API key" in str(blocker.renderable)
+        assert strip.styles.display == "none"
+        assert blocker.styles.display == "none"
+        assert str(blocker.renderable) == ""
+        assert "Provider setup needed: choose a model" not in _visible_text(console)
+        assert "Choose model" not in _visible_text(console)
+        assert "Choose a model in Console Settings to start chatting." in _visible_text(console)
+        assert "Setup required: choose a model in Console Settings." in _visible_text(console)
 
-        app.app_config["api_settings"]["openai"]["api_key"] = "configured-test-key"
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="local-model"),
+        )
         console._sync_console_control_bar()
         await pilot.pause()
 
         assert blocker.styles.display == "none"
         assert str(blocker.renderable) == ""
+        assert strip.styles.display == "none"
+        assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
+        assert "Setup required: choose a model in Console Settings." not in _visible_text(console)
 
-        app.app_config["api_settings"]["openai"]["api_key"] = ""
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model=None),
+        )
         console._sync_console_control_bar()
         await pilot.pause()
 
-        assert blocker.styles.display != "none"
-        assert "OpenAI missing API key" in str(blocker.renderable)
+        assert blocker.styles.display == "none"
+        assert str(blocker.renderable) == ""
+        assert strip.styles.display == "none"
+        assert "Provider setup needed: choose a model" not in _visible_text(console)
+        assert "Choose a model in Console Settings to start chatting." in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_empty_transcript_names_missing_model_setup_blocker(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.app_config["chat_defaults"]["model"] = ""
+    app.app_config["api_settings"]["llama_cpp"].pop("model", None)
+    app.chat_api_model_value = ""
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        transcript = console.query_one("#console-native-transcript")
+        text = _visible_text(transcript)
+
+        assert "Choose a model in Console Settings to start chatting." in text
+        assert "Ready. Ask a question" not in text
 
 
 @pytest.mark.asyncio
 async def test_console_inline_guidance_does_not_reserve_transcript_space():
     app = _build_test_app()
-    app.app_config = {
-        "chat_defaults": {
-            "provider": "OpenAI",
-            "model": "gpt-4.1-2025-04-14",
-        },
-        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
-    }
-    app.chat_api_provider_value = "OpenAI"
-    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
@@ -1300,7 +1468,7 @@ async def test_console_inline_guidance_does_not_reserve_transcript_space():
         start_copy = getattr(start_here.render(), "plain", str(start_here.render()))
         title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
         assert start_copy == ""
-        assert title_copy == "Transcript / Event Stream | Ask in Composer. Attach as needed."
+        assert title_copy == "Transcript / Event Stream"
 
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
@@ -1318,15 +1486,7 @@ async def test_console_inline_guidance_does_not_reserve_transcript_space():
 @pytest.mark.asyncio
 async def test_console_inline_guidance_disappears_after_user_starts_typing():
     app = _build_test_app()
-    app.app_config = {
-        "chat_defaults": {
-            "provider": "OpenAI",
-            "model": "gpt-4.1-2025-04-14",
-        },
-        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
-    }
-    app.chat_api_provider_value = "OpenAI"
-    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
@@ -1337,7 +1497,7 @@ async def test_console_inline_guidance_disappears_after_user_starts_typing():
         transcript_title = console.query_one("#console-transcript-title", Static)
 
         title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
-        assert title_copy == "Transcript / Event Stream | Ask in Composer. Attach as needed."
+        assert title_copy == "Transcript / Event Stream"
 
         await pilot.press("h")
         await pilot.pause(0.1)
@@ -1358,15 +1518,7 @@ async def test_console_inline_guidance_disappears_after_user_starts_typing():
 @pytest.mark.asyncio
 async def test_console_transcript_header_sits_at_top_of_center_panel():
     app = _build_test_app()
-    app.app_config = {
-        "chat_defaults": {
-            "provider": "OpenAI",
-            "model": "gpt-4.1-2025-04-14",
-        },
-        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
-    }
-    app.chat_api_provider_value = "OpenAI"
-    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
@@ -1429,6 +1581,7 @@ async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
 @pytest.mark.asyncio
 async def test_console_native_transcript_is_visible_transcript_surface():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
@@ -1441,13 +1594,14 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         assert transcript.region.height > 0
         assert transcript.styles.display != "none"
         text = _visible_text(console)
-        assert "No messages yet." in text
+        assert "Ready. Ask a question, run a command, or attach context." in text
         assert "No messages yet. Send a prompt or attach context." not in text
 
 
 @pytest.mark.asyncio
 async def test_console_empty_transcript_uses_compact_ready_state():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
@@ -1461,7 +1615,7 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         assert len(empty_rows) == 1
         empty_row = empty_rows[0]
         empty_text = getattr(empty_row.render(), "plain", str(empty_row.render()))
-        assert empty_text == "No messages yet. Composer ready."
+        assert empty_text == "Ready. Ask a question, run a command, or attach context."
         assert "No messages yet. Send a prompt or attach context." not in empty_text
         assert empty_row.region.y == tab_strip.region.y + tab_strip.region.height
 
@@ -1594,15 +1748,7 @@ async def test_console_empty_inspector_hides_disabled_actions_until_actionable()
 @pytest.mark.asyncio
 async def test_console_run_inspector_groups_state_approvals_and_source_readiness():
     app = _build_test_app()
-    app.app_config = {
-        "chat_defaults": {
-            "provider": "OpenAI",
-            "model": "gpt-4.1-2025-04-14",
-        },
-        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
-    }
-    app.chat_api_provider_value = "OpenAI"
-    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(196, 64)) as pilot:
@@ -1748,7 +1894,6 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         for selector in (
             "#console-workspace-grid",
             "#console-left-rail",
-            "#console-inspector-rail-handle",
             "#console-native-composer",
         ):
             border = console.query_one(selector).styles.border
@@ -1756,6 +1901,14 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
             assert border.right[0] == "solid", f"{selector} missing right frame"
             assert border.bottom[0] == "solid", f"{selector} missing bottom frame"
             assert border.left[0] == "solid", f"{selector} missing left frame"
+
+        right_handle = console.query_one("#console-inspector-rail-handle")
+        assert right_handle.has_class("console-frame-quiet")
+        handle_border = right_handle.styles.border
+        assert handle_border.top[0] in {"", "none"}
+        assert handle_border.right[0] in {"", "none"}
+        assert handle_border.bottom[0] in {"", "none"}
+        assert handle_border.left[0] in {"", "none"}
 
         transcript_border = console.query_one("#console-transcript-region").styles.border
         assert transcript_border.top[0] in {"", "none"}
@@ -2016,18 +2169,14 @@ def test_console_control_state_tolerates_missing_launch_source():
 
 def test_console_control_and_inspector_share_effective_provider_model_sources():
     app = _build_test_app()
-    app.app_config = {
-        "chat_defaults": {"model": "reactive-model"},
-        "api_settings": {"openai": {"api_key": "DUMMY_TEST_KEY"}},
-    }
-    app.chat_api_provider_value = "OpenAI"
+    _configure_native_ready_console(app, model="reactive-model")
     screen = ChatScreen(app)
 
     control_state = screen._build_console_control_state(None)
     inspector_state = screen._build_console_inspector_state(None)
     rows_by_label = {row.label: row for row in inspector_state.rows}
 
-    assert control_state.provider_label == "Provider: OpenAI"
+    assert control_state.provider_label == "Provider: llama_cpp"
     assert control_state.model_label == "Model: reactive-model"
     assert rows_by_label["Provider"].text == "Provider: ready"
 

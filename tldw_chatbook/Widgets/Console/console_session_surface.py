@@ -18,6 +18,8 @@ CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
 CONSOLE_CLOSE_TAB_BUTTON_HEIGHT = 1
 CONSOLE_NEW_TAB_BUTTON_WIDTH = 3
 CONSOLE_NEW_TAB_BUTTON_HEIGHT = 1
+CONSOLE_SESSION_TAB_DISPLAY_CHARS = 19
+CONSOLE_SESSION_TAB_WIDTH = 21
 CONSOLE_TRANSCRIPT_TITLE = "Transcript / Event Stream"
 
 
@@ -63,6 +65,102 @@ class ConsoleSessionSurface(Vertical):
         button.styles.max_height = CONSOLE_NEW_TAB_BUTTON_HEIGHT
         return button
 
+    @classmethod
+    def _display_title(cls, title: str) -> str:
+        """Return a tab label that preserves space for close/rename controls."""
+        normalized_title = title.strip() or "Untitled"
+        if len(normalized_title) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS:
+            return normalized_title
+        visible_chars = CONSOLE_SESSION_TAB_DISPLAY_CHARS - 3
+        return f"{normalized_title[:visible_chars].rstrip()}..."
+
+    def _build_session_tab_button(
+        self,
+        session: ConsoleChatSession,
+        *,
+        active: bool,
+    ) -> Button:
+        """Build a stable-width Console session tab title button."""
+        classes = "console-session-tab"
+        if active:
+            classes = f"{classes} console-session-tab-active"
+        button = Button(
+            self._display_title(session.title),
+            id=f"console-session-tab-{session.id}",
+            classes=classes,
+            compact=True,
+        )
+        button.tooltip = (
+            f"Rename Console tab: {session.title}"
+            if active
+            else f"Switch to Console tab: {session.title}"
+        )
+        button.styles.width = CONSOLE_SESSION_TAB_WIDTH
+        button.styles.min_width = CONSOLE_SESSION_TAB_WIDTH
+        button.styles.max_width = CONSOLE_SESSION_TAB_WIDTH
+        button.styles.height = 1
+        button.styles.min_height = 1
+        button.styles.max_height = 1
+        return button
+
+    def _build_close_tab_button(self, session: ConsoleChatSession) -> Button:
+        """Build the compact close control for a Console session tab."""
+        close_button = Button(
+            "x",
+            id=f"console-close-session-tab-{session.id}",
+            classes="console-session-close-button",
+            compact=True,
+        )
+        close_button.tooltip = "Close Console tab"
+        close_button.styles.width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
+        close_button.styles.min_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
+        close_button.styles.max_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
+        close_button.styles.height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
+        close_button.styles.min_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
+        close_button.styles.max_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
+        return close_button
+
+    def _desired_tab_child_ids(
+        self,
+        *,
+        sessions: list[ConsoleChatSession],
+        active_session_id: str | None,
+    ) -> list[str]:
+        """Return the expected child ID sequence for the session tab strip."""
+        desired_ids: list[str] = []
+        for session in sessions:
+            desired_ids.append(f"console-session-tab-{session.id}")
+            desired_ids.append(f"console-close-session-tab-{session.id}")
+        desired_ids.append("console-new-chat-tab")
+        return desired_ids
+
+    def _update_existing_tab_strip(
+        self,
+        *,
+        tab_strip: Horizontal,
+        sessions: list[ConsoleChatSession],
+        active_session_id: str | None,
+    ) -> None:
+        """Update labels, tooltips, and active state without stealing focus."""
+        session_by_id = {session.id: session for session in sessions}
+        for child in tab_strip.children:
+            child_id = child.id or ""
+            if child_id.startswith("console-session-tab-"):
+                session_id = child_id.removeprefix("console-session-tab-")
+                session = session_by_id.get(session_id)
+                if session is None or not isinstance(child, Button):
+                    continue
+                child.label = self._display_title(session.title)
+                child.tooltip = (
+                    f"Rename Console tab: {session.title}"
+                    if session.id == active_session_id
+                    else f"Switch to Console tab: {session.title}"
+                )
+                child.set_class(
+                    session.id == active_session_id,
+                    "console-session-tab-active",
+                )
+
     async def sync_sessions(
         self,
         *,
@@ -72,62 +170,39 @@ class ConsoleSessionSurface(Vertical):
         """Render native Console session tabs from controller-owned state."""
         async with self._session_sync_lock:
             tab_strip = self.query_one("#console-native-tab-strip", Horizontal)
-            desired_ids = []
-            for session in sessions:
-                desired_ids.extend(
-                    (
-                        f"console-session-tab-{session.id}",
-                        f"console-close-session-tab-{session.id}",
-                    )
-                )
-            desired_ids.append("console-new-chat-tab")
+            desired_ids = self._desired_tab_child_ids(
+                sessions=sessions,
+                active_session_id=active_session_id,
+            )
             existing_ids = [child.id for child in tab_strip.children]
             if existing_ids == desired_ids:
-                for child in tab_strip.children:
-                    if child.id and child.id.startswith("console-session-tab-"):
-                        child.set_class(
-                            child.id == f"console-session-tab-{active_session_id}",
-                            "console-session-tab-active",
-                        )
+                self._update_existing_tab_strip(
+                    tab_strip=tab_strip,
+                    sessions=sessions,
+                    active_session_id=active_session_id,
+                )
                 return
 
             for child in list(tab_strip.children):
                 await child.remove()
             for session in sessions:
-                classes = "console-session-tab"
-                if session.id == active_session_id:
-                    classes = f"{classes} console-session-tab-active"
+                is_active = session.id == active_session_id
                 await tab_strip.mount(
-                    Button(
-                        session.title,
-                        id=f"console-session-tab-{session.id}",
-                        classes=classes,
-                    )
+                    self._build_session_tab_button(session, active=is_active)
                 )
-                close_button = Button(
-                    "x",
-                    id=f"console-close-session-tab-{session.id}",
-                    classes="console-session-close-button",
-                    compact=True,
-                )
-                close_button.tooltip = "Close Console tab"
-                close_button.styles.width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
-                close_button.styles.min_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
-                close_button.styles.max_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
-                close_button.styles.height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
-                close_button.styles.min_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
-                close_button.styles.max_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT
-                await tab_strip.mount(close_button)
+                await tab_strip.mount(self._build_close_tab_button(session))
             await tab_strip.mount(self._build_new_tab_button())
 
     def sync_inline_guidance(self, *, visible: bool, copy: str = "") -> None:
-        """Render compact first-run guidance without adding a separate row."""
+        """Keep guidance out of the title and sync empty transcript copy."""
         try:
             title = self.query_one("#console-transcript-title", Static)
         except Exception:
             return
-        guidance = " ".join(str(copy or "").split())
-        if visible and guidance:
-            title.update(f"{CONSOLE_TRANSCRIPT_TITLE} | {guidance}")
-            return
         title.update(CONSOLE_TRANSCRIPT_TITLE)
+
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except Exception:
+            return
+        transcript.sync_empty_state(copy if visible else "")

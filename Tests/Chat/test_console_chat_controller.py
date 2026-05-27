@@ -6,6 +6,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunState,
     ConsoleRunStatus,
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
@@ -404,6 +405,31 @@ async def test_stop_active_run_marks_assistant_message_stopped():
     result = await task
     messages = store.messages_for_session(store.active_session_id)
     assert result.accepted is True
+    assert messages[-1].content == "partial"
+    assert messages[-1].status == "stopped"
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+
+
+def test_stop_active_run_falls_back_to_visible_streaming_assistant_message():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(assistant.id, "partial")
+    controller.run_state = ConsoleRunState(
+        ConsoleRunStatus.STREAMING,
+        "Streaming response.",
+    )
+    controller._active_assistant_message_id = None
+
+    assert controller.stop_active_run() is True
+
+    messages = store.messages_for_session(session.id)
     assert messages[-1].content == "partial"
     assert messages[-1].status == "stopped"
     assert controller.run_state.status is ConsoleRunStatus.STOPPED

@@ -330,9 +330,15 @@ def build_console_settings_summary_state(
 ) -> ConsoleSettingsSummaryState:
     """Build compact display rows for the Console settings summary widget."""
     provider_label = _string_value(settings.provider) or "Unknown"
-    model_label = _string_value(settings.model) or "Default"
+    model_value = _string_value(settings.model)
     readiness_label = _string_value(readiness.label) or ""
-    readiness_suffix = "" if readiness_label in {"", "Ready"} else f" ({readiness_label})"
+    model_is_missing = not model_value and readiness_label == "Missing model"
+    model_label = model_value or ("Missing" if model_is_missing else "Default")
+    readiness_suffix = (
+        ""
+        if readiness_label in {"", "Ready"} or model_is_missing
+        else f" ({readiness_label})"
+    )
 
     sampling_parts = [
         f"T {_format_summary_float(settings.temperature)}",
@@ -376,7 +382,7 @@ def build_console_context_estimate(
         return ConsoleSettingsContextEstimate(
             used_tokens=None,
             token_limit=None,
-            label="Context: unknown",
+            label="Context: unavailable",
             staged_source_count=staged_source_count,
             staged_context_summary=staged_context_summary,
         )
@@ -396,7 +402,7 @@ def build_console_context_estimate(
         return ConsoleSettingsContextEstimate(
             used_tokens=None,
             token_limit=None,
-            label="Context: unknown",
+            label="Context: unavailable",
             staged_source_count=staged_source_count,
             staged_context_summary=staged_context_summary,
         )
@@ -619,5 +625,7 @@ def _format_summary_float(value: float) -> str:
 
 
 def _format_context_summary_row(label: str) -> str:
-    label_text = _string_value(label) or "unknown"
+    label_text = _string_value(label) or "unavailable"
+    if label_text.lower() in {"unknown", "context: unknown"}:
+        label_text = "Context: unavailable"
     return label_text if label_text.startswith("Context: ") else f"Context: {label_text}"

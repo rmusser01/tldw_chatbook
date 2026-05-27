@@ -17,7 +17,7 @@ from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, Con
 
 CONSOLE_TRANSCRIPT_ACTION_ROW = "Copy | Edit | Save as... | ♻ | ---> | 👍/👎                 🗑"
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
-EMPTY_TRANSCRIPT_COPY = "No messages yet. Composer ready."
+EMPTY_TRANSCRIPT_COPY = "Ready. Ask a question, run a command, or attach context."
 _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "edit": "Edit this message before continuing the thread.",
@@ -90,6 +90,7 @@ class ConsoleTranscript(VerticalScroll):
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
         self._refresh_lock = asyncio.Lock()
+        self.empty_state_copy = EMPTY_TRANSCRIPT_COPY
 
     def compose(self) -> ComposeResult:
         yield from self._message_widgets()
@@ -100,6 +101,15 @@ class ConsoleTranscript(VerticalScroll):
         message_ids = {message.id for message in self._messages}
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
+
+    def sync_empty_state(self, copy: str = "") -> None:
+        """Refresh the empty transcript copy while preserving message exports."""
+        next_copy = copy.strip() or EMPTY_TRANSCRIPT_COPY
+        if self.empty_state_copy == next_copy:
+            return
+        self.empty_state_copy = next_copy
+        if self.is_mounted and not self._messages:
+            self.call_later(self.refresh_messages)
 
     async def refresh_messages(self) -> None:
         """Rebuild mounted message rows from the current transcript state."""
@@ -224,7 +234,7 @@ class ConsoleTranscript(VerticalScroll):
         else:
             widgets.append(
                 Static(
-                    EMPTY_TRANSCRIPT_COPY,
+                    self.empty_state_copy,
                     classes="console-transcript-empty-state",
                 )
             )

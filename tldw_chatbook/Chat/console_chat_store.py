@@ -149,6 +149,15 @@ class ConsoleChatStore:
         self.active_session_id = session.id
         return session
 
+    def rename_session(self, session_id: str, title: str) -> ConsoleChatSession:
+        """Rename an existing native Console session."""
+        normalized_title = title.strip()
+        if not normalized_title:
+            raise ValueError("Console chat session title cannot be blank.")
+        session = self._session_or_raise(session_id)
+        session.title = normalized_title
+        return session
+
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
         """Close a native Console session and activate a neighboring session.
 

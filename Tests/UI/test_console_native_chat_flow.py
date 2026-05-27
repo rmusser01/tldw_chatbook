@@ -9,7 +9,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -104,6 +104,28 @@ async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 80) ->
             return
         await pilot.pause(0.05)
     raise AssertionError(f"Text not found: {expected!r}. Visible text: {_visible_text(screen)!r}")
+
+
+async def _wait_for_console_rename_modal(host: ConsoleHarness, pilot):
+    for _ in range(40):
+        if (
+            host.screen_stack
+            and host.screen_stack[-1].query("#console-rename-session-modal")
+            and host.screen_stack[-1].query("#console-rename-session-title")
+        ):
+            await pilot.pause()
+            return host.screen_stack[-1]
+        await pilot.pause(0.05)
+    raise AssertionError("Console rename modal did not open")
+
+
+async def _wait_for_console_screen(host: ConsoleHarness, console, pilot) -> None:
+    for _ in range(40):
+        if host.screen_stack and host.screen_stack[-1] is console:
+            await pilot.pause()
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("Console modal did not dismiss")
 
 
 def _select_llamacpp_console(console: ChatScreen) -> None:
@@ -317,7 +339,7 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
 
 
 @pytest.mark.asyncio
-async def test_console_composer_stop_is_disabled_when_idle():
+async def test_console_composer_stop_is_subdued_when_idle():
     gateway = WaitingGateway()
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -381,7 +403,7 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         send_button = console.query_one("#console-send-message", Button)
         assert send_button.disabled is False
         assert send_button.has_class("console-send-blocked")
-        send_button.press()
+        await console.handle_console_send_message(Button.Pressed(send_button))
         await pilot.pause(0.1)
         assert console._ensure_console_chat_controller().run_state.status.value == "streaming"
 
@@ -768,6 +790,115 @@ async def test_console_native_tab_strip_keeps_compact_close_x():
 
         assert store.active_session_id == first.id
         assert second not in {session.id for session in store.sessions()}
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_title_has_stable_visible_label_region():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.rename_session(session.id, "Planning session with a long descriptive name")
+        await console._sync_native_console_chat_ui()
+
+        tab_selector = f"#console-session-tab-{session.id}"
+        await _wait_for_selector(console, pilot, tab_selector)
+        tab = console.query_one(tab_selector, Button)
+
+        assert tab.tooltip == (
+            "Rename Console tab: Planning session with a long descriptive name"
+        )
+        assert str(tab.label) == "Planning session..."
+        assert tab.region.width >= 18
+        assert "Planning session" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_native_active_tab_title_opens_rename_modal():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        assert not list(console.query(f"#console-rename-session-tab-{session.id}"))
+
+        await pilot.click(f"#console-session-tab-{session.id}")
+        modal_screen = await _wait_for_console_rename_modal(host, pilot)
+
+        rename_input = modal_screen.query_one("#console-rename-session-title", Input)
+        assert rename_input.value == "Chat 1"
+        assert getattr(console.app.focused, "id", None) == rename_input.id
+
+        await pilot.press(*"Planning")
+        modal_screen.query_one("#console-rename-session-save", Button).press()
+        await _wait_for_console_screen(host, console, pilot)
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{session.id}")
+
+        assert store.sessions()[0].title == "Planning"
+        assert "Planning" in _visible_text(console)
+        assert not list(console.query(f"#console-session-rename-input-{session.id}"))
+
+
+@pytest.mark.asyncio
+async def test_console_native_rename_modal_buttons_are_not_clipped():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click(f"#console-session-tab-{session.id}")
+        modal_screen = await _wait_for_console_rename_modal(host, pilot)
+
+        action_row = modal_screen.query_one("#console-rename-session-actions")
+        cancel_button = modal_screen.query_one("#console-rename-session-cancel", Button)
+        save_button = modal_screen.query_one("#console-rename-session-save", Button)
+
+        assert action_row.region.height >= 3
+        assert cancel_button.region.height >= 3
+        assert save_button.region.height >= 3
+        assert str(cancel_button.label) == "Cancel"
+        assert str(save_button.label) == "Save"
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_rename_escape_restores_existing_title():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click(f"#console-session-tab-{session.id}")
+
+        modal_screen = await _wait_for_console_rename_modal(host, pilot)
+        rename_input = modal_screen.query_one("#console-rename-session-title", Input)
+        assert rename_input.value == "Chat 1"
+        await pilot.press(*"Discarded")
+        await pilot.press("escape")
+        await _wait_for_console_screen(host, console, pilot)
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{session.id}")
+
+        assert store.sessions()[0].title == "Chat 1"
+        assert "Chat 1" in _visible_text(console)
+        assert not list(console.query(f"#console-session-rename-input-{session.id}"))
 
 
 @pytest.mark.asyncio
