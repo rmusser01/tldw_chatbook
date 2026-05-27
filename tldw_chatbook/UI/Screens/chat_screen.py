@@ -311,12 +311,14 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         settings = self._ensure_active_console_session_settings()
         controller = self._ensure_console_chat_controller()
+        _provider, model, _settings = self._active_console_provider_model_display()
         modal = ConsoleSettingsModal(
             settings=settings,
             app_config=getattr(self.app_instance, "app_config", {}) or {},
             providers_models=self._providers_models(),
             context_estimate=self._active_console_settings_context_estimate(),
             can_save=controller.run_state.is_send_allowed,
+            focus_model=not _has_selected_text(model),
         )
 
         def _apply_modal_result(result: ConsoleSessionSettings | None) -> None:

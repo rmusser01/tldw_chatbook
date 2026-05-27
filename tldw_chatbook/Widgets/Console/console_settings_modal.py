@@ -37,6 +37,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         providers_models: Mapping[str, list[str]],
         context_estimate: ConsoleSettingsContextEstimate,
         can_save: bool,
+        focus_model: bool = False,
     ) -> None:
         super().__init__()
         self._settings = settings
@@ -44,6 +45,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._providers_models = providers_models
         self._context_estimate = context_estimate
         self._can_save = can_save
+        self._focus_model = focus_model
         self._active_provider = settings.provider
         self._provider_model_drafts: dict[str, str] = {
             settings.provider: settings.model or "",
@@ -217,6 +219,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 yield Button("Cancel", id="console-settings-cancel")
                 yield Button("Save", id="console-settings-save", variant="primary", disabled=not self._can_save)
 
+    def on_mount(self) -> None:
+        if self._focus_model:
+            self._focus_model_control()
+
     def action_dismiss(self) -> None:
         self.dismiss(None)
 
@@ -302,6 +308,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model_input.value = fallback
         model_input.disabled = False
         model_input.display = True
+
+    def _focus_model_control(self) -> None:
+        model_select = self.query_one("#console-settings-model-select", Select)
+        if model_select.display and not model_select.disabled:
+            model_select.focus()
+            return
+        model_input = self.query_one("#console-settings-model-input", Input)
+        model_input.focus()
 
     def _provider_select_options(self) -> list[tuple[str, str]]:
         options = [(option.label, option.value) for option in build_console_provider_options(self._providers_models)]

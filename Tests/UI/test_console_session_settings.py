@@ -90,6 +90,15 @@ async def _wait_for_console_top_screen(host: ConsoleHarness, console, pilot) -> 
     raise AssertionError("Console settings modal did not dismiss")
 
 
+async def _wait_for_focused_id(host: App[None], pilot, widget_id: str) -> None:
+    for _ in range(40):
+        focused_id = getattr(host.focused, "id", None)
+        if focused_id == widget_id:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(f"Expected focus on {widget_id!r}, found {getattr(host.focused, 'id', None)!r}")
+
+
 async def _press_new_console_tab(console, store, pilot) -> str:
     previous_session_id = store.active_session_id
     console.query_one("#console-new-chat-tab", Button).press()
@@ -970,8 +979,19 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
 
         console.query_one("#console-settings-open", Button).press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
+        await _wait_for_focused_id(host, pilot, "console-settings-model-select")
 
         assert modal_screen.query_one("#console-settings-provider", Select).value == "llama_cpp"
+        assert modal_screen.query_one("#console-settings-model-select", Select).value == "model-a"
+
+        await pilot.click("#console-settings-save")
+        await _wait_for_console_top_screen(host, console, pilot)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        text = _screen_visible_text(console)
+        assert "Model: model-a" in _summary_text(console)
+        assert "Setup required: choose a model in Console Settings." not in text
+        assert console._console_send_blocked_reason() == ""
 
 
 @pytest.mark.asyncio
