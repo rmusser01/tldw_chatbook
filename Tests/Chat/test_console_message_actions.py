@@ -15,11 +15,11 @@ def test_assistant_message_actions_include_required_order():
     assert [action.label for action in actions] == [
         "Copy",
         "Edit",
-        "Save as...",
-        "♻",
-        "--->",
-        "👍/👎",
-        "🗑",
+        "Save",
+        "Regenerate",
+        "Continue",
+        "Feedback",
+        "Delete",
     ]
 
 
@@ -36,11 +36,11 @@ def test_streaming_assistant_message_shows_completed_actions_disabled_with_reaso
     assert [action.label for action in actions] == [
         "Copy",
         "Edit",
-        "Save as...",
-        "♻",
-        "--->",
-        "👍/👎",
-        "🗑",
+        "Save",
+        "Regenerate",
+        "Continue",
+        "Feedback",
+        "Delete",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -63,11 +63,11 @@ def test_pending_assistant_message_shows_completed_actions_disabled_with_reasons
     assert [action.label for action in actions] == [
         "Copy",
         "Edit",
-        "Save as...",
-        "♻",
-        "--->",
-        "👍/👎",
-        "🗑",
+        "Save",
+        "Regenerate",
+        "Continue",
+        "Feedback",
+        "Delete",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)

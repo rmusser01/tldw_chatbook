@@ -107,8 +107,8 @@ def test_console_transcript_selected_message_shows_action_row():
 
     plain = transcript.to_plain_text(width=80)
 
-    assert "Copy | Edit | Save as..." in plain
-    assert "--->" in plain
+    assert "Copy Edit Save Regenerate Continue Good Bad Delete" in plain
+    assert "|" not in plain
 
 
 def test_console_transcript_variant_navigation_changes_displayed_content():
@@ -128,8 +128,8 @@ def test_console_transcript_variant_navigation_changes_displayed_content():
     rendered = transcript.to_plain_text(width=80)
     assert "second" in rendered
     assert "first" not in rendered
-    assert "<" in rendered
-    assert ">" in rendered
+    assert "Prev" in rendered
+    assert "Next" in rendered
 
 
 @pytest.mark.asyncio
@@ -142,7 +142,10 @@ async def test_console_transcript_keyboard_selects_messages_and_enter_shows_acti
         await pilot.press("enter")
         text = _visible_text(app)
 
-    assert "Copy | Edit | Save as..." in text
+    assert "Copy" in text
+    assert "Save" in text
+    assert "Regenerate" in text
+    assert "|" not in text
 
 
 @pytest.mark.asyncio
@@ -153,7 +156,10 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
         await pilot.click("#console-message-m2")
         text = _visible_text(app)
 
-    assert "Copy | Edit | Save as..." in text
+    assert "Copy" in text
+    assert "Save" in text
+    assert "Regenerate" in text
+    assert "|" not in text
 
 
 @pytest.mark.asyncio
@@ -184,12 +190,13 @@ async def test_console_transcript_action_buttons_have_stable_ids():
         text = _visible_text(app)
 
     assert "Copy" in text
-    assert "Save as..." in text
-    assert "♻" in text
+    assert "Save" in text
+    assert "Regenerate" in text
+    assert "|" not in text
 
 
 @pytest.mark.asyncio
-async def test_console_transcript_action_tooltips_explain_power_user_symbols():
+async def test_console_transcript_action_tooltips_explain_compact_labels():
     app = TranscriptHarness()
 
     async with app.run_test(size=(100, 32)) as pilot:
@@ -208,11 +215,11 @@ async def test_console_transcript_escape_collapses_selected_action_row():
 
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.click("#console-message-m2")
-        assert "Save as..." in _visible_text(app)
+        assert "Save" in _visible_text(app)
 
         await pilot.press("escape")
 
-        assert "Save as..." not in _visible_text(app)
+        assert "Save" not in _visible_text(app)
 
 
 @pytest.mark.asyncio
