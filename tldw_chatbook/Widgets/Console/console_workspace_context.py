@@ -109,6 +109,7 @@ class ConsoleWorkspaceContextTray(Vertical):
 
     def _workspace_selector_label(self) -> str:
         """Return the visible active-workspace selector affordance."""
-        if self.state.change_workspace_enabled:
-            return self.state.workspace_label
-        return f"{self.state.workspace_label} [read-only]"
+        workspace_label = self.state.workspace_label
+        if workspace_label.startswith("Workspace: "):
+            workspace_label = workspace_label.removeprefix("Workspace: ").strip()
+        return workspace_label

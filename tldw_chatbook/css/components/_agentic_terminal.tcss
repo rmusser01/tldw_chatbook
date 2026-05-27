@@ -904,8 +904,8 @@ ConsoleSettingsModal Select {
 .console-workspace-selector-row {
     margin: 0 0 1 0;
     padding: 0 1;
-    border: solid $ds-grid-line;
-    background: $ds-surface-raised;
+    border: none;
+    background: $ds-surface-panel;
     color: $ds-text-primary;
     text-style: bold;
 }
