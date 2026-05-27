@@ -37,8 +37,8 @@ class ConsoleRenameSessionModal(ModalScreen[str | None]):
     }
 
     #console-rename-session-actions {
-        height: 1;
-        min-height: 1;
+        height: 3;
+        min-height: 3;
         margin: 1 0 0 0;
         align-horizontal: right;
     }
@@ -47,8 +47,8 @@ class ConsoleRenameSessionModal(ModalScreen[str | None]):
     #console-rename-session-save {
         width: 10;
         min-width: 10;
-        height: 1;
-        min-height: 1;
+        height: 3;
+        min-height: 3;
     }
     """
 
@@ -68,11 +68,10 @@ class ConsoleRenameSessionModal(ModalScreen[str | None]):
             )
             yield Static("", id="console-rename-session-error", markup=False)
             with Horizontal(id="console-rename-session-actions"):
-                yield Button("Cancel", id="console-rename-session-cancel", compact=True)
+                yield Button("Cancel", id="console-rename-session-cancel")
                 yield Button(
                     "Save",
                     id="console-rename-session-save",
-                    compact=True,
                     variant="primary",
                 )
 

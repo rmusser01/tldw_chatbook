@@ -849,6 +849,32 @@ async def test_console_native_active_tab_title_opens_rename_modal():
 
 
 @pytest.mark.asyncio
+async def test_console_native_rename_modal_buttons_are_not_clipped():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click(f"#console-session-tab-{session.id}")
+        modal_screen = await _wait_for_console_rename_modal(host, pilot)
+
+        action_row = modal_screen.query_one("#console-rename-session-actions")
+        cancel_button = modal_screen.query_one("#console-rename-session-cancel", Button)
+        save_button = modal_screen.query_one("#console-rename-session-save", Button)
+
+        assert action_row.region.height >= 3
+        assert cancel_button.region.height >= 3
+        assert save_button.region.height >= 3
+        assert str(cancel_button.label) == "Cancel"
+        assert str(save_button.label) == "Save"
+
+
+@pytest.mark.asyncio
 async def test_console_native_tab_rename_escape_restores_existing_title():
     app = _build_test_app()
     host = ConsoleHarness(app)
