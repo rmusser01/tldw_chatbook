@@ -570,6 +570,24 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
 
+    def _run_diagnostics_validation(self) -> None:
+        self._diagnostics_validation_result = self._validate_current_config()
+        self._set_static_text(
+            "#settings-diagnostics-validation-result",
+            self._diagnostics_validation_result,
+        )
+
+    def _run_diagnostics_reload(self) -> None:
+        self._diagnostics_reload_result = self._reload_current_config()
+        self._set_static_text(
+            "#settings-diagnostics-reload-result",
+            self._diagnostics_reload_result,
+        )
+
+    def _run_diagnostics_validation_and_reload(self) -> None:
+        self._run_diagnostics_validation()
+        self._run_diagnostics_reload()
+
     def _validate_current_config(self) -> str:
         adapter = SettingsConfigAdapter()
         try:
@@ -1568,20 +1586,12 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-validate-config")
     def handle_validate_config(self, event: Button.Pressed) -> None:
         event.stop()
-        self._diagnostics_validation_result = self._validate_current_config()
-        self._set_static_text(
-            "#settings-diagnostics-validation-result",
-            self._diagnostics_validation_result,
-        )
+        self._run_diagnostics_validation()
 
     @on(Button.Pressed, "#settings-reload-config")
     def handle_reload_config(self, event: Button.Pressed) -> None:
         event.stop()
-        self._diagnostics_reload_result = self._reload_current_config()
-        self._set_static_text(
-            "#settings-diagnostics-reload-result",
-            self._diagnostics_reload_result,
-        )
+        self._run_diagnostics_reload()
 
     @on(Button.Pressed, "#settings-advanced-validate-config")
     def handle_advanced_validate_config(self, event: Button.Pressed) -> None:
@@ -1756,6 +1766,10 @@ class SettingsScreen(BaseAppScreen):
             self._provider_test_result = self._run_provider_readiness_test()
             self._update_provider_test_result()
             self.app.notify("Provider test finished.", severity="information")
+            return
+        if self._active_category_id() is SettingsCategoryId.DIAGNOSTICS:
+            self._run_diagnostics_validation_and_reload()
+            self.app.notify("Diagnostics validation and reload finished.", severity="information")
             return
         self.app.notify("No test action is available for this Settings category yet.", severity="warning")
 

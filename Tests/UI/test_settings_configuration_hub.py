@@ -1146,6 +1146,22 @@ async def test_settings_diagnostics_validate_and_reload_config_actions():
         assert "Config reload: loaded" in text
 
 
+@pytest.mark.asyncio
+async def test_settings_diagnostics_test_shortcut_runs_validate_and_reload():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-diagnostics")
+        await pilot.press("t")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Config validation: valid" in text
+        assert "Config reload: loaded" in text
+        assert "No test action is available" not in text
+
+
 def test_settings_diagnostics_strictly_reports_corrupt_toml(monkeypatch, tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text("[chat_defaults\nprovider = \"OpenAI\"\n", encoding="utf-8")

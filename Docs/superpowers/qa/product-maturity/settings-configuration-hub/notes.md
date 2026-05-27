@@ -18,6 +18,7 @@ Evidence method: actual textual-web/CDP screenshots driven with Playwright brows
 - Advanced Config: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/08-advanced-config.png`
 - Focused Settings button final fix: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/11-focused-settings-button-no-heavy-outline.png`
 - Category search polish: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/13-category-search-polish.png`
+- Diagnostics shortcut validation: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/16-diagnostics-shortcut-cdp.png`
 
 User approval: approved after actual rendered screenshot review.
 
@@ -104,3 +105,27 @@ git diff --check
 ```
 
 Result: `66 passed` for the Settings configuration hub suite, `5 passed` for the focused destination shell suite, one existing requests dependency warning in each pytest run, and `git diff --check` clean.
+
+## 2026-05-27 Diagnostics Shortcut Follow-Up
+
+Branch: `codex/settings-next-ux-polish`
+
+Approved screenshot:
+
+- Diagnostics shortcut validation: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/16-diagnostics-shortcut-cdp.png`
+
+Coverage added:
+
+- The Settings `t` shortcut now runs Diagnostics validation and reload when Diagnostics is selected.
+- The visible Diagnostics buttons and keyboard shortcut share the same validation/reload paths.
+- The resulting status rows show both `Config validation: valid` and `Config reload: loaded` in the actual rendered Settings screen.
+
+Focused verification:
+
+```bash
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py::test_settings_diagnostics_test_shortcut_runs_validate_and_reload --tb=short
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short
+git diff --check
+```
+
+Result: `1 passed` for the red/green Diagnostics shortcut regression, `67 passed` for the full Settings configuration hub suite, one existing requests dependency warning, and `git diff --check` clean.
