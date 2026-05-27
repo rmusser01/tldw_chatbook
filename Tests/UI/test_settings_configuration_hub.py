@@ -864,14 +864,14 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
 
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
         assert endpoint.value == "https://api.openai.com/v1"
-        endpoint.value = "https://proxy.example/v1"
+        endpoint.value = "https://proxy.example.com/v1"
 
         await pilot.click("#settings-save-category")
 
     assert saved == [
-        ("api_settings.openai", "api_base_url", "https://proxy.example/v1"),
+        ("api_settings.openai", "api_base_url", "https://proxy.example.com/v1"),
     ]
-    assert app.app_config["api_settings"]["openai"]["api_base_url"] == "https://proxy.example/v1"
+    assert app.app_config["api_settings"]["openai"]["api_base_url"] == "https://proxy.example.com/v1"
 
 
 @pytest.mark.asyncio
@@ -906,6 +906,81 @@ async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch)
 
     assert saved == []
     assert app.app_config["api_settings"]["llama_cpp"]["api_url"] == "http://127.0.0.1:8080/v1"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "",
+        "model": "model-a",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    app.app_config["api_settings"] = {}
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider = screen.query_one("#settings-provider-value", Input)
+        provider.value = ""
+        screen.handle_provider_value_changed(Input.Changed(provider, ""))
+        await pilot.pause()
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "http://127.0.0.1:9099/v1"
+        screen.handle_provider_endpoint_changed(Input.Changed(endpoint, endpoint.value))
+
+        await pilot.click("#settings-save-category")
+        text = _visible_text(screen)
+
+        assert "Provider is required before saving an endpoint." in text
+
+    assert saved == []
+    assert app.app_config["api_settings"] == {}
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    app.app_config["api_settings"] = {
+        "openai": {"api_base_url": "https://api.openai.com/v1"},
+        "llama_cpp": {},
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider = screen.query_one("#settings-provider-value", Input)
+        provider.value = "llama_cpp"
+        screen.handle_provider_value_changed(Input.Changed(provider, "llama_cpp"))
+
+        assert screen.query_one("#settings-provider-endpoint-value", Input).value == ""
+        await pilot.click("#settings-save-category")
+        await pilot.click("#settings-save-category")
+
+    assert ("api_settings.llama_cpp", "api_url", "https://api.openai.com/v1") not in saved
+    assert saved == [("chat_defaults", "provider", "llama_cpp")]
+    assert app.app_config["api_settings"]["llama_cpp"] == {}
 
 
 @pytest.mark.asyncio

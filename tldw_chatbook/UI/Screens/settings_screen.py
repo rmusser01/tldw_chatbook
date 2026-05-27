@@ -4,7 +4,6 @@ from collections.abc import Mapping
 import logging
 import os
 from pathlib import Path
-from urllib.parse import urlparse
 
 from textual import on, work
 from textual.app import ComposeResult
@@ -19,7 +18,7 @@ from ...Sync_Interop.sync_promotion_state import SyncPromotionState, build_sync_
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...config import DEFAULT_CONFIG_PATH, coerce_bool_setting, save_setting_to_cli_config
-from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
 from .provider_model_resolution import resolve_effective_provider_model
@@ -68,6 +67,7 @@ class SettingsScreen(BaseAppScreen):
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
         self._provider_test_result = "Provider test has not run."
         self._provider_save_result = "Provider settings have not been saved this session."
+        self._syncing_provider_endpoint = False
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
         self._advanced_config_result = "Advanced config validation: not run"
@@ -714,9 +714,15 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_form_values_from_widgets(self) -> dict[str, object]:
         loaded_values = self._provider_loaded_setting_values()
+        provider_value = self.query_one("#settings-provider-value", Input).value.strip()
+        provider_draft = self._provider_draft()
+        provider_explicitly_staged = (
+            provider_draft is not None and "provider" in provider_draft.values
+        )
         provider = (
-            self.query_one("#settings-provider-value", Input).value.strip()
-            or str(loaded_values["provider"])
+            provider_value
+            if provider_value or provider_explicitly_staged
+            else str(loaded_values["provider"])
         )
         model = (
             self.query_one("#settings-model-value", Input).value.strip()
@@ -779,6 +785,8 @@ class SettingsScreen(BaseAppScreen):
         endpoint_value = str(
             endpoint if endpoint is not None else self._provider_endpoint_value(provider)
         ).strip()
+        if not provider_key:
+            return "Endpoint: provider required before saving"
         if endpoint_value:
             return f"Endpoint: api_settings.{provider_key}.{endpoint_key}={endpoint_value}"
         if provider_key in API_URL_PROVIDER_KEYS:
@@ -787,6 +795,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_endpoint_row(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
+        if not provider_key:
+            return "Endpoint key: provider required"
         endpoint_key = self._provider_endpoint_setting_key(provider)
         return f"Endpoint key: api_settings.{provider_key}.{endpoint_key}"
 
@@ -795,11 +805,8 @@ class SettingsScreen(BaseAppScreen):
         endpoint_text = str(endpoint or "").strip()
         if not endpoint_text:
             return None
-        parsed = urlparse(endpoint_text)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            return "Endpoint must start with http:// or https:// and include a host."
-        if not validate_text_input(endpoint_text, max_length=2048, allow_html=False):
-            return "Endpoint contains unsupported characters."
+        if not validate_url(endpoint_text):
+            return "Endpoint must start with http:// or https:// and include a valid host."
         return None
 
     def _provider_key_status(self, provider: str) -> str:
@@ -1069,7 +1076,7 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="true or false",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Temperature", classes="settings-input-label")
+                yield Static("Temp", classes="settings-input-label")
                 yield Input(
                     value=str(values["temperature"]),
                     id="settings-temperature-default",
@@ -1443,7 +1450,24 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-provider-value")
     def handle_provider_value_changed(self, event: Input.Changed) -> None:
-        self._stage_provider_value("provider", event.value.strip() or None)
+        provider = event.value.strip()
+        self._stage_provider_value("provider", provider or None)
+        try:
+            endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
+        except QueryError:
+            endpoint_input = None
+        if endpoint_input is not None:
+            self._syncing_provider_endpoint = True
+            try:
+                endpoint_input.value = self._provider_endpoint_value(provider)
+            finally:
+                self._syncing_provider_endpoint = False
+        draft = self._provider_draft()
+        if draft is not None:
+            draft.values.pop("endpoint", None)
+            draft.originals.pop("endpoint", None)
+            if not draft.is_dirty:
+                self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -1455,6 +1479,9 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-provider-endpoint-value")
     def handle_provider_endpoint_changed(self, event: Input.Changed) -> None:
+        if self._syncing_provider_endpoint:
+            self._update_provider_dynamic_widgets()
+            return
         self._stage_provider_value("endpoint", event.value.strip())
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
@@ -1541,24 +1568,43 @@ class SettingsScreen(BaseAppScreen):
             except ValueError:
                 self.app.notify("Temperature must be a number.", severity="error")
                 return
-            endpoint_validation_error = self._validate_provider_endpoint(values.get("endpoint"))
+            loaded_values = self._provider_loaded_setting_values()
+            chat_defaults_keys = {"provider", "model", "streaming", "temperature"}
+            provider = str(values.get("provider") or "").strip()
+            endpoint = str(values.get("endpoint") or "").strip()
+            draft = self._settings_drafts.get(category)
+            endpoint_touched = draft is not None and "endpoint" in draft.dirty_keys
+            loaded_endpoint = str(loaded_values.get("endpoint") or "").strip()
+            if (
+                loaded_values.get("provider") != provider
+                and not endpoint_touched
+                and endpoint == loaded_endpoint
+            ):
+                endpoint = self._provider_endpoint_value(provider)
+                values["endpoint"] = endpoint
+                try:
+                    self.query_one("#settings-provider-endpoint-value", Input).value = endpoint
+                except QueryError:
+                    pass
+            endpoint_validation_error = self._validate_provider_endpoint(endpoint)
             if endpoint_validation_error:
                 self._provider_save_result = endpoint_validation_error
                 self._set_static_text("#settings-provider-save-result", self._provider_save_result)
                 self.app.notify(endpoint_validation_error, severity="error")
                 return
-            loaded_values = self._provider_loaded_setting_values()
-            chat_defaults_keys = {"provider", "model", "streaming", "temperature"}
             dirty_values = {
                 key: value
                 for key, value in values.items()
                 if key in chat_defaults_keys and loaded_values.get(key) != value
             }
-            provider = str(values.get("provider") or "").strip()
             provider_key = provider_config_key(provider)
-            endpoint = str(values.get("endpoint") or "").strip()
-            loaded_endpoint = str(loaded_values.get("endpoint") or "").strip()
-            endpoint_dirty = endpoint != loaded_endpoint
+            current_provider_endpoint = self._provider_endpoint_value(provider)
+            endpoint_dirty = endpoint != current_provider_endpoint
+            if endpoint_dirty and not provider_key:
+                self._provider_save_result = "Provider is required before saving an endpoint."
+                self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self.app.notify(self._provider_save_result, severity="error")
+                return
             if not dirty_values and not endpoint_dirty:
                 self._settings_drafts.pop(category, None)
                 self._update_provider_dynamic_widgets()
@@ -1571,7 +1617,7 @@ class SettingsScreen(BaseAppScreen):
             if dirty_values:
                 saved = SettingsConfigAdapter().save_values("chat_defaults", dirty_values)
             endpoint_key = self._provider_endpoint_setting_key(provider)
-            if endpoint_dirty:
+            if endpoint_dirty and provider_key:
                 endpoint_saved = SettingsConfigAdapter().save_values(
                     f"api_settings.{provider_key}",
                     {endpoint_key: endpoint},
@@ -1580,7 +1626,7 @@ class SettingsScreen(BaseAppScreen):
             if saved:
                 defaults = self._chat_defaults()
                 defaults.update(dirty_values)
-                if endpoint_dirty:
+                if endpoint_dirty and provider_key:
                     app_config = getattr(self.app_instance, "app_config", None)
                     if not isinstance(app_config, dict):
                         self.app_instance.app_config = {}
