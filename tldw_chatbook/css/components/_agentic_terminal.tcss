@@ -136,6 +136,12 @@ ConsoleSettingsModal {
     margin: 1 0 0 0;
 }
 
+.console-settings-primary-section {
+    padding: 0 1;
+    border: round $ds-action-focus;
+    background: $ds-surface-raised;
+}
+
 .console-settings-modal-row {
     height: auto;
     min-height: 1;

@@ -70,7 +70,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         with Vertical(id="console-settings-modal"):
             yield Static("Console Settings", classes="console-transcript-action-row")
             yield Static(
-                readiness.detail,
+                self._readiness_detail(readiness.detail),
                 id="console-settings-readiness",
                 classes="console-settings-modal-row",
                 markup=False,
@@ -83,7 +83,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             )
 
             with Vertical(id="console-settings-body", classes="console-settings-body"):
-                with Vertical(classes="console-settings-modal-section"):
+                with Vertical(
+                    id="console-settings-provider-model-section",
+                    classes=self._provider_model_section_classes(),
+                ):
                     yield Static("Provider and model", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
                         yield Static("Provider", classes="console-settings-modal-label")
@@ -223,6 +226,20 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         if self._focus_model:
             self._focus_model_control()
 
+    def _is_model_setup_mode(self) -> bool:
+        return self._focus_model
+
+    def _readiness_detail(self, default_detail: str) -> str:
+        if self._is_model_setup_mode():
+            return "Choose a model to enable sending."
+        return default_detail
+
+    def _provider_model_section_classes(self) -> str:
+        classes = "console-settings-modal-section"
+        if self._is_model_setup_mode():
+            classes += " console-settings-primary-section"
+        return classes
+
     def action_dismiss(self) -> None:
         self.dismiss(None)
 
@@ -266,7 +283,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             character_label=self._settings.character_label,
         )
         readiness = build_console_settings_readiness(draft, app_config=self._app_config)
-        self.query_one("#console-settings-readiness", Static).update(readiness.detail)
+        self.query_one("#console-settings-readiness", Static).update(
+            self._readiness_detail(readiness.detail)
+        )
         self._sync_model_controls(provider, model)
         self._sync_base_url_control(provider, base_url)
 

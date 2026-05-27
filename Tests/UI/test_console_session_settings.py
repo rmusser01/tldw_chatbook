@@ -347,6 +347,10 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
         )
         await app.push_screen(modal, callback=app.capture_saved_settings)
         await pilot.pause()
+        readiness = app.screen.query_one("#console-settings-readiness", Static)
+        provider_model_section = app.screen.query_one("#console-settings-provider-model-section")
+        assert "Choose a model to enable sending." not in str(readiness.renderable)
+        assert provider_model_section.has_class("console-settings-primary-section") is False
         app.screen.query_one("#console-settings-temperature", Input).value = "0.42"
         app.screen.query_one("#console-settings-top-p", Input).value = "0.88"
         await pilot.click("#console-settings-save")
@@ -983,6 +987,10 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
 
         assert modal_screen.query_one("#console-settings-provider", Select).value == "llama_cpp"
         assert modal_screen.query_one("#console-settings-model-select", Select).value == "model-a"
+        readiness = modal_screen.query_one("#console-settings-readiness", Static)
+        provider_model_section = modal_screen.query_one("#console-settings-provider-model-section")
+        assert str(readiness.renderable) == "Choose a model to enable sending."
+        assert provider_model_section.has_class("console-settings-primary-section") is True
 
         await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
