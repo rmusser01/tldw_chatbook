@@ -80,3 +80,27 @@ git diff --check
 ```
 
 Result: `61 passed`, one existing requests dependency warning, and `git diff --check` clean.
+
+## 2026-05-26 Guided Settings Actions Follow-Up
+
+Branch: `codex/settings-next-polish`
+
+Approved screenshot:
+
+- Guided Settings actions: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/15-guided-actions-overview-final.png`
+
+Coverage added:
+
+- Read-only or routed Settings categories now disable the global Save and Revert affordances instead of implying that a category-local save exists.
+- Providers & Models and Console Behavior keep Save and Revert disabled until a draft change exists, then enable both controls from the same dirty-state signal.
+- Scope Inspector guidance now explains the next valid action for the selected category before the boundary and impact copy.
+
+Focused verification:
+
+```bash
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short
+python -m pytest -q Tests/UI/test_destination_shells.py::test_settings_destination_uses_three_column_workbench_contract Tests/UI/test_destination_shells.py::test_settings_appearance_action_routes_to_customize_surface Tests/UI/test_destination_shells.py::test_settings_console_paste_collapse_toggle_reflects_and_persists_config Tests/UI/test_destination_shells.py::test_legacy_tools_settings_route_opens_mcp_not_global_settings --tb=short
+git diff --check
+```
+
+Result: `66 passed` for the Settings configuration hub suite, `5 passed` for the focused destination shell suite, one existing requests dependency warning in each pytest run, and `git diff --check` clean.

@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Input, Select, Static, TextArea
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -669,6 +669,45 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_settings_non_editable_categories_disable_guided_save_revert():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        assert "Guided edits: choose Providers or Console." in _visible_text(screen)
+
+        await pilot.click("#settings-category-storage")
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        assert "Guided edits: Storage is read-only." in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_console_guided_save_revert_enable_only_when_dirty():
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        assert "Guided edits: change a field first." in _visible_text(screen)
+
+        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+
+        assert screen.query_one("#settings-save-category", Button).disabled is False
+        assert screen.query_one("#settings-revert-category", Button).disabled is False
+        assert "Guided edits: Save or Revert changes." in _visible_text(screen)
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_category_uses_effective_console_source():
     app = _build_test_app()
     app.chat_api_provider_value = "OpenAI"
@@ -685,6 +724,34 @@ async def test_settings_provider_category_uses_effective_console_source():
         assert "Source: chat_defaults" in text
         assert screen.query_one("#settings-provider-value", Input).value == "llama_cpp"
         assert screen.query_one("#settings-model-value", Input).value == "qwen"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_guided_save_revert_enable_only_when_dirty():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        assert "Guided edits: change a field first." in _visible_text(screen)
+
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "gpt-4.1-mini"
+        screen.handle_model_value_changed(Input.Changed(model, model.value))
+
+        assert screen.query_one("#settings-save-category", Button).disabled is False
+        assert screen.query_one("#settings-revert-category", Button).disabled is False
+        assert "Guided edits: Save or Revert changes." in _visible_text(screen)
 
 
 @pytest.mark.asyncio
