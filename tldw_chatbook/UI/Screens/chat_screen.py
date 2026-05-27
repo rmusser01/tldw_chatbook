@@ -126,7 +126,6 @@ CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = "Type a Library RAG query before runni
 CONSOLE_FRAME_COLOR = "#6f7782"
 CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
-CONSOLE_INLINE_GUIDANCE_COPY = "Ask in Composer. Attach as needed."
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
 
@@ -1373,6 +1372,25 @@ class ChatScreen(BaseAppScreen):
             return f"Provider setup needed: {provider} missing API key"
         return f"Provider setup needed: {settings_readiness.detail}"
 
+    @staticmethod
+    def _console_empty_transcript_copy(blocker_copy: str) -> str:
+        """Return setup-aware empty transcript copy without repeating details."""
+        blocker = blocker_copy.strip().lower()
+        if not blocker:
+            return ""
+        if blocker == "provider setup needed: choose a model":
+            return "Choose a model in Console Settings to start chatting."
+        return "Finish provider setup to start chatting."
+
+    def _console_setup_blocked_reason(self) -> str:
+        """Return setup-specific send blocker copy for the native composer."""
+        blocker = self._console_provider_blocker_copy().strip().lower()
+        if not blocker:
+            return ""
+        if blocker == "provider setup needed: choose a model":
+            return "Choose a model in Console Settings before sending."
+        return "Finish provider setup before sending."
+
     def _console_provider_recovery_action(self) -> tuple[str, str, str]:
         """Return the label, target, and tooltip for Console provider recovery."""
         provider, model, settings = self._active_console_provider_model_display()
@@ -1500,9 +1518,10 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             pass
         else:
+            empty_copy = self._console_empty_transcript_copy(blocker_copy)
             surface.sync_inline_guidance(
-                visible=guidance_visible,
-                copy=CONSOLE_INLINE_GUIDANCE_COPY,
+                visible=bool(empty_copy),
+                copy=empty_copy,
             )
 
         try:
@@ -2866,12 +2885,15 @@ class ChatScreen(BaseAppScreen):
             run_state = getattr(controller, "run_state", None)
             run_active = bool(getattr(run_state, "is_stop_allowed", False))
             send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
+        setup_blocked_reason = self._console_setup_blocked_reason()
+        send_blocked = send_blocked or bool(setup_blocked_reason)
 
         composer.sync_action_state(
             has_draft=bool(composer.draft_text().strip()),
             run_active=run_active,
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
+            setup_blocked_reason=setup_blocked_reason,
         )
 
     def _hide_console_legacy_chat_inputs(self) -> None:

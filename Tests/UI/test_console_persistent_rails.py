@@ -47,6 +47,12 @@ def _button_text(widget) -> str:
     return str(label) if label is not None else ""
 
 
+def _css_block(css: str, selector: str) -> str:
+    start = css.index(selector)
+    end = css.index("}", start)
+    return css[start:end]
+
+
 def _assert_handle_visible_text_fits(handle) -> None:
     handle_width = handle.region.width
     visible_chunks = [
@@ -207,20 +213,32 @@ class _FixedUuid:
 
 
 def test_generated_console_stylesheet_includes_rail_rules():
-    stylesheet = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
-    css = stylesheet.read_text(encoding="utf-8")
+    stylesheets = (
+        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+        Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
+    )
 
-    for selector in (
-        "#console-right-rail",
-        ".console-rail-handle",
-        ".console-rail-header",
-        ".console-rail-title",
-        ".console-rail-collapse-button",
-    ):
-        assert selector in css
-    assert "content-align: left middle;" in css
-    assert "border: heavy $ds-action-focus;" in css
-    assert "border: thick $ds-action-focus;" not in css
+    for stylesheet in stylesheets:
+        css = stylesheet.read_text(encoding="utf-8")
+        for selector in (
+            "#console-right-rail",
+            ".console-rail-handle",
+            ".console-rail-header",
+            ".console-rail-title",
+            ".console-rail-collapse-button",
+        ):
+            assert selector in css
+        assert "content-align: left middle;" in css
+        assert "border: heavy $ds-action-focus;" in css
+        assert "border: thick $ds-action-focus;" not in css
+
+        right_handle = _css_block(css, ".console-rail-handle-right")
+        right_button = _css_block(css, ".console-rail-handle-button-right")
+        assert "width: 11;" in right_handle
+        assert "min-width: 11;" in right_handle
+        assert "max-width: 11;" in right_handle
+        assert "width: 9;" in right_button
+        assert "max-width: 9;" in right_button
 
 
 @pytest.mark.asyncio

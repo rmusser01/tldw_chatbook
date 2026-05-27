@@ -74,6 +74,7 @@ class ConsoleComposerBar(Horizontal):
         self._segments_initialized = False
         self._run_active = False
         self._send_blocked = False
+        self._setup_blocked_reason = ""
         self._can_save_chatbook = False
 
     @property
@@ -183,6 +184,7 @@ class ConsoleComposerBar(Horizontal):
             run_active=self._run_active,
             can_save_chatbook=self._can_save_chatbook,
             send_blocked=self._send_blocked,
+            setup_blocked_reason=self._setup_blocked_reason,
         )
 
     def sync_action_state(
@@ -192,6 +194,7 @@ class ConsoleComposerBar(Horizontal):
         run_active: bool,
         can_save_chatbook: bool,
         send_blocked: bool = False,
+        setup_blocked_reason: str = "",
     ) -> None:
         """Refresh composer action priority and disabled state.
 
@@ -200,13 +203,17 @@ class ConsoleComposerBar(Horizontal):
             run_active: Whether a Console run is currently stoppable.
             can_save_chatbook: Whether a Chatbook artifact is available to save.
             send_blocked: Whether the current run state blocks new sends.
+            setup_blocked_reason: Provider/model setup copy when setup blocks Send.
         """
         has_draft = bool(has_draft)
         run_active = bool(run_active)
         can_save_chatbook = bool(can_save_chatbook)
         send_blocked = bool(send_blocked)
+        setup_blocked_reason = setup_blocked_reason.strip()
+        setup_reason_changed = self._setup_blocked_reason != setup_blocked_reason
         self._run_active = run_active
         self._send_blocked = send_blocked
+        self._setup_blocked_reason = setup_blocked_reason
         self._can_save_chatbook = can_save_chatbook
 
         try:
@@ -220,7 +227,9 @@ class ConsoleComposerBar(Horizontal):
         send_ready = has_draft and not send_blocked
         send_button.disabled = not send_ready
         send_button.variant = "primary" if send_ready else "default"
-        if send_blocked:
+        if send_blocked and setup_blocked_reason:
+            send_button.tooltip = setup_blocked_reason
+        elif send_blocked:
             send_button.tooltip = "Wait for the active Console run to finish before sending."
         elif has_draft:
             send_button.tooltip = "Send the active Console session draft."
@@ -232,6 +241,10 @@ class ConsoleComposerBar(Horizontal):
         send_button.set_class(send_ready, "console-send-ready")
         send_button.set_class(not has_draft, "console-send-inactive")
         send_button.set_class(send_blocked, "console-send-blocked")
+        self.set_class(
+            send_blocked and bool(setup_blocked_reason),
+            "console-composer-setup-blocked",
+        )
 
         stop_button.disabled = not run_active
         stop_button.variant = "warning" if run_active else "default"
@@ -263,6 +276,9 @@ class ConsoleComposerBar(Horizontal):
         save_button.set_class(can_save_chatbook, "console-save-chatbook-ready")
         save_button.set_class(not can_save_chatbook, "console-action-subdued")
         save_button.set_class(not can_save_chatbook, "console-action-disabled")
+
+        if setup_reason_changed and not self.draft_text().strip():
+            self._refresh_visible_draft()
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
@@ -397,6 +413,17 @@ class ConsoleComposerBar(Horizontal):
             return rendered
         return Text(cls.DRAFT_PLACEHOLDER, style="bright_black")
 
+    def _placeholder_renderable(self, *, width: int) -> Text:
+        """Return setup-aware empty composer placeholder copy."""
+        if self._send_blocked and self._setup_blocked_reason:
+            if "model" in self._setup_blocked_reason.lower():
+                return Text(
+                    "Setup required: choose a model in Console Settings.",
+                    style="bold yellow",
+                )
+            return Text("Setup required: finish provider setup.", style="bold yellow")
+        return self._draft_renderable("", width=width)
+
     @classmethod
     def _visible_draft_row_count(cls, text: str, width: int) -> int:
         if not text:
@@ -442,13 +469,15 @@ class ConsoleComposerBar(Horizontal):
             draft = self._display_draft_text()
             width = self._draft_render_width()
             row_count = self._visible_draft_row_count(draft, width)
-            self.query_one("#console-command-visible-text", Static).update(
-                self._draft_renderable(
+            if draft:
+                renderable = self._draft_renderable(
                     draft,
                     width=width,
                     style_ranges=self._display_draft_style_ranges(),
                 )
-            )
+            else:
+                renderable = self._placeholder_renderable(width=width)
+            self.query_one("#console-command-visible-text", Static).update(renderable)
             self._apply_draft_height(row_count)
         except NoMatches:
             return

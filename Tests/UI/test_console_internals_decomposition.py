@@ -445,6 +445,7 @@ async def test_console_composer_marks_has_draft_state():
 @pytest.mark.asyncio
 async def test_console_composer_send_is_primary_only_with_draft():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -527,6 +528,67 @@ async def test_console_composer_ranks_actions_by_current_availability():
         assert not save_button.has_class("console-action-disabled")
         assert not save_button.has_class("console-action-subdued")
         assert not save_button.has_class("console-action-primary")
+
+
+@pytest.mark.asyncio
+async def test_console_composer_empty_setup_blocked_state_shows_reason():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        send_button = composer.query_one("#console-send-message", Button)
+
+        composer.sync_action_state(
+            has_draft=False,
+            run_active=False,
+            can_save_chatbook=False,
+            send_blocked=True,
+            setup_blocked_reason="Choose a model in Console Settings before sending.",
+        )
+        await pilot.pause(0.1)
+
+        assert "Setup required: choose a model in Console Settings." in visible_draft.renderable.plain
+        assert send_button.disabled is True
+        assert send_button.tooltip == "Choose a model in Console Settings before sending."
+
+        composer.load_draft("draft despite missing setup")
+        await pilot.pause(0.1)
+
+        assert visible_draft.renderable.plain == "draft despite missing setup"
+        assert send_button.disabled is True
+        assert send_button.tooltip == "Choose a model in Console Settings before sending."
+
+
+@pytest.mark.asyncio
+async def test_console_composer_active_run_blocker_keeps_generic_placeholder():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        send_button = composer.query_one("#console-send-message", Button)
+
+        composer.sync_action_state(
+            has_draft=False,
+            run_active=True,
+            can_save_chatbook=False,
+            send_blocked=True,
+            setup_blocked_reason="",
+        )
+        await pilot.pause(0.1)
+
+        assert "Setup required" not in visible_draft.renderable.plain
+        assert visible_draft.renderable.plain == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        assert send_button.tooltip == "Wait for the active Console run to finish before sending."
 
 
 @pytest.mark.asyncio
@@ -755,6 +817,7 @@ async def test_console_large_paste_collapse_can_be_disabled_from_config(collapse
 @pytest.mark.asyncio
 async def test_console_clear_draft_keeps_canonical_payload_empty():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1161,7 +1224,10 @@ async def test_console_enter_sends_native_composer_draft(monkeypatch):
         await pilot.pause(0.2)
 
         text = _visible_text(console)
-        assert "Console send blocked" in text
+        send_button = console.query_one("#console-send-message", Button)
+        assert "Console send blocked" not in text
+        assert send_button.disabled is True
+        assert send_button.tooltip == "Finish provider setup before sending."
         assert "missing API key" in text
         assert "Internal Error" not in text
         assert "Missing UI elements" not in text
@@ -1200,8 +1266,8 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "Provider setup needed",
             "OpenAI missing API key",
             "Settings",
-            "Ready. Ask a question, run a command, or attach context.",
-            "Ask, command, or paste task...",
+            "Finish provider setup to start chatting.",
+            "Setup required: finish provider setup.",
         ):
             assert expected in text
         for redundant_copy in (
@@ -1330,6 +1396,8 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert str(blocker.renderable) == ""
         assert "Provider setup needed: choose a model" not in _visible_text(console)
         assert "Choose model" not in _visible_text(console)
+        assert "Choose a model in Console Settings to start chatting." in _visible_text(console)
+        assert "Setup required: choose a model in Console Settings." in _visible_text(console)
 
         store.replace_session_settings(
             session.id,
@@ -1341,6 +1409,8 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert blocker.styles.display == "none"
         assert str(blocker.renderable) == ""
         assert strip.styles.display == "none"
+        assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
+        assert "Setup required: choose a model in Console Settings." not in _visible_text(console)
 
         store.replace_session_settings(
             session.id,
@@ -1353,6 +1423,28 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert str(blocker.renderable) == ""
         assert strip.styles.display == "none"
         assert "Provider setup needed: choose a model" not in _visible_text(console)
+        assert "Choose a model in Console Settings to start chatting." in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_empty_transcript_names_missing_model_setup_blocker(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.app_config["chat_defaults"]["model"] = ""
+    app.app_config["api_settings"]["llama_cpp"].pop("model", None)
+    app.chat_api_model_value = ""
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        transcript = console.query_one("#console-native-transcript")
+        text = _visible_text(transcript)
+
+        assert "Choose a model in Console Settings to start chatting." in text
+        assert "Ready. Ask a question" not in text
 
 
 @pytest.mark.asyncio
@@ -1489,6 +1581,7 @@ async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
 @pytest.mark.asyncio
 async def test_console_native_transcript_is_visible_transcript_surface():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
@@ -1508,6 +1601,7 @@ async def test_console_native_transcript_is_visible_transcript_surface():
 @pytest.mark.asyncio
 async def test_console_empty_transcript_uses_compact_ready_state():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:

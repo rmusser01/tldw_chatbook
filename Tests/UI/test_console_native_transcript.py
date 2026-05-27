@@ -1,5 +1,6 @@
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -26,6 +27,11 @@ class TranscriptHarness(App):
             ]
         )
         yield transcript
+
+
+class EmptyTranscriptHarness(App):
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscript(id="console-native-transcript")
 
 
 class SaveAsModalHarness(App):
@@ -76,6 +82,21 @@ def test_console_transcript_widget_rules_are_long_enough_to_clip_full_width():
     renderable = getattr(first_rule, "renderable", "")
 
     assert len(str(renderable)) >= 160
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_empty_state_accepts_setup_copy():
+    app = EmptyTranscriptHarness()
+
+    async with app.run_test() as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+
+        transcript.sync_empty_state("Choose a model in Console Settings to start chatting.")
+        await pilot.pause()
+
+        empty_state = transcript.query_one(".console-transcript-empty-state", Static)
+        empty_text = getattr(empty_state.renderable, "plain", str(empty_state.renderable))
+        assert empty_text == "Choose a model in Console Settings to start chatting."
 
 
 def test_console_transcript_selected_message_shows_action_row():

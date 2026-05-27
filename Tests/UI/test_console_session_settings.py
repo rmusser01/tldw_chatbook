@@ -979,13 +979,14 @@ async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None
 
         composer = console.query_one("#console-native-composer")
         composer.load_draft("hello")
+        send_button = console.query_one("#console-send-message", Button)
         console.query_one("#console-send-message", Button).press()
-        for _ in range(40):
-            if "Select a model before sending" in _screen_visible_text(console):
-                break
-            await pilot.pause(0.05)
+        await pilot.pause(0.1)
 
-        assert "Console send blocked: Select a model before sending." in _screen_visible_text(console)
+        assert send_button.disabled is True
+        assert send_button.tooltip == "Choose a model in Console Settings before sending."
+        assert "Console send blocked: Select a model before sending." not in _screen_visible_text(console)
+        assert "Setup required: choose a model in Console Settings." not in _screen_visible_text(console)
         assert composer.draft_text() == "hello"
 
 

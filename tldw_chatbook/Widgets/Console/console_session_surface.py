@@ -194,9 +194,15 @@ class ConsoleSessionSurface(Vertical):
             await tab_strip.mount(self._build_new_tab_button())
 
     def sync_inline_guidance(self, *, visible: bool, copy: str = "") -> None:
-        """Keep guidance out of the persistent transcript title."""
+        """Keep guidance out of the title and sync empty transcript copy."""
         try:
             title = self.query_one("#console-transcript-title", Static)
         except Exception:
             return
         title.update(CONSOLE_TRANSCRIPT_TITLE)
+
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except Exception:
+            return
+        transcript.sync_empty_state(copy if visible else "")
