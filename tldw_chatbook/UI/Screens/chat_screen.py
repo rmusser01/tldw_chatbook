@@ -1874,40 +1874,42 @@ class ChatScreen(BaseAppScreen):
                         collapse_button.styles.min_width = 3
                         collapse_button.styles.max_width = 3
                         yield collapse_button
-                    staged_context_tray = ConsoleStagedContextTray(
-                        staged_context_state,
-                        id="console-staged-context-tray",
-                        classes="console-left-rail-section",
-                    )
-                    staged_context_tray.styles.width = "100%"
-                    staged_context_tray.styles.min_width = 0
-                    staged_context_tray.styles.height = "1fr"
-                    yield self._frame_console_region(
-                        staged_context_tray,
-                        variant=self._staged_context_frame_variant(staged_context_state),
-                    )
+                    with VerticalScroll(
+                        id="console-left-rail-body",
+                        classes="console-left-rail-body",
+                    ):
+                        staged_context_tray = ConsoleStagedContextTray(
+                            staged_context_state,
+                            id="console-staged-context-tray",
+                            classes="console-left-rail-section",
+                        )
+                        staged_context_tray.styles.width = "100%"
+                        staged_context_tray.styles.min_width = 0
+                        yield self._frame_console_region(
+                            staged_context_tray,
+                            variant=self._staged_context_frame_variant(staged_context_state),
+                        )
 
-                    settings_summary = ConsoleSettingsSummary(
-                        self._build_console_settings_summary_state(),
-                        id="console-settings-summary",
-                        classes="console-left-rail-section console-settings-summary",
-                    )
-                    settings_summary.styles.width = "100%"
-                    settings_summary.styles.min_width = 0
-                    yield self._frame_console_region(settings_summary, variant="quiet")
+                        settings_summary = ConsoleSettingsSummary(
+                            self._build_console_settings_summary_state(),
+                            id="console-settings-summary",
+                            classes="console-left-rail-section console-settings-summary",
+                        )
+                        settings_summary.styles.width = "100%"
+                        settings_summary.styles.min_width = 0
+                        yield self._frame_console_region(settings_summary, variant="quiet")
 
-                    workspace_context_tray = ConsoleWorkspaceContextTray(
-                        workspace_context_state,
-                        id="console-workspace-context",
-                        classes="console-left-rail-section",
-                    )
-                    workspace_context_tray.styles.width = "100%"
-                    workspace_context_tray.styles.min_width = 0
-                    workspace_context_tray.styles.height = "2fr"
-                    yield self._frame_console_region(
-                        workspace_context_tray,
-                        variant=self._workspace_context_frame_variant(workspace_context_state),
-                    )
+                        workspace_context_tray = ConsoleWorkspaceContextTray(
+                            workspace_context_state,
+                            id="console-workspace-context",
+                            classes="console-left-rail-section",
+                        )
+                        workspace_context_tray.styles.width = "100%"
+                        workspace_context_tray.styles.min_width = 0
+                        yield self._frame_console_region(
+                            workspace_context_tray,
+                            variant=self._workspace_context_frame_variant(workspace_context_state),
+                        )
 
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"

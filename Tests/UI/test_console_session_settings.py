@@ -884,6 +884,28 @@ async def test_console_left_rail_renders_settings_below_staged_context() -> None
 
 
 @pytest.mark.asyncio
+async def test_console_left_rail_body_scrolls_below_fixed_header() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(100, 32)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        left_rail = console.query_one("#console-left-rail")
+        header = console.query_one(".console-rail-header")
+        body = console.query_one("#console-left-rail-body")
+        settings = console.query_one("#console-settings-summary")
+        workspace_context = console.query_one("#console-workspace-context")
+
+        assert body.region.y >= header.region.y + header.region.height
+        assert body.region.height <= left_rail.region.height - header.region.height
+        assert settings.parent is body
+        assert workspace_context.parent is body
+        assert settings.region.width == body.region.width
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_save_updates_active_summary_only() -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"

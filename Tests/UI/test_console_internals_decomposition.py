@@ -231,6 +231,14 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    border-bottom: solid $ds-grid-line;"
         ) in css
         assert (
+            "#console-left-rail-body {\n"
+            "    width: 100%;\n"
+            "    min-width: 0;\n"
+            "    height: 1fr;\n"
+            "    min-height: 0;"
+        ) in css
+        assert "    overflow-y: auto;" in css
+        assert (
             "#console-composer-actions {\n"
             "    width: 37;"
         ) in css
@@ -1838,12 +1846,22 @@ async def test_console_left_rail_sections_use_available_space():
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
         left_rail = console.query_one("#console-left-rail")
+        body = console.query_one("#console-left-rail-body")
+        header = console.query_one(".console-rail-header")
         staged_context = console.query_one("#console-staged-context-tray")
+        settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
-        assert staged_context.region.width >= left_rail.region.width - 2
-        assert workspace_context.region.width >= left_rail.region.width - 2
-        assert workspace_context.region.height > staged_context.region.height
+        assert body.parent is left_rail
+        assert body.region.y >= header.region.y + header.region.height
+        assert body.region.height <= left_rail.region.height - header.region.height
+        assert staged_context.parent is body
+        assert settings.parent is body
+        assert workspace_context.parent is body
+        assert staged_context.region.y < settings.region.y < workspace_context.region.y
+        assert staged_context.region.width == body.region.width
+        assert settings.region.width == body.region.width
+        assert workspace_context.region.width == body.region.width
 
 
 @pytest.mark.asyncio
