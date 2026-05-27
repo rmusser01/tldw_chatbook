@@ -225,7 +225,7 @@ class ConsoleComposerBar(Horizontal):
             return
 
         send_ready = has_draft and not send_blocked
-        send_button.disabled = not send_ready
+        send_button.disabled = False
         send_button.variant = "primary" if send_ready else "default"
         if send_blocked and setup_blocked_reason:
             send_button.tooltip = setup_blocked_reason
@@ -246,7 +246,7 @@ class ConsoleComposerBar(Horizontal):
             "console-composer-setup-blocked",
         )
 
-        stop_button.disabled = not run_active
+        stop_button.disabled = False
         stop_button.variant = "warning" if run_active else "default"
         stop_button.tooltip = (
             "Stop generation in the active Console session."
@@ -264,7 +264,7 @@ class ConsoleComposerBar(Horizontal):
         attach_button.set_class(False, "console-action-disabled")
         attach_button.set_class(False, "console-action-subdued")
 
-        save_button.disabled = not can_save_chatbook
+        save_button.disabled = False
         save_button.variant = "default"
         save_button.tooltip = (
             "Open the available Chatbook artifact in Artifacts."

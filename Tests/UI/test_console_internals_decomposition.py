@@ -455,7 +455,7 @@ async def test_console_composer_send_is_primary_only_with_draft():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
 
-        assert send_button.disabled is True
+        assert send_button.disabled is False
         assert not send_button.has_class("console-action-primary")
         assert send_button.has_class("console-action-subdued")
         assert send_button.has_class("console-send-inactive")
@@ -464,7 +464,7 @@ async def test_console_composer_send_is_primary_only_with_draft():
         await pilot.pause(0.1)
 
         assert composer.has_class("console-composer-has-draft")
-        assert send_button.disabled is True
+        assert send_button.disabled is False
         assert not send_button.has_class("console-action-primary")
         assert send_button.has_class("console-action-subdued")
         assert send_button.has_class("console-send-inactive")
@@ -481,7 +481,7 @@ async def test_console_composer_send_is_primary_only_with_draft():
         composer.clear_draft()
         await pilot.pause(0.1)
 
-        assert send_button.disabled is True
+        assert send_button.disabled is False
         assert not send_button.has_class("console-action-primary")
         assert send_button.has_class("console-action-subdued")
         assert send_button.has_class("console-send-inactive")
@@ -502,9 +502,9 @@ async def test_console_composer_ranks_actions_by_current_availability():
         attach_button = composer.query_one("#console-attach-context", Button)
         save_button = composer.query_one("#console-save-chatbook", Button)
 
-        assert send_button.disabled is True
-        assert stop_button.disabled is True
-        assert save_button.disabled is True
+        assert send_button.disabled is False
+        assert stop_button.disabled is False
+        assert save_button.disabled is False
         assert attach_button.disabled is False
         assert attach_button.has_class("console-action-secondary")
         assert save_button.has_class("console-action-secondary")
@@ -553,14 +553,14 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         await pilot.pause(0.1)
 
         assert "Setup required: choose a model in Console Settings." in visible_draft.renderable.plain
-        assert send_button.disabled is True
+        assert send_button.disabled is False
         assert send_button.tooltip == "Choose a model in Console Settings before sending."
 
         composer.load_draft("draft despite missing setup")
         await pilot.pause(0.1)
 
         assert visible_draft.renderable.plain == "draft despite missing setup"
-        assert send_button.disabled is True
+        assert send_button.disabled is False
         assert send_button.tooltip == "Choose a model in Console Settings before sending."
 
 
@@ -1169,7 +1169,7 @@ async def test_console_native_composer_does_not_capture_paste_from_select_focus(
 
 
 @pytest.mark.asyncio
-async def test_console_send_without_ready_runtime_shows_native_blocked_event(monkeypatch):
+async def test_console_send_without_ready_runtime_keeps_setup_block_tooltip_only(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     _configure_openai_missing_key_console(app)
@@ -1193,7 +1193,7 @@ async def test_console_send_without_ready_runtime_shows_native_blocked_event(mon
         await pilot.pause(0.2)
 
         text = _visible_text(console)
-        assert "Console send blocked" in text
+        assert "Console send blocked" not in text
         assert "missing API key" in text
         assert "Internal Error" not in text
         assert "Missing UI elements" not in text
@@ -1226,7 +1226,7 @@ async def test_console_enter_sends_native_composer_draft(monkeypatch):
         text = _visible_text(console)
         send_button = console.query_one("#console-send-message", Button)
         assert "Console send blocked" not in text
-        assert send_button.disabled is True
+        assert send_button.disabled is False
         assert send_button.tooltip == "Finish provider setup before sending."
         assert "missing API key" in text
         assert "Internal Error" not in text

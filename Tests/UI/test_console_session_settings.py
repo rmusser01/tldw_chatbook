@@ -983,7 +983,7 @@ async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.1)
 
-        assert send_button.disabled is True
+        assert send_button.disabled is False
         assert send_button.tooltip == "Choose a model in Console Settings before sending."
         assert "Console send blocked: Select a model before sending." not in _screen_visible_text(console)
         assert "Setup required: choose a model in Console Settings." not in _screen_visible_text(console)

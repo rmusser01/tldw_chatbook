@@ -2585,6 +2585,11 @@ class ChatScreen(BaseAppScreen):
             return
         self._dismiss_console_guidance()
         if blocked_reason := self._console_send_blocked_reason():
+            if self._console_setup_blocked_reason() and not blocked_reason.startswith(
+                "Console send blocked: Library Search/RAG"
+            ):
+                self._focus_console_composer_if_needed(force=True)
+                return
             await self._append_native_console_system_message(blocked_reason)
             self._focus_console_composer_if_needed(force=True)
             return
