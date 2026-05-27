@@ -415,7 +415,9 @@ async def test_console_settings_modal_clears_setup_copy_when_freeform_model_is_e
 
         readiness = app.screen.query_one("#console-settings-readiness", Static)
         provider_model_section = app.screen.query_one("#console-settings-provider-model-section")
-        assert str(readiness.renderable) == "Choose a model to enable sending."
+        readiness_copy = str(readiness.renderable)
+        assert "Choose a model to enable sending." in readiness_copy
+        assert "Console native provider 'custom' is not wired yet." in readiness_copy
         assert provider_model_section.has_class("console-settings-primary-section") is True
 
         app.screen.query_one("#console-settings-model-input", Input).value = "freeform-model"
@@ -423,6 +425,35 @@ async def test_console_settings_modal_clears_setup_copy_when_freeform_model_is_e
 
         assert str(readiness.renderable) != "Choose a model to enable sending."
         assert provider_model_section.has_class("console-settings-primary-section") is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_setup_copy_preserves_blocking_readiness_detail() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model=None,
+        base_url="ftp://127.0.0.1:9099",
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                focus_model=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        readiness = app.screen.query_one("#console-settings-readiness", Static)
+        readiness_copy = str(readiness.renderable)
+        assert "Choose a model to enable sending." in readiness_copy
+        assert "Provider blocked: invalid llama.cpp base URL." in readiness_copy
 
 
 @pytest.mark.asyncio

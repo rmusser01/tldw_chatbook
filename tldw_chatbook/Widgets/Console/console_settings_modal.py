@@ -238,8 +238,17 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     def _readiness_detail(self, default_detail: str) -> str:
         if self._is_model_setup_mode():
-            return "Choose a model to enable sending."
+            guidance = "Choose a model to enable sending."
+            detail = default_detail.strip()
+            if detail and not self._is_ready_readiness_detail(detail):
+                return f"{guidance}\n{detail}"
+            return guidance
         return default_detail
+
+    @staticmethod
+    def _is_ready_readiness_detail(detail: str) -> bool:
+        normalized = detail.strip().lower()
+        return normalized in {"", "ready."} or " is ready" in normalized
 
     def _provider_model_section_classes(self) -> str:
         classes = "console-settings-modal-section"
