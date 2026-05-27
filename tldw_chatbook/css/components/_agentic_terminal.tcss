@@ -650,16 +650,30 @@ ConsoleSettingsModal Select {
 
 .console-settings-summary {
     height: auto;
-    min-height: 8;
+    min-height: 6;
     padding: 0 1;
 }
 
 .console-left-rail-section.console-settings-summary {
-    margin: 1 0;
-    padding: 1 1;
-    border-top: solid $ds-grid-line;
-    border-bottom: solid $ds-grid-line;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: none;
     background: $ds-surface-panel;
+}
+
+.console-settings-header {
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+.console-settings-title {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
 }
 
 .console-settings-row {
@@ -672,9 +686,12 @@ ConsoleSettingsModal Select {
 }
 
 #console-settings-open {
-    width: 100%;
+    width: auto;
+    min-width: 9;
+    max-width: 14;
     height: 1;
-    margin: 1 0 0 0;
+    min-height: 1;
+    margin: 0;
 }
 
 #console-transcript-region,

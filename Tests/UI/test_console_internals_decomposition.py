@@ -232,10 +232,9 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
         ) in css
         assert (
             ".console-left-rail-section.console-settings-summary {\n"
-            "    margin: 1 0;\n"
-            "    padding: 1 1;\n"
-            "    border-top: solid $ds-grid-line;\n"
-            "    border-bottom: solid $ds-grid-line;"
+            "    margin: 0 0 1 0;\n"
+            "    padding: 0 1;\n"
+            "    border: none;"
         ) in css
         assert (
             "#console-left-rail-body {\n"
@@ -1891,6 +1890,8 @@ async def test_console_left_rail_sections_use_available_space():
         assert settings.parent is body
         assert workspace_context.parent is body
         assert staged_context.region.y < settings.region.y < workspace_context.region.y
+        assert settings.region.height <= 6
+        assert workspace_context.region.height > settings.region.height
         assert staged_context.region.width == body.region.width
         assert settings.region.width == body.region.width
         assert workspace_context.region.width == body.region.width

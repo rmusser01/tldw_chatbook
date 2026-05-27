@@ -1,5 +1,6 @@
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Horizontal
 from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -155,13 +156,18 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
         await pilot.pause()
 
         text = _visible_text(app)
-        assert "Console Settings" in text
+        assert "Session Settings" in text
         assert "Provider: llama.cpp" in text
         assert "Model: model-a" in text
         assert "Context: 12 / 4k" in text
         assert "Sampling: T 0.70, P 0.95" in text
         assert "Persona: General" in text
+        header = app.query_one("#console-settings-header", Horizontal)
+        title = app.query_one("#console-settings-title", Static)
         button = app.query_one("#console-settings-open", Button)
+        assert title.parent is header
+        assert button.parent is header
+        assert title.region.y == button.region.y
         assert str(button.label) == "Configure"
         assert button.tooltip == "Configure Console settings"
 
