@@ -30,6 +30,13 @@ class ConsoleSettingsSummary(Vertical):
             id="console-settings-title",
             classes="destination-section",
         )
+        if self.state.provider_row:
+            yield Static(
+                self.state.provider_row,
+                id="console-settings-provider-row",
+                classes="console-settings-row",
+                markup=False,
+            )
         yield Static(
             self.state.model_row,
             id="console-settings-model-row",

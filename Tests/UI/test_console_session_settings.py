@@ -131,9 +131,10 @@ def _select_values(select: Select) -> set[str]:
 
 
 @pytest.mark.asyncio
-async def test_console_settings_summary_renders_four_rows_and_button() -> None:
+async def test_console_settings_summary_renders_rows_and_button() -> None:
     state = ConsoleSettingsSummaryState(
-        model_row="Model: llama.cpp / model-a",
+        provider_row="Provider: llama.cpp",
+        model_row="Model: model-a",
         context_row="Context: 12 / 4k",
         sampling_row="Sampling: T 0.70, P 0.95",
         identity_row="Persona: General",
@@ -146,7 +147,8 @@ async def test_console_settings_summary_renders_four_rows_and_button() -> None:
 
         text = _visible_text(app)
         assert "Console Settings" in text
-        assert "Model: llama.cpp / model-a" in text
+        assert "Provider: llama.cpp" in text
+        assert "Model: model-a" in text
         assert "Context: 12 / 4k" in text
         assert "Sampling: T 0.70, P 0.95" in text
         assert "Persona: General" in text
@@ -158,7 +160,8 @@ async def test_console_settings_summary_renders_four_rows_and_button() -> None:
 @pytest.mark.asyncio
 async def test_console_settings_summary_keeps_configure_button_when_setup_blocked() -> None:
     state = ConsoleSettingsSummaryState(
-        model_row="Model: llama.cpp / Missing",
+        provider_row="Provider: llama.cpp",
+        model_row="Model: Missing",
         context_row="Context: unavailable",
         sampling_row="Sampling: T 0.70, P 0.95",
         identity_row="Persona: General",
@@ -169,7 +172,9 @@ async def test_console_settings_summary_keeps_configure_button_when_setup_blocke
     async with app.run_test(size=(80, 20)) as pilot:
         await pilot.pause()
 
-        assert "Model: llama.cpp / Missing" in _visible_text(app)
+        text = _visible_text(app)
+        assert "Provider: llama.cpp" in text
+        assert "Model: Missing" in text
         button = app.query_one("#console-settings-open", Button)
         assert str(button.label) == "Configure"
         assert button.tooltip == "Configure Console settings"
@@ -182,7 +187,8 @@ def test_summary_state_appends_non_ready_readiness_to_model_row() -> None:
         ConsoleSettingsReadiness(label="WIP", detail="Provider not wired yet.", native_send_supported=False),
     )
 
-    assert state.model_row == "Model: llama_cpp / model-a (WIP)"
+    assert state.provider_row == "Provider: llama_cpp"
+    assert state.model_row == "Model: model-a (WIP)"
     assert state.readiness_label == "WIP"
 
 
@@ -197,7 +203,8 @@ def test_summary_state_keeps_missing_model_row_compact() -> None:
         ),
     )
 
-    assert state.model_row == "Model: llama_cpp / Missing"
+    assert state.provider_row == "Provider: llama_cpp"
+    assert state.model_row == "Model: Missing"
     assert state.readiness_label == "Missing model"
 
 
@@ -797,14 +804,18 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
         await _wait_for_console_top_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
 
-        assert "Model: openai / gpt-4.1" in _summary_text(console)
+        summary_text = _summary_text(console)
+        assert "Provider: openai" in summary_text
+        assert "Model: gpt-4.1" in summary_text
         assert store.session_settings(second_id).provider == "openai"
         assert store.session_settings(first.id).provider == "llama_cpp"
 
         await _click_console_session_tab(console, store, pilot, first.id)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
 
-        assert "Model: llama_cpp / model-a" in _summary_text(console)
+        summary_text = _summary_text(console)
+        assert "Provider: llama_cpp" in summary_text
+        assert "Model: model-a" in summary_text
 
 
 @pytest.mark.asyncio
@@ -1073,7 +1084,8 @@ def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallb
     summary_state = screen._build_console_settings_summary_state()
 
     assert summary_state.readiness_label != "Ready"
-    assert summary_state.model_row == "Model: llama_cpp / Missing"
+    assert summary_state.provider_row == "Provider: llama_cpp"
+    assert summary_state.model_row == "Model: Missing"
     assert screen._console_send_blocked_reason() == "Console send blocked: Select a model before sending."
 
 

@@ -156,6 +156,7 @@ class ConsoleSettingsSummaryState:
     sampling_row: str
     identity_row: str
     readiness_label: str = ""
+    provider_row: str = ""
 
 
 def build_console_provider_options(
@@ -356,11 +357,12 @@ def build_console_settings_summary_state(
     identity_row = f"Character: {character_label}" if character_label else f"Persona: {persona_label}"
 
     return ConsoleSettingsSummaryState(
-        model_row=f"Model: {provider_label} / {model_label}{readiness_suffix}",
+        model_row=f"Model: {model_label}{readiness_suffix}",
         context_row=_format_context_summary_row(context_estimate.label),
         sampling_row=f"Sampling: {', '.join(sampling_parts)}",
         identity_row=identity_row,
         readiness_label=readiness_label,
+        provider_row=f"Provider: {provider_label}",
     )
 
 
