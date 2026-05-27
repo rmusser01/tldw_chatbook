@@ -1076,7 +1076,7 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="true or false",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Temp", classes="settings-input-label")
+                yield Static("Temperature", classes="settings-input-label")
                 yield Input(
                     value=str(values["temperature"]),
                     id="settings-temperature-default",

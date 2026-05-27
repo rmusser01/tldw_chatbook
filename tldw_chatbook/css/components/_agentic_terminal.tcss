@@ -1294,8 +1294,8 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .settings-input-label {
-    width: 9;
-    min-width: 9;
+    width: 12;
+    min-width: 12;
     height: 1;
     min-height: 1;
     padding: 0;
