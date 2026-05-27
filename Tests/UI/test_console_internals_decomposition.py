@@ -287,10 +287,10 @@ async def test_console_mode_bar_groups_location_mode_and_readiness():
         title_plain = getattr(title.render(), "plain", str(title.render()))
         mode_plain = getattr(mode_bar.render(), "plain", str(mode_bar.render()))
 
-        assert title_plain == "Console | Live agent control, chat, RAG, tools, approvals | Local"
+        assert title_plain == "Console"
         assert (
             mode_plain
-            == "Chat | RAG | Run Follow | Assistant General | Sources 0 | Tools 0 | Approvals 0"
+            == "Chat/RAG/Follow | General | Sources 0 | Tools 0 | Approvals 0"
         )
 
 

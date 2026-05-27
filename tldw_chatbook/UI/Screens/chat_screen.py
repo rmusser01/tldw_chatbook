@@ -1354,11 +1354,13 @@ class ChatScreen(BaseAppScreen):
             value = label.partition(":")[2].strip()
             return value.split(maxsplit=1)[0] if value else "0"
 
-        persona = str(control_state.persona_label or "Assistant General")
+        persona = str(control_state.persona_label or "General")
         if persona.startswith("Assistant: "):
-            persona = f"Assistant {persona.removeprefix('Assistant: ')}"
+            persona = persona.removeprefix("Assistant: ").strip() or "General"
+        elif persona.startswith("Persona: "):
+            persona = persona.removeprefix("Persona: ").strip() or "Persona"
         return (
-            "Chat | RAG | Run Follow"
+            "Chat/RAG/Follow"
             f" | {persona}"
             f" | Sources {readiness_count(control_state.sources_label)}"
             f" | Tools {readiness_count(control_state.tools_label)}"
@@ -1797,7 +1799,7 @@ class ChatScreen(BaseAppScreen):
         )
         with Vertical(id="console-shell"):
             yield Static(
-                "Console | Live agent control, chat, RAG, tools, approvals | Local",
+                "Console",
                 id="console-title",
                 classes="destination-status-row",
             )
