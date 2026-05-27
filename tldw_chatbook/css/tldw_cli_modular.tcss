@@ -1982,8 +1982,8 @@ ConsoleSettingsModal Select {
 }
 
 .console-rail-handle-button-right {
-    width: 9;
-    max-width: 9;
+    width: 11;
+    max-width: 11;
     height: 3;
     min-height: 3;
     max-height: 3;

@@ -237,8 +237,8 @@ def test_generated_console_stylesheet_includes_rail_rules():
         assert "width: 11;" in right_handle
         assert "min-width: 11;" in right_handle
         assert "max-width: 11;" in right_handle
-        assert "width: 9;" in right_button
-        assert "max-width: 9;" in right_button
+        assert "width: 11;" in right_button
+        assert "max-width: 11;" in right_button
 
 
 @pytest.mark.asyncio
@@ -266,7 +266,7 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
         assert right_handle.region.width == 11
         _assert_right_handle_lightweight(console)
         open_button = console.query_one("#console-inspector-rail-open", Button)
-        assert str(open_button.label) == "Inspect"
+        assert str(open_button.label) == "Inspector"
         assert open_button.tooltip == "Open Inspector rail"
 
 

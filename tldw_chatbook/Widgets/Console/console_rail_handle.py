@@ -32,7 +32,7 @@ class ConsoleRailHandle(Vertical):
         self.add_class(f"console-rail-handle-{side}")
 
     def compose(self) -> ComposeResult:
-        button_width = 9 if self.side == "right" else 11
+        button_width = 11
         button_height: int | str = 3 if self.side == "right" else "100%"
         button = Button(self._display_label(), id=self.button_id, compact=True)
         button.add_class("console-rail-handle-button")
@@ -67,7 +67,7 @@ class ConsoleRailHandle(Vertical):
         """Return a compact visible label while preserving full tooltips."""
         if self.side != "right":
             return self.label
-        return "Inspect" if self.label == "< Inspector" else self.label
+        return "Inspector" if self.label == "< Inspector" else self.label
 
     def _display_badge(self) -> str:
         """Return badge copy that fits the collapsed inspector affordance."""
