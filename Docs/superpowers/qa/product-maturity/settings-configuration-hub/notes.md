@@ -55,3 +55,28 @@ Result: `58 passed`, one existing requests dependency warning, and `git diff --c
 - Settings is now a first-slice configuration hub, not a complete replacement for every legacy config surface.
 - MCP, ACP, Skills, Personas, Schedules, and Workflows ownership is intentionally documented as out-of-Settings runtime control.
 - Additional persisted controls should be added category-by-category with the same validation, save/revert, and screenshot approval workflow.
+
+## 2026-05-26 Provider Endpoint Follow-Up
+
+Branch: `codex/settings-next-after-merge`
+
+Approved screenshot:
+
+- Provider endpoint control: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/14-provider-endpoint.png`
+
+Coverage added:
+
+- Providers & Models now exposes the provider endpoint/base URL alongside provider, model, streaming, and temperature controls.
+- Endpoint saves to the provider-specific `api_settings.<provider>.<endpoint-key>` path while preserving existing endpoint-key conventions.
+- Invalid endpoint values are blocked before save unless they are empty, and visible feedback is shown in the provider detail pane.
+- Actual textual-web/CDP verification confirmed the endpoint row is visible and readable in the default Settings workbench layout.
+
+Focused verification:
+
+```bash
+python tldw_chatbook/css/build_css.py
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short
+git diff --check
+```
+
+Result: `61 passed`, one existing requests dependency warning, and `git diff --check` clean.
