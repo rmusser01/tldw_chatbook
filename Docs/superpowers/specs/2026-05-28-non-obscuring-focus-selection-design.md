@@ -62,7 +62,29 @@ The app should distinguish four states that are currently conflated:
 
 The design rule is simple: focus may emphasize a control, but it must never cover the text, invert contrast unpredictably, or create a frame that dominates the actual content.
 
+Combined states must be explicit:
+
+- **Active + focus** keeps the active/selected meaning visible, while focus adds a non-obscuring cue such as underline, marker, or thin boundary.
+- **Selected + focus** must not increase to a stronger saturated fill. The focused selected item should remain readable and visibly focused.
+- **Disabled + focus** should be avoided where the widget model allows it. If a disabled control can receive focus, the disabled state remains dominant and focus uses only a quiet non-obscuring cue.
+- **Semantic + focus** preserves warning/error/dirty/running meaning without replacing the label foreground or filling over the text.
+
 ## Visual Contract
+
+### General Focus Rules
+
+Keyboard focus needs at least two readable cues unless a native widget cannot support them. Underline alone is too easy to miss in terminal rendering, especially on short labels and dense rows.
+
+Acceptable cue pairs include:
+
+- `text-style: bold underline` plus subtle raised or panel background.
+- Underline plus an existing text marker, such as `>`.
+- Thin border plus underline or bottom emphasis for inputs.
+- Readable foreground adjustment plus underline, when background should remain unchanged.
+
+Focus colors should use neutral or primary interaction roles. They must not reuse warning, error, blocked, dirty, or approval-required colors unless the control is actually in that semantic state.
+
+The app should always keep a visible keyboard focus fallback. Removing `*:focus` visibility is only acceptable when the replacement global rule still provides a readable cue, and control-specific overrides must provide their own visible cue.
 
 ### Buttons, List Rows, And In-Screen Navigation
 
@@ -70,7 +92,7 @@ Focused buttons and list-like rows should use:
 
 - Existing readable foreground color.
 - Panel or raised background, not a saturated action fill.
-- `text-style: bold underline` as the primary focus affordance.
+- `text-style: bold underline` plus a second quiet cue as the primary focus affordance.
 - No heavy outline.
 - No `reverse` text style.
 
@@ -107,7 +129,7 @@ Invalid or blocked inputs may still use semantic warning/error color, but the fo
 Top-level navigation tabs use a hybrid rule:
 
 - The selected destination tab may keep a subtle fill if the label remains readable.
-- Keyboard focus on top navigation should use underline instead of adding a stronger fill or heavy outline.
+- Keyboard focus on top navigation should use underline plus a quiet secondary cue instead of adding a stronger fill or heavy outline.
 - Top navigation should not become visually louder than the destination content area.
 
 ### Data Tables And Trees
@@ -118,6 +140,8 @@ Data-table cursor and tree selection need special handling because they often re
 - Selected row: readable text, subtle background or marker.
 - Avoid reverse text unless a widget cannot support a readable alternative.
 - If a native Textual widget cannot express underline cleanly, document the exception and add a regression test for readable text contrast.
+
+The implementation plan should maintain a widget exception matrix for native or semi-native controls. At minimum, it should track `DataTable`, `Tree`, `ListView`, `SelectionList`, `Input`, `TextArea`, `Tabs`, and custom button/list rows. Each entry should record the supported focus cues, the fallback if underline is not available, and the regression test that protects readability.
 
 ## Architecture
 
@@ -137,6 +161,8 @@ Recommended foundation:
 - Add focused overrides in `components/_agentic_terminal.tcss` for destination-specific classes that currently bypass the shared button rule.
 
 The foundation must not remove all focus affordances. It should replace the obstructive ones with a quieter, consistent, readable pattern.
+
+The global fallback should be conservative: unknown focusable widgets must still show a visible non-obscuring focus state. If a widget-specific selector removes an outline or border, it must add an equivalent visible cue in the same rule or nearby owning rule.
 
 Inline `DEFAULT_CSS` blocks must be audited with the TCSS source. The implementation plan must not rely on TCSS-only searches, because app-shell and feature widgets can own focus/active/selected rules in Python files.
 
@@ -209,8 +235,8 @@ Scope:
   - focused tab uses underline without heavy outline or reverse text.
 - Migrate the worst shared offenders that are already visible in the screenshots:
   - Global button focus.
-  - Library source buttons.
-  - Console transcript/action buttons.
+  - Library source buttons directly involved in the screenshot issue.
+  - Console transcript/action buttons directly involved in the screenshot issue.
   - Input focus treatment for shared inputs, including the Console composer where feasible.
 - Preserve Settings behavior as the reference pattern.
 - Add TCSS, inline-CSS source contract tests, and focused mounted-widget tests.
@@ -219,6 +245,7 @@ Acceptance:
 
 - Shared/global focused buttons and the explicitly migrated PR 1 selectors do not use heavy outlines, saturated action fills, or reverse text as the primary focus style.
 - Shared/global focused inputs and the explicitly migrated PR 1 selectors keep a thin border and add subtle underline/bottom emphasis instead of a heavy full-field frame.
+- PR 1 fixes the visible screenshot classes named in scope, but does not claim the full Console or Library screen audit until PR 2.
 - Remaining legacy feature overrides are inventoried and deferred to later screen-group PRs, not silently treated as complete.
 - Settings tests still pass and continue to assert readable underline focus.
 - Top navigation source tests assert the hybrid rule for `.nav-button:focus` and `.nav-button.is-active`.
@@ -265,13 +292,14 @@ For each screen or screen group:
    Button, list row, nav tab, input/select/textarea, data-table cursor, tree row, modal action, semantic status.
 
 3. Apply the contract:
-   - Button/list/nav focus: readable text plus underline, no obscuring fill.
+   - Button/list/nav focus: readable text plus underline and a second quiet cue, no obscuring fill.
    - Input focus: thin border plus subtle underline.
    - Active/selected: underline plus optional marker or subtle background.
+   - Combined states: preserve the persistent state, add focus without stronger saturated fill.
    - Semantic state: preserve meaning, do not obscure label.
 
 4. Verify:
-   Use focused tests and screenshots for visible screens. Add TCSS parser tests for broad selectors.
+   Use focused tests and rendered screenshots for visible screens. Add TCSS parser tests for broad selectors.
 
 5. Record status:
    Update the audit inventory with migration status and verification evidence.
@@ -289,6 +317,8 @@ Parse TCSS source files and assert:
 - Known destination button focus rules contain `underline`.
 - Settings reference tests remain intact.
 - Input focus rules do not rely on heavy outlines as the only visible affordance.
+- Focus rules do not use warning, error, blocked, dirty, or approval colors unless the selector is explicitly semantic.
+- Combined selected/focused selectors do not escalate to stronger saturated fills.
 
 Existing focus accessibility tests that currently assert `outline: heavy` as the correct behavior must be updated in PR 1. The new contract is not "no visible focus"; it is "visible focus without obscuring labels." Tests should assert visible, readable focus affordances such as underline, thin border, or documented widget-specific fallback.
 
@@ -319,6 +349,8 @@ Capture screenshots for:
 
 Screenshots are review evidence, not the only verification.
 
+PR 1 must include rendered verification for the attached screenshot cases, because parser tests cannot prove that text remains readable in terminal rendering. Later screen-group PRs should repeat rendered checks for every screen where focus, selected, or active styling visibly changes.
+
 ## Non-Goals
 
 - Do not redesign the full theme system in this work.
@@ -331,9 +363,11 @@ Screenshots are review evidence, not the only verification.
 ## Open Risks
 
 - Some Textual widgets may not support the exact underline/focus combination cleanly. Those cases need documented exceptions and readable fallback tests.
+- Underline may be too subtle on some terminals or themes. Focus must pair underline with another quiet cue where possible.
 - Legacy feature CSS may override shared rules with high specificity. The audit inventory must track these explicitly.
 - Generated CSS can drift if source TCSS is edited without running `build_css.py`; implementation plans must include regeneration and diff checks.
 - Over-correcting global focus could harm accessibility. The replacement must remain visible enough for keyboard users.
+- Focus color can be confused with warning/error state if it reuses semantic orange/red tokens. Focus tokens should stay neutral or primary unless the control is actually semantic.
 
 ## Success Criteria
 
