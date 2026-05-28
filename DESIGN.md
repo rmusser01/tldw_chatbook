@@ -5,7 +5,7 @@ colors:
   canvas: "$background"
   panel: "$panel"
   surface: "$surface"
-  raised-surface: "$surface-lighten-1"
+  raised-surface: "$surface"
   field-surface: "$surface-darken-1"
   text-primary: "$text"
   text-muted: "$text-muted"
