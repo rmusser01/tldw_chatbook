@@ -218,17 +218,17 @@ def test_readiness_reports_missing_key_for_supported_openai_instead_of_wip() -> 
     assert "not wired" not in readiness.detail
 
 
-def test_readiness_reports_pending_for_keyless_supported_generic_provider() -> None:
+def test_readiness_reports_ready_for_keyless_supported_generic_provider() -> None:
     readiness = build_console_settings_readiness(
         ConsoleSessionSettings(provider="ollama", model="llama3", base_url="http://127.0.0.1:11434"),
         app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
         environ={},
     )
 
-    assert readiness.label == "Pending"
-    assert readiness.detail == "Provider ready; Console send support is pending for 'ollama'."
+    assert readiness.label == "Ready"
+    assert "No API key is required." in readiness.detail
     assert "not wired" not in readiness.detail
-    assert readiness.native_send_supported is False
+    assert readiness.native_send_supported is True
 
 
 def test_readiness_allows_configured_url_with_trailing_slash() -> None:
@@ -238,8 +238,8 @@ def test_readiness_allows_configured_url_with_trailing_slash() -> None:
         environ={},
     )
 
-    assert readiness.label == "Pending"
-    assert readiness.native_send_supported is False
+    assert readiness.label == "Ready"
+    assert readiness.native_send_supported is True
 
 
 def test_readiness_explicit_send_capable_injection_allows_supported_generic_provider() -> None:

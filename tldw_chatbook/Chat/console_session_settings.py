@@ -9,6 +9,7 @@ from urllib.parse import urlparse, urlunparse
 from tldw_chatbook.Chat.console_provider_support import (
     DIRECT_CONSOLE_PROVIDER_KEYS,
     resolve_console_provider_identity,
+    supported_console_provider_readiness_keys,
 )
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
@@ -40,37 +41,6 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "mistral",
         "mistralai",
         "mlx_lm",
-        "moonshot",
-        "ollama",
-        "oobabooga",
-        "openai",
-        "openrouter",
-        "tabbyapi",
-        "vllm",
-        "zai",
-    }
-)
-CONSOLE_SETTINGS_SUPPORTED_READINESS_KEYS = frozenset(
-    {
-        "anthropic",
-        "aphrodite",
-        "cohere",
-        "custom",
-        "custom_2",
-        "deepseek",
-        "google",
-        "groq",
-        "huggingface",
-        "koboldcpp",
-        "llama_cpp",
-        "local_llm",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_mlx_lm",
-        "local_ollama",
-        "local_vllm",
-        "mistral",
-        "mistralai",
         "moonshot",
         "ollama",
         "oobabooga",
@@ -406,6 +376,9 @@ def _supported_readiness_keys(native_provider_keys: set[str] | None = None) -> f
     ``native_provider_keys`` is retained for older tests/callers that injected a
     support set before generic Console provider support existed.
     """
+    supported_keys = supported_console_provider_readiness_keys(
+        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    )
     if native_provider_keys is not None:
         injected_keys = frozenset(
             resolve_console_provider_identity(
@@ -414,12 +387,15 @@ def _supported_readiness_keys(native_provider_keys: set[str] | None = None) -> f
             ).readiness_key
             for provider in native_provider_keys
         )
-        return CONSOLE_SETTINGS_SUPPORTED_READINESS_KEYS | injected_keys
-    return CONSOLE_SETTINGS_SUPPORTED_READINESS_KEYS
+        return supported_keys | injected_keys
+    return supported_keys
 
 
 def _send_capable_readiness_keys(native_provider_keys: set[str] | None = None) -> frozenset[str]:
     """Return readiness keys that currently have a wired Console send path."""
+    send_capable_keys = supported_console_provider_readiness_keys(
+        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    )
     if native_provider_keys is not None:
         injected_keys = frozenset(
             resolve_console_provider_identity(
@@ -428,8 +404,8 @@ def _send_capable_readiness_keys(native_provider_keys: set[str] | None = None) -
             ).readiness_key
             for provider in native_provider_keys
         )
-        return DIRECT_CONSOLE_PROVIDER_KEYS | injected_keys
-    return DIRECT_CONSOLE_PROVIDER_KEYS
+        return send_capable_keys | injected_keys
+    return send_capable_keys
 
 
 def build_console_settings_summary_state(

@@ -789,7 +789,11 @@ class ChatScreen(BaseAppScreen):
         if self._console_provider_gateway is None:
             factory = getattr(self.app_instance, "console_provider_gateway_factory", None)
             self._console_provider_gateway = (
-                factory() if callable(factory) else ConsoleProviderGateway()
+                factory()
+                if callable(factory)
+                else ConsoleProviderGateway(
+                    config_provider=lambda: getattr(self.app_instance, "app_config", {}) or {},
+                )
             )
         return self._console_provider_gateway
 
