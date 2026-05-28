@@ -237,6 +237,12 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    border: none;"
         ) in css
         assert (
+            "#console-staged-context-tray {\n"
+            "    height: auto;\n"
+            "    min-height: 6;\n"
+            "    max-height: 10;"
+        ) in css
+        assert (
             "#console-left-rail-body {\n"
             "    width: 100%;\n"
             "    min-width: 0;\n"

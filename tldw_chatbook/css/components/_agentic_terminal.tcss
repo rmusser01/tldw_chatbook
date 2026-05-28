@@ -459,6 +459,12 @@ ConsoleSettingsModal Select {
     min-width: 0;
 }
 
+#console-staged-context-tray {
+    height: auto;
+    min-height: 6;
+    max-height: 10;
+}
+
 #console-left-rail {
     height: 100%;
     min-height: 0;
