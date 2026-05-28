@@ -685,6 +685,140 @@ async def test_stream_chat_non_streaming_resolution_yields_completion_once() -> 
 
 
 @pytest.mark.asyncio
+async def test_stream_chat_generic_non_streaming_yields_completion_once() -> None:
+    calls = []
+
+    def fake_chat_api_call(**kwargs):
+        calls.append(kwargs)
+        return "generic done"
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="openai",
+            explicit_model="gpt-4.1",
+            streaming=False,
+            temperature=0.2,
+            top_p=0.9,
+            top_k=40,
+            max_tokens=256,
+        )
+    )
+
+    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    assert chunks == ["generic done"]
+    assert calls == [
+        {
+            "api_endpoint": "openai",
+            "messages_payload": [{"role": "user", "content": "hi"}],
+            "api_key": "sk-test",
+            "model": "gpt-4.1",
+            "streaming": False,
+            "temp": 0.2,
+            "topp": 0.9,
+            "maxp": 0.9,
+            "topk": 40,
+            "max_tokens": 256,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_generic_sync_generator_yields_ordered_chunks() -> None:
+    def fake_chat_api_call(**_kwargs):
+        yield "hel"
+        yield {"choices": [{"delta": {"content": "lo"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+
+    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    assert chunks == ["hel", "lo"]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_generic_completion_dict_yields_message_content() -> None:
+    def fake_chat_api_call(**_kwargs):
+        return {"choices": [{"message": {"content": "complete dict"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+
+    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    assert chunks == ["complete dict"]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_generic_sse_string_chunks_yield_content_only() -> None:
+    def fake_chat_api_call(**_kwargs):
+        yield 'data: {"choices":[{"delta":{"content":"hel"}}]}'
+        yield 'data: {"choices":[{"delta":{"content":"lo"}}]}'
+        yield "data: [DONE]"
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+
+    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    assert chunks == ["hel", "lo"]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_generic_provider_error_raises_sanitized_exception() -> None:
+    def fake_chat_api_call(**_kwargs):
+        raise RuntimeError("Authorization: Bearer sk-1234567890abcdef")
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _ = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    message = str(exc_info.value)
+    assert "Provider openai failed: RuntimeError" in message
+    assert "sk-1234567890abcdef" not in message
+    assert "Bearer" not in message
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_generic_sse_error_raises_sanitized_exception() -> None:
+    def fake_chat_api_call(**_kwargs):
+        yield 'data: {"error":{"message":"Authorization: Bearer sk-1234567890abcdef"}}'
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _ = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    message = str(exc_info.value)
+    assert "Provider openai failed: RuntimeError" in message
+    assert "sk-1234567890abcdef" not in message
+    assert "Bearer" not in message
+
+
+@pytest.mark.asyncio
 async def test_gateway_closes_owned_http_client():
     gateway = ConsoleProviderGateway()
 

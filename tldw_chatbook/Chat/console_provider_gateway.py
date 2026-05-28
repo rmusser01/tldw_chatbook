@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
+import threading
 from dataclasses import dataclass, field, replace
-from typing import Any, AsyncIterator, Callable, Mapping
+from typing import Any, AsyncIterator, Callable, Iterable, Mapping
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -92,6 +95,24 @@ class ConsoleProviderResolution:
     top_k: int | None = None
     max_tokens: int | None = None
     streaming: bool = True
+
+
+@dataclass(frozen=True)
+class _QueueItem:
+    kind: str
+    text: str = ""
+
+    @classmethod
+    def content(cls, text: str) -> "_QueueItem":
+        return cls("content", text)
+
+    @classmethod
+    def error(cls, text: str) -> "_QueueItem":
+        return cls("error", text)
+
+    @classmethod
+    def done(cls) -> "_QueueItem":
+        return cls("done")
 
 
 def build_llamacpp_chat_payload(
@@ -453,6 +474,136 @@ class ConsoleProviderGateway:
             ):
                 yield chunk
             return
+        if resolution.execution_key:
+            async for chunk in self._stream_generic_chat(resolution, messages):
+                yield chunk
+            return
+
+    async def _stream_generic_chat(
+        self,
+        resolution: ConsoleProviderResolution,
+        messages: list[Mapping[str, Any]],
+    ) -> AsyncIterator[str]:
+        """Bridge synchronous chat_api_call responses into async Console chunks."""
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
+        stop_event = threading.Event()
+
+        def enqueue(item: _QueueItem) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, item)
+
+        def worker() -> None:
+            try:
+                kwargs = self._chat_api_kwargs(resolution, messages)
+                response = self._chat_api_call(**kwargs)
+                for text in self._iter_normalized_response(response):
+                    if stop_event.is_set():
+                        break
+                    enqueue(_QueueItem.content(text))
+            except BaseException as exc:
+                enqueue(_QueueItem.error(self._safe_generic_error_copy(resolution.provider, exc)))
+            finally:
+                enqueue(_QueueItem.done())
+
+        worker_task = asyncio.create_task(asyncio.to_thread(worker))
+        try:
+            while True:
+                item = await queue.get()
+                if item.kind == "done":
+                    break
+                if item.kind == "error":
+                    raise RuntimeError(item.text or "Provider failed.")
+                if item.text:
+                    yield item.text
+        finally:
+            stop_event.set()
+            if not worker_task.done():
+                worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
+
+    def _chat_api_call(self, **kwargs: Any) -> Any:
+        if self._chat_api_call_fn is None:
+            from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+            return chat_api_call(**kwargs)
+        return self._chat_api_call_fn(**kwargs)
+
+    @staticmethod
+    def _chat_api_kwargs(
+        resolution: ConsoleProviderResolution,
+        messages: list[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        kwargs = {
+            "api_endpoint": resolution.execution_key,
+            "messages_payload": list(messages),
+            "api_key": resolution.api_key,
+            "model": resolution.model,
+            "streaming": resolution.streaming,
+            "temp": resolution.temperature,
+            "topp": resolution.top_p,
+            "maxp": resolution.top_p,
+            "topk": resolution.top_k,
+            "minp": resolution.min_p,
+            "max_tokens": resolution.max_tokens,
+        }
+        return {key: value for key, value in kwargs.items() if value is not None}
+
+    @classmethod
+    def _iter_normalized_response(cls, response: Any) -> Iterable[str]:
+        text = cls._normalized_response_text(response)
+        if text is not None:
+            yield text
+            return
+
+        if isinstance(response, Mapping):
+            return
+
+        if isinstance(response, Iterable):
+            for chunk in response:
+                text = cls._normalized_response_text(chunk)
+                if text is not None:
+                    yield text
+
+    @staticmethod
+    def _normalized_response_text(response: Any) -> str | None:
+        if isinstance(response, str):
+            if response.startswith("data:"):
+                ConsoleProviderGateway._raise_for_sse_error(response)
+                return ConsoleProviderGateway._content_from_sse_line(response)
+            return response
+        if not isinstance(response, Mapping):
+            return None
+        choices = response.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, Mapping):
+                delta = first.get("delta")
+                if isinstance(delta, Mapping) and isinstance(delta.get("content"), str):
+                    return delta["content"]
+                message = first.get("message")
+                if isinstance(message, Mapping) and isinstance(message.get("content"), str):
+                    return message["content"]
+                text = first.get("text")
+                if isinstance(text, str):
+                    return text
+        return None
+
+    @staticmethod
+    def _raise_for_sse_error(line: str) -> None:
+        data = line.removeprefix("data:").strip()
+        if not data or data == "[DONE]":
+            return
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError:
+            return
+        if isinstance(payload, Mapping) and "error" in payload:
+            raise RuntimeError("Provider stream error.")
+
+    @staticmethod
+    def _safe_generic_error_copy(provider: str, exc: BaseException) -> str:
+        return f"Provider {provider or 'unknown'} failed: {type(exc).__name__}"
 
     @staticmethod
     def _resolution_settings(config: LlamaCppProviderConfig) -> dict[str, Any]:
