@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+from tldw_chatbook.Widgets.Console import console_settings_summary as settings_summary_module
 from tldw_chatbook.Widgets.Console.console_settings_summary import ConsoleSettingsSummary
 
 
@@ -195,6 +196,56 @@ async def test_console_settings_summary_uses_direct_choose_model_action_when_set
         button = app.query_one("#console-settings-open", Button)
         assert str(button.label) == "Choose Model"
         assert button.tooltip == "Choose a model for this Console session"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_summary_treats_missing_provider_row_as_blank() -> None:
+    state = ConsoleSettingsSummaryState(
+        provider_row=None,  # type: ignore[arg-type]
+        model_row="Model: model-a",
+        context_row="Context: 12 / 4k",
+        sampling_row="Sampling: T 0.70, P 0.95",
+        identity_row="Persona: General",
+        readiness_label="Ready",
+    )
+
+    app = SummaryHarness(state)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+
+        provider_row = app.query_one("#console-settings-provider-row", Static)
+        assert str(provider_row.renderable) == ""
+        assert "None" not in _visible_text(app)
+
+        updated_state = ConsoleSettingsSummaryState(
+            provider_row=None,  # type: ignore[arg-type]
+            model_row="Model: model-b",
+            context_row="Context: 20 / 4k",
+            sampling_row="Sampling: T 0.20, P 0.90",
+            identity_row="Persona: Analyst",
+            readiness_label="Ready",
+        )
+        app.query_one(ConsoleSettingsSummary).sync_state(updated_state)
+        await pilot.pause()
+
+        assert str(provider_row.renderable) == ""
+        assert "None" not in _visible_text(app)
+
+
+def test_console_settings_summary_button_sizing_uses_named_constants() -> None:
+    assert settings_summary_module.CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT == 6
+    assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_HORIZONTAL_PADDING == 2
+    assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MIN_WIDTH == 9
+    assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MAX_WIDTH == 14
+    assert settings_summary_module.CONSOLE_SETTINGS_ROW_HEIGHT == 1
+
+
+def test_pending_launch_inspector_auto_open_docstring_is_google_style() -> None:
+    docstring = ChatScreen._apply_pending_launch_inspector_auto_open.__doc__
+
+    assert docstring is not None
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
 
 
 def test_summary_state_appends_non_ready_readiness_to_model_row() -> None:

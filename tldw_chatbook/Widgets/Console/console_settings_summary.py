@@ -12,6 +12,13 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
 
 
+CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT = 6
+CONSOLE_SETTINGS_BUTTON_HORIZONTAL_PADDING = 2
+CONSOLE_SETTINGS_BUTTON_MIN_WIDTH = 9
+CONSOLE_SETTINGS_BUTTON_MAX_WIDTH = 14
+CONSOLE_SETTINGS_ROW_HEIGHT = 1
+
+
 class ConsoleSettingsSummary(Vertical):
     """Render compact Console session settings rows."""
 
@@ -21,13 +28,15 @@ class ConsoleSettingsSummary(Vertical):
         self.add_class("console-settings-summary")
         self.styles.height = "auto"
         self.styles.min_height = 0
-        self.styles.max_height = 6
+        self.styles.max_height = CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT
 
     def sync_state(self, state: ConsoleSettingsSummaryState) -> None:
         """Refresh the summary from a new state snapshot."""
         self.state = state
         try:
-            self.query_one("#console-settings-provider-row", Static).update(state.provider_row)
+            self.query_one("#console-settings-provider-row", Static).update(
+                self._row_text(state.provider_row)
+            )
             self.query_one("#console-settings-model-row", Static).update(state.model_row)
             self.query_one("#console-settings-context-row", Static).update(state.context_row)
             self.query_one("#console-settings-sampling-row", Static).update(state.sampling_row)
@@ -42,20 +51,32 @@ class ConsoleSettingsSummary(Vertical):
         self._apply_button_sizing(button)
 
     def _apply_button_sizing(self, button: Button) -> None:
-        button_width = min(max(len(self.state.action_label) + 2, 9), 14)
+        button_width = min(
+            max(
+                len(self.state.action_label)
+                + CONSOLE_SETTINGS_BUTTON_HORIZONTAL_PADDING,
+                CONSOLE_SETTINGS_BUTTON_MIN_WIDTH,
+            ),
+            CONSOLE_SETTINGS_BUTTON_MAX_WIDTH,
+        )
         button.styles.width = button_width
         button.styles.min_width = button_width
         button.styles.max_width = button_width
-        button.styles.height = 1
-        button.styles.min_height = 1
-        button.styles.max_height = 1
+        button.styles.height = CONSOLE_SETTINGS_ROW_HEIGHT
+        button.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
+        button.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
         button.styles.margin = 0
+
+    @staticmethod
+    def _row_text(value: str | None) -> str:
+        """Return a Textual-safe settings row label."""
+        return value or ""
 
     def compose(self) -> ComposeResult:
         header = Horizontal(id="console-settings-header", classes="console-settings-header")
-        header.styles.height = 1
-        header.styles.min_height = 1
-        header.styles.max_height = 1
+        header.styles.height = CONSOLE_SETTINGS_ROW_HEIGHT
+        header.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
+        header.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
         with header:
             title = Static(
                 "Session Settings",
@@ -64,9 +85,9 @@ class ConsoleSettingsSummary(Vertical):
             )
             title.styles.width = "1fr"
             title.styles.min_width = 0
-            title.styles.height = 1
-            title.styles.min_height = 1
-            title.styles.max_height = 1
+            title.styles.height = CONSOLE_SETTINGS_ROW_HEIGHT
+            title.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
+            title.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
             yield title
 
             button = Button(
@@ -78,7 +99,7 @@ class ConsoleSettingsSummary(Vertical):
             self._apply_button_sizing(button)
             yield button
         yield Static(
-            self.state.provider_row,
+            self._row_text(self.state.provider_row),
             id="console-settings-provider-row",
             classes="console-settings-row",
             markup=False,

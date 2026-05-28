@@ -1055,7 +1055,15 @@ class ChatScreen(BaseAppScreen):
         rail_state: ConsoleRailState,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleRailState:
-        """Keep a newly launched live-work card visible until the user chooses otherwise."""
+        """Keep newly launched live work visible until the user chooses otherwise.
+
+        Args:
+            rail_state: Current Console rail state before launch visibility is applied.
+            pending_launch: Live-work launch metadata, when a launch just occurred.
+
+        Returns:
+            The original rail state, or a copy with the Inspector rail opened.
+        """
         if (
             pending_launch is not None
             and self._pending_console_launch_auto_open_inspector
