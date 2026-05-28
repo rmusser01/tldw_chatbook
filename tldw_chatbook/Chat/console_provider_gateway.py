@@ -6,12 +6,21 @@ import asyncio
 import contextlib
 import json
 import threading
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, AsyncIterator, Callable, Iterable, Mapping
+from types import GeneratorType
+from typing import Any, AsyncIterator, Callable
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 
+from tldw_chatbook.Chat.Chat_Deps import (
+    ChatAuthenticationError,
+    ChatBadRequestError,
+    ChatConfigurationError,
+    ChatProviderError,
+    ChatRateLimitError,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_support import resolve_console_provider_identity
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness, provider_config_key
@@ -23,6 +32,28 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
     "Provider blocked: invalid llama.cpp base URL. "
     "Use an http(s) URL such as http://127.0.0.1:9099."
 )
+UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response shape."
+NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
+_UNSUPPORTED_RESPONSE = object()
+_EMPTY_RESPONSE = object()
+
+
+def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
+    """Return safe user-visible provider failure copy without raw exception text."""
+    category = "unexpected provider error"
+    if isinstance(exc, ChatAuthenticationError):
+        category = "authentication failed"
+    elif isinstance(exc, ChatRateLimitError):
+        category = "rate limit exceeded"
+    elif isinstance(exc, ChatBadRequestError):
+        category = "bad request"
+    elif isinstance(exc, ChatConfigurationError):
+        category = "configuration error"
+    elif isinstance(exc, ChatProviderError):
+        category = "provider unavailable"
+    status_code = getattr(exc, "status_code", None)
+    status_copy = f" Status: {status_code}." if isinstance(status_code, int) else ""
+    return f"Provider error from {provider or 'unknown'}: {category}.{status_copy}"
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -155,12 +186,14 @@ class ConsoleProviderGateway:
         config_provider: Callable[[], Mapping[str, object]] | None = None,
         environ: Mapping[str, str] | None = None,
         chat_api_call_fn: Callable[..., Any] | None = None,
+        safe_error_copy: Callable[[str, BaseException], str] | None = None,
     ) -> None:
         self._owns_http_client = http_client is None
         self.http_client = http_client or httpx.AsyncClient(timeout=30.0)
         self._config_provider = config_provider or (lambda: {})
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
+        self._safe_error_copy = safe_error_copy or safe_provider_error_copy
 
     async def aclose(self) -> None:
         """Close the owned HTTP client, leaving injected clients to their owner."""
@@ -490,18 +523,21 @@ class ConsoleProviderGateway:
         stop_event = threading.Event()
 
         def enqueue(item: _QueueItem) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, item)
+            if stop_event.is_set():
+                return
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(queue.put_nowait, item)
 
         def worker() -> None:
             try:
                 kwargs = self._chat_api_kwargs(resolution, messages)
                 response = self._chat_api_call(**kwargs)
-                for text in self._iter_normalized_response(response):
+                for text in self.normalize_provider_response(response):
                     if stop_event.is_set():
                         break
                     enqueue(_QueueItem.content(text))
             except BaseException as exc:
-                enqueue(_QueueItem.error(self._safe_generic_error_copy(resolution.provider, exc)))
+                enqueue(_QueueItem.error(self._safe_error_copy(resolution.provider, exc)))
             finally:
                 enqueue(_QueueItem.done())
 
@@ -512,15 +548,46 @@ class ConsoleProviderGateway:
                 if item.kind == "done":
                     break
                 if item.kind == "error":
-                    raise RuntimeError(item.text or "Provider failed.")
+                    raise ChatProviderError(
+                        item.text or safe_provider_error_copy(resolution.provider, ChatProviderError()),
+                        provider=resolution.provider,
+                    )
                 if item.text:
                     yield item.text
         finally:
             stop_event.set()
             if not worker_task.done():
                 worker_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await worker_task
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(worker_task), timeout=0)
+
+    @staticmethod
+    def normalize_provider_response(response: Any) -> Iterator[str]:
+        """Yield safe assistant-visible chunks from generic provider output."""
+        content = _content_from_provider_item(response)
+        if isinstance(content, str):
+            yield content if content else NO_PROVIDER_CONTENT_COPY
+            return
+        if content is _UNSUPPORTED_RESPONSE:
+            if _is_iterable_response(response):
+                emitted = False
+                for item in response:
+                    item_content = _content_from_provider_item(item)
+                    if isinstance(item_content, str):
+                        if item_content:
+                            emitted = True
+                            yield item_content
+                        continue
+                    if item_content is _EMPTY_RESPONSE:
+                        continue
+                    emitted = True
+                    yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
+                if not emitted:
+                    yield NO_PROVIDER_CONTENT_COPY
+                return
+            yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
+            return
+        yield NO_PROVIDER_CONTENT_COPY
 
     def _chat_api_call(self, **kwargs: Any) -> Any:
         if self._chat_api_call_fn is None:
@@ -549,46 +616,6 @@ class ConsoleProviderGateway:
         }
         return {key: value for key, value in kwargs.items() if value is not None}
 
-    @classmethod
-    def _iter_normalized_response(cls, response: Any) -> Iterable[str]:
-        text = cls._normalized_response_text(response)
-        if text is not None:
-            yield text
-            return
-
-        if isinstance(response, Mapping):
-            return
-
-        if isinstance(response, Iterable):
-            for chunk in response:
-                text = cls._normalized_response_text(chunk)
-                if text is not None:
-                    yield text
-
-    @staticmethod
-    def _normalized_response_text(response: Any) -> str | None:
-        if isinstance(response, str):
-            if response.startswith("data:"):
-                ConsoleProviderGateway._raise_for_sse_error(response)
-                return ConsoleProviderGateway._content_from_sse_line(response)
-            return response
-        if not isinstance(response, Mapping):
-            return None
-        choices = response.get("choices")
-        if isinstance(choices, list) and choices:
-            first = choices[0]
-            if isinstance(first, Mapping):
-                delta = first.get("delta")
-                if isinstance(delta, Mapping) and isinstance(delta.get("content"), str):
-                    return delta["content"]
-                message = first.get("message")
-                if isinstance(message, Mapping) and isinstance(message.get("content"), str):
-                    return message["content"]
-                text = first.get("text")
-                if isinstance(text, str):
-                    return text
-        return None
-
     @staticmethod
     def _raise_for_sse_error(line: str) -> None:
         data = line.removeprefix("data:").strip()
@@ -600,10 +627,6 @@ class ConsoleProviderGateway:
             return
         if isinstance(payload, Mapping) and "error" in payload:
             raise RuntimeError("Provider stream error.")
-
-    @staticmethod
-    def _safe_generic_error_copy(provider: str, exc: BaseException) -> str:
-        return f"Provider {provider or 'unknown'} failed: {type(exc).__name__}"
 
     @staticmethod
     def _resolution_settings(config: LlamaCppProviderConfig) -> dict[str, Any]:
@@ -723,6 +746,67 @@ class ConsoleProviderGateway:
 def _mapping_value(source: Mapping[str, object], key: str) -> Mapping[str, object]:
     value = source.get(key, {})
     return value if isinstance(value, Mapping) else {}
+
+
+def _is_iterable_response(response: Any) -> bool:
+    return isinstance(response, (Iterator, GeneratorType)) and not isinstance(response, (str, bytes, Mapping, list, tuple))
+
+
+def _content_from_provider_item(item: Any) -> str | object:
+    if isinstance(item, str):
+        if item.startswith("data:"):
+            return _content_from_sse_data(item)
+        return item
+    if isinstance(item, bytes):
+        decoded = item.decode("utf-8", errors="replace")
+        if decoded.startswith("data:"):
+            return _content_from_sse_data(decoded)
+        return decoded
+    if isinstance(item, Mapping):
+        return _content_from_provider_mapping(item)
+    return _UNSUPPORTED_RESPONSE
+
+
+def _content_from_sse_data(line: str) -> str | object:
+    ConsoleProviderGateway._raise_for_sse_error(line)
+    data = line.removeprefix("data:").strip()
+    if not data or data == "[DONE]":
+        return _EMPTY_RESPONSE
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError:
+        return _EMPTY_RESPONSE
+    if not isinstance(payload, Mapping):
+        return _EMPTY_RESPONSE
+    content = _content_from_provider_mapping(payload)
+    return _EMPTY_RESPONSE if content is _UNSUPPORTED_RESPONSE else content
+
+
+def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
+    choices = item.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0]
+        if isinstance(first, Mapping):
+            delta = first.get("delta")
+            if isinstance(delta, Mapping) and isinstance(delta.get("content"), str):
+                return delta["content"]
+            message = first.get("message")
+            if isinstance(message, Mapping) and isinstance(message.get("content"), str):
+                return message["content"]
+            text = first.get("text")
+            if isinstance(text, str):
+                return text
+
+    message = item.get("message")
+    if isinstance(message, Mapping) and isinstance(message.get("content"), str):
+        return message["content"]
+
+    for key in ("content", "text", "response", "generated_text"):
+        value = item.get(key)
+        if isinstance(value, str):
+            return value
+
+    return _UNSUPPORTED_RESPONSE
 
 
 def _provider_settings(app_config: Mapping[str, object], provider_key: str) -> Mapping[str, object]:

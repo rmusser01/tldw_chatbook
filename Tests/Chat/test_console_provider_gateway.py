@@ -1,15 +1,24 @@
 import builtins
 import json
+import threading
 
 import httpx
 import pytest
 
+from tldw_chatbook.Chat.Chat_Deps import (
+    ChatAuthenticationError,
+    ChatBadRequestError,
+    ChatConfigurationError,
+    ChatProviderError,
+    ChatRateLimitError,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
     LlamaCppProviderConfig,
     build_llamacpp_chat_payload,
+    safe_provider_error_copy,
 )
 
 
@@ -760,6 +769,140 @@ async def test_stream_chat_generic_completion_dict_yields_message_content() -> N
     assert chunks == ["complete dict"]
 
 
+def test_normalize_generic_provider_response_shapes() -> None:
+    unsupported = "Provider returned an unsupported response shape."
+    no_content = "Provider returned no assistant content."
+
+    class IterableSdkResponse:
+        def __iter__(self):
+            yield {"content": "do not dump"}
+
+    assert list(ConsoleProviderGateway.normalize_provider_response({"content": "body"})) == ["body"]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response({"choices": [{"message": {"content": "choice"}}]})
+    ) == ["choice"]
+    assert list(ConsoleProviderGateway.normalize_provider_response({"generated_text": "generated"})) == ["generated"]
+    assert list(ConsoleProviderGateway.normalize_provider_response([{"content": "do not dump"}])) == [unsupported]
+    assert list(ConsoleProviderGateway.normalize_provider_response(({"content": "do not dump"},))) == [unsupported]
+    assert list(ConsoleProviderGateway.normalize_provider_response(b"hello \xff")) == ["hello \ufffd"]
+    assert list(ConsoleProviderGateway.normalize_provider_response(iter(()))) == [no_content]
+    assert list(ConsoleProviderGateway.normalize_provider_response({"unexpected": {"secret": "do not dump"}})) == [
+        unsupported
+    ]
+    assert list(ConsoleProviderGateway.normalize_provider_response(IterableSdkResponse())) == [unsupported]
+
+
+def test_normalize_generic_provider_response_dict_precedence() -> None:
+    payload = {
+        "choices": [
+            {
+                "delta": {"content": "delta"},
+                "message": {"content": "message"},
+                "text": "choice text",
+            }
+        ],
+        "message": {"content": "top message"},
+        "content": "content",
+        "text": "text",
+        "response": "response",
+        "generated_text": "generated",
+    }
+
+    assert list(ConsoleProviderGateway.normalize_provider_response(payload)) == ["delta"]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {
+                "choices": [{"message": {"content": "message"}, "text": "choice text"}],
+                "message": {"content": "top message"},
+                "content": "content",
+                "text": "text",
+                "response": "response",
+                "generated_text": "generated",
+            }
+        )
+    ) == ["message"]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {
+                "choices": [{"text": "choice text"}],
+                "message": {"content": "top message"},
+                "content": "content",
+                "text": "text",
+                "response": "response",
+                "generated_text": "generated",
+            }
+        )
+    ) == ["choice text"]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {
+                "message": {"content": "top message"},
+                "content": "content",
+                "text": "text",
+                "response": "response",
+                "generated_text": "generated",
+            }
+        )
+    ) == ["top message"]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {"content": "content", "text": "text", "response": "response", "generated_text": "generated"}
+        )
+    ) == ["content"]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {"text": "text", "response": "response", "generated_text": "generated"}
+        )
+    ) == ["text"]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response({"response": "response", "generated_text": "generated"})
+    ) == ["response"]
+    assert list(ConsoleProviderGateway.normalize_provider_response({"generated_text": "generated"})) == ["generated"]
+
+
+def test_safe_provider_error_copy_redacts_secret_like_values() -> None:
+    copy = safe_provider_error_copy(
+        "openai",
+        RuntimeError(
+            "Authorization: Bearer sk-1234567890abcdef "
+            "https://user:secret@example.test/v1 password=hunter2 token=abc123"
+        ),
+    )
+
+    assert "sk-1234567890abcdef" not in copy
+    assert "Bearer" not in copy
+    assert "user:secret@" not in copy
+    assert "hunter2" not in copy
+    assert "abc123" not in copy
+    assert "openai" in copy
+
+
+def test_safe_provider_error_copy_classifies_provider_exceptions() -> None:
+    cases = [
+        (ChatAuthenticationError(), "authentication failed"),
+        (ChatRateLimitError(), "rate limit exceeded"),
+        (ChatBadRequestError(), "bad request"),
+        (ChatConfigurationError(), "configuration error"),
+        (ChatProviderError(), "provider unavailable"),
+        (RuntimeError("boom"), "unexpected provider error"),
+    ]
+
+    for exc, category in cases:
+        copy = safe_provider_error_copy("openai", exc)
+        assert f"Provider error from openai: {category}." in copy
+        status_code = getattr(exc, "status_code", None)
+        if status_code is not None:
+            assert f"Status: {status_code}." in copy
+        else:
+            assert "Status:" not in copy
+
+
+def test_safe_provider_error_copy_includes_status_code_when_available() -> None:
+    copy = safe_provider_error_copy("openai", ChatProviderError(status_code=503))
+
+    assert copy == "Provider error from openai: provider unavailable. Status: 503."
+
+
 @pytest.mark.asyncio
 async def test_stream_chat_generic_sse_string_chunks_yield_content_only() -> None:
     def fake_chat_api_call(**_kwargs):
@@ -779,6 +922,44 @@ async def test_stream_chat_generic_sse_string_chunks_yield_content_only() -> Non
 
 
 @pytest.mark.asyncio
+async def test_stream_chat_generic_sse_byte_chunks_yield_content_only() -> None:
+    def fake_chat_api_call(**_kwargs):
+        yield b'data: {"choices":[{"delta":{"content":"bytes"}}]}'
+        yield b"data: [DONE]"
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+
+    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    assert chunks == ["bytes"]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_generic_cancel_ignores_late_chunks() -> None:
+    gate = threading.Event()
+
+    def fake_chat_api_call(**_kwargs):
+        yield "first"
+        gate.wait(timeout=1)
+        yield "late"
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="m"))
+    stream = gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])
+
+    assert await anext(stream) == "first"
+    await stream.aclose()
+    gate.set()
+
+
+@pytest.mark.asyncio
 async def test_stream_chat_generic_provider_error_raises_sanitized_exception() -> None:
     def fake_chat_api_call(**_kwargs):
         raise RuntimeError("Authorization: Bearer sk-1234567890abcdef")
@@ -789,11 +970,11 @@ async def test_stream_chat_generic_provider_error_raises_sanitized_exception() -
     )
     resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
 
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(ChatProviderError) as exc_info:
         _ = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
 
     message = str(exc_info.value)
-    assert "Provider openai failed: RuntimeError" in message
+    assert message == "Provider error from openai: unexpected provider error."
     assert "sk-1234567890abcdef" not in message
     assert "Bearer" not in message
 
@@ -809,11 +990,31 @@ async def test_stream_chat_generic_sse_error_raises_sanitized_exception() -> Non
     )
     resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
 
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(ChatProviderError) as exc_info:
         _ = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
 
     message = str(exc_info.value)
-    assert "Provider openai failed: RuntimeError" in message
+    assert message == "Provider error from openai: unexpected provider error."
+    assert "sk-1234567890abcdef" not in message
+    assert "Bearer" not in message
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_generic_sse_byte_error_raises_sanitized_exception() -> None:
+    def fake_chat_api_call(**_kwargs):
+        yield b'data: {"error":{"message":"Authorization: Bearer sk-1234567890abcdef"}}'
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        _ = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    message = str(exc_info.value)
+    assert message == "Provider error from openai: unexpected provider error."
     assert "sk-1234567890abcdef" not in message
     assert "Bearer" not in message
 
