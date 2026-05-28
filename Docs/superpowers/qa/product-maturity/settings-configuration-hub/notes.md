@@ -20,6 +20,7 @@ Evidence method: actual textual-web/CDP screenshots driven with Playwright brows
 - Category search polish: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/13-category-search-polish.png`
 - Diagnostics shortcut validation: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/16-diagnostics-shortcut-cdp.png`
 - Diagnostics worker shortcut validation: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/17-diagnostics-worker-cdp.png`
+- Storage safety check: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/18-storage-check-cdp.png`
 
 User approval: approved after actual rendered screenshot review.
 
@@ -154,3 +155,27 @@ git diff --check
 ```
 
 Result: `3 passed` for the focused review-fix regressions, `69 passed` for the full Settings configuration hub suite, one existing requests dependency warning, and `git diff --check` clean.
+
+## 2026-05-27 Storage Safety Check Follow-Up
+
+Branch: `codex/settings-config-next-slice-2`
+
+Approved screenshot:
+
+- Storage safety check: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/18-storage-check-cdp.png`
+
+Coverage added:
+
+- Storage now exposes a `Check Storage` action and wires the Settings `t` shortcut to the same non-mutating path readiness check when Storage is selected.
+- The check reports config parent, user data directory, notifications DB parent, watchlists DB parent, and workspaces DB parent readiness.
+- The Storage result block appears before the full path inventory so the safety outcome remains visible in the rendered workbench.
+- Invalid config paths are reported as validation failures instead of crashing the Settings screen.
+
+Focused verification:
+
+```bash
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short
+git diff --check
+```
+
+Result: `73 passed` for the full Settings configuration hub suite, one existing requests dependency warning, `git diff --check` clean, and approved screenshot verified as a `2050 x 1240` PNG.

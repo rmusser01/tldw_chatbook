@@ -1232,6 +1232,126 @@ def test_settings_diagnostics_strictly_reports_corrupt_toml(monkeypatch, tmp_pat
     assert "Config reload: failed" in screen._reload_current_config()
 
 
+def test_settings_storage_check_reports_path_readiness(monkeypatch, tmp_path):
+    config_path = tmp_path / "config" / "config.toml"
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    app = SimpleNamespace(
+        app_config={},
+        user_data_dir=data_dir,
+        notifications_db_path=data_dir / "notifications.db",
+        subscriptions_db_path=data_dir / "watchlists.db",
+        workspaces_db_path=data_dir / "workspaces.db",
+    )
+    screen = SettingsScreen(app)
+
+    result = screen._storage_check_results()
+
+    assert result[0] == "Storage check: complete"
+    assert "Config path parent: writable" in result
+    assert "User data directory: writable" in result
+    assert "Notifications DB parent: writable" in result
+    assert "Watchlists DB parent: writable" in result
+    assert "Workspaces DB parent: writable" in result
+
+
+def test_settings_storage_check_reports_invalid_config_path(monkeypatch):
+    monkeypatch.setenv("TLDW_CONFIG_PATH", "unsafe$(touch bad).toml")
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    result = screen._storage_check_results()
+
+    assert result[0] == "Storage check: complete"
+    assert any(row.startswith("Config path parent: invalid") for row in result)
+
+
+def test_settings_storage_check_includes_configured_fallback_paths(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    result = screen._storage_check_results()
+
+    assert any(row.startswith("User data directory:") for row in result)
+    assert any(row.startswith("Notifications DB parent:") for row in result)
+    assert any(row.startswith("Watchlists DB parent:") for row in result)
+    assert any(row.startswith("Workspaces DB parent:") for row in result)
+
+
+def test_settings_storage_check_does_not_create_missing_config(monkeypatch, tmp_path):
+    config_path = tmp_path / "missing" / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    result = screen._storage_check_results()
+
+    assert result[0] == "Storage check: complete"
+    assert not config_path.exists()
+    assert not config_path.parent.exists()
+
+
+def test_settings_storage_check_rejects_file_ancestor(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    file_ancestor = tmp_path / "not-a-dir"
+    file_ancestor.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    result = screen._storage_path_status(
+        "Workspaces DB parent",
+        file_ancestor / "workspaces.db",
+        directory=False,
+    )
+
+    assert result == "Workspaces DB parent: not writable"
+
+
+def test_settings_storage_check_reports_empty_path_as_unconfigured(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    assert screen._storage_path_status("User data directory", None, directory=True) == (
+        "User data directory: not configured"
+    )
+    assert screen._storage_path_status("User data directory", "", directory=True) == (
+        "User data directory: not configured"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_storage_test_shortcut_runs_safety_check(monkeypatch, tmp_path):
+    config_path = tmp_path / "config" / "config.toml"
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    app = _build_test_app()
+    app.user_data_dir = data_dir
+    app.notifications_db_path = data_dir / "notifications.db"
+    app.subscriptions_db_path = data_dir / "watchlists.db"
+    app.workspaces_db_path = data_dir / "workspaces.db"
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-storage")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-check-storage")
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+
+        await pilot.press("t")
+        await _wait_for_settings_text(screen, pilot, "Storage check: complete")
+        text = _visible_text(screen)
+
+        assert "Config path parent: writable" in text
+        assert "User data directory: writable" in text
+        assert "No test action is available" not in text
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+
+
 def test_settings_config_path_validates_env_override(monkeypatch):
     app = _build_test_app()
     screen = SettingsScreen(app)

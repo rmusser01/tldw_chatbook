@@ -1,9 +1,12 @@
 """Settings destination shell for global app preferences."""
 
+import copy
 from collections.abc import Mapping
 import logging
 import os
 from pathlib import Path
+import re
+import tomllib
 
 from textual import on, work
 from textual.app import ComposeResult
@@ -17,7 +20,13 @@ from ...Chat.provider_readiness import get_provider_readiness, provider_config_k
 from ...Sync_Interop.sync_promotion_state import SyncPromotionState, build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Widgets.destination_workbench import DestinationModeStrip
-from ...config import DEFAULT_CONFIG_PATH, coerce_bool_setting, save_setting_to_cli_config
+from ...config import (
+    BASE_DATA_DIR_CLI,
+    DEFAULT_CONFIG_FROM_TOML,
+    DEFAULT_CONFIG_PATH,
+    coerce_bool_setting,
+    save_setting_to_cli_config,
+)
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -76,6 +85,10 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_endpoint = False
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
+        self._storage_check_rows: tuple[str, ...] = (
+            "Storage check: not run",
+            "Run Check Storage or press t to verify local path access.",
+        )
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
 
@@ -516,7 +529,7 @@ class SettingsScreen(BaseAppScreen):
     def _config_writable_status(self) -> str:
         try:
             config_path = self._config_path()
-        except ValueError as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             return f"invalid path - {redact_secret_text(str(exc))}"
         target = config_path if config_path.exists() else config_path.parent
         writable = os.access(target, os.W_OK) if target.exists() else os.access(target.parent, os.W_OK)
@@ -525,7 +538,7 @@ class SettingsScreen(BaseAppScreen):
     def _raw_config_text(self) -> str:
         try:
             config_path = self._config_path()
-        except ValueError as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             return f"# Unable to use config path: {redact_secret_text(str(exc))}\n"
         if config_path.exists():
             try:
@@ -534,23 +547,198 @@ class SettingsScreen(BaseAppScreen):
                 return f"# Unable to read {config_path}: {type(exc).__name__}"
         return "# Config file does not exist yet.\n"
 
+    @staticmethod
+    def _deep_merge_config_values(base: dict, update: Mapping) -> dict:
+        merged = copy.deepcopy(base)
+        for key, value in update.items():
+            if isinstance(value, Mapping) and isinstance(merged.get(key), dict):
+                merged[key] = SettingsScreen._deep_merge_config_values(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+
+    def _read_cli_config_without_writes(self) -> dict:
+        loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
+        try:
+            config_path = self._config_path()
+        except (OSError, RuntimeError, ValueError):
+            return loaded_config
+        if not config_path.exists():
+            return loaded_config
+        try:
+            with open(config_path, "rb") as config_file:
+                user_config = tomllib.load(config_file)
+        except (OSError, tomllib.TOMLDecodeError):
+            return loaded_config
+        if not isinstance(user_config, Mapping):
+            return loaded_config
+        return self._deep_merge_config_values(loaded_config, user_config)
+
+    def _read_cli_config_value_without_writes(
+        self,
+        section: str,
+        key: str,
+        default: object = None,
+    ) -> object:
+        section_data = self._read_cli_config_without_writes().get(section)
+        if isinstance(section_data, Mapping):
+            return section_data.get(key, default)
+        return default
+
+    def _configured_user_folder_name(self) -> str:
+        default_user = DEFAULT_CONFIG_FROM_TOML.get("general", {}).get("users_name", "default_user")
+        user_name = self._read_cli_config_value_without_writes("general", "users_name", default_user)
+        safe_user_name = re.sub(r"[^a-zA-Z0-9_-]", "_", str(user_name))
+        return safe_user_name if safe_user_name else "default_user"
+
+    def _configured_user_data_dir_path(self) -> Path:
+        configured_data_dir = self._read_cli_config_value_without_writes("paths", "data_dir", None)
+        if configured_data_dir is None:
+            configured_data_dir = self._read_cli_config_value_without_writes("Paths", "data_dir", None)
+        base_data_dir = (
+            Path(str(configured_data_dir)).expanduser()
+            if configured_data_dir
+            else BASE_DATA_DIR_CLI
+        )
+        return validate_path_simple(
+            base_data_dir / self._configured_user_folder_name(),
+            require_exists=False,
+        ).resolve()
+
+    def _configured_database_path(self, key: str, default_filename: str) -> Path:
+        custom_path = self._read_cli_config_value_without_writes("database", key, None)
+        default_path = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(key)
+        if custom_path and custom_path != default_path:
+            return validate_path_simple(
+                Path(str(custom_path)).expanduser(),
+                require_exists=False,
+            ).resolve()
+        return self._configured_user_data_dir_path() / default_filename
+
+    def _storage_path_entries(self) -> tuple[tuple[str, str, object, bool], ...]:
+        return (
+            (
+                "User data directory",
+                "user_data_dir",
+                self._configured_user_data_dir_path,
+                True,
+            ),
+            (
+                "Notifications DB",
+                "notifications_db_path",
+                lambda: self._configured_database_path(
+                    "notifications_db_path",
+                    "tldw_chatbook_notifications.db",
+                ),
+                False,
+            ),
+            (
+                "Watchlists DB",
+                "subscriptions_db_path",
+                lambda: self._configured_database_path(
+                    "subscriptions_db_path",
+                    "tldw_chatbook_subscriptions.db",
+                ),
+                False,
+            ),
+            (
+                "Workspaces DB",
+                "workspaces_db_path",
+                lambda: self._configured_database_path(
+                    "workspaces_db_path",
+                    "tldw_chatbook_workspaces.db",
+                ),
+                False,
+            ),
+        )
+
+    def _storage_path_value(self, attr_name: str, fallback_factory: object) -> object:
+        value = getattr(self.app_instance, attr_name, None)
+        if value:
+            return value
+        if callable(fallback_factory):
+            return fallback_factory()
+        return fallback_factory
+
     def _known_storage_paths(self) -> tuple[str, ...]:
         try:
             paths = [f"Config path: {self._config_path()}"]
-        except ValueError as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             paths = [f"Config path: invalid - {redact_secret_text(str(exc))}"]
-        user_data_dir = getattr(self.app_instance, "user_data_dir", None)
-        if user_data_dir:
-            paths.append(f"User data directory: {user_data_dir}")
-        for attr_name, label in (
-            ("notifications_db_path", "Notifications DB"),
-            ("subscriptions_db_path", "Watchlists DB"),
-            ("workspaces_db_path", "Workspaces DB"),
-        ):
-            value = getattr(self.app_instance, attr_name, None)
-            if value:
+        for label, attr_name, fallback_factory, _directory in self._storage_path_entries():
+            try:
+                value = self._storage_path_value(attr_name, fallback_factory)
+            except Exception as exc:
+                paths.append(f"{label}: invalid - {redact_secret_text(str(exc))}")
+            else:
                 paths.append(f"{label}: {value}")
         return tuple(paths)
+
+    @staticmethod
+    def _nearest_existing_ancestor(path: Path) -> Path | None:
+        candidate = path
+        while candidate != candidate.parent:
+            if candidate.exists():
+                return candidate if candidate.is_dir() else None
+            candidate = candidate.parent
+        return candidate if candidate.exists() and candidate.is_dir() else None
+
+    def _storage_path_status(self, label: str, path_value: object, *, directory: bool) -> str:
+        if path_value is None or str(path_value).strip() in {"", "None"}:
+            return f"{label}: not configured"
+        try:
+            raw_path = Path(str(path_value)).expanduser()
+            path = validate_path_simple(raw_path, require_exists=False).resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            return f"{label}: invalid - {redact_secret_text(str(exc))}"
+
+        target = path if directory else path.parent
+        existing_target = target if target.exists() else self._nearest_existing_ancestor(target)
+        if existing_target is None or not existing_target.is_dir():
+            return f"{label}: not writable"
+        writable = os.access(existing_target, os.W_OK | os.X_OK)
+        return f"{label}: {'writable' if writable else 'not writable'}"
+
+    def _storage_check_results(self) -> tuple[str, ...]:
+        rows = ["Storage check: complete"]
+        try:
+            config_path = self._config_path()
+        except (OSError, RuntimeError, ValueError) as exc:
+            rows.append(f"Config path parent: invalid - {redact_secret_text(str(exc))}")
+        else:
+            rows.append(
+                self._storage_path_status(
+                    "Config path parent",
+                    config_path,
+                    directory=False,
+                )
+            )
+        for label, attr_name, fallback_factory, directory in self._storage_path_entries():
+            status_label = label if directory else f"{label} parent"
+            try:
+                value = self._storage_path_value(attr_name, fallback_factory)
+            except Exception as exc:
+                rows.append(f"{status_label}: invalid - {redact_secret_text(str(exc))}")
+            else:
+                rows.append(self._storage_path_status(status_label, value, directory=directory))
+        rows.append("Storage safety: no files were created, moved, or rewritten.")
+        return tuple(rows)
+
+    def _storage_check_text(self) -> str:
+        return "\n".join(self._storage_check_rows)
+
+    def _update_storage_check_widgets(self) -> None:
+        self._set_static_text("#settings-storage-check-result", self._storage_check_text())
+
+    def _apply_storage_check_result(self, rows: tuple[str, ...]) -> None:
+        self._storage_check_rows = rows
+        self._update_storage_check_widgets()
+        self.app.notify("Storage check finished.", severity="information")
+
+    @work(exclusive=True, thread=True)
+    def _storage_check_worker(self) -> None:
+        rows = self._storage_check_results()
+        self.app.call_from_thread(self._apply_storage_check_result, rows)
 
     def _appearance_theme_summary(self) -> str:
         app_config = getattr(self.app_instance, "app_config", {}) or {}
@@ -1291,6 +1479,18 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Storage", classes="destination-section settings-column-title")
             with Vertical(id="settings-storage-card", classes="settings-focus-card"):
                 yield self._render_category_state_banner(SettingsCategoryId.STORAGE)
+                yield self._detail_row("Safety check", "verify write access before changing storage roots")
+                with Horizontal(id="settings-storage-actions", classes="settings-action-row"):
+                    yield Button(
+                        "Check Storage",
+                        id="settings-check-storage",
+                        tooltip="Verify local storage path access without moving or writing data.",
+                    )
+                yield Static(
+                    self._storage_check_text(),
+                    id="settings-storage-check-result",
+                    classes="settings-status-row settings-storage-check-result",
+                )
                 yield Static("Local paths", classes="destination-section")
                 for path_summary in self._known_storage_paths():
                     yield self._split_detail_row(path_summary)
@@ -1299,7 +1499,6 @@ class SettingsScreen(BaseAppScreen):
                     "Handoff boundary",
                     "database and media paths remain local unless a server handoff is explicit",
                 )
-                yield self._detail_row("Safety check", "verify write access before changing storage roots")
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
             yield Static("Privacy & Security", classes="destination-section settings-column-title")
             with Vertical(id="settings-privacy-security-card", classes="settings-focus-card"):
@@ -1651,6 +1850,11 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self.action_settings_test_category()
 
+    @on(Button.Pressed, "#settings-check-storage")
+    def handle_check_storage(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_settings_test_category()
+
     @on(Button.Pressed, "#settings-validate-config")
     def handle_validate_config(self, event: Button.Pressed) -> None:
         event.stop()
@@ -1849,6 +2053,12 @@ class SettingsScreen(BaseAppScreen):
             self._diagnostics_validation_and_reload_worker()
             self.app.notify("Diagnostics validation and reload started.", severity="information")
             return
+        if self._active_category_id() is SettingsCategoryId.STORAGE:
+            self._storage_check_rows = ("Storage check: running",)
+            self._update_storage_check_widgets()
+            self._storage_check_worker()
+            self.app.notify("Storage check started.", severity="information")
+            return
         self.app.notify("No test action is available for this Settings category yet.", severity="warning")
 
     def _sync_console_behavior_widgets(self) -> None:
@@ -1903,6 +2113,7 @@ class SettingsScreen(BaseAppScreen):
             if isinstance(focused, Button) and focused.id in {
                 "settings-console-collapse-large-pastes-toggle",
                 "settings-test-provider",
+                "settings-check-storage",
                 "settings-validate-config",
                 "settings-reload-config",
                 "settings-advanced-validate-config",
