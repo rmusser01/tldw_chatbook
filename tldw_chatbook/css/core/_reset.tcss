@@ -4,18 +4,18 @@
  * Base resets and default styles
  * ======================================== */
 
-/* Restore visible focus outlines for keyboard accessibility */
+/* Visible non-obscuring keyboard focus fallback. */
 *:focus {
-    outline: heavy $accent;
+    outline: solid $ds-focus-accent;
 }
 
 /* Theme-aware focus for dark/light modes */
 .dark *:focus {
-    outline: heavy $accent-darken-3;
+    outline: solid $ds-focus-accent;
 }
 
 .light *:focus {
-    outline: heavy $accent-lighten-3;
+    outline: solid $ds-focus-accent;
 }
 
 /* REMOVED: These rules were causing layout shifts and visual issues */

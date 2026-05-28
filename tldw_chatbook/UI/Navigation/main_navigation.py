@@ -82,7 +82,9 @@ class MainNavigationBar(Container):
     .nav-button:focus {
         background: $surface;
         border: solid $primary;
-        text-style: bold;
+        text-style: bold underline;
+        color: $text;
+        outline: none;
     }
 
     .nav-button.is-active {
@@ -90,6 +92,14 @@ class MainNavigationBar(Container):
         border: solid $primary;
         text-style: bold;
         color: $text;
+    }
+
+    .nav-button.is-active:focus {
+        background: $primary-darken-1;
+        border: solid $primary;
+        text-style: bold underline;
+        color: $text;
+        outline: none;
     }
 
     .nav-group-separator {

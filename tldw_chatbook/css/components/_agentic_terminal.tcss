@@ -778,8 +778,9 @@ ConsoleSettingsModal Select {
 }
 
 #console-native-composer.console-composer-focused {
-    border: heavy $ds-action-focus;
-    background: $ds-surface-raised;
+    border: solid $ds-input-focus-border;
+    border-bottom: solid $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
 }
 
 #console-native-composer.console-composer-setup-blocked #console-command-visible-text {
@@ -924,7 +925,7 @@ ConsoleSettingsModal Select {
 }
 
 #console-native-transcript:focus {
-    border: tall $ds-action-focus;
+    border: solid $ds-focus-accent;
 }
 
 .console-transcript-rule {
@@ -945,8 +946,8 @@ ConsoleSettingsModal Select {
 .console-transcript-message-selected {
     background: $ds-surface-raised;
     color: $ds-text-primary;
-    text-style: bold;
-    border: solid $ds-action-focus;
+    text-style: bold underline;
+    border: solid $ds-focus-accent;
 }
 
 .console-transcript-action-row {
@@ -972,8 +973,10 @@ ConsoleSettingsModal Select {
 }
 
 .console-transcript-action-button:focus {
-    background: $ds-action-focus;
-    color: $ds-text-primary;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 .console-workspace-selector-row {
@@ -1115,9 +1118,9 @@ ConsoleSettingsModal Select {
 
 .library-mode-chip:focus {
     outline: none;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 #library-contract-grid,
@@ -1486,7 +1489,11 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .settings-compact-input:focus {
-    outline: heavy $ds-action-focus;
+    border: solid $ds-input-focus-border;
+    border-bottom: solid $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    outline: none;
 }
 
 .settings-status-row {
@@ -1640,10 +1647,10 @@ Button.settings-category-button.settings-secondary-search-match {
 
 .library-mode-chip.is-active:focus {
     outline: none;
-    border: solid $primary;
+    border: solid $ds-focus-accent;
     background: $primary-darken-1;
     color: $ds-text-primary;
-    text-style: bold;
+    text-style: bold underline;
 }
 
 .library-source-action {
@@ -1652,6 +1659,13 @@ Button.settings-category-button.settings-secondary-search-match {
     height: $ds-library-source-action-height;
     min-height: $ds-library-source-action-height;
     margin: 0;
+}
+
+.library-source-action:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 .is-disabled {

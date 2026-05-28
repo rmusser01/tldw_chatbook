@@ -16,17 +16,20 @@ Button:hover {
     text-style: bold;
 }
 
-/* Enhanced focus state with visible outline */
+/* Enhanced focus state with visible, non-obscuring cues */
 Button:focus {
-    background: $primary-darken-1;
-    outline: heavy $accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 /* When both hovering AND focused */
 Button:hover:focus {
-    background: $primary-lighten-2;
-    text-style: bold;
-    outline: heavy $accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 /* Disabled state */
