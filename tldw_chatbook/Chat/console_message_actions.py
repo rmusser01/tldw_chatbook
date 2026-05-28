@@ -48,11 +48,11 @@ class ConsoleMessageActionService:
     _COMPLETED_ACTIONS: tuple[tuple[str, str], ...] = (
         ("copy", "Copy"),
         ("edit", "Edit"),
-        ("save-as", "Save as..."),
-        ("regenerate", "♻"),
-        ("continue", "--->"),
-        ("feedback", "👍/👎"),
-        ("delete", "🗑"),
+        ("save-as", "Save"),
+        ("regenerate", "Regenerate"),
+        ("continue", "Continue"),
+        ("feedback", "Feedback"),
+        ("delete", "Delete"),
     )
 
     def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
@@ -66,24 +66,24 @@ class ConsoleMessageActionService:
             completed_actions = [
                 ("copy", "Copy"),
                 ("edit", "Edit"),
-                ("save-as", "Save as..."),
-                ("variant-previous", "<"),
-                ("variant-next", ">"),
-                ("regenerate", "♻"),
-                ("continue", "--->"),
-                ("feedback", "👍/👎"),
-                ("delete", "🗑"),
+                ("save-as", "Save"),
+                ("variant-previous", "Prev"),
+                ("variant-next", "Next"),
+                ("regenerate", "Regenerate"),
+                ("continue", "Continue"),
+                ("feedback", "Feedback"),
+                ("delete", "Delete"),
             ]
         if message.status == "failed":
             return [
                 ConsoleMessageAction("copy", "Copy"),
                 ConsoleMessageAction("edit", "Edit"),
-                ConsoleMessageAction("save-as", "Save as..."),
+                ConsoleMessageAction("save-as", "Save"),
                 ConsoleMessageAction("retry", "Retry"),
-                ConsoleMessageAction("regenerate", "♻"),
-                ConsoleMessageAction("continue", "--->"),
-                ConsoleMessageAction("feedback", "👍/👎"),
-                ConsoleMessageAction("delete", "🗑"),
+                ConsoleMessageAction("regenerate", "Regenerate"),
+                ConsoleMessageAction("continue", "Continue"),
+                ConsoleMessageAction("feedback", "Feedback"),
+                ConsoleMessageAction("delete", "Delete"),
             ]
         return [
             ConsoleMessageAction(

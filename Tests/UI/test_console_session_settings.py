@@ -1,5 +1,6 @@
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Horizontal
 from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -17,6 +18,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+from tldw_chatbook.Widgets.Console import console_settings_summary as settings_summary_module
 from tldw_chatbook.Widgets.Console.console_settings_summary import ConsoleSettingsSummary
 
 
@@ -155,13 +157,18 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
         await pilot.pause()
 
         text = _visible_text(app)
-        assert "Console Settings" in text
+        assert "Session Settings" in text
         assert "Provider: llama.cpp" in text
         assert "Model: model-a" in text
         assert "Context: 12 / 4k" in text
         assert "Sampling: T 0.70, P 0.95" in text
         assert "Persona: General" in text
+        header = app.query_one("#console-settings-header", Horizontal)
+        title = app.query_one("#console-settings-title", Static)
         button = app.query_one("#console-settings-open", Button)
+        assert title.parent is header
+        assert button.parent is header
+        assert title.region.y == button.region.y
         assert str(button.label) == "Configure"
         assert button.tooltip == "Configure Console settings"
 
@@ -189,6 +196,56 @@ async def test_console_settings_summary_uses_direct_choose_model_action_when_set
         button = app.query_one("#console-settings-open", Button)
         assert str(button.label) == "Choose Model"
         assert button.tooltip == "Choose a model for this Console session"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_summary_treats_missing_provider_row_as_blank() -> None:
+    state = ConsoleSettingsSummaryState(
+        provider_row=None,  # type: ignore[arg-type]
+        model_row="Model: model-a",
+        context_row="Context: 12 / 4k",
+        sampling_row="Sampling: T 0.70, P 0.95",
+        identity_row="Persona: General",
+        readiness_label="Ready",
+    )
+
+    app = SummaryHarness(state)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+
+        provider_row = app.query_one("#console-settings-provider-row", Static)
+        assert str(provider_row.renderable) == ""
+        assert "None" not in _visible_text(app)
+
+        updated_state = ConsoleSettingsSummaryState(
+            provider_row=None,  # type: ignore[arg-type]
+            model_row="Model: model-b",
+            context_row="Context: 20 / 4k",
+            sampling_row="Sampling: T 0.20, P 0.90",
+            identity_row="Persona: Analyst",
+            readiness_label="Ready",
+        )
+        app.query_one(ConsoleSettingsSummary).sync_state(updated_state)
+        await pilot.pause()
+
+        assert str(provider_row.renderable) == ""
+        assert "None" not in _visible_text(app)
+
+
+def test_console_settings_summary_button_sizing_uses_named_constants() -> None:
+    assert settings_summary_module.CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT == 6
+    assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_HORIZONTAL_PADDING == 2
+    assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MIN_WIDTH == 9
+    assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MAX_WIDTH == 14
+    assert settings_summary_module.CONSOLE_SETTINGS_ROW_HEIGHT == 1
+
+
+def test_pending_launch_inspector_auto_open_docstring_is_google_style() -> None:
+    docstring = ChatScreen._apply_pending_launch_inspector_auto_open.__doc__
+
+    assert docstring is not None
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
 
 
 def test_summary_state_appends_non_ready_readiness_to_model_row() -> None:
@@ -881,6 +938,32 @@ async def test_console_left_rail_renders_settings_below_staged_context() -> None
 
         assert staged_context.region.y < settings.region.y < workspace_context.region.y
         assert settings.region.width == staged_context.region.width
+
+
+@pytest.mark.asyncio
+async def test_console_left_rail_body_scrolls_below_fixed_header() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(100, 32)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        left_rail = console.query_one("#console-left-rail")
+        header = console.query_one(".console-rail-header")
+        body = console.query_one("#console-left-rail-body")
+        staged_context = console.query_one("#console-staged-context-tray")
+        settings = console.query_one("#console-settings-summary")
+        workspace_context = console.query_one("#console-workspace-context")
+
+        assert body.region.y >= header.region.y + header.region.height
+        assert body.region.height <= left_rail.region.height - header.region.height
+        assert settings.parent is body
+        assert workspace_context.parent is body
+        assert staged_context.region.width == settings.region.width
+        assert settings.region.width == workspace_context.region.width
+        assert settings.region.width <= body.region.width
+        assert body.region.width - settings.region.width <= 2
 
 
 @pytest.mark.asyncio

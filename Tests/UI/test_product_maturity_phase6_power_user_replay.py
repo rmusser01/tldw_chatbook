@@ -153,7 +153,8 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
                 lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
             )
             console_text = _screen_text(app)
-            assert "Console | Live agent control" in console_text
+            assert "Console" in console_text
+            assert "Chat/RAG/Follow" in console_text
             assert "Live work sources" in console_text
             assert "RAG:" in console_text
             assert "Artifacts:" in console_text

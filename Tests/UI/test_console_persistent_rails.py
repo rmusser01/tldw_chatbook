@@ -237,8 +237,8 @@ def test_generated_console_stylesheet_includes_rail_rules():
         assert "width: 11;" in right_handle
         assert "min-width: 11;" in right_handle
         assert "max-width: 11;" in right_handle
-        assert "width: 9;" in right_button
-        assert "max-width: 9;" in right_button
+        assert "width: 11;" in right_button
+        assert "max-width: 11;" in right_button
 
 
 @pytest.mark.asyncio
@@ -266,7 +266,7 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
         assert right_handle.region.width == 11
         _assert_right_handle_lightweight(console)
         open_button = console.query_one("#console-inspector-rail-open", Button)
-        assert str(open_button.label) == "Inspect"
+        assert str(open_button.label) == "Inspector"
         assert open_button.tooltip == "Open Inspector rail"
 
 
@@ -414,6 +414,39 @@ async def test_console_inspector_rail_open_restores_right_rail_and_narrows_main_
                 direction="decrease",
             )
         ) < right_collapsed_width
+
+
+@pytest.mark.asyncio
+async def test_console_inspector_rail_body_scrolls_below_fixed_header():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 32)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-inspector-rail-open")
+
+        await pilot.click("#console-inspector-rail-open")
+        await _wait_for_displayed(console, pilot, "#console-right-rail")
+
+        right_rail = console.query_one("#console-right-rail")
+        header = right_rail.query_one(".console-rail-header")
+        body = console.query_one("#console-inspector-rail-body")
+        run_inspector = console.query_one("#console-run-inspector")
+        source_readiness = console.query_one("#console-live-work-source-readiness")
+
+        assert body.parent is right_rail
+        assert body.region.y >= header.region.y + header.region.height
+        assert body.region.height <= right_rail.region.height - header.region.height
+        assert run_inspector.parent is body
+        assert source_readiness.parent is body
+        assert run_inspector.region.x >= body.region.x
+        assert source_readiness.region.x >= body.region.x
+        assert run_inspector.region.x + run_inspector.region.width <= (
+            body.region.x + body.region.width
+        )
+        assert source_readiness.region.x + source_readiness.region.width <= (
+            body.region.x + body.region.width
+        )
 
 
 @pytest.mark.asyncio

@@ -376,6 +376,7 @@ class ChatScreen(BaseAppScreen):
         self._diagnostics_run = False
         self._handoff_consumption_in_progress = False
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
+        self._pending_console_launch_auto_open_inspector = False
         self._console_control_provider: Optional[Any] = None
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
@@ -417,6 +418,7 @@ class ChatScreen(BaseAppScreen):
         pending_launch = getattr(self.app_instance, "pending_console_launch", None)
         if (normalized_launch := ConsoleLiveWorkLaunch.from_pending(pending_launch)) is not None:
             self._pending_console_launch_context = normalized_launch
+            self._pending_console_launch_auto_open_inspector = True
             self.app_instance.pending_console_launch = None
         return self._pending_console_launch_context
 
@@ -1048,6 +1050,28 @@ class ChatScreen(BaseAppScreen):
             available_columns=self._console_rail_available_columns(),
         )
 
+    def _apply_pending_launch_inspector_auto_open(
+        self,
+        rail_state: ConsoleRailState,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> ConsoleRailState:
+        """Keep newly launched live work visible until the user chooses otherwise.
+
+        Args:
+            rail_state: Current Console rail state before launch visibility is applied.
+            pending_launch: Live-work launch metadata, when a launch just occurred.
+
+        Returns:
+            The original rail state, or a copy with the Inspector rail opened.
+        """
+        if (
+            pending_launch is not None
+            and self._pending_console_launch_auto_open_inspector
+            and not rail_state.right_forced_collapsed
+        ):
+            return replace(rail_state, right_open=True)
+        return rail_state
+
     @staticmethod
     def _console_badge_inspector_rows(
         inspector_state: ConsoleInspectorState,
@@ -1121,11 +1145,12 @@ class ChatScreen(BaseAppScreen):
         staged_context_state = self._build_console_staged_context_state(pending_launch)
         inspector_state = self._build_console_inspector_state(pending_launch)
         workspace_context_state = self._build_console_workspace_context_state()
-        return self._build_console_rail_state(
+        rail_state = self._build_console_rail_state(
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
             workspace_context_state=workspace_context_state,
         )
+        return self._apply_pending_launch_inspector_auto_open(rail_state, pending_launch)
 
     def _set_console_rail_preference(
         self,
@@ -1161,6 +1186,8 @@ class ChatScreen(BaseAppScreen):
             next_preferences,
             notify_on_failure=notify_on_failure,
         )
+        if right_open is not None:
+            self._pending_console_launch_auto_open_inspector = False
         rail_state = self._current_console_rail_state()
         self._sync_console_rail_visibility(rail_state)
         return rail_state
@@ -1354,11 +1381,13 @@ class ChatScreen(BaseAppScreen):
             value = label.partition(":")[2].strip()
             return value.split(maxsplit=1)[0] if value else "0"
 
-        persona = str(control_state.persona_label or "Assistant General")
+        persona = str(control_state.persona_label or "General")
         if persona.startswith("Assistant: "):
-            persona = f"Assistant {persona.removeprefix('Assistant: ')}"
+            persona = persona.removeprefix("Assistant: ").strip() or "General"
+        elif persona.startswith("Persona: "):
+            persona = persona.removeprefix("Persona: ").strip() or "Persona"
         return (
-            "Chat | RAG | Run Follow"
+            "Chat/RAG/Follow"
             f" | {persona}"
             f" | Sources {readiness_count(control_state.sources_label)}"
             f" | Tools {readiness_count(control_state.tools_label)}"
@@ -1782,6 +1811,7 @@ class ChatScreen(BaseAppScreen):
                 action_label="Resolve Library RAG setup",
             )
         )
+        self._pending_console_launch_auto_open_inspector = True
         
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
@@ -1795,9 +1825,13 @@ class ChatScreen(BaseAppScreen):
             inspector_state=inspector_state,
             workspace_context_state=workspace_context_state,
         )
+        rail_state = self._apply_pending_launch_inspector_auto_open(
+            rail_state,
+            pending_launch,
+        )
         with Vertical(id="console-shell"):
             yield Static(
-                "Console | Live agent control, chat, RAG, tools, approvals | Local",
+                "Console",
                 id="console-title",
                 classes="destination-status-row",
             )
@@ -1872,40 +1906,47 @@ class ChatScreen(BaseAppScreen):
                         collapse_button.styles.min_width = 3
                         collapse_button.styles.max_width = 3
                         yield collapse_button
-                    staged_context_tray = ConsoleStagedContextTray(
-                        staged_context_state,
-                        id="console-staged-context-tray",
-                        classes="console-left-rail-section",
-                    )
-                    staged_context_tray.styles.width = "100%"
-                    staged_context_tray.styles.min_width = 0
-                    staged_context_tray.styles.height = "1fr"
-                    yield self._frame_console_region(
-                        staged_context_tray,
-                        variant=self._staged_context_frame_variant(staged_context_state),
-                    )
+                    with VerticalScroll(
+                        id="console-left-rail-body",
+                        classes="console-left-rail-body",
+                    ):
+                        staged_context_tray = ConsoleStagedContextTray(
+                            staged_context_state,
+                            id="console-staged-context-tray",
+                            classes="console-left-rail-section",
+                        )
+                        staged_context_tray.styles.width = "100%"
+                        staged_context_tray.styles.min_width = 0
+                        staged_context_tray.styles.height = "auto"
+                        staged_context_tray.styles.min_height = 4
+                        staged_context_tray.styles.max_height = 10
+                        yield self._frame_console_region(
+                            staged_context_tray,
+                            variant=self._staged_context_frame_variant(staged_context_state),
+                        )
 
-                    settings_summary = ConsoleSettingsSummary(
-                        self._build_console_settings_summary_state(),
-                        id="console-settings-summary",
-                        classes="console-left-rail-section console-settings-summary",
-                    )
-                    settings_summary.styles.width = "100%"
-                    settings_summary.styles.min_width = 0
-                    yield self._frame_console_region(settings_summary, variant="quiet")
+                        settings_summary = ConsoleSettingsSummary(
+                            self._build_console_settings_summary_state(),
+                            id="console-settings-summary",
+                            classes="console-left-rail-section console-settings-summary",
+                        )
+                        settings_summary.styles.width = "100%"
+                        settings_summary.styles.min_width = 0
+                        yield self._frame_console_region(settings_summary, variant="quiet")
 
-                    workspace_context_tray = ConsoleWorkspaceContextTray(
-                        workspace_context_state,
-                        id="console-workspace-context",
-                        classes="console-left-rail-section",
-                    )
-                    workspace_context_tray.styles.width = "100%"
-                    workspace_context_tray.styles.min_width = 0
-                    workspace_context_tray.styles.height = "2fr"
-                    yield self._frame_console_region(
-                        workspace_context_tray,
-                        variant=self._workspace_context_frame_variant(workspace_context_state),
-                    )
+                        workspace_context_tray = ConsoleWorkspaceContextTray(
+                            workspace_context_state,
+                            id="console-workspace-context",
+                            classes="console-left-rail-section",
+                        )
+                        workspace_context_tray.styles.width = "100%"
+                        workspace_context_tray.styles.min_width = 0
+                        workspace_context_tray.styles.height = "1fr"
+                        workspace_context_tray.styles.min_height = 8
+                        yield self._frame_console_region(
+                            workspace_context_tray,
+                            variant=self._workspace_context_frame_variant(workspace_context_state),
+                        )
 
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
@@ -2008,15 +2049,21 @@ class ChatScreen(BaseAppScreen):
                         collapse_button.styles.min_width = 3
                         collapse_button.styles.max_width = 3
                         yield collapse_button
-                    with Vertical(id="console-run-inspector"):
-                        yield ConsoleRunInspector(
-                            inspector_state,
-                            id="console-run-inspector-state",
-                        )
-                    if pending_launch:
-                        yield from self._render_console_live_work_status_card(pending_launch)
-                    else:
-                        yield from self._render_console_live_work_source_readiness()
+                    with VerticalScroll(
+                        id="console-inspector-rail-body",
+                        classes="console-inspector-rail-body",
+                    ):
+                        with Vertical(id="console-run-inspector"):
+                            yield ConsoleRunInspector(
+                                inspector_state,
+                                id="console-run-inspector-state",
+                            )
+                        if pending_launch:
+                            yield from self._render_console_live_work_status_card(
+                                pending_launch
+                            )
+                        else:
+                            yield from self._render_console_live_work_source_readiness()
 
                 right_handle = ConsoleRailHandle(
                     label=rail_state.right_label,

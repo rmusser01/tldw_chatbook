@@ -15,7 +15,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
 
 
-CONSOLE_TRANSCRIPT_ACTION_ROW = "Copy | Edit | Save as... | ♻ | ---> | 👍/👎                 🗑"
+CONSOLE_TRANSCRIPT_ACTION_ROW = "Copy Edit Save Regenerate Continue Good Bad Delete"
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
 EMPTY_TRANSCRIPT_COPY = "Ready. Ask a question, run a command, or attach context."
 _ACTION_TOOLTIPS = {
@@ -244,8 +244,8 @@ class ConsoleTranscript(VerticalScroll):
         buttons: list[Button] = []
         for action in ConsoleMessageActionService().available_actions(message):
             if action.action_id == "feedback":
-                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-up", "👍/")))
-                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-down", "👎 |")))
+                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-up", "Good")))
+                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-down", "Bad")))
                 continue
             buttons.append(self._action_button(message, action))
         return Horizontal(*buttons, classes="console-transcript-action-row")
@@ -253,16 +253,13 @@ class ConsoleTranscript(VerticalScroll):
     @staticmethod
     def _plain_action_row(message: ConsoleChatMessage) -> str:
         if message.variants is not None:
-            return "Copy | Edit | Save as... | < | > | ♻ | ---> | 👍/👎                 🗑"
+            return "Copy Edit Save Prev Next Regenerate Continue Good Bad Delete"
         return CONSOLE_TRANSCRIPT_ACTION_ROW
 
     @staticmethod
     def _action_button(message: ConsoleChatMessage, action: ConsoleMessageAction) -> Button:
-        label = action.label
-        if action.action_id not in {"delete", "feedback-up", "feedback-down"}:
-            label = f"{label} |"
         button = Button(
-            label,
+            action.label,
             id=f"console-message-action-{action.action_id}-{message.id}",
             classes="console-transcript-action-button",
             disabled=not action.enabled,

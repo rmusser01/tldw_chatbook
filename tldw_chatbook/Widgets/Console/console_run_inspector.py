@@ -33,24 +33,29 @@ _ROW_GROUPS = (
     (
         "Run State",
         "console-inspector-run-state-heading",
-        ("Live work", "Provider", "Tools"),
-    ),
-    (
-        "Approvals",
-        "console-inspector-approvals-heading",
-        ("Approvals",),
+        ("Live work", "Provider"),
     ),
     (
         "Source Readiness",
         "console-inspector-source-readiness-heading",
         ("RAG/source", "Evidence", "Authority", "Artifacts"),
     ),
+    (
+        "Tools",
+        "console-inspector-tools-heading",
+        ("Tools",),
+    ),
+    (
+        "Approvals",
+        "console-inspector-approvals-heading",
+        ("Approvals",),
+    ),
 )
 
 _ACTION_GROUPS = {
-    "Run State": (CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,),
-    "Approvals": (CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,),
     "Source Readiness": (CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,),
+    "Tools": (CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,),
+    "Approvals": (CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,),
 }
 
 
@@ -121,11 +126,6 @@ class ConsoleRunInspector(Vertical):
         return "Status: Ready"
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            "Run Inspector",
-            id="console-run-inspector-title",
-            classes="destination-section",
-        )
         yield Static(
             self._status_summary(),
             id="console-inspector-run-status-summary",

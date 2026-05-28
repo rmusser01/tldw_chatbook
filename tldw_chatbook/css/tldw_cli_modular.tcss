@@ -1909,6 +1909,53 @@ ConsoleSettingsModal Select {
     min-width: 0;
 }
 
+#console-staged-context-tray {
+    height: auto;
+    min-height: 4;
+    max-height: 10;
+}
+
+#console-workspace-context {
+    height: 1fr;
+    min-height: 8;
+}
+
+#console-left-rail {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#console-left-rail-body {
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+    min-height: 0;
+    padding: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#console-inspector-rail-body {
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+    min-height: 0;
+    padding: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 #console-main-column {
     width: 13fr;
     min-width: 60;
@@ -1918,6 +1965,7 @@ ConsoleSettingsModal Select {
 #console-right-rail {
     width: 4fr;
     min-width: 34;
+    overflow: hidden;
 }
 
 #console-staged-context-tray,
@@ -1982,8 +2030,8 @@ ConsoleSettingsModal Select {
 }
 
 .console-rail-handle-button-right {
-    width: 9;
-    max-width: 9;
+    width: 11;
+    max-width: 11;
     height: 3;
     min-height: 3;
     max-height: 3;
@@ -2031,7 +2079,7 @@ ConsoleSettingsModal Select {
 .console-inspector-status-summary {
     height: 1;
     min-height: 1;
-    margin: 1 0 0 0;
+    margin: 0 0 1 0;
     padding: 0 1;
     border: none;
     background: $ds-surface-raised;
@@ -2063,16 +2111,30 @@ ConsoleSettingsModal Select {
 
 .console-settings-summary {
     height: auto;
-    min-height: 8;
+    min-height: 6;
     padding: 0 1;
 }
 
 .console-left-rail-section.console-settings-summary {
-    margin: 1 0;
-    padding: 1 1;
-    border-top: solid $ds-grid-line;
-    border-bottom: solid $ds-grid-line;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: none;
     background: $ds-surface-panel;
+}
+
+.console-settings-header {
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+.console-settings-title {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
 }
 
 .console-settings-row {
@@ -2085,9 +2147,12 @@ ConsoleSettingsModal Select {
 }
 
 #console-settings-open {
-    width: 100%;
+    width: auto;
+    min-width: 9;
+    max-width: 14;
     height: 1;
-    margin: 1 0 0 0;
+    min-height: 1;
+    margin: 0;
 }
 
 #console-transcript-region,

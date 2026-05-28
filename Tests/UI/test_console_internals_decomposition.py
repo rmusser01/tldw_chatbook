@@ -2,6 +2,7 @@ import time
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 from rich.text import Text
 from textual.events import Paste
 from textual.widgets import Button, Footer, Input, Select, Static
@@ -144,6 +145,12 @@ async def _open_console_inspector(console, pilot) -> None:
     raise AssertionError("Timed out waiting for Console Inspector rail to open")
 
 
+def _wrapped_plain_lines(rendered: object, width: int) -> list[str]:
+    rich_text = rendered if isinstance(rendered, Text) else Text(str(rendered))
+    console = Console(width=max(1, width), color_system=None)
+    return [line.plain for line in rich_text.wrap(console, max(1, width))]
+
+
 def _assert_single_style_span(renderable: Text, *, style: str, expected_text: str) -> None:
     matching_spans = [span for span in renderable.spans if span.style == style]
     assert len(matching_spans) == 1
@@ -225,10 +232,35 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
         ) in css
         assert (
             ".console-left-rail-section.console-settings-summary {\n"
-            "    margin: 1 0;\n"
-            "    padding: 1 1;\n"
-            "    border-top: solid $ds-grid-line;\n"
-            "    border-bottom: solid $ds-grid-line;"
+            "    margin: 0 0 1 0;\n"
+            "    padding: 0 1;\n"
+            "    border: none;"
+        ) in css
+        assert (
+            "#console-staged-context-tray {\n"
+            "    height: auto;\n"
+            "    min-height: 4;\n"
+            "    max-height: 10;"
+        ) in css
+        assert (
+            "#console-workspace-context {\n"
+            "    height: 1fr;\n"
+            "    min-height: 8;"
+        ) in css
+        assert (
+            "#console-left-rail-body {\n"
+            "    width: 100%;\n"
+            "    min-width: 0;\n"
+            "    height: 1fr;\n"
+            "    min-height: 0;"
+        ) in css
+        assert "    overflow-y: auto;" in css
+        assert (
+            "#console-inspector-rail-body {\n"
+            "    width: 100%;\n"
+            "    min-width: 0;\n"
+            "    height: 1fr;\n"
+            "    min-height: 0;"
         ) in css
         assert (
             "#console-composer-actions {\n"
@@ -287,10 +319,10 @@ async def test_console_mode_bar_groups_location_mode_and_readiness():
         title_plain = getattr(title.render(), "plain", str(title.render()))
         mode_plain = getattr(mode_bar.render(), "plain", str(mode_bar.render()))
 
-        assert title_plain == "Console | Live agent control, chat, RAG, tools, approvals | Local"
+        assert title_plain == "Console"
         assert (
             mode_plain
-            == "Chat | RAG | Run Follow | Assistant General | Sources 0 | Tools 0 | Approvals 0"
+            == "Chat/RAG/Follow | General | Sources 0 | Tools 0 | Approvals 0"
         )
 
 
@@ -1693,12 +1725,13 @@ async def test_console_inspector_live_work_sources_stay_near_top():
 
         inspector = console.query_one("#console-run-inspector")
         inspector_state = console.query_one("#console-run-inspector-state")
+        body = console.query_one("#console-inspector-rail-body")
         source_readiness = console.query_one("#console-live-work-source-readiness")
 
         assert inspector_state.region.height <= 14
-        assert source_readiness.region.y >= (
-            inspector_state.region.y + inspector_state.region.height
-        )
+        assert inspector.parent is body
+        assert source_readiness.parent is body
+        assert source_readiness.region.y >= inspector.region.y
         assert source_readiness.region.y <= inspector.region.y + inspector.region.height + 1
         assert source_readiness.region.height <= 18
 
@@ -1723,9 +1756,10 @@ async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overl
         assert len(scope_plain) <= scope.region.width
         assert rows
         for row in rows:
-            rendered = row.render()
-            plain = getattr(rendered, "plain", str(rendered))
-            assert len(plain) <= row.region.width
+            lines = _wrapped_plain_lines(row.render(), row.region.width)
+            assert lines
+            assert len(lines) <= row.region.height
+            assert all(len(line) <= row.region.width for line in lines)
 
 
 @pytest.mark.asyncio
@@ -1750,7 +1784,7 @@ async def test_console_empty_inspector_hides_disabled_actions_until_actionable()
 
 
 @pytest.mark.asyncio
-async def test_console_run_inspector_groups_state_approvals_and_source_readiness():
+async def test_console_run_inspector_orders_state_source_tools_and_approvals():
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -1759,8 +1793,9 @@ async def test_console_run_inspector_groups_state_approvals_and_source_readiness
         console = host.screen_stack[-1]
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-run-state-heading")
-        await _wait_for_selector(console, pilot, "#console-inspector-approvals-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-source-readiness-heading")
+        await _wait_for_selector(console, pilot, "#console-inspector-tools-heading")
+        await _wait_for_selector(console, pilot, "#console-inspector-approvals-heading")
 
         assert (
             getattr(
@@ -1770,6 +1805,7 @@ async def test_console_run_inspector_groups_state_approvals_and_source_readiness
             )
             == "Status: Ready"
         )
+        assert not list(console.query("#console-run-inspector-title"))
         assert (
             getattr(
                 console.query_one("#console-inspector-run-state-heading", Static).render(),
@@ -1793,6 +1829,20 @@ async def test_console_run_inspector_groups_state_approvals_and_source_readiness
                 "",
             )
             == "Source Readiness"
+        )
+        assert (
+            getattr(
+                console.query_one("#console-inspector-tools-heading", Static).render(),
+                "plain",
+                "",
+            )
+            == "Tools"
+        )
+        assert (
+            console.query_one("#console-inspector-run-state-heading").region.y
+            < console.query_one("#console-inspector-source-readiness-heading").region.y
+            < console.query_one("#console-inspector-tools-heading").region.y
+            < console.query_one("#console-inspector-approvals-heading").region.y
         )
 
 
@@ -1838,12 +1888,24 @@ async def test_console_left_rail_sections_use_available_space():
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
         left_rail = console.query_one("#console-left-rail")
+        body = console.query_one("#console-left-rail-body")
+        header = console.query_one(".console-rail-header")
         staged_context = console.query_one("#console-staged-context-tray")
+        settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
-        assert staged_context.region.width >= left_rail.region.width - 2
-        assert workspace_context.region.width >= left_rail.region.width - 2
-        assert workspace_context.region.height > staged_context.region.height
+        assert body.parent is left_rail
+        assert body.region.y >= header.region.y + header.region.height
+        assert body.region.height <= left_rail.region.height - header.region.height
+        assert staged_context.parent is body
+        assert settings.parent is body
+        assert workspace_context.parent is body
+        assert staged_context.region.y < settings.region.y < workspace_context.region.y
+        assert settings.region.height <= 6
+        assert workspace_context.region.height > settings.region.height
+        assert staged_context.region.width == body.region.width
+        assert settings.region.width == body.region.width
+        assert workspace_context.region.width == body.region.width
 
 
 @pytest.mark.asyncio
@@ -2306,18 +2368,21 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         assert console.query_one("#console-inspector-review-tool-call", Button).disabled is False
         assert console.query_one("#console-inspector-save-chatbook", Button).disabled is False
         assert (
-            console.query_one("#console-inspector-tools").region.y
+            console.query_one("#console-inspector-source-readiness-heading").region.y
+            < console.query_one("#console-inspector-artifacts").region.y
+            < console.query_one("#console-inspector-save-chatbook").region.y
+            < console.query_one("#console-inspector-tools-heading").region.y
+        )
+        assert (
+            console.query_one("#console-inspector-tools-heading").region.y
+            < console.query_one("#console-inspector-tools").region.y
             < console.query_one("#console-inspector-review-tool-call").region.y
             < console.query_one("#console-inspector-approvals-heading").region.y
         )
         assert (
             console.query_one("#console-inspector-approvals-heading").region.y
+            < console.query_one("#console-inspector-approvals").region.y
             < console.query_one("#console-inspector-review-approval").region.y
-            < console.query_one("#console-inspector-source-readiness-heading").region.y
-        )
-        assert (
-            console.query_one("#console-inspector-artifacts").region.y
-            < console.query_one("#console-inspector-save-chatbook").region.y
         )
         assert console.query_one("#console-live-work-primary-action", Button).disabled is False
 
