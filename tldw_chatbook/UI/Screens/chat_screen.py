@@ -1909,6 +1909,9 @@ class ChatScreen(BaseAppScreen):
                         )
                         staged_context_tray.styles.width = "100%"
                         staged_context_tray.styles.min_width = 0
+                        staged_context_tray.styles.height = "auto"
+                        staged_context_tray.styles.min_height = 4
+                        staged_context_tray.styles.max_height = 10
                         yield self._frame_console_region(
                             staged_context_tray,
                             variant=self._staged_context_frame_variant(staged_context_state),
@@ -1930,6 +1933,8 @@ class ChatScreen(BaseAppScreen):
                         )
                         workspace_context_tray.styles.width = "100%"
                         workspace_context_tray.styles.min_width = 0
+                        workspace_context_tray.styles.height = "1fr"
+                        workspace_context_tray.styles.min_height = 8
                         yield self._frame_console_region(
                             workspace_context_tray,
                             variant=self._workspace_context_frame_variant(workspace_context_state),

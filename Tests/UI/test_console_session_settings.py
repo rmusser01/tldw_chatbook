@@ -901,6 +901,7 @@ async def test_console_left_rail_body_scrolls_below_fixed_header() -> None:
         left_rail = console.query_one("#console-left-rail")
         header = console.query_one(".console-rail-header")
         body = console.query_one("#console-left-rail-body")
+        staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
@@ -908,7 +909,10 @@ async def test_console_left_rail_body_scrolls_below_fixed_header() -> None:
         assert body.region.height <= left_rail.region.height - header.region.height
         assert settings.parent is body
         assert workspace_context.parent is body
-        assert settings.region.width == body.region.width
+        assert staged_context.region.width == settings.region.width
+        assert settings.region.width == workspace_context.region.width
+        assert settings.region.width <= body.region.width
+        assert body.region.width - settings.region.width <= 2
 
 
 @pytest.mark.asyncio

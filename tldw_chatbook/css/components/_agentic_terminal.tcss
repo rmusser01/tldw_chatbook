@@ -461,8 +461,13 @@ ConsoleSettingsModal Select {
 
 #console-staged-context-tray {
     height: auto;
-    min-height: 6;
+    min-height: 4;
     max-height: 10;
+}
+
+#console-workspace-context {
+    height: 1fr;
+    min-height: 8;
 }
 
 #console-left-rail {

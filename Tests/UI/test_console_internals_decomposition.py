@@ -239,8 +239,13 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
         assert (
             "#console-staged-context-tray {\n"
             "    height: auto;\n"
-            "    min-height: 6;\n"
+            "    min-height: 4;\n"
             "    max-height: 10;"
+        ) in css
+        assert (
+            "#console-workspace-context {\n"
+            "    height: 1fr;\n"
+            "    min-height: 8;"
         ) in css
         assert (
             "#console-left-rail-body {\n"
