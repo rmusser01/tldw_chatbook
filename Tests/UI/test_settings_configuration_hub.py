@@ -1320,6 +1320,37 @@ def test_settings_storage_check_reports_empty_path_as_unconfigured(monkeypatch, 
     )
 
 
+def test_settings_privacy_check_reports_redacted_secret_status(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-token")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    app = SimpleNamespace(
+        app_config={
+            "encryption": {"enabled": False},
+            "api_settings": {
+                "openai": {
+                    "api_key_env_var": "OPENAI_API_KEY",
+                    "api_key": "sk-config-secret",
+                },
+                "groq": {"api_key_env_var": "GROQ_API_KEY"},
+            },
+            "tldw_api": {"auth_token": "server-secret-token"},
+        }
+    )
+    screen = SettingsScreen(app)
+
+    result = screen._privacy_check_results()
+    text = "\n".join(result)
+
+    assert result[0] == "Privacy check: complete"
+    assert "Config encryption: disabled" in result
+    assert "Sensitive config fields: 2 present" in result
+    assert "Provider env vars: 1 present / 1 missing / 2 configured" in result
+    assert "Redaction: active; raw secret values hidden" in result
+    assert "sk-secret-token" not in text
+    assert "sk-config-secret" not in text
+    assert "server-secret-token" not in text
+
+
 @pytest.mark.asyncio
 async def test_settings_storage_test_shortcut_runs_safety_check(monkeypatch, tmp_path):
     config_path = tmp_path / "config" / "config.toml"
@@ -1347,6 +1378,39 @@ async def test_settings_storage_test_shortcut_runs_safety_check(monkeypatch, tmp
 
         assert "Config path parent: writable" in text
         assert "User data directory: writable" in text
+        assert "No test action is available" not in text
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkeypatch):
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_key_env_var": "OPENAI_API_KEY",
+            "api_key": "sk-config-secret",
+        }
+    }
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-token")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-privacy-security")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-check-privacy")
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+
+        await pilot.press("t")
+        await _wait_for_settings_text(screen, pilot, "Privacy check: complete")
+        text = _visible_text(screen)
+
+        assert "Provider env vars: 1 present / 0 missing / 1 configured" in text
+        assert "Sensitive config fields: 1 present" in text
+        assert "sk-secret-token" not in text
+        assert "sk-config-secret" not in text
         assert "No test action is available" not in text
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
