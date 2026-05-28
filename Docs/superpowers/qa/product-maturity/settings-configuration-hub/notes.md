@@ -21,6 +21,7 @@ Evidence method: actual textual-web/CDP screenshots driven with Playwright brows
 - Diagnostics shortcut validation: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/16-diagnostics-shortcut-cdp.png`
 - Diagnostics worker shortcut validation: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/17-diagnostics-worker-cdp.png`
 - Storage safety check: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/18-storage-check-cdp.png`
+- Privacy/Security safety check: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/19-privacy-check-cdp.png`
 
 User approval: approved after actual rendered screenshot review.
 
@@ -179,3 +180,27 @@ git diff --check
 ```
 
 Result: `73 passed` for the full Settings configuration hub suite, one existing requests dependency warning, `git diff --check` clean, and approved screenshot verified as a `2050 x 1240` PNG.
+
+## 2026-05-27 Privacy/Security Safety Check Follow-Up
+
+Branch: `codex/settings-config-next-slice-3`
+
+Approved screenshot:
+
+- Privacy/Security safety check: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/19-privacy-check-cdp.png`
+
+Coverage added:
+
+- Privacy/Security now exposes a `Check Privacy` action and wires the Settings `t` shortcut to the same non-mutating privacy check when Privacy/Security is selected.
+- The check reports config encryption status, configured sensitive-field count, provider environment variable readiness, and redaction posture without printing raw secret values.
+- The Privacy/Security result block remains local to the category detail pane, while save/revert stay disabled because the check is diagnostic-only.
+- Actual textual-web/CDP verification confirmed the checked state renders in the full Settings workbench and displays redaction status without showing configured or environment secret values.
+
+Focused verification:
+
+```bash
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short
+git diff --check
+```
+
+Result: `80 passed` for the full Settings configuration hub suite, one existing requests dependency warning, `git diff --check` clean, and approved screenshot verified as a `2050 x 1240` PNG.
