@@ -107,7 +107,7 @@ def test_console_transcript_selected_message_shows_action_row():
 
     plain = transcript.to_plain_text(width=80)
 
-    assert "Copy Edit Save Regen Cont Good Bad Del" in plain
+    assert "Copy Edit Save Regen Cont Good Bad X" in plain
     assert "|" not in plain
 
 
@@ -123,7 +123,7 @@ def test_console_transcript_action_row_stays_within_terminal_width_budget():
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save Regen Cont Good Bad Del"
+    assert action_row == "Copy Edit Save Regen Cont Good Bad X"
     assert len(action_row) <= 40
 
 
@@ -146,6 +146,47 @@ def test_console_transcript_variant_navigation_changes_displayed_content():
     assert "first" not in rendered
     assert " < " in f" {rendered} "
     assert " > " in f" {rendered} "
+
+
+def test_console_transcript_variant_action_row_stays_within_terminal_width_budget():
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
+    message.variants = ConsoleVariantSet.from_contents(
+        turn_id="turn-1",
+        contents=["first", "second"],
+    )
+    transcript = ConsoleTranscript()
+    transcript.set_messages([message])
+    transcript.select_message("m1")
+
+    action_row = next(
+        line
+        for line in transcript.to_plain_text(width=48).splitlines()
+        if line.startswith("Copy")
+    )
+
+    assert action_row == "Copy Edit Save < > Regen Cont Good Bad X"
+    assert len(action_row) <= 40
+
+
+def test_console_transcript_failed_action_row_includes_retry_without_exceeding_budget():
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="failed",
+        id="m1",
+        status="failed",
+    )
+    transcript = ConsoleTranscript()
+    transcript.set_messages([message])
+    transcript.select_message("m1")
+
+    action_row = next(
+        line
+        for line in transcript.to_plain_text(width=48).splitlines()
+        if line.startswith("Copy")
+    )
+
+    assert action_row == "Copy Edit Save Try Regen Cont Good Bad X"
+    assert len(action_row) <= 40
 
 
 @pytest.mark.asyncio

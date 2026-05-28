@@ -19,7 +19,7 @@ def test_assistant_message_actions_include_required_order():
         "Regen",
         "Cont",
         "Feedback",
-        "Del",
+        "X",
     ]
 
 
@@ -40,7 +40,7 @@ def test_streaming_assistant_message_shows_completed_actions_disabled_with_reaso
         "Regen",
         "Cont",
         "Feedback",
-        "Del",
+        "X",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -67,7 +67,7 @@ def test_pending_assistant_message_shows_completed_actions_disabled_with_reasons
         "Regen",
         "Cont",
         "Feedback",
-        "Del",
+        "X",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -88,13 +88,9 @@ def test_action_labels_fit_compact_terminal_width_budget():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
 
-    labels = [
-        replacement
-        for action in service.available_actions(message)
-        for replacement in (["Good", "Bad"] if action.action_id == "feedback" else [action.label])
-    ]
+    labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save Regen Cont Good Bad Del"
+    assert " ".join(labels) == "Copy Edit Save Regen Cont Good Bad X"
     assert len(" ".join(labels)) <= 40
 
 
@@ -118,8 +114,37 @@ def test_variant_action_labels_use_symbolic_navigation():
         "Regen",
         "Cont",
         "Feedback",
-        "Del",
+        "X",
     ]
+
+
+def test_variant_action_labels_fit_compact_terminal_width_budget():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
+    message.variants = ConsoleVariantSet.from_contents(
+        turn_id="turn-1",
+        contents=["first", "second"],
+        selected_index=1,
+    )
+
+    labels = service.plain_action_labels(message)
+
+    assert " ".join(labels) == "Copy Edit Save < > Regen Cont Good Bad X"
+    assert len(" ".join(labels)) <= 40
+
+
+def test_failed_action_labels_include_retry_inside_terminal_width_budget():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="failed",
+        status="failed",
+    )
+
+    labels = service.plain_action_labels(message)
+
+    assert " ".join(labels) == "Copy Edit Save Try Regen Cont Good Bad X"
+    assert len(" ".join(labels)) <= 40
 
 
 def test_copy_action_returns_clipboard_text():
