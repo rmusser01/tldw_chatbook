@@ -35,11 +35,11 @@ Scope: PR 1 foundation plus app-wide inventory
 
 | Selector | Owner | Screen/widget | Type | Current risk | Target state | PR/status | Verification |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `NavigationButton:focus` | `tldw_chatbook/Widgets/base_components.py` | shared widget | button/nav | inline focus state needs review | two-cue non-obscuring focus | Deferred PR 3 | not yet migrated |
-| `NavigationButton.active` | `tldw_chatbook/Widgets/base_components.py` | shared widget | active nav | active fill needs review | active plus focus contract | Deferred PR 3 | not yet migrated |
-| `Collapsible > .collapsible--header:focus` | `tldw_chatbook/css/components/_widgets.tcss` | shared widgets | collapsible header | local focus treatment needs review | readable non-obscuring focus | Deferred PR 4+ | not yet migrated |
-| `.message-actions Button:focus` | `tldw_chatbook/css/components/_messages.tcss` | message actions | button | compact action focus needs review | two-cue non-obscuring focus | Deferred PR 4+ | not yet migrated |
-| `.message-actions Button:focus:hover` | `tldw_chatbook/css/components/_messages.tcss` | message actions | button | combined hover/focus needs review | two-cue non-obscuring focus | Deferred PR 4+ | not yet migrated |
+| `NavigationButton:focus` | `tldw_chatbook/Widgets/base_components.py` | shared widget | button/nav | inline focus state needs review | two-cue non-obscuring focus | PR 2 shared widgets | source contract |
+| `NavigationButton.active` | `tldw_chatbook/Widgets/base_components.py` | shared widget | active nav | active fill needs review | active plus focus contract | PR 2 shared widgets | source contract |
+| `Collapsible > .collapsible--header:focus` | `tldw_chatbook/css/components/_widgets.tcss` | shared widgets | collapsible header | local focus treatment needs review | readable non-obscuring focus | PR 2 shared widgets | source contract |
+| `.message-actions Button:focus` | `tldw_chatbook/css/components/_messages.tcss` | message actions | button | compact action focus needs review | two-cue non-obscuring focus | PR 2 shared widgets | source contract |
+| `.message-actions Button:focus:hover` | `tldw_chatbook/css/components/_messages.tcss` | message actions | button | combined hover/focus needs review | two-cue non-obscuring focus | PR 2 shared widgets | source contract |
 | `.chat-sidebar-toggle-button:focus` | `tldw_chatbook/css/features/_chat.tcss` | Chat | button | heavy outline feature override | two-cue non-obscuring focus | Deferred PR 4+ | not yet migrated |
 | `.rag-settings-panel:focus-within` | `tldw_chatbook/css/features/_chat.tcss` | Chat RAG settings | panel | focus-within treatment needs review | non-obscuring container cue | Deferred PR 4+ | not yet migrated |
 | `.chat-tab.active` | `tldw_chatbook/css/features/_chat_tabs.tcss` | Chat tabs | selected tab | active tab fill needs review | selected plus focus contract | Deferred PR 4+ | not yet migrated |

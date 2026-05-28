@@ -8,6 +8,9 @@ RESET = ROOT / "tldw_chatbook/css/core/_reset.tcss"
 BUTTONS = ROOT / "tldw_chatbook/css/components/_buttons.tcss"
 FORMS = ROOT / "tldw_chatbook/css/components/_forms.tcss"
 AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+BASE_COMPONENTS = ROOT / "tldw_chatbook/Widgets/base_components.py"
+WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
+MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 
 
 def css_block(text: str, selector: str) -> str:
@@ -117,3 +120,34 @@ def test_top_navigation_inline_focus_uses_hybrid_contract():
     assert_non_obscuring_focus(focus)
     assert "outline: heavy" not in active
     assert_non_obscuring_focus(active_focus)
+
+
+def test_shared_navigation_button_uses_non_obscuring_active_and_focus_states():
+    text = BASE_COMPONENTS.read_text(encoding="utf-8")
+    focus = css_block(text, "NavigationButton:focus")
+    active = css_block(text, "NavigationButton.active")
+    active_focus = css_block(text, "NavigationButton.active:focus")
+    assert_non_obscuring_focus(focus)
+    assert "$ds-focus-bg" in focus or "$ds-surface-raised" in focus
+    assert "border-left: thick" not in active
+    assert "outline: heavy" not in active
+    assert "text-style: bold;" in active
+    assert_non_obscuring_focus(active_focus)
+    assert "$ds-focus-bg" in active_focus or "$ds-surface-raised" in active_focus
+
+
+def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
+    text = WIDGETS.read_text(encoding="utf-8")
+    block = css_block(text, "Collapsible > .collapsible--header:focus")
+    collapsed_focus = css_block(text, "Collapsible.-collapsed > .collapsible--header:focus")
+    assert_non_obscuring_focus(block)
+    assert "outline: heavy" not in block
+    assert "border-bottom: solid $ds-focus-accent;" in collapsed_focus
+
+
+def test_message_action_buttons_focus_without_obscuring_labels():
+    text = MESSAGES.read_text(encoding="utf-8")
+    for selector in (".message-actions Button:focus", ".message-actions Button:focus:hover"):
+        block = css_block(text, selector)
+        assert_non_obscuring_focus(block)
+        assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
