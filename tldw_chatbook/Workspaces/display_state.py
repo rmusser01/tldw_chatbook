@@ -359,6 +359,8 @@ def _safe_runtime_bindings(
 
 
 def _safe_workspaces(registry_service: Any) -> tuple[WorkspaceRecord, ...]:
+    if registry_service is None:
+        return ()
     try:
         workspaces = registry_service.list_workspaces()
     except Exception:

@@ -1,7 +1,11 @@
 import base64
 from typing import Any, Dict, List, Optional, Tuple
 
+from loguru import logger as _logger
+
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+logger = _logger.bind(module="ChatPersistenceService")
 
 
 class ChatPersistenceService:
@@ -70,11 +74,15 @@ class ChatPersistenceService:
             "client_id": self.db.client_id,
         })
         if safe_workspace_id is not None:
-            self._link_workspace_conversation(
-                workspace_id=safe_workspace_id,
-                conversation_id=conversation_id,
-                title=title,
-            )
+            try:
+                self._link_workspace_conversation(
+                    workspace_id=safe_workspace_id,
+                    conversation_id=conversation_id,
+                    title=title,
+                )
+            except Exception:
+                self._discard_created_conversation(conversation_id)
+                raise
         return conversation_id
 
     def fork_conversation_into_workspace(
@@ -83,7 +91,23 @@ class ChatPersistenceService:
         conversation_id: str,
         target_workspace_id: str,
     ) -> Any:
-        """Record a workspace conversation link without mutating global history."""
+        """Record a workspace conversation link without mutating global history.
+
+        Args:
+            conversation_id: Existing conversation id to expose in the target
+                workspace context.
+            target_workspace_id: Workspace id that should receive the
+                conversation membership link.
+
+        Returns:
+            The workspace membership returned by the registry service.
+
+        Raises:
+            ValueError: If the conversation or target workspace cannot be
+                resolved.
+            Exception: Propagates registry storage failures from the workspace
+                membership link operation.
+        """
 
         conversation = self.db.get_conversation_by_id(conversation_id)
         if not conversation:
@@ -92,7 +116,8 @@ class ChatPersistenceService:
             scope_type="workspace",
             workspace_id=target_workspace_id,
         )
-        assert safe_workspace_id is not None
+        if safe_workspace_id is None:
+            raise ValueError("Failed to resolve a valid workspace ID")
         title = str(conversation.get("title") or "Workspace conversation")
         return self._link_workspace_conversation(
             workspace_id=safe_workspace_id,
@@ -133,6 +158,26 @@ class ChatPersistenceService:
             role="workspace-thread",
             title=title,
         )
+
+    def _discard_created_conversation(self, conversation_id: str) -> None:
+        conversation = self.db.get_conversation_by_id(
+            conversation_id,
+            include_deleted=True,
+        )
+        if conversation is None or conversation.get("deleted"):
+            return
+        try:
+            expected_version = int(conversation["version"])
+            self.db.soft_delete_conversation(
+                conversation_id,
+                expected_version=expected_version,
+            )
+        except Exception:
+            logger.bind(conversation_id=conversation_id).error(
+                "Failed to soft-delete workspace conversation after membership link failure",
+                exc_info=True,
+            )
+            raise
 
     def update_message_content(
         self,

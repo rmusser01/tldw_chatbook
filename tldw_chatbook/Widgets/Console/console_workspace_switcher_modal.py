@@ -12,7 +12,13 @@ from tldw_chatbook.Workspaces.models import WorkspaceRecord
 
 
 class ConsoleWorkspaceSwitcherModal(ModalScreen[str | None]):
-    """Choose the active workspace for Console context."""
+    """Choose the active workspace for Console context.
+
+    Args:
+        workspaces: Workspace records available for selection in the modal.
+        active_workspace_id: Workspace id that should render as the current
+            disabled choice, or ``None`` when no workspace is active.
+    """
 
     DEFAULT_CSS = """
     ConsoleWorkspaceSwitcherModal {

@@ -117,6 +117,19 @@ def test_console_workspace_state_enables_switching_with_multiple_workspaces(
     assert state.recovery_copy == ""
 
 
+def test_safe_workspaces_treats_missing_registry_as_empty_without_warning(monkeypatch) -> None:
+    warnings: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class FakeLogger:
+        def warning(self, *args, **kwargs) -> None:
+            warnings.append((args, kwargs))
+
+    monkeypatch.setattr(display_state, "logger", FakeLogger(), raising=False)
+
+    assert display_state._safe_workspaces(None) == ()
+    assert warnings == []
+
+
 def test_console_workspace_state_maps_workspace_sync_status_before_promotion(tmp_path: Path) -> None:
     expected_labels = {
         WorkspaceSyncStatus.NOT_CONFIGURED: "Sync: not configured",

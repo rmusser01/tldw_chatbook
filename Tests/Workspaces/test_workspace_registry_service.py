@@ -112,6 +112,13 @@ def test_registry_lists_workspace_conversations_only(tmp_path: Path) -> None:
     assert conversations[0].title == "Planning thread"
 
 
+def test_registry_list_workspace_conversations_uses_transaction_context() -> None:
+    source = inspect.getsource(LocalWorkspaceRegistryService.list_workspace_conversations)
+
+    assert "self.db.transaction()" in source
+    assert "self.db.connection()" not in source
+
+
 def test_registry_list_workspaces_uses_constant_sql() -> None:
     source = inspect.getsource(LocalWorkspaceRegistryService.list_workspaces)
 

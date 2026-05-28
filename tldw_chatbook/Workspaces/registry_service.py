@@ -334,7 +334,7 @@ class LocalWorkspaceRegistryService:
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
-            with self.db.connection() as conn:
+            with self.db.transaction() as conn:
                 rows = conn.execute(
                     """
                     SELECT *

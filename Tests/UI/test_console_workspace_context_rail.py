@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from textual.widgets import Button, Static
 
@@ -9,6 +11,7 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Widgets.Console import ConsoleWorkspaceSwitcherModal
 from tldw_chatbook.Workspaces import WorkspaceSyncStatus
 
 
@@ -39,6 +42,13 @@ async def _wait_for_console_screen(host: ConsoleHarness, console, pilot) -> None
             return
         await pilot.pause(0.05)
     raise AssertionError("Console workspace switcher did not dismiss")
+
+
+def test_console_workspace_switcher_modal_documents_constructor_contract() -> None:
+    docstring = inspect.getdoc(ConsoleWorkspaceSwitcherModal)
+
+    assert docstring is not None
+    assert "Args:" in docstring
 
 
 @pytest.mark.asyncio
