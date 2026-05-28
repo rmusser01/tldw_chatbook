@@ -45,14 +45,16 @@ class ConsoleSaveDestination:
 class ConsoleMessageActionService:
     """Resolve and dispatch safe Console selected-message actions."""
 
+    FEEDBACK_PLAIN_LABELS: tuple[str, str] = ("Good", "Bad")
+
     _COMPLETED_ACTIONS: tuple[tuple[str, str], ...] = (
         ("copy", "Copy"),
         ("edit", "Edit"),
         ("save-as", "Save"),
-        ("regenerate", "Regenerate"),
-        ("continue", "Continue"),
+        ("regenerate", "Regen"),
+        ("continue", "Cont"),
         ("feedback", "Feedback"),
-        ("delete", "Delete"),
+        ("delete", "X"),
     )
 
     def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
@@ -67,23 +69,23 @@ class ConsoleMessageActionService:
                 ("copy", "Copy"),
                 ("edit", "Edit"),
                 ("save-as", "Save"),
-                ("variant-previous", "Prev"),
-                ("variant-next", "Next"),
-                ("regenerate", "Regenerate"),
-                ("continue", "Continue"),
+                ("variant-previous", "<"),
+                ("variant-next", ">"),
+                ("regenerate", "Regen"),
+                ("continue", "Cont"),
                 ("feedback", "Feedback"),
-                ("delete", "Delete"),
+                ("delete", "X"),
             ]
         if message.status == "failed":
             return [
                 ConsoleMessageAction("copy", "Copy"),
                 ConsoleMessageAction("edit", "Edit"),
                 ConsoleMessageAction("save-as", "Save"),
-                ConsoleMessageAction("retry", "Retry"),
-                ConsoleMessageAction("regenerate", "Regenerate"),
-                ConsoleMessageAction("continue", "Continue"),
+                ConsoleMessageAction("retry", "Try"),
+                ConsoleMessageAction("regenerate", "Regen"),
+                ConsoleMessageAction("continue", "Cont"),
                 ConsoleMessageAction("feedback", "Feedback"),
-                ConsoleMessageAction("delete", "Delete"),
+                ConsoleMessageAction("delete", "X"),
             ]
         return [
             ConsoleMessageAction(
@@ -94,6 +96,25 @@ class ConsoleMessageActionService:
             )
             for action_id, label in completed_actions
         ]
+
+    def plain_action_labels(self, message: ConsoleChatMessage) -> list[str]:
+        """Return terminal-width labels for a message action row."""
+        return self.expand_plain_action_labels(self.available_actions(message))
+
+    def plain_action_row(self, message: ConsoleChatMessage) -> str:
+        """Return a terminal-readable action row for plain transcript exports."""
+        return " ".join(self.plain_action_labels(message))
+
+    @classmethod
+    def expand_plain_action_labels(cls, actions: list[ConsoleMessageAction]) -> list[str]:
+        """Expand grouped UI actions into the labels shown in plain text."""
+        labels: list[str] = []
+        for action in actions:
+            if action.action_id == "feedback":
+                labels.extend(cls.FEEDBACK_PLAIN_LABELS)
+            else:
+                labels.append(action.label)
+        return labels
 
     def save_as_destinations(self, message: ConsoleChatMessage) -> list[ConsoleSaveDestination]:
         """Return Save as destinations, including explicit WIP/unavailable entries."""
