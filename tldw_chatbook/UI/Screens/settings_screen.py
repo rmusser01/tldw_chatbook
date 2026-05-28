@@ -775,7 +775,7 @@ class SettingsScreen(BaseAppScreen):
         if not key_text or key_text.endswith("_env_var"):
             return False
         return key_text in SENSITIVE_CONFIG_EXACT_KEYS or any(
-            pattern in key_text for pattern in SENSITIVE_CONFIG_KEY_PATTERNS
+            key_text.endswith(pattern) for pattern in SENSITIVE_CONFIG_KEY_PATTERNS
         )
 
     @staticmethod
@@ -789,7 +789,7 @@ class SettingsScreen(BaseAppScreen):
             if value_text.startswith("<") and value_text.endswith(">"):
                 return False
             return True
-        return not isinstance(value, bool)
+        return False
 
     def _iter_config_leaf_values(self, value: object):
         if isinstance(value, Mapping):
@@ -830,8 +830,9 @@ class SettingsScreen(BaseAppScreen):
                     missing += 1
         return present, missing, present + missing
 
-    def _privacy_check_results(self) -> tuple[str, ...]:
-        app_config = getattr(self.app_instance, "app_config", {}) or {}
+    def _privacy_check_results(self, app_config: object | None = None) -> tuple[str, ...]:
+        if app_config is None:
+            app_config = getattr(self.app_instance, "app_config", {}) or {}
         encryption_config = app_config.get("encryption", {}) if isinstance(app_config, Mapping) else {}
         encryption_enabled = (
             bool(encryption_config.get("enabled"))
@@ -864,8 +865,8 @@ class SettingsScreen(BaseAppScreen):
         self.app.notify("Privacy check finished.", severity="information")
 
     @work(exclusive=True, thread=True)
-    def _privacy_check_worker(self) -> None:
-        rows = self._privacy_check_results()
+    def _privacy_check_worker(self, app_config: object) -> None:
+        rows = self._privacy_check_results(app_config)
         self.app.call_from_thread(self._apply_privacy_check_result, rows)
 
     def _appearance_theme_summary(self) -> str:
@@ -2206,7 +2207,8 @@ class SettingsScreen(BaseAppScreen):
         if self._active_category_id() is SettingsCategoryId.PRIVACY_SECURITY:
             self._privacy_check_rows = ("Privacy check: running",)
             self._update_privacy_check_widgets()
-            self._privacy_check_worker()
+            app_config = copy.deepcopy(getattr(self.app_instance, "app_config", {}))
+            self._privacy_check_worker(app_config)
             self.app.notify("Privacy check started.", severity="information")
             return
         self.app.notify("No test action is available for this Settings category yet.", severity="warning")

@@ -27,6 +27,10 @@ from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsValidationResult,
 )
 
+DUMMY_REDACTION_ENV_VALUE = "redaction-fixture-env-value"
+DUMMY_REDACTION_CONFIG_VALUE = "redaction-fixture-config-value"
+DUMMY_REDACTION_SERVER_VALUE = "redaction-fixture-server-value"
+
 
 def _app(
     *,
@@ -1321,7 +1325,7 @@ def test_settings_storage_check_reports_empty_path_as_unconfigured(monkeypatch, 
 
 
 def test_settings_privacy_check_reports_redacted_secret_status(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-token")
+    monkeypatch.setenv("OPENAI_API_KEY", DUMMY_REDACTION_ENV_VALUE)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     app = SimpleNamespace(
         app_config={
@@ -1329,11 +1333,12 @@ def test_settings_privacy_check_reports_redacted_secret_status(monkeypatch):
             "api_settings": {
                 "openai": {
                     "api_key_env_var": "OPENAI_API_KEY",
-                    "api_key": "sk-config-secret",
+                    "api_key": DUMMY_REDACTION_CONFIG_VALUE,
                 },
                 "groq": {"api_key_env_var": "GROQ_API_KEY"},
             },
-            "tldw_api": {"auth_token": "server-secret-token"},
+            "chat_defaults": {"max_tokens": 4096},
+            "tldw_api": {"auth_token": DUMMY_REDACTION_SERVER_VALUE},
         }
     )
     screen = SettingsScreen(app)
@@ -1346,9 +1351,31 @@ def test_settings_privacy_check_reports_redacted_secret_status(monkeypatch):
     assert "Sensitive config fields: 2 present" in result
     assert "Provider env vars: 1 present / 1 missing / 2 configured" in result
     assert "Redaction: active; raw secret values hidden" in result
-    assert "sk-secret-token" not in text
-    assert "sk-config-secret" not in text
-    assert "server-secret-token" not in text
+    assert DUMMY_REDACTION_ENV_VALUE not in text
+    assert DUMMY_REDACTION_CONFIG_VALUE not in text
+    assert DUMMY_REDACTION_SERVER_VALUE not in text
+
+
+def test_settings_privacy_secret_count_ignores_non_secret_numeric_token_limits():
+    app = SimpleNamespace(
+        app_config={
+            "api_settings": {
+                "openai": {
+                    "api_key": DUMMY_REDACTION_CONFIG_VALUE,
+                    "max_tokens": 4096,
+                },
+            },
+            "chat_defaults": {
+                "max_tokens": 2048,
+                "token_budget": 512,
+            },
+        }
+    )
+    screen = SettingsScreen(app)
+
+    result = screen._privacy_check_results()
+
+    assert "Sensitive config fields: 1 present" in result
 
 
 @pytest.mark.asyncio
@@ -1389,10 +1416,10 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
     app.app_config["api_settings"] = {
         "openai": {
             "api_key_env_var": "OPENAI_API_KEY",
-            "api_key": "sk-config-secret",
+            "api_key": DUMMY_REDACTION_CONFIG_VALUE,
         }
     }
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-token")
+    monkeypatch.setenv("OPENAI_API_KEY", DUMMY_REDACTION_ENV_VALUE)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -1409,11 +1436,41 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
 
         assert "Provider env vars: 1 present / 0 missing / 1 configured" in text
         assert "Sensitive config fields: 1 present" in text
-        assert "sk-secret-token" not in text
-        assert "sk-config-secret" not in text
+        assert DUMMY_REDACTION_ENV_VALUE not in text
+        assert DUMMY_REDACTION_CONFIG_VALUE not in text
         assert "No test action is available" not in text
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_settings_privacy_shortcut_passes_stable_config_snapshot_to_worker():
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_key_env_var": "OPENAI_API_KEY",
+            "api_key": DUMMY_REDACTION_CONFIG_VALUE,
+        }
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-privacy-security")
+        screen = _active_destination_screen(host)
+        captured = {}
+
+        def fake_privacy_worker(app_config_snapshot):
+            captured["snapshot"] = app_config_snapshot
+
+        screen._privacy_check_worker = fake_privacy_worker
+        screen.action_settings_test_category()
+
+        snapshot = captured["snapshot"]
+        assert snapshot == app.app_config
+        assert snapshot is not app.app_config
+        assert snapshot["api_settings"] is not app.app_config["api_settings"]
+        app.app_config["api_settings"]["openai"]["api_key"] = "changed-after-dispatch"
+        assert snapshot["api_settings"]["openai"]["api_key"] == DUMMY_REDACTION_CONFIG_VALUE
 
 
 def test_settings_config_path_validates_env_override(monkeypatch):

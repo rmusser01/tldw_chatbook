@@ -203,4 +203,4 @@ python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short
 git diff --check
 ```
 
-Result: `78 passed` for the full Settings configuration hub suite, one existing requests dependency warning, `git diff --check` clean, and approved screenshot verified as a `2050 x 1240` PNG.
+Result: `80 passed` for the full Settings configuration hub suite, one existing requests dependency warning, `git diff --check` clean, and approved screenshot verified as a `2050 x 1240` PNG.
