@@ -56,7 +56,6 @@ def resolve_console_provider_identity(
     raw_provider = (provider or "").strip()
     display_key = provider_config_key(raw_provider)
     exact_key = raw_provider.lower()
-    handlers = _handler_keys(handler_keys)
 
     if exact_key in DIRECT_CONSOLE_PROVIDER_KEYS or display_key in DIRECT_CONSOLE_PROVIDER_KEYS:
         direct_key = exact_key if exact_key in DIRECT_CONSOLE_PROVIDER_KEYS else display_key
@@ -68,6 +67,7 @@ def resolve_console_provider_identity(
             uses_direct_llama_path=True,
         )
 
+    handlers = _handler_keys(handler_keys)
     readiness_key = _EXECUTION_TO_READINESS_ALIASES.get(exact_key, display_key)
     execution_key = _READINESS_TO_EXECUTION_ALIASES.get(readiness_key)
     if execution_key is None:

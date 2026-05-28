@@ -1,3 +1,4 @@
+import builtins
 import json
 
 import httpx
@@ -302,14 +303,39 @@ async def test_resolve_for_send_blocks_invalid_llamacpp_base_url_before_http():
 
 
 @pytest.mark.asyncio
-async def test_resolve_for_send_blocks_unsupported_provider_with_wip_copy():
+async def test_gateway_resolves_direct_llamacpp_without_importing_chat_functions(monkeypatch):
+    real_import = builtins.__import__
+
+    def fail_chat_functions_import(name, *args, **kwargs):
+        if name == "tldw_chatbook.Chat.Chat_Functions":
+            raise AssertionError("direct llama resolution should not import Chat_Functions")
+        return real_import(name, *args, **kwargs)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/health"
+        return httpx.Response(200, json={"status": "ok"})
+
+    monkeypatch.setattr(builtins, "__import__", fail_chat_functions_import)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = ConsoleProviderGateway(http_client=client)
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="llama_cpp", base_url="http://127.0.0.1:9099", explicit_model="m")
+    )
+
+    assert resolved.ready is True
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_blocks_unsupported_provider_with_recovery_copy():
     gateway = ConsoleProviderGateway(
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
     )
 
     resolved = await gateway.resolve_for_send(
         ConsoleProviderSelection(
-            provider="openai",
+            provider="future_provider",
             temperature=0.3,
             top_p=0.9,
             min_p=0.02,
@@ -320,14 +346,153 @@ async def test_resolve_for_send_blocks_unsupported_provider_with_wip_copy():
     )
 
     assert resolved.ready is False
-    assert resolved.provider == "openai"
+    assert resolved.provider == "future_provider"
     assert resolved.temperature == 0.3
     assert resolved.top_p == 0.9
     assert resolved.min_p == 0.02
     assert resolved.top_k == 40
     assert resolved.max_tokens == 600
     assert resolved.streaming is False
-    assert resolved.visible_copy == "WIP: Console native provider 'openai' is not wired yet. Select llama.cpp for this slice."
+    assert resolved.visible_copy == (
+        "Provider blocked: 'future_provider' is not available in Console yet. Choose a supported provider."
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_openai_uses_env_key_and_execution_key() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}},
+        environ={"OPENAI_API_KEY": "sk-test-secret"},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1", streaming=False)
+    )
+
+    assert resolved.ready is True
+    assert resolved.provider == "openai"
+    assert resolved.readiness_key == "openai"
+    assert resolved.execution_key == "openai"
+    assert resolved.api_key == "sk-test-secret"
+    assert resolved.api_key_source == "env:OPENAI_API_KEY"
+    assert "sk-test-secret" not in resolved.visible_copy
+    assert "sk-test-secret" not in repr(resolved)
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_supported_provider_missing_key_blocks_without_wip() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"anthropic": {"api_key_env_var": "ANTHROPIC_API_KEY"}}},
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="anthropic", explicit_model="claude-sonnet")
+    )
+
+    assert resolved.ready is False
+    assert "Missing API key" in resolved.visible_copy
+    assert "not wired" not in resolved.visible_copy
+    assert "WIP" not in resolved.visible_copy
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_custom_alias_uses_custom_openai_execution_key() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"custom": {"model": "m"}}},
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(ConsoleProviderSelection(provider="Custom", configured_model="m"))
+
+    assert resolved.ready is True
+    assert resolved.readiness_key == "custom"
+    assert resolved.execution_key == "custom-openai-api"
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_from_config() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="ollama", explicit_model="llama3", base_url="http://127.0.0.1:9999")
+    )
+
+    assert resolved.ready is False
+    assert "save the endpoint in Settings" in resolved.visible_copy
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_accepts_generic_base_url_matching_config_with_trailing_slash() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="ollama", explicit_model="llama3", base_url="http://127.0.0.1:11434/")
+    )
+
+    assert resolved.ready is True
+    assert resolved.base_url == "http://127.0.0.1:11434/"
+    assert resolved.model == "llama3"
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_accepts_generic_base_url_matching_default_port() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"ollama": {"api_url": "http://example.test"}}},
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="ollama", explicit_model="llama3", base_url="http://example.test:80/")
+    )
+
+    assert resolved.ready is True
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashing() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="ollama", explicit_model="llama3", base_url="http://[::1")
+    )
+
+    assert resolved.ready is False
+    assert "save the endpoint in Settings" in resolved.visible_copy
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_reads_config_provider_at_resolution_time() -> None:
+    configs = [
+        {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY", "model": "old-model"}}},
+        {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY", "model": "new-model"}}},
+    ]
+
+    def config_provider() -> dict[str, object]:
+        return configs.pop(0)
+
+    gateway = ConsoleProviderGateway(
+        config_provider=config_provider,
+        environ={"OPENAI_API_KEY": "sk-test-secret"},
+    )
+
+    first = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai"))
+    second = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai"))
+
+    assert first.ready is True
+    assert first.model == "old-model"
+    assert second.ready is True
+    assert second.model == "new-model"
+    assert configs == []
 
 
 @pytest.mark.asyncio

@@ -40,6 +40,21 @@ def test_direct_console_provider_keys_are_not_generic_adapter() -> None:
         assert identity.is_supported is True
 
 
+def test_direct_console_provider_identity_does_not_require_handler_keys(monkeypatch) -> None:
+    def fail_handler_lookup(*_args, **_kwargs):
+        raise AssertionError("direct providers should not load chat_api_call handlers")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_provider_support._handler_keys",
+        fail_handler_lookup,
+    )
+
+    identity = resolve_console_provider_identity("llama_cpp")
+
+    assert identity.uses_direct_llama_path is True
+    assert identity.execution_key == "llama_cpp"
+
+
 def test_preserves_exact_execution_key_when_present_in_handler_keys() -> None:
     identity = resolve_console_provider_identity(
         "provider-with-hyphen",
