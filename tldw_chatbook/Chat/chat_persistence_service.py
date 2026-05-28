@@ -5,8 +5,9 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 class ChatPersistenceService:
-    def __init__(self, db: CharactersRAGDB):
+    def __init__(self, db: CharactersRAGDB, workspace_registry: Any | None = None):
         self.db = db
+        self.workspace_registry = workspace_registry
 
     @staticmethod
     def derive_conversation_title(
@@ -45,13 +46,17 @@ class ChatPersistenceService:
         workspace_id: Optional[str] = None,
         conversation_title: Optional[str] = None,
     ) -> str:
+        safe_workspace_id = self._require_workspace_scope(
+            scope_type=scope_type,
+            workspace_id=workspace_id,
+        )
         title = self.derive_conversation_title(
             character_name=character_name,
             assistant_kind=assistant_kind,
             assistant_id=assistant_id,
             explicit_title=conversation_title,
         )
-        return self.db.add_conversation({
+        conversation_id = self.db.add_conversation({
             "character_id": character_id,
             "assistant_kind": assistant_kind,
             "assistant_id": assistant_id,
@@ -60,10 +65,74 @@ class ChatPersistenceService:
             "discovery_owner": discovery_owner,
             "discovery_entity_id": discovery_entity_id,
             "scope_type": scope_type,
-            "workspace_id": workspace_id,
+            "workspace_id": safe_workspace_id if safe_workspace_id is not None else workspace_id,
             "title": title,
             "client_id": self.db.client_id,
         })
+        if safe_workspace_id is not None:
+            self._link_workspace_conversation(
+                workspace_id=safe_workspace_id,
+                conversation_id=conversation_id,
+                title=title,
+            )
+        return conversation_id
+
+    def fork_conversation_into_workspace(
+        self,
+        *,
+        conversation_id: str,
+        target_workspace_id: str,
+    ) -> Any:
+        """Record a workspace conversation link without mutating global history."""
+
+        conversation = self.db.get_conversation_by_id(conversation_id)
+        if not conversation:
+            raise ValueError(f"Conversation {conversation_id} not found")
+        safe_workspace_id = self._require_workspace_scope(
+            scope_type="workspace",
+            workspace_id=target_workspace_id,
+        )
+        assert safe_workspace_id is not None
+        title = str(conversation.get("title") or "Workspace conversation")
+        return self._link_workspace_conversation(
+            workspace_id=safe_workspace_id,
+            conversation_id=conversation_id,
+            title=title,
+        )
+
+    def _require_workspace_scope(
+        self,
+        *,
+        scope_type: Optional[str],
+        workspace_id: Optional[str],
+    ) -> Optional[str]:
+        normalized_scope = (scope_type or "").strip().lower()
+        if normalized_scope != "workspace":
+            return None
+        safe_workspace_id = (workspace_id or "").strip()
+        if not safe_workspace_id:
+            raise ValueError("Workspace conversation requires a workspace_id")
+        if self.workspace_registry is None:
+            raise ValueError("Workspace registry is required for workspace conversations")
+        workspace = self.workspace_registry.get_workspace(safe_workspace_id)
+        if workspace is None:
+            raise ValueError(f"Unknown workspace: {safe_workspace_id}")
+        return safe_workspace_id
+
+    def _link_workspace_conversation(
+        self,
+        *,
+        workspace_id: str,
+        conversation_id: str,
+        title: str,
+    ) -> Any:
+        return self.workspace_registry.link_membership(
+            workspace_id,
+            item_type="conversation",
+            item_id=conversation_id,
+            role="workspace-thread",
+            title=title,
+        )
 
     def update_message_content(
         self,

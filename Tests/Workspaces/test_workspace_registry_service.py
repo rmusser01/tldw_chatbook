@@ -87,6 +87,31 @@ def test_registry_lists_workspaces_deterministically(tmp_path: Path) -> None:
     ]
 
 
+def test_registry_lists_workspace_conversations_only(tmp_path: Path) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="conv-1",
+        role="workspace-thread",
+        title="Planning thread",
+    )
+    service.link_membership(
+        "ws-a",
+        item_type="note",
+        item_id="note-1",
+        role="source",
+        title="Research note",
+    )
+
+    conversations = service.list_workspace_conversations("ws-a")
+
+    assert [conversation.item_id for conversation in conversations] == ["conv-1"]
+    assert conversations[0].title == "Planning thread"
+
+
 def test_registry_list_workspaces_uses_constant_sql() -> None:
     source = inspect.getsource(LocalWorkspaceRegistryService.list_workspaces)
 

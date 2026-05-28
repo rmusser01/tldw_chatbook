@@ -99,6 +99,24 @@ def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: 
     assert "later slice" in state.new_conversation_recovery.lower()
 
 
+def test_console_workspace_state_enables_switching_with_multiple_workspaces(
+    tmp_path: Path,
+) -> None:
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+    )
+
+    assert state.change_workspace_enabled is True
+    assert state.change_workspace_recovery == ""
+    assert state.recovery_copy == ""
+
+
 def test_console_workspace_state_maps_workspace_sync_status_before_promotion(tmp_path: Path) -> None:
     expected_labels = {
         WorkspaceSyncStatus.NOT_CONFIGURED: "Sync: not configured",

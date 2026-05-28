@@ -2,6 +2,8 @@ import pytest
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
 
 @pytest.fixture
@@ -243,3 +245,41 @@ class TestChatPersistenceService:
         assert conversation["character_id"] == character_id
         assert conversation["assistant_kind"] == assistant_kind
         assert conversation["assistant_id"] == assistant_id
+
+    def test_workspace_conversation_requires_existing_workspace(
+        self,
+        db_instance: CharactersRAGDB,
+        tmp_path,
+    ):
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+        )
+        service = ChatPersistenceService(db_instance, workspace_registry=registry)
+
+        with pytest.raises(ValueError, match="Unknown workspace"):
+            service.create_conversation(
+                scope_type="workspace",
+                workspace_id="missing",
+                conversation_title="Missing workspace chat",
+            )
+
+    def test_workspace_conversation_links_membership(
+        self,
+        db_instance: CharactersRAGDB,
+        tmp_path,
+    ):
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+        )
+        registry.create_workspace(workspace_id="ws-a", name="Workspace A")
+        service = ChatPersistenceService(db_instance, workspace_registry=registry)
+
+        conversation_id = service.create_conversation(
+            scope_type="workspace",
+            workspace_id="ws-a",
+            conversation_title="Workspace planning",
+        )
+
+        conversations = registry.list_workspace_conversations("ws-a")
+        assert [conversation.item_id for conversation in conversations] == [conversation_id]
+        assert conversations[0].title == "Workspace planning"

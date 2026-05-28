@@ -56,8 +56,14 @@ class WaitingGateway(_ReadyResolutionGateway):
 
 
 class DelayedWaitingGateway(WaitingGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.validation_started = asyncio.Event()
+        self.validation_release = asyncio.Event()
+
     async def resolve_for_send(self, selection):
-        await asyncio.sleep(0.15)
+        self.validation_started.set()
+        await self.validation_release.wait()
         return await super().resolve_for_send(selection)
 
 
@@ -428,13 +434,8 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        for _ in range(20):
-            if (
-                console._ensure_console_chat_controller().run_state.status
-                is ConsoleRunStatus.VALIDATING
-            ):
-                break
-            await pilot.pause(0.01)
+        await asyncio.wait_for(gateway.validation_started.wait(), timeout=1)
+        assert console._ensure_console_chat_controller().run_state.status is ConsoleRunStatus.VALIDATING
         console._sync_console_control_bar()
         send_button = console.query_one("#console-send-message", Button)
         stop_button = console.query_one("#console-stop-generation", Button)
@@ -446,6 +447,7 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
         assert stop_button.disabled is False
         assert stop_button.has_class("console-stop-idle")
 
+        gateway.validation_release.set()
         await asyncio.wait_for(gateway.started.wait(), timeout=1)
         await _wait_for_text(console, pilot, "partial")
         gateway.release.set()
@@ -663,7 +665,9 @@ async def test_console_failed_stream_renders_inline_retry_and_recovers():
         transcript.select_message(failed.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(console, pilot, f"#console-message-action-retry-{failed.id}")
-        assert "Retry" in _visible_text(console)
+        retry_button = console.query_one(f"#console-message-action-retry-{failed.id}", Button)
+        assert str(retry_button.label) == "Try"
+        assert retry_button.tooltip == "Retry the failed response."
 
         await pilot.click(f"#console-message-action-retry-{failed.id}")
         await _wait_for_text(console, pilot, "recovered")

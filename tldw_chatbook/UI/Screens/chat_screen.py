@@ -103,6 +103,7 @@ from ...Widgets.Console import (
     ConsoleStagedContextTray,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceSwitcherModal,
 )
 from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
@@ -361,6 +362,61 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(
             ConsoleRenameSessionModal(title=session.title),
             callback=_apply_rename,
+        )
+
+    @on(Button.Pressed, "#console-change-workspace")
+    def on_console_change_workspace(self, event: Button.Pressed) -> None:
+        """Open the active Console workspace switcher."""
+        event.stop()
+        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry_service is None:
+            self.app_instance.notify("Workspace service is not ready.", severity="warning")
+            return
+        try:
+            workspaces = tuple(registry_service.list_workspaces())
+            active_workspace = registry_service.get_active_workspace()
+        except Exception:
+            logger.warning("Unable to open Console workspace switcher", exc_info=True)
+            self.app_instance.notify(
+                "Workspace registry could not be read.",
+                severity="error",
+            )
+            return
+        if not workspaces:
+            self.app_instance.notify(
+                "Create a workspace in Library > Workspaces before switching.",
+                severity="warning",
+            )
+            return
+
+        active_workspace_id = (
+            active_workspace.workspace_id if active_workspace is not None else None
+        )
+
+        def _apply_workspace_switch(workspace_id: str | None) -> None:
+            if not workspace_id:
+                return
+            try:
+                registry_service.set_active_workspace(workspace_id)
+            except Exception:
+                logger.warning(
+                    "Unable to switch Console workspace",
+                    exc_info=True,
+                )
+                self.app_instance.notify(
+                    "Workspace could not be selected.",
+                    severity="error",
+                )
+                return
+            self._sync_console_chat_core_state()
+            self._sync_console_workspace_context()
+
+        self.app.push_screen(
+            ConsoleWorkspaceSwitcherModal(
+                workspaces=workspaces,
+                active_workspace_id=active_workspace_id,
+            ),
+            callback=_apply_workspace_switch,
         )
     
     
@@ -706,7 +762,14 @@ class ChatScreen(BaseAppScreen):
             persistence = None
             db = getattr(self.app_instance, "chachanotes_db", None)
             if db is not None:
-                persistence = ChatPersistenceService(db)
+                persistence = ChatPersistenceService(
+                    db,
+                    workspace_registry=getattr(
+                        self.app_instance,
+                        "workspace_registry_service",
+                        None,
+                    ),
+                )
             self._console_chat_store = ConsoleChatStore(
                 persistence=persistence,
                 workspace_context=self._current_console_workspace_context(),
@@ -1941,8 +2004,8 @@ class ChatScreen(BaseAppScreen):
                         )
                         workspace_context_tray.styles.width = "100%"
                         workspace_context_tray.styles.min_width = 0
-                        workspace_context_tray.styles.height = "1fr"
-                        workspace_context_tray.styles.min_height = 8
+                        workspace_context_tray.styles.height = "auto"
+                        workspace_context_tray.styles.min_height = 14
                         yield self._frame_console_region(
                             workspace_context_tray,
                             variant=self._workspace_context_frame_variant(workspace_context_state),
