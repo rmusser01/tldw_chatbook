@@ -1,9 +1,12 @@
 """Settings destination shell for global app preferences."""
 
+import copy
 from collections.abc import Mapping
 import logging
 import os
 from pathlib import Path
+import re
+import tomllib
 
 from textual import on, work
 from textual.app import ComposeResult
@@ -22,8 +25,6 @@ from ...config import (
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONFIG_PATH,
     coerce_bool_setting,
-    get_cli_setting,
-    get_user_folder_name,
     save_setting_to_cli_config,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
@@ -528,7 +529,7 @@ class SettingsScreen(BaseAppScreen):
     def _config_writable_status(self) -> str:
         try:
             config_path = self._config_path()
-        except ValueError as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             return f"invalid path - {redact_secret_text(str(exc))}"
         target = config_path if config_path.exists() else config_path.parent
         writable = os.access(target, os.W_OK) if target.exists() else os.access(target.parent, os.W_OK)
@@ -537,7 +538,7 @@ class SettingsScreen(BaseAppScreen):
     def _raw_config_text(self) -> str:
         try:
             config_path = self._config_path()
-        except ValueError as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             return f"# Unable to use config path: {redact_secret_text(str(exc))}\n"
         if config_path.exists():
             try:
@@ -546,22 +547,66 @@ class SettingsScreen(BaseAppScreen):
                 return f"# Unable to read {config_path}: {type(exc).__name__}"
         return "# Config file does not exist yet.\n"
 
+    @staticmethod
+    def _deep_merge_config_values(base: dict, update: Mapping) -> dict:
+        merged = copy.deepcopy(base)
+        for key, value in update.items():
+            if isinstance(value, Mapping) and isinstance(merged.get(key), dict):
+                merged[key] = SettingsScreen._deep_merge_config_values(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+
+    def _read_cli_config_without_writes(self) -> dict:
+        loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
+        try:
+            config_path = self._config_path()
+        except (OSError, RuntimeError, ValueError):
+            return loaded_config
+        if not config_path.exists():
+            return loaded_config
+        try:
+            with open(config_path, "rb") as config_file:
+                user_config = tomllib.load(config_file)
+        except (OSError, tomllib.TOMLDecodeError):
+            return loaded_config
+        if not isinstance(user_config, Mapping):
+            return loaded_config
+        return self._deep_merge_config_values(loaded_config, user_config)
+
+    def _read_cli_config_value_without_writes(
+        self,
+        section: str,
+        key: str,
+        default: object = None,
+    ) -> object:
+        section_data = self._read_cli_config_without_writes().get(section)
+        if isinstance(section_data, Mapping):
+            return section_data.get(key, default)
+        return default
+
+    def _configured_user_folder_name(self) -> str:
+        default_user = DEFAULT_CONFIG_FROM_TOML.get("general", {}).get("users_name", "default_user")
+        user_name = self._read_cli_config_value_without_writes("general", "users_name", default_user)
+        safe_user_name = re.sub(r"[^a-zA-Z0-9_-]", "_", str(user_name))
+        return safe_user_name if safe_user_name else "default_user"
+
     def _configured_user_data_dir_path(self) -> Path:
-        configured_data_dir = get_cli_setting("paths", "data_dir", None)
+        configured_data_dir = self._read_cli_config_value_without_writes("paths", "data_dir", None)
         if configured_data_dir is None:
-            configured_data_dir = get_cli_setting("Paths", "data_dir", None)
+            configured_data_dir = self._read_cli_config_value_without_writes("Paths", "data_dir", None)
         base_data_dir = (
             Path(str(configured_data_dir)).expanduser()
             if configured_data_dir
             else BASE_DATA_DIR_CLI
         )
         return validate_path_simple(
-            base_data_dir / get_user_folder_name(),
+            base_data_dir / self._configured_user_folder_name(),
             require_exists=False,
         ).resolve()
 
     def _configured_database_path(self, key: str, default_filename: str) -> Path:
-        custom_path = get_cli_setting("database", key, None)
+        custom_path = self._read_cli_config_value_without_writes("database", key, None)
         default_path = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(key)
         if custom_path and custom_path != default_path:
             return validate_path_simple(
@@ -618,7 +663,7 @@ class SettingsScreen(BaseAppScreen):
     def _known_storage_paths(self) -> tuple[str, ...]:
         try:
             paths = [f"Config path: {self._config_path()}"]
-        except ValueError as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             paths = [f"Config path: invalid - {redact_secret_text(str(exc))}"]
         for label, attr_name, fallback_factory, _directory in self._storage_path_entries():
             try:
@@ -632,28 +677,33 @@ class SettingsScreen(BaseAppScreen):
     @staticmethod
     def _nearest_existing_ancestor(path: Path) -> Path | None:
         candidate = path
-        while not candidate.exists() and candidate != candidate.parent:
+        while candidate != candidate.parent:
+            if candidate.exists():
+                return candidate if candidate.is_dir() else None
             candidate = candidate.parent
-        return candidate if candidate.exists() else None
+        return candidate if candidate.exists() and candidate.is_dir() else None
 
     def _storage_path_status(self, label: str, path_value: object, *, directory: bool) -> str:
+        if path_value is None or str(path_value).strip() in {"", "None"}:
+            return f"{label}: not configured"
         try:
             raw_path = Path(str(path_value)).expanduser()
             path = validate_path_simple(raw_path, require_exists=False).resolve()
-        except (OSError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             return f"{label}: invalid - {redact_secret_text(str(exc))}"
 
         target = path if directory else path.parent
         existing_target = target if target.exists() else self._nearest_existing_ancestor(target)
-        if existing_target is None:
+        if existing_target is None or not existing_target.is_dir():
             return f"{label}: not writable"
-        return f"{label}: {'writable' if os.access(existing_target, os.W_OK) else 'not writable'}"
+        writable = os.access(existing_target, os.W_OK | os.X_OK)
+        return f"{label}: {'writable' if writable else 'not writable'}"
 
     def _storage_check_results(self) -> tuple[str, ...]:
         rows = ["Storage check: complete"]
         try:
             config_path = self._config_path()
-        except ValueError as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             rows.append(f"Config path parent: invalid - {redact_secret_text(str(exc))}")
         else:
             rows.append(
