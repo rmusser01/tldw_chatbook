@@ -1,3 +1,4 @@
+import builtins
 import inspect
 
 import tldw_chatbook.Chat.console_session_settings as session_settings
@@ -25,6 +26,29 @@ def test_session_settings_keeps_gateway_runtime_dependencies_out() -> None:
     assert not forbidden_dependencies.intersection(source.split())
     for forbidden_dependency in forbidden_dependencies:
         assert forbidden_dependency not in source
+
+
+def test_readiness_does_not_import_gateway_or_config_runtime_modules(monkeypatch) -> None:
+    real_import = builtins.__import__
+    forbidden_modules = {
+        "tldw_chatbook.Chat.Chat_Functions",
+        "tldw_chatbook.config",
+    }
+
+    def guarded_import(name: str, *args: object, **kwargs: object) -> object:
+        if name in forbidden_modules:
+            raise AssertionError(f"unexpected import: {name}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+        app_config={"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}},
+        environ={},
+    )
+
+    assert readiness.label == "Missing key"
 
 
 def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:
@@ -182,13 +206,64 @@ def test_validation_rejects_bool_and_non_integral_float_numeric_fields() -> None
     assert "Max tokens must be 1 or greater." in errors
 
 
-def test_readiness_wip_precedes_missing_key_for_openai() -> None:
-    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+def test_readiness_reports_missing_key_for_supported_openai_instead_of_wip() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+        app_config={"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}},
+        environ={},
+    )
 
-    readiness = build_console_settings_readiness(settings, app_config={"api_settings": {}})
+    assert readiness.label == "Missing key"
+    assert "OPENAI_API_KEY" in readiness.detail
+    assert "not wired" not in readiness.detail
 
-    assert readiness.label == "WIP"
-    assert "not wired" in readiness.detail
+
+def test_readiness_reports_pending_for_keyless_supported_generic_provider() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="ollama", model="llama3", base_url="http://127.0.0.1:11434"),
+        app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+        environ={},
+    )
+
+    assert readiness.label == "Pending"
+    assert readiness.detail == "Provider ready; Console send support is pending for 'ollama'."
+    assert "not wired" not in readiness.detail
+    assert readiness.native_send_supported is False
+
+
+def test_readiness_allows_configured_url_with_trailing_slash() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="ollama", model="llama3", base_url="http://127.0.0.1:11434/"),
+        app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+        environ={},
+    )
+
+    assert readiness.label == "Pending"
+    assert readiness.native_send_supported is False
+
+
+def test_readiness_explicit_send_capable_injection_allows_supported_generic_provider() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="ollama", model="llama3", base_url="http://127.0.0.1:11434"),
+        app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+        environ={},
+        native_provider_keys={"ollama"},
+    )
+
+    assert readiness.label == "Ready"
+    assert readiness.native_send_supported is True
+
+
+def test_readiness_explicit_send_capable_injection_preserves_direct_providers() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="llama_cpp", model="local-model"),
+        app_config={"api_settings": {"llama_cpp": {"model": "local-model"}}},
+        environ={},
+        native_provider_keys={"ollama"},
+    )
+
+    assert readiness.label == "Ready"
+    assert readiness.native_send_supported is True
 
 
 def test_invalid_url_precedes_wip_for_url_provider() -> None:
@@ -263,29 +338,31 @@ def test_readiness_labels_cover_missing_key_ready_and_unknown() -> None:
 
     assert missing.label == "Missing key"
     assert ready.label == "Ready"
+    assert ready.native_send_supported is True
     assert unknown.label == "Unknown"
 
 
-def test_readiness_unsupported_provider_missing_key_is_still_primary_wip() -> None:
+def test_readiness_supported_provider_missing_key_is_not_wip() -> None:
     readiness = build_console_settings_readiness(
         ConsoleSessionSettings(provider="anthropic", model="claude-sonnet"),
         app_config={"api_settings": {"anthropic": {"api_key_env_var": "MISSING_KEY"}}},
         environ={},
     )
 
-    assert readiness.label == "WIP"
-    assert "missing API key" in readiness.detail
+    assert readiness.label == "Missing key"
+    assert "not wired" not in readiness.detail
 
 
-def test_readiness_configured_unknown_non_native_provider_is_wip() -> None:
+def test_readiness_configured_unknown_non_native_provider_is_unknown() -> None:
     readiness = build_console_settings_readiness(
         ConsoleSessionSettings(provider="future_provider", model="future-model"),
-        app_config={"api_settings": {"future_provider": {}}},
+        app_config={"api_settings": {"future_provider": {"api_url": "http://127.0.0.1:9000"}}},
         environ={},
     )
 
-    assert readiness.label == "WIP"
-    assert "not wired" in readiness.detail
+    assert readiness.label == "Unknown"
+    assert "Choose a supported provider" in readiness.detail
+    assert "not wired" not in readiness.detail
 
 
 def test_context_estimate_counts_messages_and_staged_sources() -> None:

@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 from urllib.parse import urlparse, urlunparse
 
+from tldw_chatbook.Chat.console_provider_support import (
+    DIRECT_CONSOLE_PROVIDER_KEYS,
+    resolve_console_provider_identity,
+)
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
@@ -13,7 +17,70 @@ from tldw_chatbook.Chat.provider_readiness import (
 from tldw_chatbook.Utils.input_validation import validate_url
 
 
-NATIVE_CONSOLE_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
+NATIVE_CONSOLE_PROVIDER_KEYS = DIRECT_CONSOLE_PROVIDER_KEYS
+CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
+    {
+        "anthropic",
+        "aphrodite",
+        "cohere",
+        "custom-openai-api",
+        "custom-openai-api-2",
+        "deepseek",
+        "google",
+        "groq",
+        "huggingface",
+        "koboldcpp",
+        "llama_cpp",
+        "local-llm",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_mlx_lm",
+        "local_ollama",
+        "local_vllm",
+        "mistral",
+        "mistralai",
+        "mlx_lm",
+        "moonshot",
+        "ollama",
+        "oobabooga",
+        "openai",
+        "openrouter",
+        "tabbyapi",
+        "vllm",
+        "zai",
+    }
+)
+CONSOLE_SETTINGS_SUPPORTED_READINESS_KEYS = frozenset(
+    {
+        "anthropic",
+        "aphrodite",
+        "cohere",
+        "custom",
+        "custom_2",
+        "deepseek",
+        "google",
+        "groq",
+        "huggingface",
+        "koboldcpp",
+        "llama_cpp",
+        "local_llm",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_mlx_lm",
+        "local_ollama",
+        "local_vllm",
+        "mistral",
+        "mistralai",
+        "moonshot",
+        "ollama",
+        "oobabooga",
+        "openai",
+        "openrouter",
+        "tabbyapi",
+        "vllm",
+        "zai",
+    }
+)
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
 INVALID_LLAMACPP_BASE_URL_COPY = (
     "Provider blocked: invalid llama.cpp base URL. "
@@ -263,11 +330,13 @@ def build_console_settings_readiness(
     native_provider_keys: set[str] | None = None,
 ) -> ConsoleSettingsReadiness:
     """Build readiness copy without probing networks or mutating state."""
-    provider_key = provider_config_key(settings.provider)
-    native_keys = {
-        provider_config_key(provider)
-        for provider in (native_provider_keys if native_provider_keys is not None else NATIVE_CONSOLE_PROVIDER_KEYS)
-    }
+    identity = resolve_console_provider_identity(
+        settings.provider,
+        handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    )
+    provider_key = identity.readiness_key
+    supported_keys = _supported_readiness_keys(native_provider_keys)
+    send_capable_keys = _send_capable_readiness_keys(native_provider_keys)
 
     base_url = _string_value(settings.base_url)
     provider_settings = _provider_settings(app_config, provider_key)
@@ -283,18 +352,17 @@ def build_console_settings_readiness(
             native_send_supported=False,
         )
 
-    readiness = get_provider_readiness(settings.provider, app_config, environ=environ)
-    native_send_supported = provider_key in native_keys and readiness.ready
-    provider_is_configured = _has_provider_settings_key(app_config, provider_key)
-    if provider_key not in native_keys and (provider_is_configured or readiness.reason != "Unknown provider"):
-        detail = f"Console native provider '{provider_key}' is not wired yet."
-        if readiness.reason == "Missing API key":
-            detail = f"{detail} This provider also has a missing API key."
-        elif readiness.reason and readiness.reason != "Ready":
-            detail = f"{detail} {readiness.user_message}"
+    readiness = get_provider_readiness(provider_key, app_config, environ=environ)
+    provider_supported = provider_key in supported_keys
+    native_send_supported = provider_key in send_capable_keys and readiness.ready
+
+    if not provider_supported:
         return ConsoleSettingsReadiness(
-            label="WIP",
-            detail=detail,
+            label="Unknown",
+            detail=(
+                f"Provider blocked: '{provider_key}' is not available in Console yet. "
+                "Choose a supported provider."
+            ),
             native_send_supported=False,
         )
 
@@ -306,6 +374,12 @@ def build_console_settings_readiness(
         )
 
     if readiness.ready:
+        if not native_send_supported:
+            return ConsoleSettingsReadiness(
+                label="Pending",
+                detail=f"Provider ready; Console send support is pending for '{provider_key}'.",
+                native_send_supported=False,
+            )
         return ConsoleSettingsReadiness(
             label="Ready",
             detail=readiness.user_message,
@@ -324,6 +398,38 @@ def build_console_settings_readiness(
         detail=readiness.user_message,
         native_send_supported=False,
     )
+
+
+def _supported_readiness_keys(native_provider_keys: set[str] | None = None) -> frozenset[str]:
+    """Return readiness keys accepted by Console readiness.
+
+    ``native_provider_keys`` is retained for older tests/callers that injected a
+    support set before generic Console provider support existed.
+    """
+    if native_provider_keys is not None:
+        injected_keys = frozenset(
+            resolve_console_provider_identity(
+                provider,
+                handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+            ).readiness_key
+            for provider in native_provider_keys
+        )
+        return CONSOLE_SETTINGS_SUPPORTED_READINESS_KEYS | injected_keys
+    return CONSOLE_SETTINGS_SUPPORTED_READINESS_KEYS
+
+
+def _send_capable_readiness_keys(native_provider_keys: set[str] | None = None) -> frozenset[str]:
+    """Return readiness keys that currently have a wired Console send path."""
+    if native_provider_keys is not None:
+        injected_keys = frozenset(
+            resolve_console_provider_identity(
+                provider,
+                handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+            ).readiness_key
+            for provider in native_provider_keys
+        )
+        return DIRECT_CONSOLE_PROVIDER_KEYS | injected_keys
+    return DIRECT_CONSOLE_PROVIDER_KEYS
 
 
 def build_console_settings_summary_state(

@@ -104,6 +104,24 @@ def _requires_api_key(provider_key: str) -> bool:
     return provider_key not in KEYLESS_PROVIDER_KEYS
 
 
+def _provider_settings_for_key(
+    api_settings: object,
+    provider_key: str,
+) -> Mapping[str, object]:
+    """Return settings whose configured provider key normalizes to provider_key."""
+    if not isinstance(api_settings, Mapping):
+        return {}
+
+    for configured_provider, configured_value in api_settings.items():
+        if provider_config_key(str(configured_provider)) != provider_key:
+            continue
+        if isinstance(configured_value, Mapping):
+            return configured_value
+        return {}
+
+    return {}
+
+
 def get_provider_readiness(
     provider: Optional[str],
     app_config: Mapping[str, object],
@@ -139,11 +157,7 @@ def get_provider_readiness(
         )
 
     api_settings = app_config.get("api_settings", {})
-    provider_settings = {}
-    if isinstance(api_settings, Mapping):
-        maybe_provider_settings = api_settings.get(provider_key, {})
-        if isinstance(maybe_provider_settings, Mapping):
-            provider_settings = maybe_provider_settings
+    provider_settings = _provider_settings_for_key(api_settings, provider_key)
 
     requires_api_key = _requires_api_key(provider_key)
     configured_key = _valid_api_key(provider_settings.get("api_key"))
