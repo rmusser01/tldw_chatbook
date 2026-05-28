@@ -1,7 +1,7 @@
 # Console Provider Execution Parity Design
 
 Date: 2026-05-28
-Status: Draft for review
+Status: Approved for implementation planning
 Target branch: `dev`
 
 ## Purpose
@@ -42,6 +42,7 @@ Observed state:
 - Show blocked-state recovery before clearing the composer or appending the user message.
 - Keep Settings as global config and Console Settings as active-session overrides.
 - Maintain existing Console transcript, inspector, and composer behavior.
+- Remove llama-only WIP blocking for every provider key already dispatched by `chat_api_call()`, with representative execution coverage by provider category.
 
 ## Non-Goals
 
@@ -122,10 +123,12 @@ This avoids duplicating provider-specific code while keeping Console independent
 
 `ConsoleProviderGateway` must accept injectable runtime dependencies:
 
-- `app_config` or `config_provider`: read-only mapping used for `[api_settings.*]`, `[chat_defaults]`, and provider-specific defaults.
+- `config_provider`: callable returning the current read-only config mapping used for `[api_settings.*]`, `[chat_defaults]`, and provider-specific defaults.
 - `environ`: optional mapping for deterministic API-key readiness tests.
 - `chat_api_call_fn`: defaults to `Chat_Functions.chat_api_call` but is injectable for tests.
 - Optional redaction/safe-error helper, defaulting to a local conservative redactor.
+
+The gateway must not cache a stale config snapshot across Settings saves. It should call `config_provider()` during readiness/send resolution, or be rebuilt whenever the Console synchronizes active provider state. A static config copy is acceptable only inside unit tests that intentionally pass one.
 
 Provider settings lookup must search `[api_settings]` by normalized key, matching the existing `_provider_settings()` behavior in `console_session_settings.py`; direct dictionary lookup alone is insufficient because configured TOML keys can differ in case or separators.
 
@@ -160,6 +163,8 @@ Base URL rules:
 - If `ConsoleProviderSelection.base_url` is blank or matches the configured provider endpoint after normalization, proceed.
 - If a generic URL-based provider has a non-blank session `base_url` that differs from the configured endpoint, block before send with `Provider blocked: save the endpoint in Settings before using it from Console.`
 - Do not pass `api_url` or `base_url` kwargs to `chat_api_call()` in this slice because the current dispatcher does not expose a safe generic override contract.
+
+Implementation must avoid false blocking when Console Settings pre-populates `base_url` from persisted config. The block applies only when the normalized session URL differs from the normalized configured endpoint.
 
 ## Data Flow
 
@@ -248,6 +253,8 @@ Required bridge behavior:
 
 If a provider returns a complete string or dict, the worker should normalize it and enqueue exactly one content item plus the final sentinel.
 
+Stop/cancel cannot forcibly terminate every synchronous provider call. The required user-facing contract is that Console stops consuming worker output immediately, marks the visible assistant response as stopped or failed according to existing Console semantics, and safely ignores any late chunks produced by a worker that finishes afterward.
+
 ### Response Normalization
 
 Allowed streamed item types:
@@ -276,6 +283,12 @@ Unknown dictionary fallback:
 Empty content:
 
 - If every chunk normalizes to empty content, mark the assistant message failed with `Provider returned no assistant content.`
+
+Unsupported item types:
+
+- Lists, response objects, SDK-specific objects, and other unsupported shapes must not be dumped into the transcript.
+- Emit `Provider returned an unsupported response shape.` as the visible copy.
+- Include only provider name, safe response type, and safe category in logs.
 
 ## Settings And Console Settings Relationship
 
@@ -317,6 +330,7 @@ Safe error handling rules:
 Focused tests should cover:
 
 - A non-llama provider resolves through the generic adapter instead of WIP-blocking.
+- Every provider key present in `API_CALL_HANDLERS` resolves as either supported for Console send or an explicit unsupported-provider recovery state; supported handler keys must not return the old llama-only WIP copy.
 - A key-required provider with no key blocks before composer clear.
 - A key-required provider with an injected env key proceeds without exposing the key.
 - A non-streaming provider response renders as a completed assistant message.
@@ -327,11 +341,14 @@ Focused tests should cover:
 - Provider alias mapping covers `custom` to `custom-openai-api`, `custom_2` to `custom-openai-api-2`, and `local_llm` to `local-llm`.
 - Provider alias mapping covers `mlx_lm` and `local_mlx_lm` as the same durable `local_mlx_lm` provider.
 - Generic URL-based provider base URL overrides are rejected unless they match persisted config.
+- A generic provider with a session URL matching persisted config after normalization proceeds and is not falsely treated as an override.
 - `build_console_settings_readiness()` does not WIP-block a supported generic provider.
 - A synchronous generator provider is consumed through the worker queue without blocking the async test loop.
+- Stop/cancel stops UI consumption of a synchronous generic provider stream and ignores late worker chunks.
 - Raw exception text containing secret-looking values is redacted before becoming visible UI copy.
+- Unsupported list/object response shapes produce compact recovery copy rather than transcript dumps.
 
-Tests should use fake gateway dependencies or monkeypatched `chat_api_call()` rather than making live network calls.
+Tests should use fake gateway dependencies or monkeypatched `chat_api_call()` rather than making live network calls. The full provider-key sweep can be a readiness/dispatch contract test; live end-to-end sends should use representative fake providers by category rather than real external services.
 
 ## Rollout Plan
 
@@ -344,16 +361,19 @@ Recommended implementation sequence:
 5. Add the generic `chat_api_call()` adapter path in `stream_chat()` using a worker-thread-to-async-queue bridge.
 6. Centralize response normalization and safe visible error copy.
 7. Preserve and rerun existing llama.cpp tests.
-8. Add one mounted Console test proving non-streaming completion renders and the composer clears only after acceptance.
-9. Capture actual CDP/textual-web screenshots for the Console provider-ready and provider-blocked states before PR review.
+8. Add mounted Console tests proving non-streaming completion renders, the composer clears only after acceptance, and blocked sends preserve drafts.
+9. Capture actual CDP/textual-web screenshots for generic-provider success, missing-key blocked with composer preserved, and base-URL override blocked before PR review.
 
 ## Risks And Mitigations
 
 - Risk: `chat_api_call()` is synchronous and may block the UI.
   Mitigation: run generic calls off the UI event loop and bridge results back into the async Console stream.
 
+- Risk: Settings saves can make cached Console config stale.
+  Mitigation: pass a `config_provider()` callable into the gateway or rebuild the gateway on Console provider-state synchronization.
+
 - Risk: provider handlers return inconsistent shapes.
-  Mitigation: centralize response-to-text/chunk normalization in the gateway and test string, dict, iterator, and empty results.
+  Mitigation: centralize response-to-text/chunk normalization in the gateway and test string, dict, iterator, empty, list, and unsupported object results.
 
 - Risk: provider key normalization can break legacy aliases.
   Mitigation: resolve against `API_CALL_HANDLERS` through the explicit provider identity table and test every non-identical alias.
@@ -367,14 +387,19 @@ Recommended implementation sequence:
 - Risk: API key diagnostics leak secrets.
   Mitigation: reuse `provider_readiness.py` source labels and redact any provider exception text before displaying it.
 
+- Risk: Stop appears broken for sync providers that cannot be forcibly terminated.
+  Mitigation: stop visible UI consumption immediately, ignore late worker chunks, and document that provider process cancellation is best-effort in this adapter slice.
+
 ## Acceptance Criteria
 
-- Console can send through at least one generic non-llama provider path using the same gateway used by production sends.
-- Console no longer WIP-blocks every non-llama supported provider.
+- Console can send through representative generic non-llama provider paths using the same gateway used by production sends.
+- Every provider key already present in `API_CALL_HANDLERS` is recognized by Console provider support and no longer receives the old llama-only WIP block.
 - Non-streaming provider output appears as a completed assistant message.
 - Missing credentials and unsupported providers block before composer clear.
 - Console Settings readiness and composer preflight no longer WIP-block supported generic providers.
 - Provider alias mapping is explicit and tested for non-identical config/readiness/execution keys.
+- Generic base URL overrides block only when they differ from persisted config after normalization.
+- Stop/cancel behavior is safe for synchronous generic provider streams.
 - Existing llama.cpp behavior is preserved.
-- Tests cover readiness, non-streaming, streaming, and unsupported-provider paths.
-- Actual CDP/textual-web screenshots are captured for approval before merging implementation.
+- Tests cover readiness, non-streaming, streaming, unsupported-provider paths, response-shape normalization, redaction, and cancellation.
+- Actual CDP/textual-web screenshots are captured for approval before merging implementation, including generic success and blocked-send recovery states.
