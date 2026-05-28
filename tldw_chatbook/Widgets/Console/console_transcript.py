@@ -15,7 +15,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
 
 
-CONSOLE_TRANSCRIPT_ACTION_ROW = "Copy Edit Save Regenerate Continue Good Bad Delete"
+CONSOLE_TRANSCRIPT_ACTION_ROW = "Copy Edit Save Regen Cont Good Bad Del"
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
 EMPTY_TRANSCRIPT_COPY = "Ready. Ask a question, run a command, or attach context."
 _ACTION_TOOLTIPS = {
@@ -253,7 +253,7 @@ class ConsoleTranscript(VerticalScroll):
     @staticmethod
     def _plain_action_row(message: ConsoleChatMessage) -> str:
         if message.variants is not None:
-            return "Copy Edit Save Prev Next Regenerate Continue Good Bad Delete"
+            return "Copy Edit Save < > Regen Cont Good Bad Del"
         return CONSOLE_TRANSCRIPT_ACTION_ROW
 
     @staticmethod

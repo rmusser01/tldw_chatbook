@@ -49,10 +49,10 @@ class ConsoleMessageActionService:
         ("copy", "Copy"),
         ("edit", "Edit"),
         ("save-as", "Save"),
-        ("regenerate", "Regenerate"),
-        ("continue", "Continue"),
+        ("regenerate", "Regen"),
+        ("continue", "Cont"),
         ("feedback", "Feedback"),
-        ("delete", "Delete"),
+        ("delete", "Del"),
     )
 
     def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
@@ -67,12 +67,12 @@ class ConsoleMessageActionService:
                 ("copy", "Copy"),
                 ("edit", "Edit"),
                 ("save-as", "Save"),
-                ("variant-previous", "Prev"),
-                ("variant-next", "Next"),
-                ("regenerate", "Regenerate"),
-                ("continue", "Continue"),
+                ("variant-previous", "<"),
+                ("variant-next", ">"),
+                ("regenerate", "Regen"),
+                ("continue", "Cont"),
                 ("feedback", "Feedback"),
-                ("delete", "Delete"),
+                ("delete", "Del"),
             ]
         if message.status == "failed":
             return [
@@ -80,10 +80,10 @@ class ConsoleMessageActionService:
                 ConsoleMessageAction("edit", "Edit"),
                 ConsoleMessageAction("save-as", "Save"),
                 ConsoleMessageAction("retry", "Retry"),
-                ConsoleMessageAction("regenerate", "Regenerate"),
-                ConsoleMessageAction("continue", "Continue"),
+                ConsoleMessageAction("regenerate", "Regen"),
+                ConsoleMessageAction("continue", "Cont"),
                 ConsoleMessageAction("feedback", "Feedback"),
-                ConsoleMessageAction("delete", "Delete"),
+                ConsoleMessageAction("delete", "Del"),
             ]
         return [
             ConsoleMessageAction(
