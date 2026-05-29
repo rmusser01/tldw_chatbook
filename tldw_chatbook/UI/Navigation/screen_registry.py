@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 
+from loguru import logger
+
 from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP, TAB_SUBSCRIPTIONS
 
 
@@ -16,10 +18,35 @@ class ScreenRoute:
     canonical_tab: str
     module_path: str
     class_name: str
+    dependency_check: str | None = None
 
-    def load_screen_class(self) -> type:
-        module = import_module(self.module_path)
-        return getattr(module, self.class_name)
+    def dependencies_available(self) -> bool:
+        """Return whether optional dependencies for this route are available."""
+
+        if self.dependency_check is None:
+            return True
+        try:
+            optional_deps = import_module("tldw_chatbook.Utils.optional_deps")
+            check = getattr(optional_deps, self.dependency_check)
+        except (ImportError, AttributeError) as exc:
+            logger.warning(
+                f"Optional dependency guard unavailable for route {self.screen_name}: {exc}"
+            )
+            return False
+        return bool(check())
+
+    def load_screen_class(self) -> type | None:
+        """Load the screen class, returning None when an optional screen is unavailable."""
+
+        if not self.dependencies_available():
+            logger.warning(f"Screen route unavailable due to missing dependencies: {self.screen_name}")
+            return None
+        try:
+            module = import_module(self.module_path)
+            return getattr(module, self.class_name)
+        except (ImportError, AttributeError) as exc:
+            logger.warning(f"Screen route unavailable: {self.screen_name}: {exc}")
+            return None
 
 
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {
@@ -68,6 +95,7 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         TAB_SUBSCRIPTIONS,
         "tldw_chatbook.UI.Screens.subscription_screen",
         "SubscriptionScreen",
+        dependency_check="check_subscriptions_deps",
     ),
 }
 

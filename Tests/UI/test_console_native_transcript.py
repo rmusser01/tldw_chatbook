@@ -174,6 +174,27 @@ async def test_console_transcript_selection_update_preserves_message_rows():
 
 
 @pytest.mark.asyncio
+async def test_console_transcript_removes_build_counts_for_stale_rows():
+    app = MutableTranscriptHarness()
+    removed = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="remove me", id="m-removed")
+    kept = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="keep me", id="m-kept")
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages([removed, kept])
+        await transcript.refresh_messages()
+        assert "message:m-removed" in transcript.row_build_counts()
+
+        transcript.set_messages([kept])
+        await transcript.refresh_messages()
+        build_counts = transcript.row_build_counts()
+
+    assert "rule:m-removed" not in build_counts
+    assert "message:m-removed" not in build_counts
+    assert "message:m-kept" in build_counts
+
+
+@pytest.mark.asyncio
 async def test_console_transcript_empty_state_accepts_setup_copy():
     app = EmptyTranscriptHarness()
 

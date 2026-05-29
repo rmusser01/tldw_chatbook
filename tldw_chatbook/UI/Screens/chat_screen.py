@@ -2596,7 +2596,7 @@ class ChatScreen(BaseAppScreen):
                             getattr(variant, "id", None),
                             getattr(variant, "content", ""),
                         )
-                        for variant in getattr(variants, "variants", ())
+                        for variant in (getattr(variants, "variants", None) or ())
                     ),
                 )
             message_signatures.append(

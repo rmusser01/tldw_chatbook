@@ -22,6 +22,7 @@ from loguru import logger
 LabelValue = Union[str, int, float, bool]
 LabelDict = Dict[str, LabelValue]
 _METRICS_LOGGING_TRUTHY = {"1", "true", "yes", "on"}
+_metrics_enabled_cache: bool | None = None
 
 # 2. (Gold Standard) Define a custom "METRIC" level for powerful filtering
 # This allows separating metrics from regular application logs at the sink level.
@@ -31,7 +32,12 @@ logger.level("METRIC", no=25, color="<blue>", icon="📊")
 def is_metrics_logging_enabled() -> bool:
     """Return whether high-volume Loguru metric lines should be emitted."""
 
-    return os.environ.get("TLDW_METRICS_LOGGING", "").lower() in _METRICS_LOGGING_TRUTHY
+    global _metrics_enabled_cache
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return os.environ.get("TLDW_METRICS_LOGGING", "").lower() in _METRICS_LOGGING_TRUTHY
+    if _metrics_enabled_cache is None:
+        _metrics_enabled_cache = os.environ.get("TLDW_METRICS_LOGGING", "").lower() in _METRICS_LOGGING_TRUTHY
+    return _metrics_enabled_cache
 
 
 def _log_metric(

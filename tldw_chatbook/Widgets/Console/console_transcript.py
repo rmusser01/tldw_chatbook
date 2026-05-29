@@ -314,6 +314,7 @@ class ConsoleTranscript(VerticalScroll):
         for stale_key in [key for key in self._row_widgets if key not in desired_key_set]:
             stale_widget = self._row_widgets.pop(stale_key)
             self._row_signatures.pop(stale_key, None)
+            self._row_build_counts.pop(stale_key, None)
             await stale_widget.remove()
 
         previous_widget: Widget | None = None

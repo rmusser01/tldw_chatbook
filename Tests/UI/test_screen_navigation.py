@@ -105,7 +105,7 @@ from tldw_chatbook.Subscriptions import (
 )
 from tldw_chatbook.Translation_Interop import ServerTranslationService, TranslationScopeService
 from tldw_chatbook.Voice_Assistant_Interop import ServerVoiceAssistantService, VoiceAssistantScopeService
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_NOTES
+from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_NOTES, TAB_SUBSCRIPTIONS
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -130,7 +130,11 @@ PRIMARY_ROUTE_IDS = [
 ]
 
 
-def test_master_shell_route_inventory_has_known_legacy_routes():
+def test_master_shell_route_inventory_has_known_legacy_routes(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.optional_deps.check_subscriptions_deps",
+        lambda: True,
+    )
     expected_legacy_routes = {
         "chat",
         "notes",
@@ -353,6 +357,46 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         resolved[destination.primary_route] = screen_class.__name__ if screen_class else None
 
     assert resolved == expected_class_names
+
+
+def test_optional_screen_registry_route_skips_import_when_dependency_guard_fails(monkeypatch):
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    imported_modules = []
+
+    def fake_import_module(module_name):
+        imported_modules.append(module_name)
+        if module_name == "tldw_chatbook.Utils.optional_deps":
+            return SimpleNamespace(check_subscriptions_deps=lambda: False)
+        raise AssertionError(f"Optional screen should not import when dependencies are missing: {module_name}")
+
+    monkeypatch.setattr(screen_registry, "import_module", fake_import_module)
+
+    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscriptions")
+
+    assert screen_name == "subscriptions"
+    assert canonical_tab == TAB_SUBSCRIPTIONS
+    assert screen_class is None
+    assert imported_modules == ["tldw_chatbook.Utils.optional_deps"]
+
+
+def test_optional_screen_registry_route_handles_import_error(monkeypatch):
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    def fake_import_module(module_name):
+        if module_name == "tldw_chatbook.Utils.optional_deps":
+            return SimpleNamespace(check_subscriptions_deps=lambda: True)
+        if module_name == "tldw_chatbook.UI.Screens.subscription_screen":
+            raise ImportError("missing optional subscription dependency")
+        raise AssertionError(f"Unexpected import: {module_name}")
+
+    monkeypatch.setattr(screen_registry, "import_module", fake_import_module)
+
+    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscriptions")
+
+    assert screen_name == "subscriptions"
+    assert canonical_tab == TAB_SUBSCRIPTIONS
+    assert screen_class is None
 
 
 def test_conversation_route_uses_library_conversation_context():
@@ -827,7 +871,11 @@ async def test_main_navigation_route_ids_match_shell_destinations():
 
 
 @pytest.mark.asyncio
-async def test_screen_navigation_routes_reach_real_app_handler():
+async def test_screen_navigation_routes_reach_real_app_handler(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.optional_deps.check_subscriptions_deps",
+        lambda: True,
+    )
     app = _build_test_app()
     captured_destinations = []
 

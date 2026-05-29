@@ -264,6 +264,23 @@ def test_console_transcript_sync_timer_polls_at_coarse_interval(monkeypatch):
     assert captured["interval"] >= 0.15
 
 
+def test_console_transcript_fingerprint_tolerates_empty_variant_container():
+    screen = ChatScreen(_build_test_app())
+    message = SimpleNamespace(
+        id="m1",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        status="complete",
+        turn_id="turn-1",
+        persisted_message_id=None,
+        variants=SimpleNamespace(selected_index=0, variants=None),
+    )
+
+    fingerprint = screen._native_console_transcript_fingerprint([message])
+
+    assert fingerprint[1][0][-1] == (0, ())
+
+
 def test_console_provider_selection_reads_local_llamacpp_configured_model():
     app = _build_test_app()
     app.chat_api_provider_value = "local_llamacpp"
