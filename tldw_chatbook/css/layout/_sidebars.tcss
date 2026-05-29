@@ -49,9 +49,10 @@
 }
 
 .preset-button.active {
-    background: $primary 30%;
-    border: tall $primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: tall $ds-focus-accent;
+    text-style: bold underline;
 }
 
 .preset-button:hover {
@@ -283,13 +284,6 @@
     color: $text;
     text-style: bold;
 }
-
-.sidebar-resize-button:focus {
-    background: $primary-lighten-2;
-    color: $text;
-    text-style: bold;
-    border: tall $primary-lighten-2;
-}
 .sidebar-label { margin-top: 1; text-style: bold; }
 .sidebar-input { width: 100%; margin-bottom: 1; }
 .sidebar-textarea { 
@@ -440,27 +434,9 @@
     opacity: 50%;
 }
 
-/* Keyboard navigation indicators */
-.sidebar *:focus {
-    outline: heavy $accent;
-}
-
 /* Search mode indicator */
 .sidebar.search-active {
     border: solid $warning;
-}
-
-/* Focus states for accessibility */
-.sidebar Button:focus {
-    outline: heavy $accent;
-}
-
-.sidebar Select:focus {
-    outline: heavy $accent;
-}
-
-.sidebar Input:focus {
-    outline: heavy $accent;
 }
 
 /* ----------------------------------------
@@ -485,12 +461,8 @@
 .setting-input {
     width: 100%;
     margin-bottom: 1;
-    border: round $primary-lighten-1;
-}
-
-.setting-input:focus {
-    border: round $accent;
-    background: $background 10%;
+    border: solid $primary-lighten-1;
+    border-bottom: solid $primary-lighten-1;
 }
 
 /* Modified settings indicator */

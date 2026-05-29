@@ -13,6 +13,7 @@ WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
+SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
@@ -255,3 +256,38 @@ def test_config_search_highlight_focus_uses_thin_non_semantic_focus():
         assert_stable_solid_border_geometry(base, focus)
         assert_thin_input_focus(focus)
         assert "background: $ds-input-focus-bg;" in focus
+
+
+def test_legacy_sidebar_focus_overrides_defer_to_shared_contracts():
+    text = SIDEBARS.read_text(encoding="utf-8")
+    for selector in (
+        ".sidebar *:focus",
+        ".sidebar Button:focus",
+        ".sidebar Select:focus",
+        ".sidebar Input:focus",
+        ".setting-input:focus",
+        ".sidebar-resize-button:focus",
+    ):
+        assert css_blocks(text, selector) == []
+
+
+def test_sidebar_setting_input_uses_stable_base_geometry_for_shared_focus():
+    text = SIDEBARS.read_text(encoding="utf-8")
+    block = css_block(text, ".setting-input")
+    assert "border: thick" not in block
+    assert "border: round" not in block
+    assert "border: solid" in block
+    assert "border-bottom: solid" in block
+
+
+def test_sidebar_preset_active_state_is_readable_without_dominant_fill():
+    text = SIDEBARS.read_text(encoding="utf-8")
+    active = css_block(text, ".preset-button.active")
+    assert "outline: heavy" not in active
+    assert "reverse" not in active
+    assert "$primary" not in active
+    assert "$warning" not in active
+    assert "$error" not in active
+    assert "background: $ds-focus-bg;" in active
+    assert "color: $ds-focus-fg;" in active
+    assert "text-style: bold underline;" in active
