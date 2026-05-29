@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     build_llamacpp_chat_payload,
     safe_provider_error_copy,
 )
+from tldw_chatbook.Chat.console_provider_support import resolve_console_provider_identity
 
 
 def test_llamacpp_payload_includes_supported_sampling_params() -> None:
@@ -386,6 +387,50 @@ async def test_resolve_for_send_openai_uses_env_key_and_execution_key() -> None:
     assert resolved.api_key_source == "env:OPENAI_API_KEY"
     assert "sk-test-secret" not in resolved.visible_copy
     assert "sk-test-secret" not in repr(resolved)
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_send_all_chat_api_handlers_are_console_supported() -> None:
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.Chat.provider_readiness import PROVIDERS_REQUIRING_API_KEY_KEYS
+
+    handler_keys = frozenset(API_CALL_HANDLERS)
+    api_settings: dict[str, dict[str, str]] = {}
+    for provider in handler_keys:
+        identity = resolve_console_provider_identity(
+            provider,
+            handler_keys=handler_keys,
+        )
+        settings = api_settings.setdefault(
+            identity.readiness_key,
+            {"model": f"{identity.readiness_key}-model"},
+        )
+        if identity.readiness_key in PROVIDERS_REQUIRING_API_KEY_KEYS:
+            settings["api_key"] = f"test-key-for-{identity.readiness_key}"
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"status": "ok"}))
+    ) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            config_provider=lambda: {"api_settings": api_settings},
+            environ={},
+        )
+
+        for provider in sorted(handler_keys):
+            identity = resolve_console_provider_identity(
+                provider,
+                handler_keys=handler_keys,
+            )
+            resolved = await gateway.resolve_for_send(
+                ConsoleProviderSelection(provider=provider, explicit_model="console-sweep-model")
+            )
+
+            assert resolved.ready is True, provider
+            assert resolved.readiness_key == identity.readiness_key, provider
+            assert resolved.execution_key == identity.execution_key, provider
+            assert "not available in Console yet" not in resolved.visible_copy
+            assert "WIP" not in resolved.visible_copy
 
 
 @pytest.mark.asyncio
