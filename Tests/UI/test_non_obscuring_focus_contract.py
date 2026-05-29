@@ -28,6 +28,9 @@ EMBEDDINGS = ROOT / "tldw_chatbook/css/features/_embeddings.tcss"
 INGEST = ROOT / "tldw_chatbook/css/features/_ingest.tcss"
 TOOLS_SETTINGS = ROOT / "tldw_chatbook/css/features/_tools-settings.tcss"
 TAB_DROPDOWN = ROOT / "tldw_chatbook/css/features/_tab_dropdown.tcss"
+MEDIA = ROOT / "tldw_chatbook/css/features/_media.tcss"
+MEDIA_NAVIGATION_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_navigation_panel.py"
+MEDIA_LIST_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_list_panel.py"
 RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
 
 
@@ -116,6 +119,26 @@ def assert_feature_nav_active_contract(block: str) -> None:
     assert "$primary" not in block
     assert "background: $ds-focus-bg;" in block
     assert "color: $ds-focus-fg;" in block
+    assert "text-style: bold underline;" in block
+
+
+def assert_readable_selected_state_contract(block: str) -> None:
+    assert "outline: heavy" not in block
+    assert "reverse" not in block
+    assert "$accent" not in block
+    assert "$primary" not in block
+    assert "background: $ds-focus-bg;" in block
+    assert "color: $ds-focus-fg;" in block
+    assert "text-style: bold underline;" in block
+
+
+def assert_readable_inline_selected_state_contract(block: str) -> None:
+    assert "outline: heavy" not in block
+    assert "reverse" not in block
+    assert "$accent" not in block
+    assert "$primary" not in block
+    assert "background: $surface;" in block
+    assert "color: $text;" in block
     assert "text-style: bold underline;" in block
 
 
@@ -380,6 +403,38 @@ def test_bundled_feature_navigation_states_match_source_contracts():
     assert_feature_nav_active_contract(
         css_block(text, ".tools-nav-pane .ts-nav-button.active-nav")
     )
+
+
+def test_media_selected_and_active_states_follow_shared_contracts():
+    media_text = MEDIA.read_text(encoding="utf-8")
+    for selector in (
+        ".keyword-item.selected",
+        ".keyword-item.selected:hover",
+        ".review-item.selected",
+        ".review-item.selected:hover",
+    ):
+        assert_readable_selected_state_contract(css_block(media_text, selector))
+
+    nav_text = MEDIA_NAVIGATION_PANEL.read_text(encoding="utf-8")
+    assert_readable_inline_selected_state_contract(
+        css_block(nav_text, "MediaNavigationPanel .media-type-button.active")
+    )
+
+    list_text = MEDIA_LIST_PANEL.read_text(encoding="utf-8")
+    assert_readable_inline_selected_state_contract(
+        css_block(list_text, "MediaListPanel .media-item.selected")
+    )
+
+
+def test_bundled_media_selected_states_match_source_contracts():
+    text = BUNDLE.read_text(encoding="utf-8")
+    for selector in (
+        ".keyword-item.selected",
+        ".keyword-item.selected:hover",
+        ".review-item.selected",
+        ".review-item.selected:hover",
+    ):
+        assert_readable_selected_state_contract(css_block(text, selector))
 
 
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():

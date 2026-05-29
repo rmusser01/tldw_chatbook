@@ -98,8 +98,9 @@ class MediaListPanel(Container):
     }
     
     MediaListPanel .media-item.selected {
-        background: $accent;
-        text-style: bold;
+        background: $surface;
+        color: $text;
+        text-style: bold underline;
     }
     
     MediaListPanel .item-title {

@@ -446,8 +446,11 @@ MediaDetailsWidget {
     margin-bottom: 0;
 }
 
-.keyword-item.selected {
-    background: $accent-lighten-1;
+.keyword-item.selected,
+.keyword-item.selected:hover {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .keyword-item:hover {
@@ -604,8 +607,11 @@ MediaDetailsWidget {
     margin-bottom: 0;
 }
 
-.review-item.selected {
-    background: $accent-lighten-1;
+.review-item.selected,
+.review-item.selected:hover {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .review-item:hover {
