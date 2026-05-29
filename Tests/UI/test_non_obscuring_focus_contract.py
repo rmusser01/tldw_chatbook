@@ -8,7 +8,6 @@ RESET = ROOT / "tldw_chatbook/css/core/_reset.tcss"
 BUTTONS = ROOT / "tldw_chatbook/css/components/_buttons.tcss"
 FORMS = ROOT / "tldw_chatbook/css/components/_forms.tcss"
 AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
-NAV = ROOT / "tldw_chatbook/UI/Navigation/main_navigation.py"
 
 
 def css_block(text: str, selector: str) -> str:
@@ -98,8 +97,20 @@ def test_console_composer_focus_uses_thin_input_treatment():
     assert "border-bottom: solid $ds-input-focus-accent;" in block
 
 
+def test_settings_compact_input_focus_preserves_single_row_content():
+    text = AGENTIC.read_text(encoding="utf-8")
+    block = css_block(text, ".settings-compact-input:focus")
+    assert "border:" not in block
+    assert "border-bottom:" not in block
+    assert "outline: none" not in block
+    assert "outline: solid $ds-input-focus-accent;" in block
+    assert "background: $ds-input-focus-bg;" in block
+
+
 def test_top_navigation_inline_focus_uses_hybrid_contract():
-    text = NAV.read_text(encoding="utf-8")
+    from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+
+    text = MainNavigationBar.DEFAULT_CSS
     focus = css_block(text, ".nav-button:focus")
     active = css_block(text, ".nav-button.is-active")
     active_focus = css_block(text, ".nav-button.is-active:focus")

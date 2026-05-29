@@ -9,15 +9,6 @@
     outline: solid $ds-focus-accent;
 }
 
-/* Theme-aware focus for dark/light modes */
-.dark *:focus {
-    outline: solid $ds-focus-accent;
-}
-
-.light *:focus {
-    outline: solid $ds-focus-accent;
-}
-
 /* REMOVED: These rules were causing layout shifts and visual issues */
 /* *:hover { border: none; } */
 /* *:focus-within { border: none; } */
