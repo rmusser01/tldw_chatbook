@@ -12,6 +12,7 @@ from .console_settings_summary import ConsoleSettingsSummary
 from .console_staged_context import ConsoleStagedContextTray
 from .console_transcript import ConsoleTranscript
 from .console_workspace_context import ConsoleWorkspaceContextTray
+from .console_workspace_switcher_modal import ConsoleWorkspaceSwitcherModal
 
 __all__ = [
     "ConsoleComposerBar",
@@ -26,4 +27,5 @@ __all__ = [
     "ConsoleStagedContextTray",
     "ConsoleTranscript",
     "ConsoleWorkspaceContextTray",
+    "ConsoleWorkspaceSwitcherModal",
 ]

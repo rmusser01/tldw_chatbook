@@ -326,6 +326,29 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows)
 
+    def list_workspace_conversations(
+        self,
+        workspace_id: str,
+    ) -> tuple[WorkspaceMembership, ...]:
+        """Return conversation memberships for one workspace."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        try:
+            with self.db.transaction() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM workspace_memberships
+                    WHERE workspace_id = ?
+                        AND item_type = ?
+                    ORDER BY created_at ASC, item_id ASC, role ASC
+                    """,
+                    (safe_workspace_id, "conversation"),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return tuple(_membership_from_row(row) for row in rows)
+
     def save_runtime_binding(
         self,
         binding: WorkspaceRuntimeBinding,

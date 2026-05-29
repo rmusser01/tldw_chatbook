@@ -466,6 +466,7 @@ class TestChatScreenRestore:
         mock_app.query_one = Mock(return_value=chat_log)
 
         screen.chat_window = Mock()
+        screen.chat_window._tab_container = None
         screen.chat_window.hide_empty_state = Mock()
         screen.chat_window.query = Mock(return_value=[])
 

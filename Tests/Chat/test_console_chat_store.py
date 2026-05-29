@@ -5,6 +5,8 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
 
 def test_store_creates_session_and_appends_messages():
@@ -524,7 +526,13 @@ def test_store_updates_persisted_streaming_assistant_content_and_status():
 def test_store_persists_workspace_session_with_real_chat_persistence_service(tmp_path):
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
     try:
-        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="test_client")
+        )
+        registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+        store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db, workspace_registry=registry)
+        )
         session = store.ensure_session(title="Chat 1", workspace_id="workspace-a")
 
         conversation_id = store.persist_session_if_needed(session.id)
@@ -542,6 +550,8 @@ def test_store_persists_workspace_session_with_real_chat_persistence_service(tmp
         assert conversation["assistant_kind"] == "generic"
         assert conversation["assistant_id"] == "console"
         assert persisted_message["content"] == "hello"
+        workspace_conversations = registry.list_workspace_conversations("workspace-a")
+        assert [item.item_id for item in workspace_conversations] == [conversation_id]
     finally:
         db.close()
 

@@ -38,21 +38,19 @@ class ConsoleWorkspaceContextTray(Vertical):
             id="console-active-workspace",
             classes="console-workspace-status-row console-workspace-selector-row",
         )
-        yield self._static(
-            self.state.authority_label,
-            id="console-workspace-authority",
-            classes="console-workspace-status-row",
-        )
-        yield self._static(
-            self.state.sync_label,
-            id="console-workspace-sync",
-            classes="console-workspace-status-row",
-        )
-        yield self._static(
-            self.state.runtime_label,
-            id="console-workspace-runtime",
-            classes="console-workspace-status-row",
-        )
+        if self.state.change_workspace_enabled:
+            yield Button(
+                "Change workspace",
+                id="console-change-workspace",
+                classes="console-workspace-action",
+                compact=True,
+            )
+            if self.state.change_workspace_recovery:
+                yield self._static(
+                    self.state.change_workspace_recovery,
+                    id="console-change-workspace-recovery",
+                    classes="console-workspace-recovery",
+                )
         if self.state.recovery_copy:
             yield self._static(
                 self.state.recovery_copy,
@@ -81,24 +79,12 @@ class ConsoleWorkspaceContextTray(Vertical):
                     classes="console-workspace-empty-copy",
                 )
 
-        if self.state.change_workspace_enabled:
-            yield Button(
-                "Change workspace",
-                id="console-change-workspace",
-                classes="console-workspace-action",
-            )
-            if self.state.change_workspace_recovery:
-                yield self._static(
-                    self.state.change_workspace_recovery,
-                    id="console-change-workspace-recovery",
-                    classes="console-workspace-recovery",
-                )
-
         if self.state.new_conversation_enabled:
             yield Button(
                 "New conversation",
                 id="console-new-workspace-conversation",
                 classes="console-workspace-action",
+                compact=True,
             )
             if self.state.new_conversation_recovery:
                 yield self._static(
@@ -106,6 +92,21 @@ class ConsoleWorkspaceContextTray(Vertical):
                     id="console-new-workspace-conversation-recovery",
                     classes="console-workspace-recovery",
                 )
+        yield self._static(
+            self.state.authority_label,
+            id="console-workspace-authority",
+            classes="console-workspace-status-row",
+        )
+        yield self._static(
+            self.state.sync_label,
+            id="console-workspace-sync",
+            classes="console-workspace-status-row",
+        )
+        yield self._static(
+            self.state.runtime_label,
+            id="console-workspace-runtime",
+            classes="console-workspace-status-row",
+        )
 
     def _workspace_selector_label(self) -> str:
         """Return the visible active-workspace selector affordance."""

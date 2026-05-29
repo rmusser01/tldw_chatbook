@@ -158,6 +158,8 @@ def build_console_workspace_state(
         )
 
     if active_workspace is None:
+        workspaces = _safe_workspaces(registry_service)
+        can_switch = bool(workspaces)
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="Workspace: Local Default",
@@ -166,14 +168,20 @@ def build_console_workspace_state(
             runtime_label="Runtime: none",
             conversation_rows=(),
             conversation_empty_copy="No active workspace conversations.",
-            change_workspace_enabled=False,
-            change_workspace_recovery="Workspace switching is read-only in this slice.",
+            change_workspace_enabled=can_switch,
+            change_workspace_recovery=(
+                "" if can_switch else "Create a workspace in Library > Workspaces before switching."
+            ),
             new_conversation_enabled=False,
             new_conversation_recovery="Conversation creation is read-only until workspace selection is wired.",
-            recovery_copy="Workspace switching: locked",
+            recovery_copy=(
+                "" if can_switch else "Workspace switching: locked"
+            ),
         )
 
     runtime_bindings = _safe_runtime_bindings(registry_service, active_workspace)
+    workspaces = _safe_workspaces(registry_service)
+    can_switch = len(workspaces) > 1
     source_rows = (
         tuple(conversations)
         if conversations is not None
@@ -188,11 +196,15 @@ def build_console_workspace_state(
         runtime_label=_runtime_label(runtime_bindings),
         conversation_rows=rows,
         conversation_empty_copy="No conversations in this workspace yet.",
-        change_workspace_enabled=False,
-        change_workspace_recovery="Workspace switching is not wired yet.",
+        change_workspace_enabled=can_switch,
+        change_workspace_recovery=(
+            "" if can_switch else "Add another workspace before switching."
+        ),
         new_conversation_enabled=False,
         new_conversation_recovery="Workspace conversation creation lands in a later slice.",
-        recovery_copy="Workspace switching is read-only in this slice.",
+        recovery_copy=(
+            "" if can_switch else "Workspace switching: only one workspace available."
+        ),
     )
 
 
@@ -344,6 +356,17 @@ def _safe_runtime_bindings(
             exc_info=True,
         )
         return ()
+
+
+def _safe_workspaces(registry_service: Any) -> tuple[WorkspaceRecord, ...]:
+    if registry_service is None:
+        return ()
+    try:
+        workspaces = registry_service.list_workspaces()
+    except Exception:
+        logger.warning("Failed to list workspaces for display state", exc_info=True)
+        return ()
+    return tuple(workspaces or ())
 
 
 def _conversation_rows_from_memberships(

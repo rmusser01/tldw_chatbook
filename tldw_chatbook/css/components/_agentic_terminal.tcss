@@ -466,8 +466,8 @@ ConsoleSettingsModal Select {
 }
 
 #console-workspace-context {
-    height: 1fr;
-    min-height: 8;
+    height: auto;
+    min-height: 14;
 }
 
 #console-left-rail {
@@ -986,6 +986,12 @@ ConsoleSettingsModal Select {
     background: $ds-surface-panel;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+.console-workspace-action {
+    height: 1;
+    min-height: 1;
+    margin: 0 0 1 0;
 }
 
 .console-transcript-empty-state {

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Widgets.Console import ConsoleWorkspaceSwitcherModal
 from tldw_chatbook.Workspaces import WorkspaceSyncStatus
 
 
@@ -18,6 +21,34 @@ def _visible_text(screen) -> str:
         for widget in screen.query(Static)
         if widget.display and hasattr(widget, "renderable")
     )
+
+
+async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
+    for _ in range(40):
+        if (
+            host.screen_stack
+            and host.screen_stack[-1].query("#console-workspace-switcher-modal")
+        ):
+            await pilot.pause()
+            return host.screen_stack[-1]
+        await pilot.pause(0.05)
+    raise AssertionError("Console workspace switcher modal did not open")
+
+
+async def _wait_for_console_screen(host: ConsoleHarness, console, pilot) -> None:
+    for _ in range(40):
+        if host.screen_stack and host.screen_stack[-1] is console:
+            await pilot.pause()
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("Console workspace switcher did not dismiss")
+
+
+def test_console_workspace_switcher_modal_documents_constructor_contract() -> None:
+    docstring = inspect.getdoc(ConsoleWorkspaceSwitcherModal)
+
+    assert docstring is not None
+    assert "Args:" in docstring
 
 
 @pytest.mark.asyncio
@@ -156,3 +187,51 @@ async def test_console_workspace_context_renders_markup_titles_literally() -> No
         text = _visible_text(console)
         assert "[bold red]Research[/]" in text
         assert "[blink]Planning[/]" in text
+
+
+@pytest.mark.asyncio
+async def test_console_change_workspace_switches_active_context_and_conversation_rows() -> None:
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="conv-a",
+        role="workspace-thread",
+        title="Planning A",
+    )
+    service.link_membership(
+        "ws-b",
+        item_type="conversation",
+        item_id="conv-b",
+        role="workspace-thread",
+        title="Planning B",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-change-workspace")
+
+        assert "Workspace A" in _visible_text(console)
+        assert "Planning A" in _visible_text(console)
+        assert "Planning B" not in _visible_text(console)
+
+        console.query_one("#console-change-workspace", Button).press()
+        modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
+        switch_button = modal_screen.query_one("#console-workspace-switch-1", Button)
+        assert str(switch_button.label) == "Workspace B"
+
+        switch_button.press()
+        await _wait_for_console_screen(host, console, pilot)
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+
+        active = service.get_active_workspace()
+        assert active is not None
+        assert active.workspace_id == "ws-b"
+        assert "Workspace B" in _visible_text(console)
+        assert "Planning B" in _visible_text(console)
+        assert "Planning A" not in _visible_text(console)
