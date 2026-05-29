@@ -275,7 +275,7 @@ class SettingsScreen(BaseAppScreen):
     def _collapse_large_pastes_button_label(self) -> str:
         return "Enabled" if self._collapse_large_pastes_enabled() else "Disabled"
 
-    def _paste_collapse_threshold_value(self) -> object:
+    def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
         if draft is not None and "paste_collapse_threshold" in draft.values:
             return draft.values["paste_collapse_threshold"]
@@ -1646,7 +1646,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-console-paste-collapse-threshold",
                     classes="settings-compact-input",
                     placeholder=str(DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD),
-                    restrict="[0-9]*",
+                    restrict=r"^[0-9]*$",
                 )
             yield Static(
                 "Normal typing stays literal. The canonical message payload is preserved.",
