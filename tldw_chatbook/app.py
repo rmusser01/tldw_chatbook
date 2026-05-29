@@ -202,42 +202,11 @@ from .LLM_Calls.LLM_API_Calls_Local import (
     chat_with_ollama, chat_with_custom_openai, chat_with_custom_openai_2, chat_with_local_llm
 )
 from tldw_chatbook.config import get_chachanotes_db_path, settings, get_chachanotes_db_lazy
-from .UI.Chat_Window import ChatWindow
-from .UI.Chat_Window_Enhanced import ChatWindowEnhanced
-from .UI.Conv_Char_Window import CCPWindow
-from .UI.Logs_Window import LogsWindow
-from .UI.Stats_Window import StatsWindow
-from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
 from .UI.Navigation.main_navigation import NavigateToScreen
-from .UI.Screens.acp_screen import ACPScreen
-from .UI.Screens.artifacts_screen import ArtifactsScreen
-from .UI.Screens.chat_screen import ChatScreen
-from .UI.Screens.home_screen import HomeScreen
-from .UI.Screens.library_conversations_screen import LibraryConversationsScreen
-from .UI.Screens.library_screen import LibraryScreen
-from .UI.Screens.mcp_screen import MCPScreen
-from .UI.Screens.media_ingest_screen import MediaIngestScreen
-from .UI.Screens.coding_screen import CodingScreen
-from .UI.Screens.conversation_screen import ConversationScreen
-from .UI.Screens.media_screen import MediaScreen
-from .UI.Screens.notes_screen import NotesScreen
-from .UI.Screens.personas_screen import PersonasScreen
-from .UI.Screens.schedules_screen import SchedulesScreen
+from .UI.Navigation.screen_registry import resolve_screen_target
 from .UI.Screens.notes_scope_models import WorkspaceSubview
-from .UI.Screens.search_screen import SearchScreen
-from .UI.Screens.evals_screen import EvalsScreen
-from .UI.Screens.settings_screen import SettingsScreen
-from .UI.Screens.skills_screen import SkillsScreen
-from .UI.Screens.llm_screen import LLMScreen
-from .UI.Screens.customize_screen import CustomizeScreen
-from .UI.Screens.logs_screen import LogsScreen
-from .UI.Screens.stats_screen import StatsScreen
 from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
-from .UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
-from .UI.Screens.workflows_screen import WorkflowsScreen
-from .UI.Screens.writing_screen import WritingScreen
-from .UI.Screens.research_screen import ResearchScreen
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
 # The legacy per-view navigation (ingest-nav-*/ingest-view-*) is not used anymore.
 # Keep these as empty to avoid wiring legacy handlers.
@@ -247,17 +216,9 @@ INGEST_VIEW_IDS: list[str] = []
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Customize_Window import CustomizeWindow
-# Using pragmatic V2 Evals window
-from .UI.Evals.evals_window_v3 import EvalsWindowV3 as EvalsWindow
-from .UI.Coding_Window import CodingWindow
-from .UI.STTS_Window import STTSWindow
-from .UI.Study_Window import StudyWindow
-from .UI.Chatbooks_Window import ChatbooksWindow
 from .UI.Tab_Bar import TabBar
 from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
-from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
-from .UI.SearchWindow import SearchWindow
 from tldw_chatbook.Chat_Grammars_Interop import (
     ChatGrammarsScopeService,
     LocalChatGrammarsService,
@@ -365,25 +326,28 @@ from tldw_chatbook.Audio_Services_Interop import (
     ServerAudioServicesService,
 )
 from .Evals.eval_orchestrator import EvaluationOrchestrator
-from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
-    SEARCH_VIEW_RAG_QA,
-    SEARCH_NAV_RAG_QA,
-    SEARCH_NAV_RAG_CHAT,
-    SEARCH_NAV_RAG_MANAGEMENT,
-    SEARCH_NAV_WEB_SEARCH,
-    SEARCH_NAV_EMBEDDINGS_CREATE,
-    SEARCH_NAV_EMBEDDINGS_MANAGE
-)
 API_IMPORTS_SUCCESSFUL = True
 
-# Try to import SubscriptionWindow if dependencies are available
-SubscriptionWindow = None
-try:
-    from .UI.SubscriptionWindow import SubscriptionWindow
-    SUBSCRIPTIONS_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Subscriptions feature unavailable: {e}")
-    SUBSCRIPTIONS_AVAILABLE = False
+SEARCH_VIEW_RAG_QA = "search-view-rag-qa"
+SEARCH_NAV_RAG_QA = "search-nav-rag-qa"
+SEARCH_NAV_RAG_CHAT = "search-nav-rag-chat"
+SEARCH_NAV_RAG_MANAGEMENT = "search-nav-rag-management"
+SEARCH_NAV_WEB_SEARCH = "search-nav-web-search"
+SEARCH_NAV_EMBEDDINGS_CREATE = "search-nav-embeddings-create"
+SEARCH_NAV_EMBEDDINGS_MANAGE = "search-nav-embeddings-manage"
+
+CACHEABLE_SCREEN_ROUTES = {
+    TAB_CHAT,
+    TAB_LIBRARY,
+    TAB_NOTES,
+    TAB_MEDIA,
+    TAB_SEARCH,
+    TAB_SETTINGS,
+}
+
+DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
+DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
+DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
 #
 #######################################################################################################################
 #
@@ -1377,6 +1341,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
+        self._screen_cache: dict[str, Any] = {}
         
         # Reduce logging in production
         if not os.environ.get("TLDW_DEBUG"):
@@ -1535,6 +1500,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}")
 
+        self._tts_handler = None
+        self._stts_handler = None
+        self._tts_initialization_task: asyncio.Task | None = None
+        self._stts_initialization_task: asyncio.Task | None = None
+        self._deferred_startup_tasks: set[asyncio.Task] = set()
+
         self._ui_ready = False  # Track if UI is fully composed
         self._shutting_down = False  # Track if app is shutting down
 
@@ -1671,6 +1642,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         workspace_id: str,
         subview: WorkspaceSubview = WorkspaceSubview.DETAILS,
     ) -> None:
+        self.invalidate_screen_cache()
         self.pending_notes_workspace_context = {
             "workspace_id": workspace_id,
             "subview": subview,
@@ -2786,9 +2758,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 )
                 if callable(invalidate_for_server_switch):
                     invalidate_for_server_switch(previous_server_id, updated_state.active_server_id)
+                self.invalidate_screen_cache()
             else:
                 self.current_runtime_backend = normalized_backend
                 self.runtime_backend = normalized_backend
+                self.invalidate_screen_cache()
 
         resolved_backend = normalized_backend
         runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
@@ -3183,66 +3157,42 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     def _resolve_screen_navigation_target(self, target: str):
         """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
-        from .UI.Screens.stts_screen import STTSScreen
-        from .UI.Screens.study_screen import StudyScreen
-        from .UI.Screens.chatbooks_screen import ChatbooksScreen
-        from .UI.Screens.subscription_screen import SubscriptionScreen
+        return resolve_screen_target(target)
 
-        screen_aliases = {
-            TAB_CCP: "ccp",
-            TAB_LLM: "llm",
-            "subscription": "subscriptions",
-        }
-        canonical_screen = screen_aliases.get(target, target)
+    def invalidate_screen_cache(self, routes: set[str] | None = None) -> None:
+        """Clear cached destination screens after context changes."""
+        cache = getattr(self, "_screen_cache", None)
+        if not cache:
+            return
+        if routes is None:
+            cache.clear()
+            logger.debug("Cleared all cached destination screens")
+            return
+        for route in routes:
+            cache.pop(route, None)
+        logger.debug(f"Cleared cached destination screens: {sorted(routes)}")
 
-        tab_aliases = {
-            "ccp": TAB_CCP,
-            "conversation": "conversation",
-            TAB_CCP: TAB_CCP,
-            "llm": TAB_LLM,
-            TAB_LLM: TAB_LLM,
-            "subscription": TAB_SUBSCRIPTIONS,
-            "subscriptions": TAB_SUBSCRIPTIONS,
-            "tools_settings": "mcp",
-        }
-        canonical_tab = tab_aliases.get(target, tab_aliases.get(canonical_screen, canonical_screen))
+    def _get_or_create_navigation_screen(self, screen_name: str, screen_class: type):
+        """Return a cached screen for allowlisted routes, otherwise build a fresh screen."""
+        if screen_name not in CACHEABLE_SCREEN_ROUTES:
+            return screen_class(self)
 
-        screen_map = {
-            "home": HomeScreen,
-            "chat": ChatScreen,
-            "library": LibraryScreen,
-            "artifacts": ArtifactsScreen,
-            "personas": PersonasScreen,
-            "watchlists_collections": WatchlistsCollectionsScreen,
-            "schedules": SchedulesScreen,
-            "workflows": WorkflowsScreen,
-            "mcp": MCPScreen,
-            "acp": ACPScreen,
-            "skills": SkillsScreen,
-            "settings": SettingsScreen,
-            "ingest": MediaIngestScreen,
-            "coding": CodingScreen,
-            "conversation": LibraryConversationsScreen,
-            "ccp": ConversationScreen,
-            "media": MediaScreen,
-            "notes": NotesScreen,
-            "search": SearchScreen,
-            "evals": EvalsScreen,
-            "tools_settings": MCPScreen,
-            "llm": LLMScreen,
-            "customize": CustomizeScreen,
-            "logs": LogsScreen,
-            "stats": StatsScreen,
-            "stts": STTSScreen,
-            "study": StudyScreen,
-            "writing": WritingScreen,
-            "research": ResearchScreen,
-            "chatbooks": ChatbooksScreen,
-            "subscription": SubscriptionScreen,
-            "subscriptions": SubscriptionScreen,
-        }
+        cache = getattr(self, "_screen_cache", None)
+        if cache is None:
+            cache = self._screen_cache = {}
 
-        return canonical_screen, canonical_tab, screen_map.get(canonical_screen)
+        cached_screen = cache.get(screen_name)
+        if cached_screen is not None:
+            try:
+                if cached_screen is self.screen:
+                    return screen_class(self)
+            except Exception:
+                pass
+            return cached_screen
+
+        new_screen = screen_class(self)
+        cache[screen_name] = new_screen
+        return new_screen
 
     def _valid_startup_route_ids(self) -> set[str]:
         """Return route ids allowed in startup config during the shell migration."""
@@ -3306,8 +3256,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             if previous_tab == TAB_NOTES and previous_tab != current_tab_value:
                 await self._notes_tab_initializer.on_tab_hidden()
 
-            # Create a fresh screen instance (per Textual best practices)
-            new_screen = screen_class(self)
+            new_screen = self._get_or_create_navigation_screen(screen_name, screen_class)
             
             # Restore state if available
             if hasattr(self, '_screen_states') and screen_name in self._screen_states:
@@ -3332,9 +3281,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
             self.current_tab = current_tab_value
 
-            if current_tab_value == TAB_NOTES and previous_tab != current_tab_value:
-                await self._notes_tab_initializer.on_tab_shown()
-            
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
             logger.error(f"Unknown screen requested: {requested_screen}")
@@ -3373,8 +3319,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     async def handle_tts_request_event(self, event: TTSRequestEvent) -> None:
         """Handle TTS generation request."""
         self.loguru_logger.info(f"TTS request received for text: '{event.text[:50]}...'")
-        if self._tts_handler:
-            await self._tts_handler.handle_tts_request(event)
+        handler = await self._ensure_tts_handler()
+        if handler:
+            await handler.handle_tts_request(event)
         else:
             self.loguru_logger.error("TTS handler not initialized")
             await self.post_message(
@@ -3478,15 +3425,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback control."""
-        if self._tts_handler:
-            await self._tts_handler.handle_tts_playback(event)
+        handler = await self._ensure_tts_handler()
+        if handler:
+            await handler.handle_tts_playback(event)
     
     @on(STTSPlaygroundGenerateEvent)
     async def handle_stts_playground_generate_event(self, event: STTSPlaygroundGenerateEvent) -> None:
         """Handle S/TT/S playground generation request."""
         self.loguru_logger.info(f"S/TT/S generation request: provider={event.provider}, model={event.model}")
-        if self._stts_handler:
-            await self._stts_handler.handle_playground_generate(event)
+        handler = await self._ensure_stts_handler()
+        if handler:
+            await handler.handle_playground_generate(event)
         else:
             self.loguru_logger.error("S/TT/S handler not initialized")
             self.notify("S/TT/S service not available", severity="error")
@@ -3494,14 +3443,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     @on(STTSSettingsSaveEvent)
     async def handle_stts_settings_save_event(self, event: STTSSettingsSaveEvent) -> None:
         """Handle S/TT/S settings save."""
-        if self._stts_handler:
-            await self._stts_handler.handle_settings_save(event)
+        handler = await self._ensure_stts_handler()
+        if handler:
+            await handler.handle_settings_save(event)
     
     @on(STTSAudioBookGenerateEvent)
     async def handle_stts_audiobook_generate_event(self, event: STTSAudioBookGenerateEvent) -> None:
         """Handle audiobook generation request."""
-        if self._stts_handler:
-            await self._stts_handler.handle_audiobook_generate(event)
+        handler = await self._ensure_stts_handler()
+        if handler:
+            await handler.handle_audiobook_generate(event)
 
     def switch_ccp_center_view(self, view_name: str) -> None:
         """Switch the center pane view in the CCP tab."""
@@ -4360,7 +4311,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if screen_class is None:
             resolved_screen_name = TAB_CHAT
             resolved_tab = TAB_CHAT
-            screen_class = ChatScreen
+            _, _, screen_class = self._resolve_screen_navigation_target(TAB_CHAT)
+            if screen_class is None:
+                raise RuntimeError("Unable to resolve default chat screen")
 
         await self.push_screen(screen_class(self))
         self.current_tab = resolved_tab
@@ -4422,38 +4375,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                      labels={"phase": "widget_binding"}, 
                      documentation="Duration of post-mount phase in seconds")
 
-        # Initialize TTS service
-        phase_start = time.perf_counter()
-        try:
-            self.loguru_logger.info("Initializing TTS service...")
-            # Create TTS event handler instance
-            self._tts_handler = TTSEventHandler()
-            self._tts_handler.app = self  # Set app reference for posting messages
-            await self._tts_handler.initialize_tts()
-            self.loguru_logger.info("TTS service initialized successfully")
-        except Exception as e:
-            self.loguru_logger.error(f"Failed to initialize TTS service: {e}")
-            self._tts_handler = None
-        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
-                     labels={"phase": "tts_init"}, 
-                     documentation="Duration of post-mount phase in seconds")
-        
-        # Initialize S/TT/S service
-        phase_start = time.perf_counter()
-        try:
-            self.loguru_logger.info("Initializing S/TT/S service...")
-            # Create S/TT/S event handler instance
-            self._stts_handler = STTSEventHandler(app=self)
-            await self._stts_handler.initialize_stts()
-            # Copy some methods to app instance for convenience
-            self.play_current_audio = self._stts_handler.play_current_audio
-            self.export_current_audio = self._stts_handler.export_current_audio
-            self.loguru_logger.info("S/TT/S service initialized successfully")
-        except Exception as e:
-            self.loguru_logger.error(f"Failed to initialize S/TT/S service: {e}")
-            self._stts_handler = None
-        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
-                     labels={"phase": "stts_init"}, 
+        # TTS/STTS services are initialized after readiness or on first use.
+        log_histogram("app_post_mount_phase_duration_seconds", 0.0,
+                     labels={"phase": "audio_services_deferred"},
                      documentation="Duration of post-mount phase in seconds")
 
         # Set initial tab now that other bindings might be ready
@@ -4504,30 +4428,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.current_tab = self._resolve_initial_shell_route()
         self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
 
-        # --- DB Size Indicator Setup ---
-        try:
-            # Query for the AppFooterStatus widget instance
-            self._db_size_status_widget = self.query_one(AppFooterStatus)
-            # Or use ID: self._db_size_status_widget = self.query_one("#app-footer-status", AppFooterStatus)
-            self.loguru_logger.info("AppFooterStatus widget instance acquired.")
-
-            await self.db_status_manager.update_db_sizes()  # Initial population
-            self.db_status_manager.start_periodic_updates(120)  # Update every 2 minutes
-            self.loguru_logger.info("DB size update timer started for AppFooterStatus (interval: 2 minutes).")
-            
-            # Start token count updates
-            # Initial update after a short delay to ensure UI is ready
-            # Initial update after a short delay
-            self.set_timer(0.5, self.update_token_count_display)
-            # REDUCED FREQUENCY: Update token count less frequently to improve performance
-            # Changed from 3 seconds to 10 seconds - tokens don't change that often
-            self._token_count_update_timer = self.set_interval(10, lambda: self.call_after_refresh(self.update_token_count_display))
-            self.loguru_logger.info("Token count update timer started (10s interval).")
-        except QueryError:
-            self.loguru_logger.error("Failed to find AppFooterStatus widget for DB size display.")
-        except Exception as e_db_size:
-            self.loguru_logger.error(f"Error setting up DB size indicator with AppFooterStatus: {e_db_size}", exc_info=True)
-        # --- End DB Size Indicator Setup ---
+        # Footer status population is scheduled after readiness so DB-size
+        # polling cannot hold the first interactive frame.
 
         # Initialize chat settings sidebar mode
         try:
@@ -4587,8 +4489,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Final memory usage
             log_resource_usage()
             
-        # Schedule media cleanup if enabled
-        self.schedule_media_cleanup()
+        self._schedule_deferred_startup_work()
 
 
     async def update_db_sizes(self) -> None:
@@ -4598,6 +4499,177 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     async def update_token_count_display(self) -> None:
         """Updates the token count in the footer when on Chat tab."""
         await self.db_status_manager.update_token_count_display()
+
+    def _create_deferred_startup_task(
+        self,
+        coroutine,
+        *,
+        name: str,
+    ) -> asyncio.Task:
+        """Schedule nonessential startup work without blocking UI readiness."""
+
+        task = asyncio.create_task(coroutine, name=name)
+        self._deferred_startup_tasks.add(task)
+
+        def on_done(completed: asyncio.Task) -> None:
+            self._deferred_startup_tasks.discard(completed)
+            if completed.cancelled():
+                self.loguru_logger.debug(f"Deferred startup task cancelled: {name}")
+                return
+            try:
+                completed.result()
+            except Exception as exc:
+                self.loguru_logger.error(
+                    f"Deferred startup task failed: {name}: {exc}",
+                    exc_info=True,
+                )
+
+        task.add_done_callback(on_done)
+        return task
+
+    def _schedule_deferred_startup_work(self) -> None:
+        """Start nonessential services after the first interactive UI frame."""
+
+        self.set_timer(
+            DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
+            self._schedule_footer_status_updates,
+        )
+        self.set_timer(
+            DEFERRED_AUDIO_SERVICE_DELAY_SECONDS,
+            self._start_deferred_audio_service_initialization,
+        )
+        self.schedule_media_cleanup()
+
+    def _schedule_footer_status_updates(self) -> None:
+        """Wire footer DB/token status updates after UI readiness."""
+
+        try:
+            self._db_size_status_widget = self.query_one(AppFooterStatus)
+            self.loguru_logger.info("AppFooterStatus widget instance acquired.")
+
+            self.set_timer(
+                DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
+                self.update_db_sizes,
+            )
+            self.db_status_manager.start_periodic_updates(120)
+            self.loguru_logger.info("DB size update timer started for AppFooterStatus (interval: 2 minutes).")
+
+            self.set_timer(0.5, self.update_token_count_display)
+            self._token_count_update_timer = self.set_interval(
+                10,
+                lambda: self.call_after_refresh(self.update_token_count_display),
+            )
+            self.loguru_logger.info("Token count update timer started (10s interval).")
+        except QueryError:
+            self.loguru_logger.error("Failed to find AppFooterStatus widget for DB size display.")
+        except Exception as e_db_size:
+            self.loguru_logger.error(
+                f"Error setting up DB size indicator with AppFooterStatus: {e_db_size}",
+                exc_info=True,
+            )
+
+    def _start_deferred_audio_service_initialization(self) -> None:
+        """Kick off TTS/STTS initialization after startup readiness."""
+
+        self._schedule_tts_initialization()
+        self._schedule_stts_initialization()
+
+    def _schedule_tts_initialization(self) -> None:
+        if self._tts_handler is not None:
+            return
+        if self._tts_initialization_task and not self._tts_initialization_task.done():
+            return
+        self._tts_initialization_task = self._create_deferred_startup_task(
+            self._initialize_tts_service(),
+            name="deferred_tts_initialization",
+        )
+
+    def _schedule_stts_initialization(self) -> None:
+        if self._stts_handler is not None:
+            return
+        if self._stts_initialization_task and not self._stts_initialization_task.done():
+            return
+        self._stts_initialization_task = self._create_deferred_startup_task(
+            self._initialize_stts_service(),
+            name="deferred_stts_initialization",
+        )
+
+    async def _initialize_tts_service(self):
+        """Initialize the TTS handler outside the startup critical path."""
+
+        phase_start = time.perf_counter()
+        try:
+            self.loguru_logger.info("Initializing TTS service...")
+            handler = TTSEventHandler()
+            handler.app = self
+            await handler.initialize_tts()
+            self._tts_handler = handler
+            self.loguru_logger.info("TTS service initialized successfully")
+        except Exception as e:
+            self.loguru_logger.error(f"Failed to initialize TTS service: {e}")
+            self._tts_handler = None
+        finally:
+            log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                         labels={"phase": "tts_init_deferred"},
+                         documentation="Duration of post-mount phase in seconds")
+        return self._tts_handler
+
+    async def _initialize_stts_service(self):
+        """Initialize the S/TT/S handler outside the startup critical path."""
+
+        phase_start = time.perf_counter()
+        try:
+            self.loguru_logger.info("Initializing S/TT/S service...")
+            handler = STTSEventHandler(app=self)
+            await handler.initialize_stts()
+            self._stts_handler = handler
+            self.loguru_logger.info("S/TT/S service initialized successfully")
+        except Exception as e:
+            self.loguru_logger.error(f"Failed to initialize S/TT/S service: {e}")
+            self._stts_handler = None
+        finally:
+            log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                         labels={"phase": "stts_init_deferred"},
+                         documentation="Duration of post-mount phase in seconds")
+        return self._stts_handler
+
+    async def _ensure_tts_handler(self):
+        """Return an initialized TTS handler, initializing on first use if needed."""
+
+        if self._tts_handler is not None:
+            return self._tts_handler
+        if self._tts_initialization_task and not self._tts_initialization_task.done():
+            await self._tts_initialization_task
+            return self._tts_handler
+        return await self._initialize_tts_service()
+
+    async def _ensure_stts_handler(self):
+        """Return an initialized S/TT/S handler, initializing on first use if needed."""
+
+        if self._stts_handler is not None:
+            return self._stts_handler
+        if self._stts_initialization_task and not self._stts_initialization_task.done():
+            await self._stts_initialization_task
+            return self._stts_handler
+        return await self._initialize_stts_service()
+
+    async def play_current_audio(self) -> None:
+        """Play the current S/TT/S audio after lazy service initialization."""
+
+        handler = await self._ensure_stts_handler()
+        if handler is None:
+            self.notify("S/TT/S service not available", severity="error")
+            return
+        await handler.play_current_audio()
+
+    async def export_current_audio(self, target_path: Path) -> None:
+        """Export the current S/TT/S audio after lazy service initialization."""
+
+        handler = await self._ensure_stts_handler()
+        if handler is None:
+            self.notify("S/TT/S service not available", severity="error")
+            return
+        await handler.export_current_audio(target_path)
 
 
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
@@ -4641,6 +4713,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Stop all background services and threads
         try:
+            deferred_tasks = [
+                task for task in getattr(self, "_deferred_startup_tasks", set())
+                if not task.done()
+            ]
+            for task in deferred_tasks:
+                task.cancel()
+            if deferred_tasks:
+                await asyncio.gather(*deferred_tasks, return_exceptions=True)
+
             # Stop audio player if it exists
             if hasattr(self, 'audio_player'):
                 try:
@@ -5042,6 +5123,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         elif new_tab == TAB_MEDIA:
             def activate_media_initial_view():
                 try:
+                    from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
+
                     media_window = self.query_one(MediaWindow_v2)
                     media_window.activate_initial_view()
                 except QueryError:
@@ -5314,6 +5397,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_video_models(self) -> None:
         """Initialize models for the video ingestion window."""
         try:
+            from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
+
             ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
             # New ingest window doesn't need model initialization
             self.log.debug("New ingest window loaded")
@@ -5323,6 +5408,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_audio_models(self) -> None:
         """Initialize models for the audio ingestion window."""
         try:
+            from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
+
             ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
             # New ingest window doesn't need model initialization
             self.log.debug("New ingest window loaded")
@@ -5331,6 +5418,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def save_current_note(self) -> bool:
         """Saves the currently selected note's title and content to the database."""
+        from .UI.Screens.notes_screen import NotesScreen
+
         if isinstance(self.screen, NotesScreen):
             return await self.screen._save_current_note()
         if not self.notes_service or not self.current_selected_note_id or self.current_selected_note_version is None:
@@ -6129,12 +6218,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Handles changes in Select widgets if specific actions are needed beyond watchers."""
         select_id = event.select.id
         current_active_tab = self.current_tab
-        self.loguru_logger.info(f"Select changed: {select_id} = {event.value}, current tab = {current_active_tab}")
-
-        if select_id == "conv-char-character-select" and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_character_select_changed(self, event.value)
-
-        current_active_tab = self.current_tab
+        self.loguru_logger.debug(f"Select changed: {select_id} = {event.value}, current tab = {current_active_tab}")
 
         if select_id == "conv-char-character-select" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_character_select_changed(self, event.value)
@@ -6157,18 +6241,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.debug(f"chat-api-provider change event (handled in ChatScreen): {event.value}")
             
             # Update token counter when provider changes
-            try:
-                from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
-                await update_chat_token_counter(self)
-            except Exception as e:
-                self.loguru_logger.debug(f"Could not update token counter on provider change: {e}")
+            if self._ui_ready:
+                try:
+                    from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                    await update_chat_token_counter(self)
+                except Exception as e:
+                    self.loguru_logger.debug(f"Could not update token counter on provider change: {e}")
         elif select_id == "chat-api-model" and current_active_tab == TAB_CHAT:
             # Update token counter when model changes
-            try:
-                from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
-                await update_chat_token_counter(self)
-            except Exception as e:
-                self.loguru_logger.debug(f"Could not update token counter on model change: {e}")
+            if self._ui_ready:
+                try:
+                    from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                    await update_chat_token_counter(self)
+                except Exception as e:
+                    self.loguru_logger.debug(f"Could not update token counter on model change: {e}")
         elif select_id == "chat-conversation-search-character-filter-select" and current_active_tab == TAB_CHAT:
             self.loguru_logger.debug("Character filter changed in chat tab, triggering conversation search")
             await chat_handlers.perform_chat_conversation_search(self)
@@ -6628,8 +6714,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             # Run cleanup on startup if configured
             if cleanup_on_startup:
-                self.loguru_logger.info("Running media cleanup on startup")
-                self.call_later(self.perform_media_cleanup)
+                self.loguru_logger.info(
+                    "Scheduling media cleanup after startup idle delay"
+                )
+                self._media_cleanup_startup_timer = self.set_timer(
+                    DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS,
+                    self.perform_media_cleanup,
+                )
             
             # Schedule periodic cleanup
             cleanup_interval_seconds = cleanup_interval_hours * 3600

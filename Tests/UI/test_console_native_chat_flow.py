@@ -264,6 +264,23 @@ def test_console_transcript_sync_timer_polls_at_coarse_interval(monkeypatch):
     assert captured["interval"] >= 0.15
 
 
+def test_console_transcript_fingerprint_tolerates_empty_variant_container():
+    screen = ChatScreen(_build_test_app())
+    message = SimpleNamespace(
+        id="m1",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        status="complete",
+        turn_id="turn-1",
+        persisted_message_id=None,
+        variants=SimpleNamespace(selected_index=0, variants=None),
+    )
+
+    fingerprint = screen._native_console_transcript_fingerprint([message])
+
+    assert fingerprint[1][0][-1] == (0, ())
+
+
 def test_console_provider_selection_reads_local_llamacpp_configured_model():
     app = _build_test_app()
     app.chat_api_provider_value = "local_llamacpp"
@@ -680,6 +697,44 @@ async def test_console_selected_message_copy_action_uses_app_clipboard():
 
     app.copy_to_clipboard.assert_called_once_with("answer")
     assert console._last_console_action.action_id == "copy"
+
+
+@pytest.mark.asyncio
+async def test_console_sync_skips_transcript_refresh_when_messages_unchanged(monkeypatch):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        original_refresh = transcript.refresh_messages
+        refresh_calls = 0
+
+        async def counted_refresh():
+            nonlocal refresh_calls
+            refresh_calls += 1
+            await original_refresh()
+
+        monkeypatch.setattr(transcript, "refresh_messages", counted_refresh)
+
+        await console._sync_native_console_chat_ui()
+        assert refresh_calls == 1
+
+        await console._sync_native_console_chat_ui()
+        assert refresh_calls == 1
+
+        store.add_variant(message.id, "updated answer")
+        await console._sync_native_console_chat_ui()
+        assert refresh_calls == 2
 
 
 @pytest.mark.asyncio

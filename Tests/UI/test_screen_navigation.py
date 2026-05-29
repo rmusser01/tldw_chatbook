@@ -105,7 +105,7 @@ from tldw_chatbook.Subscriptions import (
 )
 from tldw_chatbook.Translation_Interop import ServerTranslationService, TranslationScopeService
 from tldw_chatbook.Voice_Assistant_Interop import ServerVoiceAssistantService, VoiceAssistantScopeService
-from tldw_chatbook.Constants import ALL_TABS
+from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_NOTES, TAB_SUBSCRIPTIONS
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -130,7 +130,11 @@ PRIMARY_ROUTE_IDS = [
 ]
 
 
-def test_master_shell_route_inventory_has_known_legacy_routes():
+def test_master_shell_route_inventory_has_known_legacy_routes(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.optional_deps.check_subscriptions_deps",
+        lambda: True,
+    )
     expected_legacy_routes = {
         "chat",
         "notes",
@@ -220,6 +224,87 @@ def test_ccp_default_tab_initializes_before_reactive_watcher_runs():
     assert app._ui_ready is False
 
 
+@pytest.mark.asyncio
+async def test_ccp_character_select_change_dispatches_once(monkeypatch):
+    app = _build_test_app()
+    app.current_tab = TAB_CCP
+    calls = []
+
+    async def fake_character_select_changed(_app, value):
+        calls.append(value)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.app.ccp_handlers.handle_ccp_character_select_changed",
+        fake_character_select_changed,
+    )
+
+    await app.on_select_changed(
+        SimpleNamespace(
+            select=SimpleNamespace(id="conv-char-character-select"),
+            value="character-1",
+        )
+    )
+
+    assert calls == ["character-1"]
+
+
+@pytest.mark.asyncio
+async def test_chat_select_change_before_ui_ready_skips_token_counter(monkeypatch):
+    app = _build_test_app()
+    app.current_tab = TAB_CHAT
+    app._ui_ready = False
+    calls = []
+
+    async def fake_update_token_counter(_app):
+        calls.append("updated")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_token_events.update_chat_token_counter",
+        fake_update_token_counter,
+    )
+
+    await app.on_select_changed(
+        SimpleNamespace(
+            select=SimpleNamespace(id="chat-api-provider"),
+            value="OpenAI",
+        )
+    )
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_notes_screen_navigation_refreshes_scope_once_per_entry(monkeypatch):
+    from tldw_chatbook.UI.Screens.notes_screen import NotesScreen
+
+    app = _build_test_app()
+    refresh_calls = []
+
+    async def fake_refresh_current_scope(self):
+        refresh_calls.append(self)
+
+    monkeypatch.setattr(NotesScreen, "refresh_current_scope", fake_refresh_current_scope)
+    monkeypatch.setattr(
+        "tldw_chatbook.app.get_cli_setting",
+        lambda section, key=None, default=None: False
+        if section == "splash_screen" and key == "enabled"
+        else default,
+    )
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+
+        await app.handle_screen_navigation(NavigateToScreen(TAB_NOTES))
+        await pilot.pause(0.1)
+        assert len(refresh_calls) == 1
+
+        await app.handle_screen_navigation(NavigateToScreen(TAB_CHAT))
+        await pilot.pause(0.1)
+        await app.handle_screen_navigation(NavigateToScreen(TAB_NOTES))
+        await pilot.pause(0.1)
+        assert len(refresh_calls) == 2
+
+
 def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
     app = _build_test_app()
     expected_routes = {
@@ -247,6 +332,73 @@ def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
     assert unresolved == []
 
 
+def test_lazy_screen_registry_resolves_visible_shell_destinations():
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+
+    expected_class_names = {
+        "home": "HomeScreen",
+        "chat": "ChatScreen",
+        "library": "LibraryScreen",
+        "artifacts": "ArtifactsScreen",
+        "personas": "PersonasScreen",
+        "watchlists_collections": "WatchlistsCollectionsScreen",
+        "schedules": "SchedulesScreen",
+        "workflows": "WorkflowsScreen",
+        "mcp": "MCPScreen",
+        "acp": "ACPScreen",
+        "skills": "SkillsScreen",
+        "settings": "SettingsScreen",
+    }
+
+    resolved = {}
+    for destination in SHELL_DESTINATION_ORDER:
+        _screen_name, _tab_id, screen_class = resolve_screen_target(destination.primary_route)
+        resolved[destination.primary_route] = screen_class.__name__ if screen_class else None
+
+    assert resolved == expected_class_names
+
+
+def test_optional_screen_registry_route_skips_import_when_dependency_guard_fails(monkeypatch):
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    imported_modules = []
+
+    def fake_import_module(module_name):
+        imported_modules.append(module_name)
+        if module_name == "tldw_chatbook.Utils.optional_deps":
+            return SimpleNamespace(check_subscriptions_deps=lambda: False)
+        raise AssertionError(f"Optional screen should not import when dependencies are missing: {module_name}")
+
+    monkeypatch.setattr(screen_registry, "import_module", fake_import_module)
+
+    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscriptions")
+
+    assert screen_name == "subscriptions"
+    assert canonical_tab == TAB_SUBSCRIPTIONS
+    assert screen_class is None
+    assert imported_modules == ["tldw_chatbook.Utils.optional_deps"]
+
+
+def test_optional_screen_registry_route_handles_import_error(monkeypatch):
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    def fake_import_module(module_name):
+        if module_name == "tldw_chatbook.Utils.optional_deps":
+            return SimpleNamespace(check_subscriptions_deps=lambda: True)
+        if module_name == "tldw_chatbook.UI.Screens.subscription_screen":
+            raise ImportError("missing optional subscription dependency")
+        raise AssertionError(f"Unexpected import: {module_name}")
+
+    monkeypatch.setattr(screen_registry, "import_module", fake_import_module)
+
+    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscriptions")
+
+    assert screen_name == "subscriptions"
+    assert canonical_tab == TAB_SUBSCRIPTIONS
+    assert screen_class is None
+
+
 def test_conversation_route_uses_library_conversation_context():
     app = _build_test_app()
 
@@ -265,6 +417,51 @@ def test_legacy_tools_settings_route_uses_mcp_context():
     assert screen_name == "tools_settings"
     assert current_tab == "mcp"
     assert screen_class.__name__ == "MCPScreen"
+
+
+@pytest.mark.asyncio
+async def test_cacheable_screen_navigation_reuses_constructed_screen_instance(monkeypatch):
+    app = _build_test_app()
+    constructed = {"chat": 0, "library": 0}
+
+    class FakeChatScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+            constructed["chat"] += 1
+
+    class FakeLibraryScreen:
+        screen_name = "library"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+            constructed["library"] += 1
+
+    def fake_resolve(target):
+        if target == "chat":
+            return "chat", "chat", FakeChatScreen
+        if target == "library":
+            return "library", "library", FakeLibraryScreen
+        return target, target, None
+
+    switched_screens = []
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+
+    assert constructed == {"chat": 1, "library": 1}
+    assert switched_screens[0] is switched_screens[2]
 
 
 def _build_test_app(configured_default: str | None = None) -> TldwCli:
@@ -674,7 +871,11 @@ async def test_main_navigation_route_ids_match_shell_destinations():
 
 
 @pytest.mark.asyncio
-async def test_screen_navigation_routes_reach_real_app_handler():
+async def test_screen_navigation_routes_reach_real_app_handler(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.optional_deps.check_subscriptions_deps",
+        lambda: True,
+    )
     app = _build_test_app()
     captured_destinations = []
 

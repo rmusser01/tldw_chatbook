@@ -153,8 +153,7 @@ class HomeScreen(BaseAppScreen):
                 f"{dashboard.next_action.label}\n"
                 f"{dashboard.next_action.reason}\n"
                 f"Destination: {_home_route_label(dashboard.next_action.target_route)}\n"
-                f"Enter: Open {_home_route_label(dashboard.next_action.target_route)}\n"
-                "Ctrl+P: Search commands"
+                f"Enter: Open {_home_route_label(dashboard.next_action.target_route)}"
             )
         )
         next_action_copy = section_text("next_best_action")
@@ -182,7 +181,7 @@ class HomeScreen(BaseAppScreen):
                 classes="ds-panel",
             )
             yield Static(
-                "Keys: Enter open selected | Tab switch pane | Ctrl+P command palette",
+                "Keys: Enter open selected | Tab switch pane",
                 id="home-action-hints",
                 classes="destination-status-row",
             )

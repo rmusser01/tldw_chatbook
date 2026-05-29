@@ -34,6 +34,11 @@ class EmptyTranscriptHarness(App):
         yield ConsoleTranscript(id="console-native-transcript")
 
 
+class MutableTranscriptHarness(App):
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscript(id="console-native-transcript")
+
+
 class SaveAsModalHarness(App):
     def on_mount(self) -> None:
         self.push_screen(
@@ -82,6 +87,131 @@ def test_console_transcript_widget_rules_are_long_enough_to_clip_full_width():
     renderable = getattr(first_rule, "renderable", "")
 
     assert len(str(renderable)) >= 160
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_append_preserves_existing_message_rows():
+    app = MutableTranscriptHarness()
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content=f"message {index}", id=f"m{index}")
+        for index in range(12)
+    ]
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+        before_counts = transcript.row_build_counts()
+
+        transcript.set_messages(
+            messages
+            + [ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="new answer", id="m-new")]
+        )
+        await transcript.refresh_messages()
+        after_counts = transcript.row_build_counts()
+
+    for message in messages:
+        assert after_counts[f"message:{message.id}"] == before_counts[f"message:{message.id}"]
+    assert after_counts["message:m-new"] == 1
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_streaming_update_preserves_unrelated_message_rows():
+    app = MutableTranscriptHarness()
+    user = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="prompt", id="m-user")
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial",
+        id="m-assistant",
+        status="streaming",
+    )
+    trailing = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="next", id="m-next")
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages([user, assistant, trailing])
+        await transcript.refresh_messages()
+        before_counts = transcript.row_build_counts()
+
+        assistant.content = "partial response"
+        transcript.set_messages([user, assistant, trailing])
+        await transcript.refresh_messages()
+        after_counts = transcript.row_build_counts()
+        rendered = transcript.query_one("#console-message-m-assistant", Static)
+
+    assert after_counts["message:m-user"] == before_counts["message:m-user"]
+    assert after_counts["message:m-next"] == before_counts["message:m-next"]
+    assert after_counts["message:m-assistant"] == before_counts["message:m-assistant"]
+    assert "partial response" in str(rendered.renderable)
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_selection_update_preserves_message_rows():
+    app = MutableTranscriptHarness()
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="prompt", id="m-user"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m-assistant"),
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="followup", id="m-followup"),
+    ]
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+
+        transcript.selected_message_id = "m-user"
+        await transcript.refresh_messages()
+        before_counts = transcript.row_build_counts()
+
+        transcript.selected_message_id = "m-assistant"
+        await transcript.refresh_messages()
+        after_counts = transcript.row_build_counts()
+
+    for message in messages:
+        assert after_counts[f"message:{message.id}"] == before_counts[f"message:{message.id}"]
+    assert "actions:m-user" not in transcript.row_render_signatures()
+    assert "actions:m-assistant" in transcript.row_render_signatures()
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_removes_build_counts_for_stale_rows():
+    app = MutableTranscriptHarness()
+    removed = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="remove me", id="m-removed")
+    kept = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="keep me", id="m-kept")
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages([removed, kept])
+        await transcript.refresh_messages()
+        assert "message:m-removed" in transcript.row_build_counts()
+
+        transcript.set_messages([kept])
+        await transcript.refresh_messages()
+        build_counts = transcript.row_build_counts()
+
+    assert "rule:m-removed" not in build_counts
+    assert "message:m-removed" not in build_counts
+    assert "message:m-kept" in build_counts
+
+
+def test_console_transcript_compose_resets_build_count_bookkeeping():
+    transcript = ConsoleTranscript()
+    transcript._row_build_counts["message:stale"] = 3
+    transcript.set_messages(
+        [
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER,
+                content="current",
+                id="m-current",
+            )
+        ]
+    )
+
+    list(transcript.compose())
+
+    build_counts = transcript.row_build_counts()
+    assert "message:stale" not in build_counts
+    assert build_counts["message:m-current"] == 1
 
 
 @pytest.mark.asyncio

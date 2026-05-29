@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Iterable
+from dataclasses import dataclass
+from typing import Iterable, Literal
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -47,6 +48,16 @@ def _message_body(message: ConsoleChatMessage) -> str:
     return content
 
 
+@dataclass(frozen=True)
+class _TranscriptRow:
+    key: str
+    kind: Literal["rule", "message", "actions", "empty"]
+    signature: tuple
+    message: ConsoleChatMessage | None = None
+    selected: bool = False
+    renderable: str = ""
+
+
 class ConsoleTranscriptMessage(Static):
     """Clickable native Console transcript message row."""
 
@@ -64,6 +75,17 @@ class ConsoleTranscriptMessage(Static):
         )
         if selected:
             self.styles.border = ("solid", "grey")
+
+    def sync_message(self, message: ConsoleChatMessage, *, selected: bool = False) -> None:
+        """Update row content and selection styling without remounting the row."""
+        self.message_id = message.id
+        self.update(f"{_message_role_label(message)}\n{_message_body(message)}")
+        if selected:
+            self.add_class("console-transcript-message-selected")
+            self.styles.border = ("solid", "grey")
+        else:
+            self.remove_class("console-transcript-message-selected")
+            self.styles.border = ("none", "grey")
 
     def on_click(self, event: Click) -> None:
         event.stop()
@@ -91,9 +113,19 @@ class ConsoleTranscript(VerticalScroll):
         self.selected_message_id: str | None = None
         self._refresh_lock = asyncio.Lock()
         self.empty_state_copy = EMPTY_TRANSCRIPT_COPY
+        self._row_widgets: dict[str, Widget] = {}
+        self._row_signatures: dict[str, tuple] = {}
+        self._row_build_counts: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
-        yield from self._message_widgets()
+        self._row_widgets.clear()
+        self._row_signatures.clear()
+        self._row_build_counts.clear()
+        for row in self._transcript_rows():
+            widget = self._build_row_widget(row, track=True)
+            self._row_widgets[row.key] = widget
+            self._row_signatures[row.key] = row.signature
+            yield widget
 
     def set_messages(self, messages: Iterable[ConsoleChatMessage]) -> None:
         """Replace transcript messages and refresh mounted rows when possible."""
@@ -112,11 +144,17 @@ class ConsoleTranscript(VerticalScroll):
             self.call_later(self.refresh_messages)
 
     async def refresh_messages(self) -> None:
-        """Rebuild mounted message rows from the current transcript state."""
+        """Reconcile mounted message rows from the current transcript state."""
         async with self._refresh_lock:
-            await self.remove_children()
-            for widget in self._message_widgets():
-                await self.mount(widget)
+            await self._reconcile_rows(self._transcript_rows())
+
+    def row_build_counts(self) -> dict[str, int]:
+        """Return row build counts for focused reconciliation tests."""
+        return dict(self._row_build_counts)
+
+    def row_render_signatures(self) -> dict[str, tuple]:
+        """Return active row signatures for focused reconciliation tests."""
+        return dict(self._row_signatures)
 
     def select_message(self, message_id: str) -> None:
         """Select one message and show its contextual action row."""
@@ -217,28 +255,168 @@ class ConsoleTranscript(VerticalScroll):
     def _message_by_id(self, message_id: str) -> ConsoleChatMessage | None:
         return next((message for message in self._messages if message.id == message_id), None)
 
-    def _message_widgets(self) -> list[Widget]:
-        widgets: list[Widget] = []
+    def _transcript_rows(self) -> list[_TranscriptRow]:
+        rows: list[_TranscriptRow] = []
         for message in self._messages:
-            widgets.append(Static(CONSOLE_TRANSCRIPT_RULE, classes="console-transcript-rule"))
-            widgets.append(
-                ConsoleTranscriptMessage(
-                    message,
-                    selected=message.id == self.selected_message_id,
+            selected = message.id == self.selected_message_id
+            rows.append(
+                _TranscriptRow(
+                    key=f"rule:{message.id}",
+                    kind="rule",
+                    signature=("rule", message.id),
+                    renderable=CONSOLE_TRANSCRIPT_RULE,
                 )
             )
-            if message.id == self.selected_message_id:
-                widgets.append(self._action_row(message))
+            rows.append(
+                _TranscriptRow(
+                    key=f"message:{message.id}",
+                    kind="message",
+                    signature=self._message_row_signature(message, selected=selected),
+                    message=message,
+                    selected=selected,
+                )
+            )
+            if selected:
+                rows.append(
+                    _TranscriptRow(
+                        key=f"actions:{message.id}",
+                        kind="actions",
+                        signature=self._action_row_signature(message),
+                        message=message,
+                    )
+                )
         if self._messages:
-            widgets.append(Static(CONSOLE_TRANSCRIPT_RULE, classes="console-transcript-rule"))
-        else:
-            widgets.append(
-                Static(
-                    self.empty_state_copy,
-                    classes="console-transcript-empty-state",
+            rows.append(
+                _TranscriptRow(
+                    key="rule:end",
+                    kind="rule",
+                    signature=("rule", "end"),
+                    renderable=CONSOLE_TRANSCRIPT_RULE,
                 )
             )
-        return widgets
+        else:
+            rows.append(
+                _TranscriptRow(
+                    key="empty",
+                    kind="empty",
+                    signature=("empty", self.empty_state_copy),
+                    renderable=self.empty_state_copy,
+                )
+            )
+        return rows
+
+    def _message_widgets(self) -> list[Widget]:
+        return [self._build_row_widget(row, track=False) for row in self._transcript_rows()]
+
+    async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
+        desired_keys = [row.key for row in rows]
+        desired_key_set = set(desired_keys)
+
+        for stale_key in [key for key in self._row_widgets if key not in desired_key_set]:
+            stale_widget = self._row_widgets.pop(stale_key)
+            self._row_signatures.pop(stale_key, None)
+            self._row_build_counts.pop(stale_key, None)
+            await stale_widget.remove()
+
+        previous_widget: Widget | None = None
+        for index, row in enumerate(rows):
+            widget = self._row_widgets.get(row.key)
+            if widget is None:
+                widget = self._build_row_widget(row, track=True)
+                if previous_widget is None:
+                    await self.mount(widget, before=0 if self.children else None)
+                else:
+                    await self.mount(widget, after=previous_widget)
+                self._row_widgets[row.key] = widget
+                self._row_signatures[row.key] = row.signature
+            elif self._row_signatures.get(row.key) != row.signature:
+                updated_widget = self._update_row_widget(widget, row)
+                if updated_widget is widget:
+                    self._row_signatures[row.key] = row.signature
+                else:
+                    await widget.remove()
+                    widget = updated_widget
+                    if previous_widget is None:
+                        await self.mount(widget, before=0 if self.children else None)
+                    else:
+                        await self.mount(widget, after=previous_widget)
+                    self._row_widgets[row.key] = widget
+                    self._row_signatures[row.key] = row.signature
+
+            if previous_widget is None:
+                self.move_child(widget, before=0)
+            else:
+                self.move_child(widget, after=previous_widget)
+            previous_widget = widget
+
+    def _build_row_widget(self, row: _TranscriptRow, *, track: bool) -> Widget:
+        if track:
+            self._row_build_counts[row.key] = self._row_build_counts.get(row.key, 0) + 1
+        if row.kind == "rule":
+            return Static(
+                row.renderable,
+                id=self._row_widget_id(row),
+                classes="console-transcript-rule",
+            )
+        if row.kind == "empty":
+            return Static(
+                row.renderable,
+                id=self._row_widget_id(row),
+                classes="console-transcript-empty-state",
+            )
+        if row.kind == "message" and row.message is not None:
+            return ConsoleTranscriptMessage(row.message, selected=row.selected)
+        if row.kind == "actions" and row.message is not None:
+            return self._action_row(row.message)
+        raise ValueError(f"Unsupported transcript row: {row}")
+
+    def _update_row_widget(self, widget: Widget, row: _TranscriptRow) -> Widget:
+        if row.kind == "message" and row.message is not None and isinstance(widget, ConsoleTranscriptMessage):
+            widget.sync_message(row.message, selected=row.selected)
+            return widget
+        if row.kind == "empty" and isinstance(widget, Static):
+            widget.update(row.renderable)
+            return widget
+        return self._build_row_widget(row, track=True)
+
+    @staticmethod
+    def _row_widget_id(row: _TranscriptRow) -> str:
+        return "console-transcript-row-" + row.key.replace(":", "-")
+
+    @staticmethod
+    def _message_row_signature(message: ConsoleChatMessage, *, selected: bool) -> tuple:
+        variants_signature = None
+        if message.variants is not None:
+            variants_signature = (
+                message.variants.selected_index,
+                tuple(variant.id for variant in message.variants.variants),
+            )
+        return (
+            "message",
+            _message_role_label(message),
+            _message_body(message),
+            message.status,
+            selected,
+            variants_signature,
+        )
+
+    @staticmethod
+    def _action_row_signature(message: ConsoleChatMessage) -> tuple:
+        actions = []
+        for action in ConsoleMessageActionService().available_actions(message):
+            if action.action_id == "feedback":
+                actions.append(("feedback-up", "Good", True, ""))
+                actions.append(("feedback-down", "Bad", True, ""))
+                continue
+            actions.append(
+                (
+                    action.action_id,
+                    action.label,
+                    action.enabled,
+                    action.disabled_reason or "",
+                )
+            )
+        return ("actions", message.id, tuple(actions))
 
     def _action_row(self, message: ConsoleChatMessage) -> Horizontal:
         buttons: list[Button] = []
@@ -248,7 +426,7 @@ class ConsoleTranscript(VerticalScroll):
                 buttons.append(self._action_button(message, ConsoleMessageAction("feedback-down", "Bad")))
                 continue
             buttons.append(self._action_button(message, action))
-        return Horizontal(*buttons, classes="console-transcript-action-row")
+        return Horizontal(*buttons, id=f"console-message-actions-{message.id}", classes="console-transcript-action-row")
 
     @staticmethod
     def _plain_action_row(message: ConsoleChatMessage) -> str:

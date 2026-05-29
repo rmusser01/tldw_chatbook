@@ -83,6 +83,34 @@ def test_optional_feature_metadata_groups_release_capabilities_without_core_inst
     assert "web" in groups["Web access"]
 
 
+def test_subscriptions_deps_require_beautifulsoup_for_route_import(monkeypatch):
+    """The subscriptions route guard blocks imports when BeautifulSoup is absent."""
+    from tldw_chatbook.Utils import optional_deps
+
+    optional_deps.reset_dependency_checks()
+    seen: list[tuple[str, str]] = []
+
+    def fake_check_dependency(module_name: str, feature_name: str | None = None) -> bool:
+        dependency_key = feature_name or module_name
+        seen.append((module_name, dependency_key))
+        is_available = module_name != "bs4"
+        optional_deps.DEPENDENCIES_AVAILABLE[dependency_key] = is_available
+        return is_available
+
+    monkeypatch.setattr(optional_deps, "check_dependency", fake_check_dependency)
+
+    assert optional_deps.check_subscriptions_deps() is False
+    assert ("bs4", "beautifulsoup4") in seen
+    assert optional_deps.DEPENDENCIES_AVAILABLE["subscriptions"] is False
+
+
+def test_subscriptions_extra_declares_beautifulsoup_dependency():
+    """The install extra matches the route guard's BeautifulSoup dependency."""
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "beautifulsoup4" in pyproject["project"]["optional-dependencies"]["subscriptions"]
+
+
 def test_unavailable_feature_handler():
     """Test that unavailable feature handlers work correctly."""
     from tldw_chatbook.Utils.optional_deps import create_unavailable_feature_handler

@@ -451,6 +451,7 @@ class ChatScreen(BaseAppScreen):
         self._last_console_action: ConsoleActionResult | None = None
         self._console_transcript_sync_timer: Any | None = None
         self._console_sync_in_progress = False
+        self._last_native_transcript_refresh_key: tuple[int, tuple[Any, ...]] | None = None
         self._console_guidance_dismissed = False
         self.ui_state = UIState()
         self._load_sidebar_state()
@@ -2225,6 +2226,8 @@ class ChatScreen(BaseAppScreen):
             result = close()
             if inspect.isawaitable(result):
                 await result
+        self._console_provider_gateway = None
+        self._console_chat_controller = None
         super().on_unmount()
     
     def save_state(self) -> Dict[str, Any]:
@@ -2578,6 +2581,37 @@ class ChatScreen(BaseAppScreen):
             return []
         return store.messages_for_session(store.active_session_id)
 
+    def _native_console_transcript_fingerprint(self, messages: list[Any]) -> tuple[Any, ...]:
+        """Return a lightweight signature for native transcript refresh skipping."""
+        store = self._ensure_console_chat_store()
+        message_signatures = []
+        for message in messages:
+            variants = getattr(message, "variants", None)
+            variant_signature = None
+            if variants is not None:
+                variant_signature = (
+                    getattr(variants, "selected_index", None),
+                    tuple(
+                        (
+                            getattr(variant, "id", None),
+                            getattr(variant, "content", ""),
+                        )
+                        for variant in (getattr(variants, "variants", None) or ())
+                    ),
+                )
+            message_signatures.append(
+                (
+                    getattr(message, "id", None),
+                    getattr(getattr(message, "role", None), "value", getattr(message, "role", None)),
+                    getattr(message, "content", ""),
+                    getattr(message, "status", None),
+                    getattr(message, "turn_id", None),
+                    getattr(message, "persisted_message_id", None),
+                    variant_signature,
+                )
+            )
+        return (store.active_session_id, tuple(message_signatures))
+
     async def _sync_native_console_transcript_to_legacy_surface(self) -> None:
         """Temporary bridge: render native Console messages in the existing surface."""
         try:
@@ -2585,9 +2619,16 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             transcript = None
 
+        messages = self._native_console_messages()
         if transcript is not None:
-            transcript.set_messages(self._native_console_messages())
-            await transcript.refresh_messages()
+            transcript.set_messages(messages)
+            refresh_key = (
+                id(transcript),
+                self._native_console_transcript_fingerprint(messages),
+            )
+            if refresh_key != self._last_native_transcript_refresh_key:
+                await transcript.refresh_messages()
+                self._last_native_transcript_refresh_key = refresh_key
             self._sync_console_transcript_guidance()
             return
 
@@ -2595,7 +2636,6 @@ class ChatScreen(BaseAppScreen):
         if chat_log is None:
             return
 
-        messages = self._native_console_messages()
         chat_log.remove_children()
         for message in messages:
             role_label = str(message.role.value if hasattr(message.role, "value") else message.role)

@@ -303,7 +303,7 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
     ),
     "subscriptions": _feature(
         "subscriptions", "Subscriptions and scheduled feeds", AREA_WATCHLISTS,
-        ("markdown", "schedule", "feedparser", "cryptography"),
+        ("markdown", "schedule", "feedparser", "beautifulsoup4", "cryptography"),
         "Watchlists", "Subscriptions/watchlists", OWNER_WATCHLISTS,
     ),
     "transcription_faster_whisper": _feature(
@@ -878,10 +878,17 @@ def check_subscriptions_deps() -> bool:
     markdown_available = check_dependency('markdown')
     schedule_available = check_dependency('schedule')
     feedparser_available = check_dependency('feedparser')
+    beautifulsoup_available = check_dependency('bs4', 'beautifulsoup4')
     defusedxml_available = check_dependency('defusedxml')
     
     # All are needed for subscriptions to work properly
-    subscriptions_available = markdown_available and schedule_available and feedparser_available and defusedxml_available
+    subscriptions_available = (
+        markdown_available
+        and schedule_available
+        and feedparser_available
+        and beautifulsoup_available
+        and defusedxml_available
+    )
     DEPENDENCIES_AVAILABLE['subscriptions'] = subscriptions_available
     
     if subscriptions_available:
@@ -894,6 +901,8 @@ def check_subscriptions_deps() -> bool:
             missing.append("schedule")
         if not feedparser_available:
             missing.append("feedparser")
+        if not beautifulsoup_available:
+            missing.append("beautifulsoup4")
         if not defusedxml_available:
             missing.append("defusedxml")
         logger.warning(f"⚠️ Subscriptions dependencies missing: {', '.join(missing)}")
@@ -1116,12 +1125,6 @@ else:
                 logger.info("Eager dependency checking enabled via config file")
         except Exception as e:
             logger.debug(f"Could not check config for eager_dependency_check: {e}")
-
-# Always check embeddings dependencies eagerly since they're critical for the UI
-# This ensures the embeddings window loads correctly
-if 'PYTEST_CURRENT_TEST' not in os.environ:
-    logger.info("Checking embeddings dependencies early to ensure UI loads correctly...")
-    check_embeddings_rag_deps()
 
 if eager_check:
     initialize_dependency_checks()
