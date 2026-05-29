@@ -22,6 +22,7 @@ SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
 FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
 INGESTION_REBUILT = ROOT / "tldw_chatbook/css/features/_ingestion_rebuilt.tcss"
+NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
 RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
 
 
@@ -253,6 +254,28 @@ def test_feature_buttons_inherit_shared_button_focus_contract_without_duplicate_
 def test_ingestion_rebuilt_focus_overrides_defer_to_shared_contracts():
     text = INGESTION_REBUILT.read_text(encoding="utf-8")
     widget_focus_selector = re.compile(r"\b(Input|TextArea|Select|Button)\b.*:focus")
+    offenders = [
+        selector
+        for selector in css_selectors(text)
+        if widget_focus_selector.search(selector)
+    ]
+    assert offenders == []
+
+
+def test_new_ingest_focus_overrides_defer_to_shared_contracts():
+    text = NEW_INGEST.read_text(encoding="utf-8")
+    card_base = css_block(text, ".media-card")
+    card_focus = css_block(text, ".media-card:focus")
+    assert "border: round $border;" in card_base
+    assert "border: round $primary;" not in card_base
+    assert "box-shadow" not in card_focus
+    assert "border: round $ds-focus-accent;" in card_focus
+
+    metadata_input_base = css_block(text, ".metadata-grid Input")
+    assert "border: solid $border;" in metadata_input_base
+    assert "border: solid $primary;" not in metadata_input_base
+
+    widget_focus_selector = re.compile(r"\b(Button|Input|RadioButton)\b.*:focus")
     offenders = [
         selector
         for selector in css_selectors(text)
