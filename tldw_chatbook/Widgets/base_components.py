@@ -586,14 +586,18 @@ class NavigationButton(Button):
     }
     
     NavigationButton.active {
-        background: $accent;
-        color: $text;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
         text-style: bold;
-        border-left: thick $primary;
+        border: none;
     }
     
-    NavigationButton:focus {
-        text-style: bold;
+    NavigationButton:focus,
+    NavigationButton.active:focus {
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
+        outline: none;
     }
     """
     
