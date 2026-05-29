@@ -3,6 +3,7 @@ import inspect
 
 import tldw_chatbook.Chat.console_session_settings as session_settings
 from tldw_chatbook.Chat.console_session_settings import (
+    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSettingsContextEstimate,
     ConsoleSessionSettings,
     build_console_context_estimate,
@@ -51,6 +52,12 @@ def test_readiness_does_not_import_gateway_or_config_runtime_modules(monkeypatch
     )
 
     assert readiness.label == "Missing key"
+
+
+def test_settings_execution_provider_keys_match_chat_api_handlers() -> None:
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+
+    assert CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS == frozenset(API_CALL_HANDLERS)
 
 
 def test_default_settings_prefers_chat_defaults_and_provider_config() -> None:

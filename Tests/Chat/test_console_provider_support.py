@@ -79,6 +79,21 @@ def test_all_chat_api_call_handlers_are_known_to_console_support() -> None:
     assert "custom_2" in keys
 
 
+def test_all_chat_api_call_handlers_resolve_to_supported_console_identity() -> None:
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+
+    handler_keys = frozenset(API_CALL_HANDLERS)
+
+    for handler_key in sorted(handler_keys):
+        identity = resolve_console_provider_identity(
+            handler_key,
+            handler_keys=handler_keys,
+        )
+
+        assert identity.is_supported is True, handler_key
+        assert identity.execution_key in handler_keys, handler_key
+
+
 def test_supported_readiness_key_sweep_deduplicates_aliases() -> None:
     keys = supported_console_provider_readiness_keys(
         handler_keys={
