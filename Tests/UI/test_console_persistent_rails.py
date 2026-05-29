@@ -229,7 +229,8 @@ def test_generated_console_stylesheet_includes_rail_rules():
         ):
             assert selector in css
         assert "content-align: left middle;" in css
-        assert "border: heavy $ds-action-focus;" in css
+        composer_focus = _css_block(css, "#console-native-composer.console-composer-focused")
+        assert "border: heavy $ds-action-focus;" not in composer_focus
         assert "border: thick $ds-action-focus;" not in css
 
         right_handle = _css_block(css, ".console-rail-handle-right")

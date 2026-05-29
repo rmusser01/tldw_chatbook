@@ -37,6 +37,12 @@ REQUIRED_SEMANTIC_TOKENS = {
     "ds-surface-panel",
     "ds-text-primary",
     "ds-action-focus",
+    "ds-focus-fg",
+    "ds-focus-bg",
+    "ds-focus-accent",
+    "ds-input-focus-border",
+    "ds-input-focus-bg",
+    "ds-input-focus-accent",
     "ds-status-ready",
     "ds-status-warning",
     "ds-status-error",
@@ -168,11 +174,12 @@ def test_library_mode_chip_focus_keeps_active_label_readable():
     active_block = text.split(".library-mode-chip.is-active", 1)[1].split("}", 1)[0]
     active_focus_block = text.split(".library-mode-chip.is-active:focus", 1)[1].split("}", 1)[0]
 
-    assert "color: $ds-text-primary;" in focus_block
+    assert "color: $ds-focus-fg;" in focus_block
+    assert "text-style: bold underline;" in focus_block
     assert "background: $primary-darken-1;" in active_block
     assert "border: solid $primary;" in active_block
     assert "color: $ds-text-primary;" in active_focus_block
-    assert "text-style: bold;" in active_focus_block
+    assert "text-style: bold underline;" in active_focus_block
     assert "$ds-library-mode-bar-height: 3;" in variables
     assert "$ds-library-mode-chip-height: 3;" in variables
     assert "LIBRARY_MODE_BAR_HEIGHT = 3" in library_screen

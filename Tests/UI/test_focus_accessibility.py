@@ -1,8 +1,6 @@
-"""
-Test suite for verifying focus accessibility improvements.
-Tests that focus indicators are properly visible on all interactive elements.
-"""
+"""Test suite for verifying non-obscuring focus accessibility improvements."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -31,9 +29,22 @@ class FocusTestApp(App):
 CSS_PATH = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
 
 
+def css_block(text: str, selector: str) -> str:
+    """Return a CSS rule body whose selector list contains selector."""
+    uncommented = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    for match in re.finditer(r"\{(?P<body>[^{}]*)\}", uncommented, flags=re.DOTALL):
+        prefix = uncommented[: match.start()]
+        selector_start = max(prefix.rfind("}"), prefix.rfind(";")) + 1
+        selector_text = prefix[selector_start : match.start()]
+        selectors = [item.strip() for item in selector_text.split(",")]
+        if selector in selectors:
+            return match.group("body")
+    raise AssertionError(f"Missing CSS block for {selector}")
+
+
 @pytest.mark.asyncio
-async def test_button_has_focus_outline():
-    """Test that buttons show focus outline when focused."""
+async def test_button_has_visible_non_obscuring_focus():
+    """Test that buttons retain a visible focus cue without heavy outline."""
     app = FocusTestApp()
     async with app.run_test() as pilot:
         # Focus the button
@@ -49,19 +60,19 @@ async def test_button_has_focus_outline():
         assert button.has_focus
         assert app.CSS_PATH  # Verify CSS is loaded
         
-        # Check that the CSS file exists and has proper focus styles
         assert CSS_PATH.exists()
 
         with CSS_PATH.open("r", encoding="utf-8") as f:
             css_content = f.read()
-            # Verify focus styles are present and not suppressed
-            assert "outline: heavy $accent" in css_content
+            button_focus = css_block(css_content, "Button:focus")
+            assert "text-style: bold underline" in button_focus
+            assert "outline: heavy" not in button_focus
             assert "outline: none !important" not in css_content
 
 
 @pytest.mark.asyncio
-async def test_input_has_focus_outline():
-    """Test that input fields show focus outline when focused."""
+async def test_input_has_visible_non_obscuring_focus():
+    """Test that input fields still receive keyboard focus."""
     app = FocusTestApp()
     async with app.run_test() as pilot:
         # Focus the input
@@ -74,8 +85,8 @@ async def test_input_has_focus_outline():
 
 
 @pytest.mark.asyncio
-async def test_textarea_has_focus_outline():
-    """Test that textareas show focus outline when focused."""
+async def test_textarea_has_visible_non_obscuring_focus():
+    """Test that textareas still receive keyboard focus."""
     app = FocusTestApp()
     async with app.run_test() as pilot:
         # Focus the textarea
@@ -88,8 +99,8 @@ async def test_textarea_has_focus_outline():
 
 
 @pytest.mark.asyncio
-async def test_no_outline_suppression_in_css():
-    """Test that CSS doesn't contain outline suppression anti-patterns."""
+async def test_no_global_outline_suppression_in_css():
+    """Test that CSS keeps a visible global fallback without global suppression."""
     # Check the main CSS file
     with CSS_PATH.open("r", encoding="utf-8") as f:
         css_content = f.read()
@@ -98,9 +109,21 @@ async def test_no_outline_suppression_in_css():
         assert "outline: none !important" not in css_content
         assert "outline:none!important" not in css_content
         
-        # These proper patterns SHOULD be present
         assert "*:focus" in css_content
-        assert "outline: heavy" in css_content or "outline: solid" in css_content
+        global_focus = css_block(css_content, "*:focus")
+        assert "outline: solid" in global_focus
+        assert "outline: heavy" not in global_focus
+
+
+def test_generated_input_focus_uses_thin_border_and_bottom_emphasis():
+    """Test generated input focus styles use the non-obscuring input pattern."""
+    css_content = CSS_PATH.read_text(encoding="utf-8")
+
+    for selector in ("Input:focus", "TextArea:focus", "Select:focus"):
+        block = css_block(css_content, selector)
+        assert "outline: heavy" not in block
+        assert "border: solid $ds-input-focus-border;" in block
+        assert "border-bottom: solid $ds-input-focus-accent;" in block
 
 
 @pytest.mark.asyncio
