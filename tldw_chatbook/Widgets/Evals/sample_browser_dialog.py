@@ -19,6 +19,7 @@ from pathlib import Path
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal, ScrollableContainer, Grid
+from textual.events import Click
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button, Label, Static, Input, Select, DataTable, 
@@ -106,8 +107,16 @@ class SampleBrowserDialog(ModalScreen):
     }
     
     .sample-row.selected {
-        background: $accent 40%;
-        border-left: thick $primary;
+        background: $surface;
+        color: $text;
+        text-style: bold underline;
+    }
+
+    .sample-row.selected .sample-id,
+    .sample-row.selected .sample-type,
+    .sample-row.selected .sample-preview {
+        color: $text;
+        text-style: bold underline;
     }
     
     .sample-header {
@@ -440,26 +449,78 @@ class SampleBrowserDialog(ModalScreen):
     def update_list_view(self) -> None:
         """Update the list view display."""
         samples_list = self.query_one("#samples-list", ScrollableContainer)
-        samples_list.remove_children()
-        
+
         # Calculate page range
         start = self.current_page * self.samples_per_page
         end = min(start + self.samples_per_page, len(self.filtered_samples))
-        
-        # Add samples to list
+
+        visible_rows = []
         for i in range(start, end):
             sample = self.filtered_samples[i]
-            
-            with samples_list.mount(Container(classes="sample-row", id=f"sample-{i}")):
-                with samples_list.mount(Horizontal(classes="sample-header")):
-                    samples_list.mount(Static(sample['id'], classes="sample-id"))
-                    samples_list.mount(Static(self.task_type, classes="sample-type"))
-                    
-                    # Create preview
-                    preview = sample.get('input_text', '')[:100]
-                    if len(sample.get('input_text', '')) > 100:
-                        preview += "..."
-                    samples_list.mount(Static(preview, classes="sample-preview"))
+            sample_index = sample.get("index", i)
+            preview = sample.get('input_text', '')[:100]
+            if len(sample.get('input_text', '')) > 100:
+                preview += "..."
+            visible_rows.append((sample_index, sample, preview))
+
+        visible_ids = {f"sample-{sample_index}" for sample_index, _, _ in visible_rows}
+        existing_rows = {
+            row.id: row
+            for row in samples_list.query(".sample-row")
+            if row.id is not None
+        }
+
+        for row_id, row in existing_rows.items():
+            if row_id not in visible_ids:
+                row.remove()
+
+        for sample_index, sample, preview in visible_rows:
+            row_id = f"sample-{sample_index}"
+            row = existing_rows.get(row_id)
+            if row is None:
+                samples_list.mount(self._build_sample_row(sample_index, sample, preview))
+            else:
+                self._sync_sample_row(row, sample_index, sample, preview)
+
+    def _sample_row_classes(self, sample_index: int) -> str:
+        """Return the CSS classes for a rendered sample row."""
+        if sample_index in self.selected_indices:
+            return "sample-row selected"
+        return "sample-row"
+
+    def _build_sample_row(
+        self,
+        sample_index: int,
+        sample: Dict[str, Any],
+        preview: str,
+    ) -> Container:
+        """Build a sample row widget for the visible list."""
+        return Container(
+            Horizontal(
+                Static(sample['id'], classes="sample-id"),
+                Static(self.task_type, classes="sample-type"),
+                Static(preview, classes="sample-preview"),
+                classes="sample-header",
+            ),
+            classes=self._sample_row_classes(sample_index),
+            id=f"sample-{sample_index}",
+        )
+
+    def _sync_sample_row(
+        self,
+        row,
+        sample_index: int,
+        sample: Dict[str, Any],
+        preview: str,
+    ) -> None:
+        """Update a mounted sample row without remounting it."""
+        if sample_index in self.selected_indices:
+            row.add_class("selected")
+        else:
+            row.remove_class("selected")
+        row.query_one(".sample-id", Static).update(sample['id'])
+        row.query_one(".sample-type", Static).update(self.task_type)
+        row.query_one(".sample-preview", Static).update(preview)
     
     def update_table_view(self) -> None:
         """Update the table view display."""
@@ -544,6 +605,50 @@ class SampleBrowserDialog(ModalScreen):
         # Update button states
         self.query_one("#prev-btn").disabled = self.current_page == 0
         self.query_one("#next-btn").disabled = self.current_page >= total_pages - 1
+
+    def _visible_sample_indices(self) -> list[int]:
+        """Return original sample indices visible on the current page."""
+        start = self.current_page * self.samples_per_page
+        end = min(start + self.samples_per_page, len(self.filtered_samples))
+        return [
+            int(sample.get("index", i))
+            for i, sample in enumerate(self.filtered_samples[start:end], start=start)
+        ]
+
+    @staticmethod
+    def _sample_index_from_row_id(row_id: str | None) -> int | None:
+        """Parse a mounted sample row id into its original sample index."""
+        if not row_id or not row_id.startswith("sample-"):
+            return None
+        try:
+            return int(row_id.removeprefix("sample-"))
+        except ValueError:
+            return None
+
+    def _sample_row_from_event(self, event: Click):
+        """Return the sample row widget targeted by a click event."""
+        widget = getattr(event, "widget", None) or getattr(event, "control", None)
+        while widget is not None:
+            if widget.has_class("sample-row"):
+                return widget
+            widget = getattr(widget, "parent", None)
+        return None
+
+    def _refresh_selected_row_classes(self) -> None:
+        """Sync mounted sample row classes with selected indices."""
+        selected_indices = set(self.selected_indices)
+        for row in self.query(".sample-row"):
+            sample_index = self._sample_index_from_row_id(row.id)
+            if sample_index in selected_indices:
+                row.add_class("selected")
+            else:
+                row.remove_class("selected")
+
+    def _set_selected_indices(self, selected_indices: set[int]) -> None:
+        """Assign selected indices and refresh dependent UI."""
+        self.selected_indices = set(selected_indices)
+        self._refresh_selected_row_classes()
+        self.update_statistics()
     
     @on(Input.Changed, "#search-input")
     def handle_search(self, event: Input.Changed) -> None:
@@ -556,6 +661,36 @@ class SampleBrowserDialog(ModalScreen):
         """Handle filter field selection."""
         self.filter_field = event.value
         self.filter_samples()
+
+    @on(Click, ".sample-row")
+    def handle_sample_row_click(self, event: Click) -> None:
+        """Toggle selection for the clicked sample row."""
+        row = self._sample_row_from_event(event)
+        sample_index = self._sample_index_from_row_id(getattr(row, "id", None))
+        if sample_index is None:
+            return
+
+        selected_indices = set(self.selected_indices)
+        if sample_index in selected_indices:
+            selected_indices.remove(sample_index)
+        else:
+            selected_indices.add(sample_index)
+        self.current_sample_index = sample_index
+        self._set_selected_indices(selected_indices)
+        event.stop()
+        event.prevent_default()
+
+    @on(Button.Pressed, "#select-all-btn")
+    def handle_select_all(self) -> None:
+        """Select all currently visible samples."""
+        selected_indices = set(self.selected_indices)
+        selected_indices.update(self._visible_sample_indices())
+        self._set_selected_indices(selected_indices)
+
+    @on(Button.Pressed, "#clear-btn")
+    def handle_clear_selection(self) -> None:
+        """Clear all selected samples."""
+        self._set_selected_indices(set())
     
     def filter_samples(self) -> None:
         """Filter samples based on search and filter criteria."""
