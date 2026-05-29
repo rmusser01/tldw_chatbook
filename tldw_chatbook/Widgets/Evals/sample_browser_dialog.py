@@ -106,8 +106,9 @@ class SampleBrowserDialog(ModalScreen):
     }
     
     .sample-row.selected {
-        background: $accent 40%;
-        border-left: thick $primary;
+        background: $surface;
+        color: $text;
+        text-style: bold underline;
     }
     
     .sample-header {
