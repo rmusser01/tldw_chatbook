@@ -11,6 +11,11 @@ from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
     supported_console_provider_readiness_keys,
 )
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    generic_endpoint_differs,
+    safe_endpoint_display,
+    unsaved_endpoint_copy,
+)
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
@@ -194,6 +199,9 @@ class ConsoleSettingsSummaryState:
     identity_row: str
     readiness_label: str = ""
     provider_row: str = ""
+    endpoint_row: str = ""
+    credential_row: str = ""
+    transport_row: str = ""
     action_label: str = "Configure"
     action_tooltip: str = "Configure Console settings"
 
@@ -319,6 +327,16 @@ def build_console_settings_readiness(
         return ConsoleSettingsReadiness(
             label="Invalid URL",
             detail=detail,
+            native_send_supported=False,
+        )
+    if (
+        base_url
+        and _is_url_based_provider(provider_key, provider_settings)
+        and generic_endpoint_differs(base_url, provider_settings)
+    ):
+        return ConsoleSettingsReadiness(
+            label="Endpoint not saved",
+            detail=unsaved_endpoint_copy(base_url, provider_settings),
             native_send_supported=False,
         )
 
@@ -452,6 +470,9 @@ def build_console_settings_summary_state(
         identity_row=identity_row,
         readiness_label=readiness_label,
         provider_row=f"Provider: {provider_label}",
+        endpoint_row=_format_endpoint_summary_row(settings),
+        credential_row=_format_credential_summary_row(readiness),
+        transport_row=f"Streaming: {'on' if settings.streaming else 'off'}",
         action_label=action_label,
         action_tooltip=action_tooltip,
     )
@@ -722,3 +743,20 @@ def _format_context_summary_row(label: str) -> str:
     if label_text.lower() in {"unknown", "context: unknown"}:
         label_text = "Context: unavailable"
     return label_text if label_text.startswith("Context: ") else f"Context: {label_text}"
+
+
+def _format_endpoint_summary_row(settings: ConsoleSessionSettings) -> str:
+    endpoint = safe_endpoint_display(settings.base_url)
+    return f"Endpoint: {endpoint or 'provider default'}"
+
+
+def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:
+    label = (_string_value(readiness.label) or "").lower()
+    detail = (_string_value(readiness.detail) or "").lower()
+    if label == "missing key" or "missing api key" in detail:
+        return "Credential: missing"
+    if "no api key is required" in detail:
+        return "Credential: not required"
+    if "api key found" in detail:
+        return "Credential: ready"
+    return "Credential: check setup"

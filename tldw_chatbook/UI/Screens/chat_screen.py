@@ -1503,6 +1503,10 @@ class ChatScreen(BaseAppScreen):
             return ""
         if blocker == "provider setup needed: choose a model":
             return "Choose a model in Console Settings before sending."
+        if "missing api key" in blocker:
+            return "Add API key in Settings before sending."
+        if "save the endpoint in settings" in blocker:
+            return "Save provider endpoint in Settings before sending."
         return "Finish provider setup before sending."
 
     def _console_provider_recovery_action(self) -> tuple[str, str, str]:
@@ -1530,7 +1534,13 @@ class ChatScreen(BaseAppScreen):
             getattr(self.app_instance, "app_config", {}) or {},
         )
         if provider_readiness.reason == "Missing API key":
-            return ("Open Settings", "settings", f"Add an API key for {provider}")
+            return ("Add API key", "settings", f"Add an API key for {provider}")
+        if settings_readiness.label == "Endpoint not saved":
+            return (
+                "Configure endpoint",
+                "settings",
+                f"Save the {provider} endpoint in Settings",
+            )
         return ("Review settings", "console", "Review this Console session's settings")
 
     def _console_provider_recovery_strip_visible(self, blocker_copy: str) -> bool:

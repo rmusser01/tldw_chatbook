@@ -3,8 +3,10 @@ import inspect
 
 import tldw_chatbook.Chat.console_session_settings as session_settings
 from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSettingsContextEstimate,
     ConsoleSessionSettings,
     build_console_context_estimate,
+    build_console_settings_summary_state,
     build_console_settings_readiness,
     build_default_console_session_settings,
     build_console_model_options,
@@ -240,6 +242,60 @@ def test_readiness_allows_configured_url_with_trailing_slash() -> None:
 
     assert readiness.label == "Ready"
     assert readiness.native_send_supported is True
+
+
+def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="llama3",
+            base_url="http://127.0.0.1:9999/v1",
+        ),
+        app_config={
+            "api_settings": {
+                "ollama": {"api_url": "http://127.0.0.1:11434"},
+            }
+        },
+        environ={},
+    )
+
+    assert readiness.label == "Endpoint not saved"
+    assert readiness.native_send_supported is False
+    assert "save the endpoint in Settings" in readiness.detail
+    assert "Selected endpoint: http://127.0.0.1:9999/v1" in readiness.detail
+    assert "Saved endpoint: http://127.0.0.1:11434" in readiness.detail
+
+
+def test_settings_summary_includes_runtime_endpoint_credential_and_streaming_rows() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="llama3",
+            base_url="http://127.0.0.1:11434",
+            streaming=False,
+        ),
+        app_config={
+            "api_settings": {
+                "ollama": {"api_url": "http://127.0.0.1:11434"},
+            }
+        },
+        environ={},
+    )
+
+    state = build_console_settings_summary_state(
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="llama3",
+            base_url="http://127.0.0.1:11434",
+            streaming=False,
+        ),
+        ConsoleSettingsContextEstimate(used_tokens=None, token_limit=None, label="Context: unavailable"),
+        readiness,
+    )
+
+    assert state.endpoint_row == "Endpoint: http://127.0.0.1:11434"
+    assert state.credential_row == "Credential: not required"
+    assert state.transport_row == "Streaming: off"
 
 
 def test_readiness_explicit_send_capable_injection_allows_supported_generic_provider() -> None:

@@ -12,7 +12,7 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
 
 
-CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT = 6
+CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT = 9
 CONSOLE_SETTINGS_BUTTON_HORIZONTAL_PADDING = 2
 CONSOLE_SETTINGS_BUTTON_MIN_WIDTH = 9
 CONSOLE_SETTINGS_BUTTON_MAX_WIDTH = 14
@@ -39,6 +39,9 @@ class ConsoleSettingsSummary(Vertical):
             )
             self.query_one("#console-settings-model-row", Static).update(state.model_row)
             self.query_one("#console-settings-context-row", Static).update(state.context_row)
+            self.query_one("#console-settings-endpoint-row", Static).update(state.endpoint_row)
+            self.query_one("#console-settings-credential-row", Static).update(state.credential_row)
+            self.query_one("#console-settings-transport-row", Static).update(state.transport_row)
             self.query_one("#console-settings-sampling-row", Static).update(state.sampling_row)
             self.query_one("#console-settings-identity-row", Static).update(state.identity_row)
             button = self.query_one("#console-settings-open", Button)
@@ -113,6 +116,24 @@ class ConsoleSettingsSummary(Vertical):
         yield Static(
             self.state.context_row,
             id="console-settings-context-row",
+            classes="console-settings-row",
+            markup=False,
+        )
+        yield Static(
+            self.state.endpoint_row,
+            id="console-settings-endpoint-row",
+            classes="console-settings-row",
+            markup=False,
+        )
+        yield Static(
+            self.state.credential_row,
+            id="console-settings-credential-row",
+            classes="console-settings-row",
+            markup=False,
+        )
+        yield Static(
+            self.state.transport_row,
+            id="console-settings-transport-row",
             classes="console-settings-row",
             markup=False,
         )

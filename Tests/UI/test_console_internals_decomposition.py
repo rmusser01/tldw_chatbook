@@ -1291,7 +1291,7 @@ async def test_console_enter_sends_native_composer_draft(monkeypatch):
         send_button = console.query_one("#console-send-message", Button)
         assert "Console send blocked" not in text
         assert send_button.disabled is False
-        assert send_button.tooltip == "Finish provider setup before sending."
+        assert send_button.tooltip == "Add API key in Settings before sending."
         assert "missing API key" in text
         assert "Internal Error" not in text
         assert "Missing UI elements" not in text
@@ -1381,8 +1381,8 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         assert button.display is True
         assert button.disabled is False
         assert button.region.height == 1
-        assert button.region.width >= len("Open Settings")
-        assert str(button.label) == "Open Settings"
+        assert button.region.width >= len("Add API key")
+        assert str(button.label) == "Add API key"
         assert blocker.region.y == button.region.y
         assert str(strip.styles.height) == "auto"
         assert str(blocker.styles.height) == "auto"
@@ -1392,7 +1392,7 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         blocker_text = getattr(blocker.render(), "plain", str(blocker.render()))
         assert blocker_text == "Provider setup needed: OpenAI missing API key"
         text = _visible_text(console)
-        assert "Open Settings" in text
+        assert "Add API key" in text
         assert console.query_one("#console-inspector-rail-handle").display is True
         assert console.query_one("#console-right-rail").display is False
         assert text.lower().count("missing api key") == 1
@@ -1933,7 +1933,7 @@ async def test_console_left_rail_sections_use_available_space():
         assert settings.parent is body
         assert workspace_context.parent is body
         assert staged_context.region.y < settings.region.y < workspace_context.region.y
-        assert settings.region.height <= 6
+        assert settings.region.height <= 9
         assert workspace_context.region.height > settings.region.height
         assert staged_context.region.width == body.region.width
         assert settings.region.width == body.region.width

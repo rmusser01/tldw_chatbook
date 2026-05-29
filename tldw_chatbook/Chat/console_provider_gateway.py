@@ -22,6 +22,10 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    generic_endpoint_differs,
+    unsaved_endpoint_copy,
+)
 from tldw_chatbook.Chat.console_provider_support import resolve_console_provider_identity
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness, provider_config_key
 from tldw_chatbook.Utils.input_validation import validate_url
@@ -335,12 +339,12 @@ class ConsoleProviderGateway:
                 execution_key=identity.execution_key,
             )
 
-        if _has_different_generic_base_url(selection.base_url, provider_settings):
+        if generic_endpoint_differs(selection.base_url, provider_settings):
             return self._blocked_resolution(
                 selection,
                 provider=selection.provider,
                 model=model,
-                visible_copy="Provider blocked: save the endpoint in Settings before using it from Console.",
+                visible_copy=unsaved_endpoint_copy(selection.base_url, provider_settings),
                 readiness_key=identity.readiness_key,
                 execution_key=identity.execution_key,
             )
@@ -825,43 +829,3 @@ def _first_string(*values: object) -> str | None:
         if stripped:
             return stripped
     return None
-
-
-def _has_different_generic_base_url(base_url: str | None, provider_settings: Mapping[str, object]) -> bool:
-    selected_base_url = _normalize_generic_url_for_compare(base_url)
-    if not selected_base_url:
-        return False
-
-    configured_base_url = _normalize_generic_url_for_compare(
-        _first_string(
-            provider_settings.get("api_url"),
-            provider_settings.get("base_url"),
-            provider_settings.get("api_base"),
-            provider_settings.get("api_endpoint"),
-            provider_settings.get("endpoint"),
-        )
-    )
-    return selected_base_url != configured_base_url
-
-
-def _normalize_generic_url_for_compare(url: str | None) -> str:
-    raw_url = str(url or "").strip()
-    if not raw_url:
-        return ""
-    try:
-        parsed = urlparse(raw_url)
-    except ValueError:
-        return raw_url.rstrip("/")
-    if parsed.scheme and parsed.netloc:
-        scheme = parsed.scheme.lower()
-        netloc = parsed.netloc.lower()
-        try:
-            port = parsed.port
-        except ValueError:
-            return raw_url.rstrip("/")
-        default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
-        if default_port and parsed.hostname:
-            hostname = parsed.hostname.lower()
-            netloc = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
-        return urlunparse((scheme, netloc, parsed.path.rstrip("/"), "", "", ""))
-    return raw_url.rstrip("/")

@@ -233,7 +233,7 @@ async def test_console_settings_summary_treats_missing_provider_row_as_blank() -
 
 
 def test_console_settings_summary_button_sizing_uses_named_constants() -> None:
-    assert settings_summary_module.CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT == 6
+    assert settings_summary_module.CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT == 9
     assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_HORIZONTAL_PADDING == 2
     assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MIN_WIDTH == 9
     assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MAX_WIDTH == 14
@@ -1274,6 +1274,56 @@ def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
     assert provider_row.recovery == ""
     assert blocker_copy == ""
     assert screen._console_send_blocked_reason() == ""
+
+
+def test_console_missing_key_recovery_action_is_provider_specific() -> None:
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "OPENAI_API_KEY", "model": "gpt-4.1"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+
+    label, target, tooltip = screen._console_provider_recovery_action()
+
+    assert screen._console_provider_blocker_copy() == "Provider setup needed: OpenAI missing API key"
+    assert label == "Add API key"
+    assert target == "settings"
+    assert tooltip == "Add an API key for OpenAI"
+    assert screen._console_setup_blocked_reason() == "Add API key in Settings before sending."
+
+
+def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details() -> None:
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "ollama": {"api_url": "http://127.0.0.1:11434", "model": "llama3"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(
+        session.id,
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="llama3",
+            base_url="http://127.0.0.1:9999/v1",
+        ),
+    )
+
+    inspector_state = screen._build_console_inspector_state(None)
+    provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
+    label, target, tooltip = screen._console_provider_recovery_action()
+
+    assert provider_row.value == "blocked"
+    assert "Selected endpoint: http://127.0.0.1:9999/v1" in provider_row.recovery
+    assert "Saved endpoint: http://127.0.0.1:11434" in provider_row.recovery
+    assert "save the endpoint in Settings" in screen._console_provider_blocker_copy()
+    assert label == "Configure endpoint"
+    assert target == "settings"
+    assert tooltip == "Save the ollama endpoint in Settings"
+    assert screen._console_setup_blocked_reason() == "Save provider endpoint in Settings before sending."
 
 
 def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallback() -> None:

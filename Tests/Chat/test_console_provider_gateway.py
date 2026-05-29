@@ -427,11 +427,19 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
     )
 
     resolved = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="ollama", explicit_model="llama3", base_url="http://127.0.0.1:9999")
+        ConsoleProviderSelection(
+            provider="ollama",
+            explicit_model="llama3",
+            base_url="http://user:secret@127.0.0.1:9999/v1",
+        )
     )
 
     assert resolved.ready is False
     assert "save the endpoint in Settings" in resolved.visible_copy
+    assert "Selected endpoint: http://127.0.0.1:9999/v1" in resolved.visible_copy
+    assert "Saved endpoint: http://127.0.0.1:11434" in resolved.visible_copy
+    assert "user" not in resolved.visible_copy
+    assert "secret" not in resolved.visible_copy
 
 
 @pytest.mark.asyncio
