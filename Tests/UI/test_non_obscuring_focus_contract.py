@@ -35,6 +35,7 @@ CHATBOOKS_IMPROVED = ROOT / "tldw_chatbook/css/features/_chatbooks_improved.tcss
 CHATBOOKS_WINDOW_IMPROVED = ROOT / "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
 SAMPLE_BROWSER_DIALOG = ROOT / "tldw_chatbook/Widgets/Evals/sample_browser_dialog.py"
 RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
+BASE_TAMAGOTCHI = ROOT / "tldw_chatbook/Widgets/Tamagotchi/base_tamagotchi.py"
 
 
 def css_blocks(text: str, selector: str) -> list[str]:
@@ -69,6 +70,14 @@ def css_block(text: str, selector: str) -> str:
     if blocks:
         return blocks[0]
     raise AssertionError(f"Missing CSS block for {selector}")
+
+
+def python_default_css(text: str) -> str:
+    """Return a widget DEFAULT_CSS literal from a Python source file."""
+    match = re.search(r'DEFAULT_CSS = """(?P<css>.*?)"""', text, flags=re.DOTALL)
+    if match is None:
+        raise AssertionError("Missing DEFAULT_CSS literal")
+    return match.group("css")
 
 
 def assert_non_obscuring_focus(block: str) -> None:
@@ -154,6 +163,20 @@ def assert_readable_inline_selected_state_contract(block: str) -> None:
     assert "$primary" not in block
     assert "background: $surface;" in block
     assert "color: $text;" in block
+    assert "text-style: bold underline;" in block
+
+
+def assert_custom_widget_focus_contract(block: str) -> None:
+    assert "outline: heavy" not in block
+    assert "reverse" not in block
+    assert "border: thick" not in block
+    assert "$accent" not in block
+    assert "$primary" not in block
+    assert "$error" not in block
+    assert "$warning" not in block
+    assert "border: round $ds-focus-accent;" in block
+    assert "background: $ds-focus-bg;" in block
+    assert "color: $ds-focus-fg;" in block
     assert "text-style: bold underline;" in block
 
 
@@ -484,6 +507,14 @@ def test_evals_sample_browser_selected_row_children_show_inline_selected_cue():
         assert "$primary" not in block
         assert "color: $text;" in block
         assert "text-style: bold underline;" in block
+
+
+def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():
+    text = python_default_css(BASE_TAMAGOTCHI.read_text(encoding="utf-8"))
+    base = css_block(text, "BaseTamagotchi")
+    focus = css_block(text, "BaseTamagotchi:focus")
+    assert "border: round" in base
+    assert_custom_widget_focus_contract(focus)
 
 
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():

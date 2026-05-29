@@ -72,7 +72,10 @@ class BaseTamagotchi(Static):
     }
     
     BaseTamagotchi:focus {
-        border: round $accent;
+        border: round $ds-focus-accent;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
     }
     
     BaseTamagotchi.sleeping {
