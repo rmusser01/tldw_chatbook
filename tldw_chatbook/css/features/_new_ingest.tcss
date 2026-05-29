@@ -78,7 +78,7 @@
 .media-card {
     height: 10;
     background: linear-gradient(135deg, $surface, $surface-lighten-1);
-    border: round $primary;
+    border: round $border;
     padding: 2;
     cursor: pointer;
     transition: all 0.3s ease;
@@ -94,8 +94,7 @@
 }
 
 .media-card:focus {
-    border: round $accent;
-    box-shadow: 0 0 0 2px $accent;
+    border: round $ds-focus-accent;
 }
 
 /* Card header with icon and title */
@@ -351,10 +350,6 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-.quick-actions Button:focus {
-    box-shadow: 0 0 0 2px $accent;
-}
-
 /* ================================================
  * SMART FILE DROP ZONE
  * ================================================ */
@@ -550,13 +545,8 @@
     height: 2;
     width: 100%;
     background: $surface;
-    border: solid $primary;
+    border: solid $border;
     padding: 0 1;
-}
-
-.metadata-grid Input:focus {
-    border: solid $accent;
-    background: $accent 10%;
 }
 
 /* Options panel styling */
@@ -966,14 +956,6 @@
 .processing {
     opacity: 0.8;
     animation: pulse 2s infinite;
-}
-
-/* Focus indicators for accessibility */
-Button:focus,
-Input:focus,
-RadioButton:focus {
-    box-shadow: 0 0 0 2px $accent;
-    outline: solid transparent;
 }
 
 /* Scrollbar styling for webkit browsers */

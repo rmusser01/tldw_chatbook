@@ -229,42 +229,53 @@ class TestSearchRAGWindow:
                 assert window.is_searching is False
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("web_search_available", [False, True])
     async def test_get_search_config_reads_current_controls(
         self,
         mock_app_instance: MagicMock,
         search_rag_test_env,
         widget_pilot,
+        web_search_available: bool,
     ) -> None:
         """Search config should mirror the live control values and reactive state."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
-            window = pilot.app.test_widget
+        with patch.object(search_rag_window_module, "WEB_SEARCH_AVAILABLE", web_search_available):
+            with patch(
+                "tldw_chatbook.UI.Views.RAGSearch.search_event_handlers.WEB_SEARCH_AVAILABLE",
+                web_search_available,
+            ):
+                async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                    window = pilot.app.test_widget
 
-            window.query_one("#search-mode-select", Select).value = "hybrid"
-            window.query_one("#collection-select", Select).value = "all"
-            window.query_one("#top-k-input", Input).value = "7"
-            window.query_one("#temperature-input", Input).value = "0.35"
-            window.query_one("#filter-media", Checkbox).value = True
-            window.query_one("#filter-conversations", Checkbox).value = False
-            window.query_one("#filter-notes", Checkbox).value = True
+                    window.query_one("#search-mode-select", Select).value = "hybrid"
+                    window.query_one("#collection-select", Select).value = "all"
+                    window.query_one("#top-k-input", Input).value = "7"
+                    window.query_one("#temperature-input", Input).value = "0.35"
+                    window.query_one("#filter-media", Checkbox).value = True
+                    window.query_one("#filter-conversations", Checkbox).value = False
+                    window.query_one("#filter-notes", Checkbox).value = True
 
-            window.enable_parent_docs = True
-            window.parent_retrieval_strategy = "sentence_window"
-            window.parent_retrieval_size = 256
+                    window.enable_parent_docs = True
+                    window.parent_retrieval_strategy = "sentence_window"
+                    window.parent_retrieval_size = 256
 
-            assert window._get_search_config() == {
-                "mode": "hybrid",
-                "collection": "all",
-                "top_k": 7,
-                "temperature": 0.35,
-                "enable_parent_docs": True,
-                "parent_strategy": "sentence_window",
-                "parent_size": 256,
-                "filters": {
-                    "media": True,
-                    "conversations": False,
-                    "notes": True,
-                },
-            }
+                    expected_config = {
+                        "mode": "hybrid",
+                        "collection": "all",
+                        "top_k": 7,
+                        "temperature": 0.35,
+                        "enable_parent_docs": True,
+                        "parent_strategy": "sentence_window",
+                        "parent_size": 256,
+                        "filters": {
+                            "media": True,
+                            "conversations": False,
+                            "notes": True,
+                        },
+                    }
+                    if web_search_available:
+                        expected_config["include_web_search"] = False
+
+                    assert window._get_search_config() == expected_config
 
     @pytest.mark.asyncio
     async def test_action_focus_search_focuses_search_input(
