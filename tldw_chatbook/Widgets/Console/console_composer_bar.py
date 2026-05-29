@@ -15,7 +15,13 @@ from textual.css.query import NoMatches
 from textual.events import Click, DescendantBlur, DescendantFocus
 from textual.widgets import Button, Input, Static
 
-from ...config import coerce_bool_setting
+from ...config import (
+    DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    coerce_bool_setting,
+    coerce_int_setting,
+)
 
 
 _CollapseState = Literal["literal", "collapsed", "confirm", "expanded"]
@@ -54,7 +60,7 @@ class ConsoleComposerBar(Horizontal):
 
     DEFAULT_STATUS = "No active Console session."
     DRAFT_PLACEHOLDER = "Ask, command, or paste task..."
-    PASTE_COLLAPSE_THRESHOLD = 50
+    PASTE_COLLAPSE_THRESHOLD = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD
     PASTE_COLLAPSE_ENABLED = True
     MIN_DRAFT_ROWS = 1
     MAX_DRAFT_ROWS = 4
@@ -63,13 +69,25 @@ class ConsoleComposerBar(Horizontal):
     PASTE_TOKEN_STYLE = "bold cyan"
     PASTE_CONFIRM_STYLE = "bold black on yellow"
 
-    def __init__(self, *, collapse_large_pastes: bool = True, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        collapse_large_pastes: bool = True,
+        paste_collapse_threshold: int = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.can_focus = True
         self.styles.height = 5
         self.styles.min_height = 5
         self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
         self.collapse_large_pastes = coerce_bool_setting(collapse_large_pastes, True)
+        self.paste_collapse_threshold = coerce_int_setting(
+            paste_collapse_threshold,
+            DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+            minimum=MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+            maximum=MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+        )
         self._segments: list[_DraftSegment] = []
         self._segments_initialized = False
         self._run_active = False
@@ -550,7 +568,7 @@ class ConsoleComposerBar(Horizontal):
         self._reset_pending_unfurl_state()
         should_collapse = (
             self.collapse_large_pastes_enabled
-            and len(text) > self.PASTE_COLLAPSE_THRESHOLD
+            and len(text) > self.paste_collapse_threshold
         )
         if should_collapse:
             self._segments.append(_DraftSegment(text, collapse_state="collapsed"))

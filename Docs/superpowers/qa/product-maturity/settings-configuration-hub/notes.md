@@ -204,3 +204,29 @@ git diff --check
 ```
 
 Result: `80 passed` for the full Settings configuration hub suite, one existing requests dependency warning, `git diff --check` clean, and approved screenshot verified as a `2050 x 1240` PNG.
+
+## 2026-05-28 Console Paste Threshold Follow-Up
+
+Branch: `codex/settings-config-next-slice-4`
+
+Approved screenshot:
+
+- Console paste threshold: `Docs/superpowers/qa/product-maturity/settings-configuration-hub/screenshots/20-console-paste-threshold-cdp.png`
+
+Coverage added:
+
+- Console paste collapse now has a user-configurable `[console].paste_collapse_threshold` with a default of `50`.
+- Settings exposes the threshold in Console Behavior next to the enabled/disabled paste-collapse toggle.
+- The Console composer reads the same effective threshold from app config, so pasted chunks collapse only when their inserted length exceeds the configured value.
+- Normal typing remains literal and is not transformed by the paste-collapse behavior.
+- Actual textual-web/CDP verification confirmed the threshold control is visible in the full Settings workbench and the approved screenshot was reviewed by the user.
+
+Focused verification:
+
+```bash
+python tldw_chatbook/css/build_css.py
+python -m pytest -q Tests/test_config_console_defaults.py Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_internals_decomposition.py::test_console_paste_threshold_can_be_configured_from_app_config Tests/UI/test_console_internals_decomposition.py::test_console_paste_under_threshold_remains_literal Tests/UI/test_console_internals_decomposition.py::test_console_large_paste_collapse_can_be_disabled_from_config --tb=short
+git diff --check
+```
+
+Result: `90 passed` for the focused config, Settings, and Console composer regression suite, with existing dependency/deprecation warnings only, and `git diff --check` clean.

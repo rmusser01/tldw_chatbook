@@ -24,10 +24,19 @@ from ...config import (
     BASE_DATA_DIR_CLI,
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONFIG_PATH,
+    DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     coerce_bool_setting,
+    coerce_int_setting,
     save_setting_to_cli_config,
 )
-from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
+from ...Utils.input_validation import (
+    sanitize_string,
+    validate_number_range,
+    validate_text_input,
+    validate_url,
+)
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
 from .provider_model_resolution import resolve_effective_provider_model
@@ -108,6 +117,7 @@ class SettingsScreen(BaseAppScreen):
         self._provider_test_result = "Provider test has not run."
         self._provider_save_result = "Provider settings have not been saved this session."
         self._syncing_provider_endpoint = False
+        self._syncing_console_threshold = False
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
         self._storage_check_rows: tuple[str, ...] = (
@@ -118,6 +128,7 @@ class SettingsScreen(BaseAppScreen):
             "Privacy check: not run",
             "Run Check Privacy or press t to verify redacted secret status.",
         )
+        self._console_behavior_result = "Console behavior settings have not been saved this session."
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
 
@@ -234,6 +245,17 @@ class SettingsScreen(BaseAppScreen):
             True,
         )
 
+    def _loaded_paste_collapse_threshold(self) -> int:
+        return coerce_int_setting(
+            self._console_settings().get(
+                "paste_collapse_threshold",
+                DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+            ),
+            DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+            minimum=MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+            maximum=MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+        )
+
     def _collapse_large_pastes_enabled(self) -> bool:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
         if draft is not None and "collapse_large_pastes" in draft.values:
@@ -250,12 +272,32 @@ class SettingsScreen(BaseAppScreen):
         state = "Enabled" if self._collapse_large_pastes_enabled() else "Disabled"
         return f"{state}: collapse large pastes"
 
+    def _collapse_large_pastes_button_label(self) -> str:
+        return "Enabled" if self._collapse_large_pastes_enabled() else "Disabled"
+
+    def _paste_collapse_threshold_value(self) -> object:
+        draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        if draft is not None and "paste_collapse_threshold" in draft.values:
+            return draft.values["paste_collapse_threshold"]
+        return self._loaded_paste_collapse_threshold()
+
+    def _paste_collapse_threshold_label(self) -> str:
+        value = self._paste_collapse_threshold_value()
+        try:
+            threshold = self._normalise_paste_collapse_threshold(value)
+        except ValueError:
+            return f"Invalid threshold: {value}"
+        return f"{threshold} characters"
+
     def _update_console_paste_summary(self) -> None:
         try:
             summary = self.query_one("#settings-overview-console-paste-collapse", Static)
         except QueryError:
             return
-        summary.update(f"Console paste collapse: {self._collapse_large_pastes_label()}")
+        summary.update(
+            "Console paste collapse: "
+            f"{self._collapse_large_pastes_label()} | Threshold: {self._paste_collapse_threshold_label()}"
+        )
 
     def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
         draft = self._settings_drafts.get(category)
@@ -506,6 +548,37 @@ class SettingsScreen(BaseAppScreen):
             "collapse_large_pastes",
             self._loaded_collapse_large_pastes_enabled(),
             value,
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    def _normalise_paste_collapse_threshold(self, value: object) -> int:
+        text_value = str(value).strip()
+        if not text_value or not text_value.isdigit():
+            raise ValueError("Paste collapse threshold must be a whole number.")
+        if not validate_number_range(
+            text_value,
+            min_val=MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+            max_val=MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+        ):
+            raise ValueError(
+                "Paste collapse threshold must be between "
+                f"{MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD} and "
+                f"{MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD}."
+            )
+        return int(text_value)
+
+    def _stage_console_paste_threshold_value(self, value: object) -> None:
+        category = SettingsCategoryId.CONSOLE_BEHAVIOR
+        draft = self._settings_drafts.setdefault(category, SettingsDraft(category=category))
+        try:
+            staged_value: object = self._normalise_paste_collapse_threshold(value)
+        except ValueError:
+            staged_value = str(value)
+        draft.set_value(
+            "paste_collapse_threshold",
+            self._loaded_paste_collapse_threshold(),
+            staged_value,
         )
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
@@ -1558,17 +1631,31 @@ class SettingsScreen(BaseAppScreen):
             title = "Console paste collapse" if compact else "Console Behavior"
             yield Static(title, classes="destination-section")
             yield Static(
-                "Collapse large pasted chunks over 50 characters.",
+                "Collapse large pasted chunks only when they exceed the threshold.",
                 id="settings-console-collapse-large-pastes-label",
             )
             yield Button(
-                self._collapse_large_pastes_label(),
+                self._collapse_large_pastes_button_label(),
                 id="settings-console-collapse-large-pastes-toggle",
                 tooltip="Toggle compact display for large pasted Console chunks.",
             )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Threshold", classes="settings-input-label")
+                yield Input(
+                    value=str(self._paste_collapse_threshold_value()),
+                    id="settings-console-paste-collapse-threshold",
+                    classes="settings-compact-input",
+                    placeholder=str(DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD),
+                    restrict="[0-9]*",
+                )
             yield Static(
-                "Keeps large paste chunks compact in Console. Disable to keep pasted text literal.",
+                "Normal typing stays literal. The canonical message payload is preserved.",
                 id="settings-console-collapse-large-pastes-help",
+            )
+            yield Static(
+                self._console_behavior_result,
+                id="settings-console-behavior-result",
+                classes="settings-status-row",
             )
 
     def _render_detail_pane(self) -> ComposeResult:
@@ -1581,19 +1668,23 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Console Behavior", classes="destination-section settings-column-title")
             with Vertical(id="settings-console-behavior-detail", classes="settings-focus-card"):
                 yield self._render_category_state_banner(SettingsCategoryId.CONSOLE_BEHAVIOR)
+                yield from self._render_console_behavior_card(compact=False)
                 yield Static("Composer behavior", classes="destination-section")
                 yield self._detail_row(
                     "Paste collapse",
-                    "chunks over 50 characters display as compact placeholders",
+                    "pasted chunks over the threshold display as compact placeholders",
                 )
+                yield self._detail_row("Threshold", self._paste_collapse_threshold_label())
                 yield self._detail_row(
                     "Typing rule",
                     "normal typing remains literal and never auto-collapses",
                 )
                 yield self._detail_row("Current default", self._collapse_large_pastes_label())
-                yield self._detail_row("Save target", "[console].collapse_large_pastes")
+                yield self._detail_row(
+                    "Save targets",
+                    "[console].collapse_large_pastes, [console].paste_collapse_threshold",
+                )
                 yield self._detail_row("Console impact", "composer display only; message payload is preserved")
-                yield from self._render_console_behavior_card(compact=False)
         elif category is SettingsCategoryId.APPEARANCE:
             yield Static("Appearance", classes="destination-section settings-column-title")
             with Vertical(id="settings-appearance-card", classes="settings-focus-card"):
@@ -1917,7 +2008,17 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         next_value = not self._collapse_large_pastes_enabled()
         self._stage_console_large_paste_value(next_value)
-        event.button.label = self._collapse_large_pastes_label()
+        event.button.label = self._collapse_large_pastes_button_label()
+        self._update_console_paste_summary()
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Input.Changed, "#settings-console-paste-collapse-threshold")
+    def handle_console_paste_threshold_changed(self, event: Input.Changed) -> None:
+        if self._syncing_console_threshold:
+            return
+        self._stage_console_paste_threshold_value(event.value)
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
@@ -2137,6 +2238,21 @@ class SettingsScreen(BaseAppScreen):
 
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             dirty_values = {key: draft.values[key] for key in draft.dirty_keys}
+            if "paste_collapse_threshold" in dirty_values:
+                try:
+                    dirty_values["paste_collapse_threshold"] = (
+                        self._normalise_paste_collapse_threshold(
+                            dirty_values["paste_collapse_threshold"]
+                        )
+                    )
+                except ValueError as exc:
+                    self._console_behavior_result = str(exc)
+                    self._set_static_text(
+                        "#settings-console-behavior-result",
+                        self._console_behavior_result,
+                    )
+                    self.app.notify(self._console_behavior_result, severity="error")
+                    return
             saved = True
             for key, value in dirty_values.items():
                 if not save_setting_to_cli_config("console", key, value):
@@ -2144,9 +2260,15 @@ class SettingsScreen(BaseAppScreen):
             if saved:
                 self._console_settings().update(dirty_values)
                 self._settings_drafts.pop(category, None)
+                self._console_behavior_result = "Console behavior settings saved."
                 self._sync_console_behavior_widgets()
                 self.app.notify("Console behavior settings saved.", severity="information")
             else:
+                self._console_behavior_result = "Failed to save Console behavior settings."
+                self._set_static_text(
+                    "#settings-console-behavior-result",
+                    self._console_behavior_result,
+                )
                 self.app.notify("Failed to save Console behavior settings.", severity="error")
             return
 
@@ -2159,6 +2281,7 @@ class SettingsScreen(BaseAppScreen):
             return
         self._settings_drafts.pop(category, None)
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+            self._console_behavior_result = "Console behavior settings reverted to last loaded values."
             self._sync_console_behavior_widgets()
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
             values = self._provider_setting_values()
@@ -2216,10 +2339,21 @@ class SettingsScreen(BaseAppScreen):
     def _sync_console_behavior_widgets(self) -> None:
         try:
             self.query_one("#settings-console-collapse-large-pastes-toggle", Button).label = (
-                self._collapse_large_pastes_label()
+                self._collapse_large_pastes_button_label()
             )
         except QueryError:
             pass
+        try:
+            self._syncing_console_threshold = True
+            try:
+                self.query_one("#settings-console-paste-collapse-threshold", Input).value = str(
+                    self._paste_collapse_threshold_value()
+                )
+            finally:
+                self._syncing_console_threshold = False
+        except QueryError:
+            pass
+        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 

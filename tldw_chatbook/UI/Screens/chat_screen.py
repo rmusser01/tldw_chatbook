@@ -79,7 +79,15 @@ from ...Chat.console_rail_state import (
     coerce_console_rail_preferences,
     serialize_console_rail_preferences,
 )
-from ...config import coerce_bool_setting, get_cli_providers_and_models, save_setting_to_cli_config
+from ...config import (
+    DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    coerce_bool_setting,
+    coerce_int_setting,
+    get_cli_providers_and_models,
+    save_setting_to_cli_config,
+)
 from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
@@ -2004,8 +2012,8 @@ class ChatScreen(BaseAppScreen):
                         )
                         workspace_context_tray.styles.width = "100%"
                         workspace_context_tray.styles.min_width = 0
-                        workspace_context_tray.styles.height = "auto"
-                        workspace_context_tray.styles.min_height = 14
+                        workspace_context_tray.styles.height = "1fr"
+                        workspace_context_tray.styles.min_height = 8
                         yield self._frame_console_region(
                             workspace_context_tray,
                             variant=self._workspace_context_frame_variant(workspace_context_state),
@@ -2147,6 +2155,7 @@ class ChatScreen(BaseAppScreen):
                     id="console-native-composer",
                     classes="ds-panel",
                     collapse_large_pastes=self._console_collapse_large_pastes_enabled(),
+                    paste_collapse_threshold=self._console_paste_collapse_threshold(),
                 )
             )
 
@@ -2157,6 +2166,22 @@ class ChatScreen(BaseAppScreen):
         if not isinstance(console_config, dict):
             return True
         return coerce_bool_setting(console_config.get("collapse_large_pastes", True), True)
+
+    def _console_paste_collapse_threshold(self) -> int:
+        """Return the app-level Console paste-collapse character threshold."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        console_config = app_config.get("console", {})
+        if not isinstance(console_config, dict):
+            return DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD
+        return coerce_int_setting(
+            console_config.get(
+                "paste_collapse_threshold",
+                DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+            ),
+            DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+            minimum=MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+            maximum=MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+        )
     
     def on_mount(self) -> None:
         """Run diagnostics when first mounted (only once)."""
