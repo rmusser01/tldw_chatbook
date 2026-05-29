@@ -40,9 +40,9 @@ Scope: PR 1 foundation plus app-wide inventory
 | `Collapsible > .collapsible--header:focus` | `tldw_chatbook/css/components/_widgets.tcss` | shared widgets | collapsible header | local focus treatment needs review | readable non-obscuring focus | PR 2 shared widgets | source contract |
 | `.message-actions Button:focus` | `tldw_chatbook/css/components/_messages.tcss` | message actions | button | compact action focus needs review | two-cue non-obscuring focus | PR 2 shared widgets | source contract |
 | `.message-actions Button:focus:hover` | `tldw_chatbook/css/components/_messages.tcss` | message actions | button | combined hover/focus needs review | two-cue non-obscuring focus | PR 2 shared widgets | source contract |
-| `.chat-sidebar-toggle-button:focus` | `tldw_chatbook/css/features/_chat.tcss` | Chat | button | heavy outline feature override | two-cue non-obscuring focus | Deferred PR 4+ | not yet migrated |
-| `.rag-settings-panel:focus-within` | `tldw_chatbook/css/features/_chat.tcss` | Chat RAG settings | panel | focus-within treatment needs review | non-obscuring container cue | Deferred PR 4+ | not yet migrated |
-| `.chat-tab.active` | `tldw_chatbook/css/features/_chat_tabs.tcss` | Chat tabs | selected tab | active tab fill needs review | selected plus focus contract | Deferred PR 4+ | not yet migrated |
+| `.chat-sidebar-toggle-button:focus` | `tldw_chatbook/css/features/_chat.tcss` | Chat | button | heavy outline feature override | two-cue non-obscuring focus | PR 3 chat focus | source contract |
+| `.rag-settings-panel:focus-within` | `tldw_chatbook/css/features/_chat.tcss` | Chat RAG settings | panel | focus-within treatment needs review | non-obscuring container cue | PR 3 chat focus | source contract |
+| `.chat-tab.active` | `tldw_chatbook/css/features/_chat_tabs.tcss` | Chat tabs | selected tab | active tab fill needs review | selected plus focus contract | PR 3 chat focus | source contract |
 | `.coding-nav-button:focus` | `tldw_chatbook/css/features/_coding.tcss` | Coding | nav button | local focus override needs review | two-cue non-obscuring focus | Deferred PR 4+ | not yet migrated |
 | `.search-input-enhanced:focus` | `tldw_chatbook/css/features/_search-rag.tcss` | Search/RAG | input | search field focus needs review | thin non-obscuring input focus | Deferred PR 4+ | not yet migrated |
 | `Input.search-highlight:focus` | `tldw_chatbook/css/features/config_search.tcss` | Config search | input | highlight focus needs review | thin non-obscuring input focus | Deferred PR 4+ | not yet migrated |
