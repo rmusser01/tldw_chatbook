@@ -1,6 +1,6 @@
 ---
 id: TASK-73.5
-title: Define Settings server sync workspace and handoff source contracts
+title: Add Settings server sync workspace and handoff defaults
 status: To Do
 labels:
 - settings
