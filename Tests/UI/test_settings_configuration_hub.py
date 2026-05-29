@@ -668,7 +668,7 @@ async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
         screen = _active_destination_screen(host)
         threshold = screen.query_one("#settings-console-paste-collapse-threshold", Input)
 
-        assert threshold.restrict == "[0-9]*"
+        assert threshold.restrict == r"^[0-9]*$"
         threshold.value = "120"
         screen.handle_console_paste_threshold_changed(Input.Changed(threshold, threshold.value))
         assert "Unsaved" in _visible_text(screen)
