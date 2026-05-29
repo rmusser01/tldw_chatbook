@@ -89,10 +89,10 @@ def assert_thin_inline_input_focus(block: str) -> None:
     assert "outline: heavy" not in block
     assert "border: thick" not in block
     assert "border: round" not in block
-    assert "border: solid $primary;" in block
-    assert "border-bottom: solid $primary;" in block
-    assert "background: $surface;" in block
-    assert "color: $text;" in block
+    assert "border: solid $ds-input-focus-border;" in block
+    assert "border-bottom: solid $ds-input-focus-accent;" in block
+    assert "background: $ds-input-focus-bg;" in block
+    assert "color: $ds-text-primary;" in block
     assert "$error" not in block
     assert "$warning" not in block
 
