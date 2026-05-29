@@ -1,6 +1,8 @@
 import re
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 VARIABLES = ROOT / "tldw_chatbook/css/core/_variables.tcss"
@@ -14,6 +16,7 @@ MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
 SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
+BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
@@ -271,9 +274,22 @@ def test_legacy_sidebar_focus_overrides_defer_to_shared_contracts():
         assert css_blocks(text, selector) == []
 
 
-def test_sidebar_setting_input_uses_stable_base_geometry_for_shared_focus():
+@pytest.mark.parametrize("selector", (".setting-input", ".sidebar-input", ".sidebar Select"))
+def test_sidebar_inputs_use_stable_base_geometry_for_shared_focus(selector: str):
     text = SIDEBARS.read_text(encoding="utf-8")
-    block = css_block(text, ".setting-input")
+    block = css_block(text, selector)
+    assert "border: thick" not in block
+    assert "border: round" not in block
+    assert "border: solid" in block
+    assert "border-bottom: solid" in block
+
+
+@pytest.mark.parametrize("selector", (".setting-input", ".sidebar-input", ".sidebar Select"))
+def test_bundled_sidebar_inputs_keep_stable_effective_geometry(selector: str):
+    text = BUNDLE.read_text(encoding="utf-8")
+    blocks = css_blocks(text, selector)
+    assert blocks
+    block = blocks[-1]
     assert "border: thick" not in block
     assert "border: round" not in block
     assert "border: solid" in block
