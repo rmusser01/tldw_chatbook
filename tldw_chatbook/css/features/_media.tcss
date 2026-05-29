@@ -447,11 +447,19 @@ MediaDetailsWidget {
 }
 
 .keyword-item.selected {
-    background: $accent-lighten-1;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .keyword-item:hover {
     background: $accent 50%;
+}
+
+.keyword-item.selected:hover {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .keyword-action-buttons {
@@ -605,11 +613,19 @@ MediaDetailsWidget {
 }
 
 .review-item.selected {
-    background: $accent-lighten-1;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .review-item:hover {
     background: $accent 50%;
+}
+
+.review-item.selected:hover {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .item-title {
