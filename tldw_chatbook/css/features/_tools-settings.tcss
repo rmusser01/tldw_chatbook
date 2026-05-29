@@ -33,9 +33,9 @@
 }
 
 .tools-nav-pane .ts-nav-button.active-nav {
-    background: $accent;
-    color: $text;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .tools-content-pane {
