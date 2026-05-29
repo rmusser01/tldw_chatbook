@@ -528,6 +528,11 @@ def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type 
         return default
 
 
+DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 50
+MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 1
+MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 100000
+
+
 def coerce_bool_setting(value: Any, default: bool = True) -> bool:
     """Coerce config/app setting values with the same bool rules as load_settings.
 
@@ -539,6 +544,36 @@ def coerce_bool_setting(value: Any, default: bool = True) -> bool:
         Coerced boolean value.
     """
     return _get_typed_value({"value": value}, "value", default, bool)
+
+
+def coerce_int_setting(
+    value: Any,
+    default: int,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    """Coerce integer config/app setting values with optional bounds.
+
+    Args:
+        value: Raw setting value to coerce.
+        default: Fallback value when coercion fails or bounds reject the value.
+        minimum: Optional inclusive lower bound.
+        maximum: Optional inclusive upper bound.
+
+    Returns:
+        Coerced integer value, or the default when the value is invalid.
+    """
+    if isinstance(value, bool):
+        return default
+    coerced = _get_typed_value({"value": value}, "value", default, int)
+    if isinstance(coerced, bool):
+        return default
+    if minimum is not None and coerced < minimum:
+        return default
+    if maximum is not None and coerced > maximum:
+        return default
+    return coerced
 
 # Global cache for load_settings to avoid redundant file I/O
 _SETTINGS_CACHE: Optional[Dict[str, Any]] = None
@@ -668,6 +703,15 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_console_settings_cli["collapse_large_pastes"] = coerce_bool_setting(
         final_console_settings_cli.get("collapse_large_pastes", True),
         True,
+    )
+    final_console_settings_cli["paste_collapse_threshold"] = coerce_int_setting(
+        final_console_settings_cli.get(
+            "paste_collapse_threshold",
+            DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+        ),
+        DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+        minimum=MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+        maximum=MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     )
 
     # --- Application Mode ---
@@ -1380,6 +1424,7 @@ users_name = "default_user" # Default user name for the TUI
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
+paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 
 [acp.runtime]
 # ACP owns runtime launch/setup. Leave command empty to keep ACP honestly blocked.

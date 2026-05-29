@@ -821,6 +821,38 @@ async def test_console_paste_under_threshold_remains_literal():
         assert "Pasted Text:" not in visible_plain
 
 
+@pytest.mark.asyncio
+async def test_console_paste_threshold_can_be_configured_from_app_config():
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "collapse_large_pastes": True,
+        "paste_collapse_threshold": 80,
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+
+        under_custom_threshold = "x" * 60
+        composer.insert_pasted_text(under_custom_threshold)
+        await pilot.pause(0.1)
+
+        assert composer.draft_text() == under_custom_threshold
+        assert visible_draft.renderable.plain == under_custom_threshold
+
+        composer.clear_draft()
+        over_custom_threshold = "y" * 81
+        composer.insert_pasted_text(over_custom_threshold)
+        await pilot.pause(0.1)
+
+        assert composer.draft_text() == over_custom_threshold
+        assert visible_draft.renderable.plain == "Pasted Text: 81 Characters"
+
+
 @pytest.mark.parametrize("collapse_setting", [False, "false"])
 @pytest.mark.asyncio
 async def test_console_large_paste_collapse_can_be_disabled_from_config(collapse_setting):

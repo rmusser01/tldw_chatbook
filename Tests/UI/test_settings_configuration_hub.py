@@ -611,14 +611,14 @@ async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypa
         await pilot.press("enter")
         await pilot.pause()
         assert host.focused is toggle
-        assert "Disabled: collapse large pastes" in str(toggle.label)
+        assert str(toggle.label) == "Disabled"
         assert "Unsaved" in _visible_text(screen)
 
         await pilot.press("enter")
         await pilot.pause()
 
         assert host.focused is toggle
-        assert "Enabled: collapse large pastes" in str(toggle.label)
+        assert str(toggle.label) == "Enabled"
         assert "No unsaved changes" in _visible_text(screen)
 
 
@@ -646,6 +646,37 @@ async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
 
     assert saved == [("console", "collapse_large_pastes", False)]
     assert app.app_config["console"]["collapse_large_pastes"] is False
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "collapse_large_pastes": True,
+        "paste_collapse_threshold": 50,
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        threshold = screen.query_one("#settings-console-paste-collapse-threshold", Input)
+
+        assert threshold.restrict == "[0-9]*"
+        threshold.value = "120"
+        screen.handle_console_paste_threshold_changed(Input.Changed(threshold, threshold.value))
+        assert "Unsaved" in _visible_text(screen)
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [("console", "paste_collapse_threshold", 120)]
+    assert app.app_config["console"]["paste_collapse_threshold"] == 120
 
 
 @pytest.mark.asyncio
