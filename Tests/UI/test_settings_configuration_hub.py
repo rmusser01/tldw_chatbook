@@ -296,6 +296,69 @@ async def test_settings_defaults_to_overview_category():
         assert "Console paste collapse" in text
 
 
+def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    records = screen._category_ownership_records()
+    records_by_category = {record.category: record for record in records}
+
+    assert set(records_by_category) == {
+        summary.category for summary in screen._category_summaries()
+    }
+    assert all(record.__class__.__name__ == "SettingsOwnershipRecord" for record in records)
+    assert records_by_category[SettingsCategoryId.PROVIDERS_MODELS].owns_config_sections == (
+        "chat_defaults.provider",
+        "chat_defaults.model",
+        "api_settings.<provider>.endpoint",
+        "api_settings.<provider>.credential_source",
+    )
+    assert not records_by_category[SettingsCategoryId.STORAGE].writes_allowed
+    assert records_by_category[SettingsCategoryId.STORAGE].read_only_reason
+
+    overview = records_by_category[SettingsCategoryId.OVERVIEW]
+    boundary_text = " ".join(
+        (
+            overview.boundary_copy,
+            overview.recovery_copy,
+            *overview.reads_runtime_state_from,
+        )
+    )
+    for owner in ("Console", "MCP", "ACP", "sync", "workspace"):
+        assert owner in boundary_text
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_renders_ownership_contract_boundaries():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Settings owns persisted defaults and validation" in text
+        assert "Console owns live chat/run state" in text
+        assert "MCP owns server and tool management" in text
+        assert "ACP owns runtime/session setup" in text
+        assert "Sync and workspace handoff defaults are read-only until source contracts exist" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_inspector_excludes_console_sampling_ownership():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Affected config: provider, model, endpoint, and credential source defaults" in text
+        assert "Console sampling and transport defaults live under Console Behavior" in text
+        assert "streaming, and temperature" not in text
+
+
 @pytest.mark.asyncio
 async def test_settings_category_selection_updates_detail_and_inspector():
     app = _build_test_app()
