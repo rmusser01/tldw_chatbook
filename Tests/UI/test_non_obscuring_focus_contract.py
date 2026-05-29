@@ -15,16 +15,25 @@ CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
 
 
-def css_block(text: str, selector: str) -> str:
-    """Return a CSS rule body whose selector list contains selector."""
+def css_blocks(text: str, selector: str) -> list[str]:
+    """Return CSS rule bodies whose selector lists contain selector."""
     uncommented = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    blocks = []
     for match in re.finditer(r"\{(?P<body>[^{}]*)\}", uncommented, flags=re.DOTALL):
         prefix = uncommented[: match.start()]
         selector_start = max(prefix.rfind("}"), prefix.rfind(";")) + 1
         selector_text = prefix[selector_start : match.start()]
         selectors = [item.strip() for item in selector_text.split(",")]
         if selector in selectors:
-            return match.group("body")
+            blocks.append(match.group("body"))
+    return blocks
+
+
+def css_block(text: str, selector: str) -> str:
+    """Return a CSS rule body whose selector list contains selector."""
+    blocks = css_blocks(text, selector)
+    if blocks:
+        return blocks[0]
     raise AssertionError(f"Missing CSS block for {selector}")
 
 
@@ -164,16 +173,13 @@ def test_chat_sidebar_toggle_focus_uses_two_non_obscuring_cues():
 
 def test_chat_rag_focus_within_uses_non_semantic_container_cue():
     text = CHAT.read_text(encoding="utf-8")
-    blocks = [
-        match.group("body")
-        for match in re.finditer(r"\.rag-settings-panel:focus-within\s*\{(?P<body>[^{}]*)\}", text)
-    ]
-    assert len(blocks) == 2
-    for block in blocks:
-        assert "$accent" not in block
-        assert "$boost" not in block
-        assert "border: round $ds-focus-accent;" in block
-        assert "background: $panel;" in block
+    blocks = css_blocks(text, ".rag-settings-panel:focus-within")
+    assert len(blocks) == 1
+    block = blocks[0]
+    assert "$accent" not in block
+    assert "$boost" not in block
+    assert "border: round $ds-focus-accent;" in block
+    assert "background: $panel;" in block
 
 
 def test_chat_tab_active_state_is_readable_without_dominant_fill():
