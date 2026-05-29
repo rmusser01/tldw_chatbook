@@ -2,14 +2,32 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
-from dataclasses import dataclass
-from typing import Any, AsyncIterator, Mapping
+import threading
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field, replace
+from types import GeneratorType
+from typing import Any, AsyncIterator, Callable
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 
+from tldw_chatbook.Chat.Chat_Deps import (
+    ChatAuthenticationError,
+    ChatBadRequestError,
+    ChatConfigurationError,
+    ChatProviderError,
+    ChatRateLimitError,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    generic_endpoint_differs,
+    unsaved_endpoint_copy,
+)
+from tldw_chatbook.Chat.console_provider_support import resolve_console_provider_identity
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness, provider_config_key
 from tldw_chatbook.Utils.input_validation import validate_url
 
 
@@ -18,6 +36,28 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
     "Provider blocked: invalid llama.cpp base URL. "
     "Use an http(s) URL such as http://127.0.0.1:9099."
 )
+UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response shape."
+NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
+_UNSUPPORTED_RESPONSE = object()
+_EMPTY_RESPONSE = object()
+
+
+def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
+    """Return safe user-visible provider failure copy without raw exception text."""
+    category = "unexpected provider error"
+    if isinstance(exc, ChatAuthenticationError):
+        category = "authentication failed"
+    elif isinstance(exc, ChatRateLimitError):
+        category = "rate limit exceeded"
+    elif isinstance(exc, ChatBadRequestError):
+        category = "bad request"
+    elif isinstance(exc, ChatConfigurationError):
+        category = "configuration error"
+    elif isinstance(exc, ChatProviderError):
+        category = "provider unavailable"
+    status_code = getattr(exc, "status_code", None)
+    status_copy = f" Status: {status_code}." if isinstance(status_code, int) else ""
+    return f"Provider error from {provider or 'unknown'}: {category}.{status_copy}"
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -80,12 +120,34 @@ class ConsoleProviderResolution:
     model: str | None
     ready: bool
     visible_copy: str = ""
+    readiness_key: str = ""
+    execution_key: str = ""
+    api_key: str | None = field(default=None, repr=False)
+    api_key_source: str | None = None
     temperature: float | None = None
     top_p: float | None = None
     min_p: float | None = None
     top_k: int | None = None
     max_tokens: int | None = None
     streaming: bool = True
+
+
+@dataclass(frozen=True)
+class _QueueItem:
+    kind: str
+    text: str = ""
+
+    @classmethod
+    def content(cls, text: str) -> "_QueueItem":
+        return cls("content", text)
+
+    @classmethod
+    def error(cls, text: str) -> "_QueueItem":
+        return cls("error", text)
+
+    @classmethod
+    def done(cls) -> "_QueueItem":
+        return cls("done")
 
 
 def build_llamacpp_chat_payload(
@@ -121,9 +183,21 @@ def build_llamacpp_chat_payload(
 class ConsoleProviderGateway:
     """Resolve Console providers and stream chat responses."""
 
-    def __init__(self, *, http_client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+        config_provider: Callable[[], Mapping[str, object]] | None = None,
+        environ: Mapping[str, str] | None = None,
+        chat_api_call_fn: Callable[..., Any] | None = None,
+        safe_error_copy: Callable[[str, BaseException], str] | None = None,
+    ) -> None:
         self._owns_http_client = http_client is None
         self.http_client = http_client or httpx.AsyncClient(timeout=30.0)
+        self._config_provider = config_provider or (lambda: {})
+        self._environ = environ
+        self._chat_api_call_fn = chat_api_call_fn
+        self._safe_error_copy = safe_error_copy or safe_provider_error_copy
 
     async def aclose(self) -> None:
         """Close the owned HTTP client, leaving injected clients to their owner."""
@@ -141,6 +215,8 @@ class ConsoleProviderGateway:
                 model=model,
                 ready=False,
                 visible_copy=INVALID_LLAMACPP_BASE_URL_COPY,
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
                 **self._resolution_settings(config),
             )
 
@@ -151,6 +227,8 @@ class ConsoleProviderGateway:
                     base_url=base_url,
                     model=model,
                     ready=True,
+                    readiness_key="llama_cpp",
+                    execution_key="llama_cpp",
                     **self._resolution_settings(config),
                 )
             return ConsoleProviderResolution(
@@ -159,6 +237,8 @@ class ConsoleProviderGateway:
                 model=model,
                 ready=False,
                 visible_copy=self._unreachable_copy(base_url),
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
                 **self._resolution_settings(config),
             )
 
@@ -171,6 +251,8 @@ class ConsoleProviderGateway:
                 model=None,
                 ready=False,
                 visible_copy=self._unreachable_copy(base_url),
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
                 **self._resolution_settings(config),
             )
 
@@ -182,6 +264,8 @@ class ConsoleProviderGateway:
                 model=None,
                 ready=False,
                 visible_copy="Provider blocked: select or configure a llama.cpp model.",
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
                 **self._resolution_settings(config),
             )
         return ConsoleProviderResolution(
@@ -189,13 +273,23 @@ class ConsoleProviderGateway:
             base_url=base_url,
             model=model,
             ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
             **self._resolution_settings(config),
         )
 
     async def resolve_for_send(self, selection: ConsoleProviderSelection) -> ConsoleProviderResolution:
         """Resolve the provider selected by Console before sending."""
-        if selection.provider in {"llama_cpp", "local_llamacpp"}:
-            return await self.resolve_llamacpp(
+        if not selection.provider.strip():
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                visible_copy="Select a provider and model before sending.",
+            )
+
+        identity = resolve_console_provider_identity(selection.provider)
+        if identity.uses_direct_llama_path:
+            resolved = await self.resolve_llamacpp(
                 LlamaCppProviderConfig(
                     base_url=selection.base_url or DEFAULT_LLAMACPP_BASE_URL,
                     explicit_model=selection.explicit_model,
@@ -208,16 +302,74 @@ class ConsoleProviderGateway:
                     streaming=selection.streaming,
                 )
             )
+            return replace(
+                resolved,
+                provider=identity.execution_key,
+                readiness_key=identity.readiness_key,
+                execution_key=identity.execution_key,
+            )
+
+        if not identity.is_supported:
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                visible_copy=(
+                    f"Provider blocked: '{selection.provider}' is not available in Console yet. "
+                    "Choose a supported provider."
+                ),
+                readiness_key=identity.readiness_key,
+                execution_key=identity.execution_key,
+            )
+
+        app_config = self._config_provider() or {}
+        provider_settings = _provider_settings(app_config, identity.readiness_key)
+        model = _first_string(
+            selection.explicit_model,
+            selection.configured_model,
+            provider_settings.get("model"),
+            provider_settings.get("api_model"),
+            provider_settings.get("default_model"),
+        )
+        if model is None:
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                visible_copy="Select a model before sending.",
+                readiness_key=identity.readiness_key,
+                execution_key=identity.execution_key,
+            )
+
+        if generic_endpoint_differs(selection.base_url, provider_settings):
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                model=model,
+                visible_copy=unsaved_endpoint_copy(selection.base_url, provider_settings),
+                readiness_key=identity.readiness_key,
+                execution_key=identity.execution_key,
+            )
+
+        readiness = get_provider_readiness(identity.readiness_key, app_config, environ=self._environ)
+        if not readiness.ready:
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                model=model,
+                visible_copy=readiness.user_message,
+                readiness_key=identity.readiness_key,
+                execution_key=identity.execution_key,
+                api_key_source=readiness.api_key_source,
+            )
 
         return ConsoleProviderResolution(
             provider=selection.provider,
             base_url=selection.base_url or "",
-            model=selection.explicit_model or selection.configured_model,
-            ready=False,
-            visible_copy=(
-                f"WIP: Console native provider '{selection.provider}' is not wired yet. "
-                "Select llama.cpp for this slice."
-            ),
+            model=model,
+            ready=True,
+            readiness_key=identity.readiness_key,
+            execution_key=identity.execution_key,
+            api_key=readiness.api_key,
+            api_key_source=readiness.api_key_source,
             temperature=selection.temperature,
             top_p=selection.top_p,
             min_p=selection.min_p,
@@ -359,6 +511,126 @@ class ConsoleProviderGateway:
             ):
                 yield chunk
             return
+        if resolution.execution_key:
+            async for chunk in self._stream_generic_chat(resolution, messages):
+                yield chunk
+            return
+
+    async def _stream_generic_chat(
+        self,
+        resolution: ConsoleProviderResolution,
+        messages: list[Mapping[str, Any]],
+    ) -> AsyncIterator[str]:
+        """Bridge synchronous chat_api_call responses into async Console chunks."""
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
+        stop_event = threading.Event()
+
+        def enqueue(item: _QueueItem) -> None:
+            if stop_event.is_set():
+                return
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(queue.put_nowait, item)
+
+        def worker() -> None:
+            try:
+                kwargs = self._chat_api_kwargs(resolution, messages)
+                response = self._chat_api_call(**kwargs)
+                for text in self.normalize_provider_response(response):
+                    if stop_event.is_set():
+                        break
+                    enqueue(_QueueItem.content(text))
+            except BaseException as exc:
+                enqueue(_QueueItem.error(self._safe_error_copy(resolution.provider, exc)))
+            finally:
+                enqueue(_QueueItem.done())
+
+        worker_task = asyncio.create_task(asyncio.to_thread(worker))
+        try:
+            while True:
+                item = await queue.get()
+                if item.kind == "done":
+                    break
+                if item.kind == "error":
+                    raise ChatProviderError(
+                        item.text or safe_provider_error_copy(resolution.provider, ChatProviderError()),
+                        provider=resolution.provider,
+                    )
+                if item.text:
+                    yield item.text
+        finally:
+            stop_event.set()
+            if not worker_task.done():
+                worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(worker_task), timeout=0)
+
+    @staticmethod
+    def normalize_provider_response(response: Any) -> Iterator[str]:
+        """Yield safe assistant-visible chunks from generic provider output."""
+        content = _content_from_provider_item(response)
+        if isinstance(content, str):
+            yield content if content else NO_PROVIDER_CONTENT_COPY
+            return
+        if content is _UNSUPPORTED_RESPONSE:
+            if _is_iterable_response(response):
+                emitted = False
+                for item in response:
+                    item_content = _content_from_provider_item(item)
+                    if isinstance(item_content, str):
+                        if item_content:
+                            emitted = True
+                            yield item_content
+                        continue
+                    if item_content is _EMPTY_RESPONSE:
+                        continue
+                    emitted = True
+                    yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
+                if not emitted:
+                    yield NO_PROVIDER_CONTENT_COPY
+                return
+            yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
+            return
+        yield NO_PROVIDER_CONTENT_COPY
+
+    def _chat_api_call(self, **kwargs: Any) -> Any:
+        if self._chat_api_call_fn is None:
+            from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+            return chat_api_call(**kwargs)
+        return self._chat_api_call_fn(**kwargs)
+
+    @staticmethod
+    def _chat_api_kwargs(
+        resolution: ConsoleProviderResolution,
+        messages: list[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        kwargs = {
+            "api_endpoint": resolution.execution_key,
+            "messages_payload": list(messages),
+            "api_key": resolution.api_key,
+            "model": resolution.model,
+            "streaming": resolution.streaming,
+            "temp": resolution.temperature,
+            "topp": resolution.top_p,
+            "maxp": resolution.top_p,
+            "topk": resolution.top_k,
+            "minp": resolution.min_p,
+            "max_tokens": resolution.max_tokens,
+        }
+        return {key: value for key, value in kwargs.items() if value is not None}
+
+    @staticmethod
+    def _raise_for_sse_error(line: str) -> None:
+        data = line.removeprefix("data:").strip()
+        if not data or data == "[DONE]":
+            return
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError:
+            return
+        if isinstance(payload, Mapping) and "error" in payload:
+            raise RuntimeError("Provider stream error.")
 
     @staticmethod
     def _resolution_settings(config: LlamaCppProviderConfig) -> dict[str, Any]:
@@ -445,3 +717,115 @@ class ConsoleProviderGateway:
             f"Provider blocked: llama.cpp server is not reachable at {base_url}. "
             "Start llama.cpp or update Console provider settings."
         )
+
+    @staticmethod
+    def _blocked_resolution(
+        selection: ConsoleProviderSelection,
+        *,
+        provider: str,
+        visible_copy: str,
+        model: str | None = None,
+        readiness_key: str = "",
+        execution_key: str = "",
+        api_key_source: str | None = None,
+    ) -> ConsoleProviderResolution:
+        return ConsoleProviderResolution(
+            provider=provider,
+            base_url=selection.base_url or "",
+            model=model if model is not None else selection.explicit_model or selection.configured_model,
+            ready=False,
+            visible_copy=visible_copy,
+            readiness_key=readiness_key,
+            execution_key=execution_key,
+            api_key_source=api_key_source,
+            temperature=selection.temperature,
+            top_p=selection.top_p,
+            min_p=selection.min_p,
+            top_k=selection.top_k,
+            max_tokens=selection.max_tokens,
+            streaming=selection.streaming,
+        )
+
+
+def _mapping_value(source: Mapping[str, object], key: str) -> Mapping[str, object]:
+    value = source.get(key, {})
+    return value if isinstance(value, Mapping) else {}
+
+
+def _is_iterable_response(response: Any) -> bool:
+    return isinstance(response, (Iterator, GeneratorType)) and not isinstance(response, (str, bytes, Mapping, list, tuple))
+
+
+def _content_from_provider_item(item: Any) -> str | object:
+    if isinstance(item, str):
+        if item.startswith("data:"):
+            return _content_from_sse_data(item)
+        return item
+    if isinstance(item, bytes):
+        decoded = item.decode("utf-8", errors="replace")
+        if decoded.startswith("data:"):
+            return _content_from_sse_data(decoded)
+        return decoded
+    if isinstance(item, Mapping):
+        return _content_from_provider_mapping(item)
+    return _UNSUPPORTED_RESPONSE
+
+
+def _content_from_sse_data(line: str) -> str | object:
+    ConsoleProviderGateway._raise_for_sse_error(line)
+    data = line.removeprefix("data:").strip()
+    if not data or data == "[DONE]":
+        return _EMPTY_RESPONSE
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError:
+        return _EMPTY_RESPONSE
+    if not isinstance(payload, Mapping):
+        return _EMPTY_RESPONSE
+    content = _content_from_provider_mapping(payload)
+    return _EMPTY_RESPONSE if content is _UNSUPPORTED_RESPONSE else content
+
+
+def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
+    choices = item.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0]
+        if isinstance(first, Mapping):
+            delta = first.get("delta")
+            if isinstance(delta, Mapping) and isinstance(delta.get("content"), str):
+                return delta["content"]
+            message = first.get("message")
+            if isinstance(message, Mapping) and isinstance(message.get("content"), str):
+                return message["content"]
+            text = first.get("text")
+            if isinstance(text, str):
+                return text
+
+    message = item.get("message")
+    if isinstance(message, Mapping) and isinstance(message.get("content"), str):
+        return message["content"]
+
+    for key in ("content", "text", "response", "generated_text"):
+        value = item.get(key)
+        if isinstance(value, str):
+            return value
+
+    return _UNSUPPORTED_RESPONSE
+
+
+def _provider_settings(app_config: Mapping[str, object], provider_key: str) -> Mapping[str, object]:
+    api_settings = _mapping_value(app_config, "api_settings")
+    for configured_provider, configured_value in api_settings.items():
+        if provider_config_key(str(configured_provider)) == provider_key:
+            return configured_value if isinstance(configured_value, Mapping) else {}
+    return {}
+
+
+def _first_string(*values: object) -> str | None:
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        stripped = value.strip()
+        if stripped:
+            return stripped
+    return None

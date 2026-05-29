@@ -233,7 +233,7 @@ async def test_console_settings_summary_treats_missing_provider_row_as_blank() -
 
 
 def test_console_settings_summary_button_sizing_uses_named_constants() -> None:
-    assert settings_summary_module.CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT == 6
+    assert settings_summary_module.CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT == 9
     assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_HORIZONTAL_PADDING == 2
     assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MIN_WIDTH == 9
     assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MAX_WIDTH == 14
@@ -474,13 +474,14 @@ async def test_console_settings_modal_clears_setup_copy_when_freeform_model_is_e
         provider_model_section = app.screen.query_one("#console-settings-provider-model-section")
         readiness_copy = str(readiness.renderable)
         assert "Choose a model to enable sending." in readiness_copy
-        assert "Console native provider 'custom' is not wired yet." in readiness_copy
+        assert "not wired yet" not in readiness_copy
         assert provider_model_section.has_class("console-settings-primary-section") is True
 
         app.screen.query_one("#console-settings-model-input", Input).value = "freeform-model"
         await pilot.pause()
 
         assert str(readiness.renderable) != "Choose a model to enable sending."
+        assert "custom is ready" in str(readiness.renderable)
         assert provider_model_section.has_class("console-settings-primary-section") is False
 
 
@@ -1108,7 +1109,7 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_send_blocker_uses_saved_session_provider() -> None:
+async def test_console_send_blocker_uses_saved_unsupported_session_provider() -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "local-model"
@@ -1123,18 +1124,18 @@ async def test_console_send_blocker_uses_saved_session_provider() -> None:
         await _wait_for_selector(console, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        store.replace_session_settings(session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+        store.replace_session_settings(session.id, ConsoleSessionSettings(provider="wip_provider", model="test-model"))
         await console._sync_native_console_chat_ui()
 
         composer = console.query_one("#console-native-composer")
         composer.load_draft("hello")
         console.query_one("#console-send-message", Button).press()
         for _ in range(40):
-            if "not wired yet" in _screen_visible_text(console):
+            if "Provider blocked" in _screen_visible_text(console):
                 break
             await pilot.pause(0.05)
 
-        assert "Console native provider 'openai' is not wired yet" in _screen_visible_text(console)
+        assert "Provider blocked: 'wip_provider' is not available in Console yet." in _screen_visible_text(console)
 
 
 @pytest.mark.asyncio
@@ -1253,7 +1254,7 @@ def test_console_readiness_uses_saved_session_settings_over_stale_global_provide
     assert provider_row.recovery == ""
 
 
-def test_console_saved_openai_with_key_still_shows_native_wip_readiness() -> None:
+def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
     app = _build_test_app()
     app.app_config["api_settings"] = {
         "openai": {"api_key": "test-key", "model": "gpt-4.1"},
@@ -1268,13 +1269,61 @@ def test_console_saved_openai_with_key_still_shows_native_wip_readiness() -> Non
     provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
     blocker_copy = screen._console_provider_blocker_copy()
 
-    assert summary_state.readiness_label == "WIP"
-    assert provider_row.value == "blocked"
-    assert "Console native provider 'openai' is not wired yet." in provider_row.recovery
-    assert "Console native provider 'openai' is not wired yet." in blocker_copy
-    assert screen._console_send_blocked_reason() == (
-        "Console send blocked: Console native provider 'openai' is not wired yet."
+    assert summary_state.readiness_label == "Ready"
+    assert provider_row.value == "ready"
+    assert provider_row.recovery == ""
+    assert blocker_copy == ""
+    assert screen._console_send_blocked_reason() == ""
+
+
+def test_console_missing_key_recovery_action_is_provider_specific() -> None:
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "OPENAI_API_KEY", "model": "gpt-4.1"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+
+    label, target, tooltip = screen._console_provider_recovery_action()
+
+    assert screen._console_provider_blocker_copy() == "Provider setup needed: OpenAI missing API key"
+    assert label == "Add API key"
+    assert target == "settings"
+    assert tooltip == "Add an API key for OpenAI"
+    assert screen._console_setup_blocked_reason() == "Add API key in Settings before sending."
+
+
+def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details() -> None:
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "ollama": {"api_url": "http://127.0.0.1:11434", "model": "llama3"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(
+        session.id,
+        ConsoleSessionSettings(
+            provider="ollama",
+            model="llama3",
+            base_url="http://127.0.0.1:9999/v1",
+        ),
     )
+
+    inspector_state = screen._build_console_inspector_state(None)
+    provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
+    label, target, tooltip = screen._console_provider_recovery_action()
+
+    assert provider_row.value == "blocked"
+    assert "Selected endpoint: http://127.0.0.1:9999/v1" in provider_row.recovery
+    assert "Saved endpoint: http://127.0.0.1:11434" in provider_row.recovery
+    assert "save the endpoint in Settings" in screen._console_provider_blocker_copy()
+    assert label == "Configure endpoint"
+    assert target == "settings"
+    assert tooltip == "Save the ollama endpoint in Settings"
+    assert screen._console_setup_blocked_reason() == "Save provider endpoint in Settings before sending."
 
 
 def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallback() -> None:

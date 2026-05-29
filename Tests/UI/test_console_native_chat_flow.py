@@ -13,6 +13,7 @@ from textual.widgets import Button, Input
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -139,6 +140,72 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
     console._console_control_provider = "llama_cpp"
     console._console_control_model = "test-model"
     console._sync_console_control_bar()
+
+
+@pytest.mark.asyncio
+async def test_console_native_generic_provider_send_renders_completed_message(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {}
+    captured_kwargs = []
+
+    def fake_chat_api_call(**_kwargs):
+        captured_kwargs.append(_kwargs)
+        return "generic provider response"
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+        fake_chat_api_call,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        gateway = console._ensure_console_provider_gateway()
+        app.app_config["api_settings"] = {"openai": {"api_key": "sk-current"}}
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "generic provider response")
+
+        assert isinstance(gateway, ConsoleProviderGateway)
+        assert captured_kwargs
+        assert captured_kwargs[-1]["api_endpoint"] == "openai"
+        assert captured_kwargs[-1]["api_key"] == "sk-current"
+        assert console._ensure_console_chat_controller().run_state.status is ConsoleRunStatus.COMPLETED
+        store = console._ensure_console_chat_store()
+        messages = store.messages_for_session(store.active_session_id)
+        assistant_messages = [
+            message for message in messages if message.role is ConsoleMessageRole.ASSISTANT
+        ]
+        assert assistant_messages[-1].status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_console_native_missing_key_blocks_before_clearing_generic_draft():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "MISSING_OPENAI_KEY"}
+    }
+    app.console_provider_gateway_factory = lambda: ConsoleProviderGateway(
+        config_provider=lambda: app.app_config,
+        environ={},
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("preserve this")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "missing API key")
+
+        assert composer.draft_text() == "preserve this"
 
 
 @pytest.mark.asyncio
@@ -565,21 +632,24 @@ async def test_console_unsupported_provider_block_renders_one_normalized_system_
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        controller = console._ensure_console_chat_controller()
-        controller.provider = "openai"
-        controller.model = "test-model"
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="wip_provider", model="test-model"),
+        )
+        await console._sync_native_console_chat_ui()
 
         await console._submit_console_native_draft("hello")
-        await _wait_for_text(console, pilot, "Provider blocked: WIP")
+        await _wait_for_text(console, pilot, "Provider blocked")
 
-        store = console._ensure_console_chat_store()
         messages = store.messages_for_session(store.active_session_id)
         system_messages = [message.content for message in messages if message.role is ConsoleMessageRole.SYSTEM]
         assert system_messages == [
-            "Provider blocked: WIP: Console native provider 'openai' is not wired yet. "
-            "Select llama.cpp for this slice."
+            "Provider blocked: 'wip_provider' is not available in Console yet. "
+            "Choose a supported provider."
         ]
-        assert controller.run_state.visible_copy == system_messages[0]
+        assert console._ensure_console_chat_controller().run_state.visible_copy == system_messages[0]
 
 
 @pytest.mark.asyncio

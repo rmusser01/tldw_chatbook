@@ -83,6 +83,20 @@ def test_key_required_provider_names_are_case_insensitive():
     assert readiness.recovery == "Set OPENAI_API_KEY or add api_key under [api_settings.openai]."
 
 
+def test_provider_settings_lookup_uses_normalized_config_key():
+    readiness = get_provider_readiness(
+        "Custom-2",
+        {"api_settings": {"Custom-2": {"api_key": "configured-custom-key"}}},
+        environ={},
+    )
+
+    assert readiness.provider_key == "custom_2"
+    assert readiness.ready is True
+    assert readiness.requires_api_key is False
+    assert readiness.api_key == "configured-custom-key"
+    assert readiness.api_key_source == "config:api_settings.custom_2.api_key"
+
+
 def test_keyless_local_provider_is_ready_without_api_key():
     readiness = get_provider_readiness(
         "Ollama",

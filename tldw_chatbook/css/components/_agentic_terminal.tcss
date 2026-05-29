@@ -661,7 +661,7 @@ ConsoleSettingsModal Select {
 
 .console-settings-summary {
     height: auto;
-    min-height: 6;
+    min-height: 9;
     padding: 0 1;
 }
 

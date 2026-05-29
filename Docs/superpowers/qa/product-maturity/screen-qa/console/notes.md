@@ -33,6 +33,12 @@ Fallback reason: Codex in-app Browser lost its active pane after tab refresh, so
 - Path: `Docs/superpowers/qa/product-maturity/screen-qa/console/final-2026-05-08-playwright-console.png`
 - User approval: approved by user in Codex thread on 2026-05-09 after recapture with splash cleared.
 
+## Provider Parity Screenshots
+
+- QA notes: `Docs/superpowers/qa/product-maturity/screen-qa/console/provider-parity/notes.md`
+- User approval: approved by user in Codex thread on 2026-05-28 after reviewing actual textual-web/CDP screenshots.
+- Covered scenarios: generic provider success, missing-key blocked send with draft preservation, and unsaved base URL override blocked with draft preservation.
+
 ## Verification
 
 - Commands:
