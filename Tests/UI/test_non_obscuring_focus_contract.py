@@ -13,6 +13,10 @@ WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
+CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
+SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
+CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
+FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
 
 
 def css_blocks(text: str, selector: str) -> list[str]:
@@ -41,6 +45,15 @@ def assert_non_obscuring_focus(block: str) -> None:
     assert "outline: heavy" not in block
     assert "reverse" not in block
     assert "text-style: bold underline;" in block
+
+
+def assert_thin_input_focus(block: str) -> None:
+    assert "outline: heavy" not in block
+    assert "border: thick" not in block
+    assert "border: solid $ds-input-focus-border;" in block
+    assert "border-bottom: solid $ds-input-focus-accent;" in block
+    assert "$error" not in block
+    assert "$warning" not in block
 
 
 def test_focus_tokens_are_defined_and_not_semantic_warning_or_error():
@@ -192,3 +205,31 @@ def test_chat_tab_active_state_is_readable_without_dominant_fill():
     assert "text-style: bold;" in active
     assert_non_obscuring_focus(active_focus)
     assert "$ds-focus-bg" in active_focus or "$ds-surface-raised" in active_focus
+
+
+def test_coding_nav_button_focus_uses_two_non_obscuring_cues():
+    text = CODING.read_text(encoding="utf-8")
+    block = css_block(text, ".coding-nav-button:focus")
+    assert_non_obscuring_focus(block)
+    assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
+
+
+def test_search_rag_enhanced_input_focus_uses_thin_non_semantic_focus():
+    text = SEARCH_RAG.read_text(encoding="utf-8")
+    block = css_block(text, ".search-input-enhanced:focus")
+    assert_thin_input_focus(block)
+    assert "background: $ds-input-focus-bg;" in block
+
+
+def test_config_search_highlight_focus_uses_thin_non_semantic_focus():
+    text = CONFIG_SEARCH.read_text(encoding="utf-8")
+    block = css_block(text, "Input.search-highlight:focus")
+    assert_thin_input_focus(block)
+    assert "background: $ds-input-focus-bg;" in block
+
+
+def test_feature_alert_dialog_button_focus_uses_two_non_obscuring_cues():
+    text = FEATURE_ALERTS.read_text(encoding="utf-8")
+    block = css_block(text, "FeatureNotAvailableDialog Button:focus")
+    assert_non_obscuring_focus(block)
+    assert "$ds-focus-bg" in block or "$ds-surface-raised" in block

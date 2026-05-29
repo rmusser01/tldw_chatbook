@@ -103,7 +103,11 @@ ConfigSearchResult ListItem.--highlight {
 }
 
 Input.search-highlight:focus {
-    border: thick $warning;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    border: solid $ds-input-focus-border;
+    border-bottom: solid $ds-input-focus-accent;
+    outline: none;
 }
 
 Select.search-highlight {

@@ -53,7 +53,10 @@ FeatureNotAvailableDialog Button {
 }
 
 FeatureNotAvailableDialog Button:focus {
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 /* Warning styles for disabled UI elements */

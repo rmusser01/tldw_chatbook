@@ -50,7 +50,10 @@ CodingWindow {
 }
 
 .coding-nav-button:focus {
-    background: $primary-lighten-1;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 /* Content pane */
