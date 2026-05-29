@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_endpoints import (
     generic_endpoint_differs,
+    provider_uses_endpoint,
     unsaved_endpoint_copy,
 )
 from tldw_chatbook.Chat.console_provider_support import resolve_console_provider_identity
@@ -43,7 +44,16 @@ _EMPTY_RESPONSE = object()
 
 
 def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
-    """Return safe user-visible provider failure copy without raw exception text."""
+    """Return safe user-visible provider failure copy.
+
+    Args:
+        provider: Provider name associated with the failed request.
+        exc: Exception raised by the provider adapter.
+
+    Returns:
+        Redacted user-facing error text that categorizes the failure without
+        including raw exception content.
+    """
     category = "unexpected provider error"
     if isinstance(exc, ChatAuthenticationError):
         category = "authentication failed"
@@ -61,7 +71,14 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
-    """Return the llama.cpp origin root used before appending OpenAI paths."""
+    """Return the llama.cpp origin root used before appending OpenAI paths.
+
+    Args:
+        api_url: User or config-provided llama.cpp endpoint.
+
+    Returns:
+        Normalized origin/base path for llama.cpp HTTP calls.
+    """
     raw_url = str(api_url or "").strip()
     if not raw_url:
         return DEFAULT_LLAMACPP_BASE_URL
@@ -98,7 +115,19 @@ def normalize_llamacpp_base_url(api_url: str | None) -> str:
 
 @dataclass(frozen=True)
 class LlamaCppProviderConfig:
-    """Configuration needed to resolve a llama.cpp-compatible provider."""
+    """Configuration needed to resolve a llama.cpp-compatible provider.
+
+    Attributes:
+        base_url: llama.cpp server base URL.
+        explicit_model: Session-selected model, when present.
+        configured_model: Provider-configured fallback model.
+        temperature: Optional sampling temperature.
+        top_p: Optional nucleus sampling value.
+        min_p: Optional min-p sampling value.
+        top_k: Optional top-k sampling value.
+        max_tokens: Optional response token limit.
+        streaming: Whether streaming responses are requested.
+    """
 
     base_url: str = DEFAULT_LLAMACPP_BASE_URL
     explicit_model: str | None = None
@@ -113,7 +142,25 @@ class LlamaCppProviderConfig:
 
 @dataclass(frozen=True)
 class ConsoleProviderResolution:
-    """Provider readiness result used by Console send and recovery UI."""
+    """Provider readiness result used by Console send and recovery UI.
+
+    Attributes:
+        provider: Display provider selected for the session.
+        base_url: Session endpoint value, when applicable.
+        model: Model selected for the request.
+        ready: Whether the provider has enough configuration to send.
+        visible_copy: User-visible blocker or recovery copy.
+        readiness_key: Normalized key used for readiness checks.
+        execution_key: Provider key passed to ``chat_api_call``.
+        api_key: Resolved API key, omitted from repr output.
+        api_key_source: Human-readable source of the resolved API key.
+        temperature: Optional sampling temperature.
+        top_p: Optional nucleus sampling value.
+        min_p: Optional min-p sampling value.
+        top_k: Optional top-k sampling value.
+        max_tokens: Optional response token limit.
+        streaming: Whether streaming responses are requested.
+    """
 
     provider: str
     base_url: str
@@ -161,7 +208,21 @@ def build_llamacpp_chat_payload(
     top_k: int | None = None,
     max_tokens: int | None = None,
 ) -> dict[str, Any]:
-    """Build the OpenAI-compatible llama.cpp chat completion payload."""
+    """Build the OpenAI-compatible llama.cpp chat completion payload.
+
+    Args:
+        model: Model identifier to send to llama.cpp.
+        messages: OpenAI-compatible chat messages.
+        stream: Whether llama.cpp should stream chunks.
+        temperature: Optional sampling temperature.
+        top_p: Optional nucleus sampling value.
+        min_p: Optional min-p sampling value.
+        top_k: Optional top-k sampling value.
+        max_tokens: Optional response token limit.
+
+    Returns:
+        Request payload for the llama.cpp chat completions endpoint.
+    """
     payload: dict[str, Any] = {
         "model": model,
         "messages": list(messages),
@@ -181,7 +242,15 @@ def build_llamacpp_chat_payload(
 
 
 class ConsoleProviderGateway:
-    """Resolve Console providers and stream chat responses."""
+    """Resolve Console providers and stream chat responses.
+
+    Args:
+        http_client: Optional HTTP client for llama.cpp probes and calls.
+        config_provider: Callable returning the current app configuration.
+        environ: Optional environment mapping for provider readiness checks.
+        chat_api_call_fn: Optional replacement for ``chat_api_call`` in tests.
+        safe_error_copy: Optional error redaction callback.
+    """
 
     def __init__(
         self,
@@ -200,12 +269,23 @@ class ConsoleProviderGateway:
         self._safe_error_copy = safe_error_copy or safe_provider_error_copy
 
     async def aclose(self) -> None:
-        """Close the owned HTTP client, leaving injected clients to their owner."""
+        """Close the owned HTTP client.
+
+        Returns:
+            ``None``. Injected HTTP clients are left open for their owner.
+        """
         if self._owns_http_client:
             await self.http_client.aclose()
 
     async def resolve_llamacpp(self, config: LlamaCppProviderConfig) -> ConsoleProviderResolution:
-        """Resolve llama.cpp readiness and the effective model."""
+        """Resolve llama.cpp readiness and the effective model.
+
+        Args:
+            config: llama.cpp provider configuration and sampling settings.
+
+        Returns:
+            Provider resolution indicating whether llama.cpp can be used.
+        """
         model = config.explicit_model or config.configured_model
         base_url = normalize_llamacpp_base_url(config.base_url)
         if not validate_url(base_url):
@@ -279,7 +359,15 @@ class ConsoleProviderGateway:
         )
 
     async def resolve_for_send(self, selection: ConsoleProviderSelection) -> ConsoleProviderResolution:
-        """Resolve the provider selected by Console before sending."""
+        """Resolve the provider selected by Console before sending.
+
+        Args:
+            selection: Current Console provider, model, endpoint, and sampling
+                settings.
+
+        Returns:
+            Provider resolution used to either send or render recovery copy.
+        """
         if not selection.provider.strip():
             return self._blocked_resolution(
                 selection,
@@ -339,7 +427,10 @@ class ConsoleProviderGateway:
                 execution_key=identity.execution_key,
             )
 
-        if generic_endpoint_differs(selection.base_url, provider_settings):
+        if (
+            provider_uses_endpoint(identity.readiness_key, provider_settings)
+            and generic_endpoint_differs(selection.base_url, provider_settings)
+        ):
             return self._blocked_resolution(
                 selection,
                 provider=selection.provider,
@@ -390,7 +481,21 @@ class ConsoleProviderGateway:
         top_k: int | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
-        """Stream OpenAI-compatible chat completion content chunks from llama.cpp."""
+        """Stream OpenAI-compatible chat completion chunks from llama.cpp.
+
+        Args:
+            base_url: llama.cpp server endpoint.
+            model: Model identifier to send.
+            messages: OpenAI-compatible chat messages.
+            temperature: Optional sampling temperature.
+            top_p: Optional nucleus sampling value.
+            min_p: Optional min-p sampling value.
+            top_k: Optional top-k sampling value.
+            max_tokens: Optional response token limit.
+
+        Yields:
+            Assistant-visible content chunks.
+        """
         normalized_base_url = normalize_llamacpp_base_url(base_url)
         if not validate_url(normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
@@ -455,7 +560,21 @@ class ConsoleProviderGateway:
         top_k: int | None = None,
         max_tokens: int | None = None,
     ) -> str:
-        """Request a non-streaming OpenAI-compatible chat completion."""
+        """Request a non-streaming OpenAI-compatible chat completion.
+
+        Args:
+            base_url: llama.cpp server endpoint.
+            model: Model identifier to send.
+            messages: OpenAI-compatible chat messages.
+            temperature: Optional sampling temperature.
+            top_p: Optional nucleus sampling value.
+            min_p: Optional min-p sampling value.
+            top_k: Optional top-k sampling value.
+            max_tokens: Optional response token limit.
+
+        Returns:
+            Assistant-visible completion text.
+        """
         normalized_base_url = normalize_llamacpp_base_url(base_url)
         if not validate_url(normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
@@ -481,7 +600,15 @@ class ConsoleProviderGateway:
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
     ) -> AsyncIterator[str]:
-        """Dispatch streaming for a resolved Console provider."""
+        """Dispatch streaming for a resolved Console provider.
+
+        Args:
+            resolution: Provider resolution produced by ``resolve_for_send``.
+            messages: OpenAI-compatible chat messages.
+
+        Yields:
+            Assistant-visible content chunks.
+        """
         if not resolution.ready or not resolution.model:
             return
         if resolution.provider in {"llama_cpp", "local_llamacpp"}:
@@ -567,7 +694,14 @@ class ConsoleProviderGateway:
 
     @staticmethod
     def normalize_provider_response(response: Any) -> Iterator[str]:
-        """Yield safe assistant-visible chunks from generic provider output."""
+        """Yield safe assistant-visible chunks from generic provider output.
+
+        Args:
+            response: Raw return value from ``chat_api_call``.
+
+        Yields:
+            Assistant-visible text chunks or normalized fallback copy.
+        """
         content = _content_from_provider_item(response)
         if isinstance(content, str):
             yield content if content else NO_PROVIDER_CONTENT_COPY

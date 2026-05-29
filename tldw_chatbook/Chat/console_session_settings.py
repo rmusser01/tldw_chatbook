@@ -12,7 +12,9 @@ from tldw_chatbook.Chat.console_provider_support import (
     supported_console_provider_readiness_keys,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    URL_BASED_PROVIDER_KEYS,
     generic_endpoint_differs,
+    provider_uses_endpoint,
     safe_endpoint_display,
     unsaved_endpoint_copy,
 )
@@ -63,23 +65,6 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
 )
 TokenCounter = Callable[[Sequence[Mapping[str, str]], str, str], int]
 TokenLimitResolver = Callable[[str, str], int]
-URL_BASED_PROVIDER_KEYS = frozenset(
-    {
-        "aphrodite",
-        "custom",
-        "custom_2",
-        "koboldcpp",
-        "llama_cpp",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_ollama",
-        "local_vllm",
-        "ollama",
-        "oobabooga",
-        "tabbyapi",
-        "vllm",
-    }
-)
 CONSOLE_MODEL_TOKEN_LIMITS = {
     "gpt-4": 8192,
     "gpt-4-32k": 32768,
@@ -569,9 +554,7 @@ def _default_base_url(provider_key: str, provider_settings: Mapping[str, object]
 
 
 def _is_url_based_provider(provider_key: str, provider_settings: Mapping[str, object]) -> bool:
-    return provider_key in URL_BASED_PROVIDER_KEYS or any(
-        key in provider_settings for key in ("api_url", "base_url", "api_base")
-    )
+    return provider_uses_endpoint(provider_key, provider_settings)
 
 
 def _valid_base_url(provider_key: str, base_url: str) -> bool:

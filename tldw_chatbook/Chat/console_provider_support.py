@@ -28,7 +28,16 @@ _EXECUTION_TO_READINESS_ALIASES = {
 
 @dataclass(frozen=True)
 class ConsoleProviderIdentity:
-    """Resolved Console provider identities for config, readiness, and send."""
+    """Resolved Console provider identities for config, readiness, and send.
+
+    Attributes:
+        display_key: Normalized provider key used by Console controls.
+        readiness_key: Provider key used for configuration/readiness lookup.
+        execution_key: Provider key passed to ``chat_api_call``.
+        is_supported: Whether Console can send through this provider.
+        uses_direct_llama_path: Whether the provider bypasses the generic
+            adapter and uses the direct llama.cpp path.
+    """
 
     display_key: str
     readiness_key: str
@@ -52,7 +61,17 @@ def resolve_console_provider_identity(
     *,
     handler_keys: Collection[str] | None = None,
 ) -> ConsoleProviderIdentity:
-    """Resolve Console provider display, readiness, and execution keys."""
+    """Resolve Console provider display, readiness, and execution keys.
+
+    Args:
+        provider: Raw provider name from config or Console controls.
+        handler_keys: Optional ``chat_api_call`` handler keys for deterministic
+            tests or side-effect-free callers.
+
+    Returns:
+        Resolved provider identity describing display, readiness, and execution
+        keys plus whether the provider is supported.
+    """
     raw_provider = (provider or "").strip()
     display_key = provider_config_key(raw_provider)
     exact_key = raw_provider.lower()
@@ -68,10 +87,18 @@ def resolve_console_provider_identity(
         )
 
     handlers = _handler_keys(handler_keys)
-    readiness_key = _EXECUTION_TO_READINESS_ALIASES.get(exact_key, display_key)
+    normalized_handler_keys = {
+        provider_config_key(handler_key): handler_key for handler_key in handlers
+    }
+    handler_exact_key = (
+        exact_key
+        if exact_key in handlers
+        else normalized_handler_keys.get(display_key, exact_key)
+    )
+    readiness_key = _EXECUTION_TO_READINESS_ALIASES.get(handler_exact_key, display_key)
     execution_key = _READINESS_TO_EXECUTION_ALIASES.get(readiness_key)
     if execution_key is None:
-        execution_key = exact_key if exact_key in handlers else readiness_key
+        execution_key = handler_exact_key if handler_exact_key in handlers else readiness_key
 
     return ConsoleProviderIdentity(
         display_key=display_key,
@@ -85,7 +112,16 @@ def resolve_console_provider_identity(
 def supported_console_provider_readiness_keys(
     handler_keys: Collection[str] | None = None,
 ) -> frozenset[str]:
-    """Return readiness keys supported by Console provider execution."""
+    """Return readiness keys supported by Console provider execution.
+
+    Args:
+        handler_keys: Optional ``chat_api_call`` handler keys for deterministic
+            tests or side-effect-free callers.
+
+    Returns:
+        Set of normalized readiness keys whose providers can be sent from
+        Console.
+    """
     handlers = _handler_keys(handler_keys)
     return frozenset(
         resolve_console_provider_identity(
