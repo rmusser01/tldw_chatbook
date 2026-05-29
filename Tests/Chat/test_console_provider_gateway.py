@@ -443,6 +443,29 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
 
 
 @pytest.mark.asyncio
+async def test_resolve_for_send_ignores_cloud_session_base_url_without_configured_endpoint() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {"openai": {"api_key": "unit-test-key", "model": "gpt-4.1"}},
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="openai",
+            explicit_model="gpt-4.1",
+            base_url="http://127.0.0.1:9999/v1",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.readiness_key == "openai"
+    assert resolved.execution_key == "openai"
+    assert "save the endpoint in Settings" not in resolved.visible_copy
+
+
+@pytest.mark.asyncio
 async def test_resolve_for_send_accepts_generic_base_url_matching_config_with_trailing_slash() -> None:
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},

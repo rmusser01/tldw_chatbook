@@ -30,6 +30,34 @@ def test_aliases_resolve_to_readiness_and_execution_keys() -> None:
         assert identity.is_supported is True
 
 
+def test_normalized_handler_key_resolves_to_hyphenated_execution_key() -> None:
+    identity = resolve_console_provider_identity(
+        "custom_openai_api",
+        handler_keys={"custom-openai-api"},
+    )
+
+    assert identity == ConsoleProviderIdentity(
+        display_key="custom_openai_api",
+        readiness_key="custom",
+        execution_key="custom-openai-api",
+        is_supported=True,
+    )
+
+
+def test_numbered_normalized_handler_key_resolves_to_hyphenated_execution_key() -> None:
+    identity = resolve_console_provider_identity(
+        "custom_openai_api_2",
+        handler_keys={"custom-openai-api-2"},
+    )
+
+    assert identity == ConsoleProviderIdentity(
+        display_key="custom_openai_api_2",
+        readiness_key="custom_2",
+        execution_key="custom-openai-api-2",
+        is_supported=True,
+    )
+
+
 def test_direct_console_provider_keys_are_not_generic_adapter() -> None:
     for provider in DIRECT_CONSOLE_PROVIDER_KEYS:
         identity = resolve_console_provider_identity(provider)
