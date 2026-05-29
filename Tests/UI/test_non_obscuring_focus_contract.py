@@ -472,6 +472,20 @@ def test_evals_sample_browser_selected_row_uses_readable_inline_contract():
     assert_readable_inline_selected_state_contract(css_block(text, ".sample-row.selected"))
 
 
+def test_evals_sample_browser_selected_row_children_show_inline_selected_cue():
+    text = SAMPLE_BROWSER_DIALOG.read_text(encoding="utf-8")
+    for selector in (
+        ".sample-row.selected .sample-id",
+        ".sample-row.selected .sample-type",
+        ".sample-row.selected .sample-preview",
+    ):
+        block = css_block(text, selector)
+        assert "$accent" not in block
+        assert "$primary" not in block
+        assert "color: $text;" in block
+        assert "text-style: bold underline;" in block
+
+
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():
     ui_text = RAG_SEARCH_WINDOW.read_text(encoding="utf-8")
     text = SEARCH_RAG.read_text(encoding="utf-8")
