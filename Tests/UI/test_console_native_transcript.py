@@ -194,6 +194,26 @@ async def test_console_transcript_removes_build_counts_for_stale_rows():
     assert "message:m-kept" in build_counts
 
 
+def test_console_transcript_compose_resets_build_count_bookkeeping():
+    transcript = ConsoleTranscript()
+    transcript._row_build_counts["message:stale"] = 3
+    transcript.set_messages(
+        [
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER,
+                content="current",
+                id="m-current",
+            )
+        ]
+    )
+
+    list(transcript.compose())
+
+    build_counts = transcript.row_build_counts()
+    assert "message:stale" not in build_counts
+    assert build_counts["message:m-current"] == 1
+
+
 @pytest.mark.asyncio
 async def test_console_transcript_empty_state_accepts_setup_copy():
     app = EmptyTranscriptHarness()

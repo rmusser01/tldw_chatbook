@@ -120,6 +120,7 @@ class ConsoleTranscript(VerticalScroll):
     def compose(self) -> ComposeResult:
         self._row_widgets.clear()
         self._row_signatures.clear()
+        self._row_build_counts.clear()
         for row in self._transcript_rows():
             widget = self._build_row_widget(row, track=True)
             self._row_widgets[row.key] = widget
