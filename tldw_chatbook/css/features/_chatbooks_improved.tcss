@@ -47,14 +47,17 @@ ChatbooksWindowImproved .action-card:hover .action-icon {
 
 /* Search bar styling */
 ChatbooksWindowImproved .search-input {
-    background: $boost;
-    border: round $background-darken-1;
+    background: $surface;
+    border: solid $surface-lighten-1;
+    border-bottom: solid $surface-lighten-1;
     padding: 0 1;
 }
 
 ChatbooksWindowImproved .search-input:focus {
-    border: round $primary;
-    background: $boost;
+    border: solid $ds-input-focus-border;
+    border-bottom: solid $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
 }
 
 /* Enhanced chatbook cards */

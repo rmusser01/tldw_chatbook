@@ -270,6 +270,17 @@ class ChatbooksWindowImproved(Screen):
     
     .search-input {
         width: 100%;
+        background: $surface;
+        border: solid $primary-lighten-2;
+        border-bottom: solid $primary-lighten-2;
+        padding: 0 1;
+    }
+
+    .search-input:focus {
+        border: solid $primary;
+        border-bottom: solid $primary;
+        background: $surface;
+        color: $text;
     }
     
     .content-area {

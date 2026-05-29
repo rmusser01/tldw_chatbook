@@ -31,6 +31,8 @@ TAB_DROPDOWN = ROOT / "tldw_chatbook/css/features/_tab_dropdown.tcss"
 MEDIA = ROOT / "tldw_chatbook/css/features/_media.tcss"
 MEDIA_NAVIGATION_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_navigation_panel.py"
 MEDIA_LIST_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_list_panel.py"
+CHATBOOKS_IMPROVED = ROOT / "tldw_chatbook/css/features/_chatbooks_improved.tcss"
+CHATBOOKS_WINDOW_IMPROVED = ROOT / "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
 RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
 
 
@@ -79,6 +81,18 @@ def assert_thin_input_focus(block: str) -> None:
     assert "border: thick" not in block
     assert "border: solid $ds-input-focus-border;" in block
     assert "border-bottom: solid $ds-input-focus-accent;" in block
+    assert "$error" not in block
+    assert "$warning" not in block
+
+
+def assert_thin_inline_input_focus(block: str) -> None:
+    assert "outline: heavy" not in block
+    assert "border: thick" not in block
+    assert "border: round" not in block
+    assert "border: solid $primary;" in block
+    assert "border-bottom: solid $primary;" in block
+    assert "background: $surface;" in block
+    assert "color: $text;" in block
     assert "$error" not in block
     assert "$warning" not in block
 
@@ -435,6 +449,21 @@ def test_bundled_media_selected_states_match_source_contracts():
         ".review-item.selected:hover",
     ):
         assert_readable_selected_state_contract(css_block(text, selector))
+
+
+def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
+    text = CHATBOOKS_IMPROVED.read_text(encoding="utf-8")
+    base = css_block(text, "ChatbooksWindowImproved .search-input")
+    focus = css_block(text, "ChatbooksWindowImproved .search-input:focus")
+    assert_stable_solid_border_geometry(base, focus)
+    assert_thin_input_focus(focus)
+    assert "background: $ds-input-focus-bg;" in focus
+
+    inline_text = CHATBOOKS_WINDOW_IMPROVED.read_text(encoding="utf-8")
+    inline_base = css_block(inline_text, ".search-input")
+    inline_focus = css_block(inline_text, ".search-input:focus")
+    assert_stable_solid_border_geometry(inline_base, inline_focus)
+    assert_thin_inline_input_focus(inline_focus)
 
 
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():
