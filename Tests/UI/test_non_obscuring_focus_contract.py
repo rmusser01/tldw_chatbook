@@ -11,6 +11,8 @@ AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
 BASE_COMPONENTS = ROOT / "tldw_chatbook/Widgets/base_components.py"
 WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
+CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
+CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
 
 
 def css_block(text: str, selector: str) -> str:
@@ -151,3 +153,36 @@ def test_message_action_buttons_focus_without_obscuring_labels():
         block = css_block(text, selector)
         assert_non_obscuring_focus(block)
         assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
+
+
+def test_chat_sidebar_toggle_focus_uses_two_non_obscuring_cues():
+    text = CHAT.read_text(encoding="utf-8")
+    block = css_block(text, ".chat-sidebar-toggle-button:focus")
+    assert_non_obscuring_focus(block)
+    assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
+
+
+def test_chat_rag_focus_within_uses_non_semantic_container_cue():
+    text = CHAT.read_text(encoding="utf-8")
+    blocks = [
+        match.group("body")
+        for match in re.finditer(r"\.rag-settings-panel:focus-within\s*\{(?P<body>[^{}]*)\}", text)
+    ]
+    assert len(blocks) == 2
+    for block in blocks:
+        assert "$accent" not in block
+        assert "$boost" not in block
+        assert "border: round $ds-focus-accent;" in block
+        assert "background: $panel;" in block
+
+
+def test_chat_tab_active_state_is_readable_without_dominant_fill():
+    text = CHAT_TABS.read_text(encoding="utf-8")
+    active = css_block(text, ".chat-tab.active")
+    active_focus = css_block(text, ".chat-tab.active:focus")
+    assert "$primary" not in active
+    assert "background: $ds-focus-bg;" in active
+    assert "color: $ds-focus-fg;" in active
+    assert "text-style: bold;" in active
+    assert_non_obscuring_focus(active_focus)
+    assert "$ds-focus-bg" in active_focus or "$ds-surface-raised" in active_focus

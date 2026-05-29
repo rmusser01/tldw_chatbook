@@ -24,9 +24,11 @@
 }
 
 .chat-sidebar-toggle-button:focus {
-    background: $background;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
     border: none;
-    outline: heavy $accent;
+    outline: none;
 }
 
 /* --- Chat Window specific layouts --- */
@@ -373,8 +375,8 @@ ChatWindowEnhanced {
 
 /* Highlight RAG panel when focused */
 .rag-settings-panel:focus-within {
-    border: round $accent;
-    background: $boost;
+    border: round $ds-focus-accent;
+    background: $panel;
 }
 
 /* Remove highlight when collapsed */
@@ -547,8 +549,8 @@ ChatWindowEnhanced {
 
 /* Highlight RAG panel when focused */
 .rag-settings-panel:focus-within {
-    border: round $primary-lighten-2;
-    background: $boost;
+    border: round $ds-focus-accent;
+    background: $panel;
 }
 
 /* Remove highlight when collapsed */

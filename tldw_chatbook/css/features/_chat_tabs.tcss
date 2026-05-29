@@ -39,9 +39,16 @@
 }
 
 .chat-tab.active {
-    background: $primary;
-    color: $text;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
     text-style: bold;
+}
+
+.chat-tab.active:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 /* Close tab button */
