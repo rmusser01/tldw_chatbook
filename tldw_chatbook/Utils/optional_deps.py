@@ -1117,12 +1117,6 @@ else:
         except Exception as e:
             logger.debug(f"Could not check config for eager_dependency_check: {e}")
 
-# Always check embeddings dependencies eagerly since they're critical for the UI
-# This ensures the embeddings window loads correctly
-if 'PYTEST_CURRENT_TEST' not in os.environ:
-    logger.info("Checking embeddings dependencies early to ensure UI loads correctly...")
-    check_embeddings_rag_deps()
-
 if eager_check:
     initialize_dependency_checks()
     _initialized = True

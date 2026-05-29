@@ -228,11 +228,12 @@ async def test_home_empty_state_inspector_explains_selected_primary_action():
         assert "Import Library sources" in selected_text
         assert "Destination: Library" in selected_text
         assert "Enter: Open Library" in selected_text
-        assert "Ctrl+P: Search commands" in selected_text
+        assert "Ctrl+P" not in selected_text
 
         hint_text = str(home.query_one("#home-action-hints").renderable)
         assert "Enter open selected" in hint_text
         assert "Tab switch pane" in hint_text
+        assert "Ctrl+P" not in hint_text
 
 
 @pytest.mark.asyncio

@@ -31,9 +31,6 @@ from ..Utils.Splash import get_ascii_art, get_splash_card_config
 from ..Utils.Splash_Screens import load_all_effects, get_effect_class
 from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
 
-# Load all effects on module import
-load_all_effects()
-
 
 class SplashScreen(Container):
     """Customizable splash screen widget with animation support."""
@@ -266,6 +263,7 @@ class SplashScreen(Container):
         logger.debug(f"Starting animation with effect: {effect_type}")
         
         if effect_type:
+            load_all_effects()
             # Get the effect class from the registry
             effect_class = get_effect_class(effect_type)
             

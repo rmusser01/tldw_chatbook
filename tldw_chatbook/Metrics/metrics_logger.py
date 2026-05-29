@@ -2,6 +2,7 @@
 #
 # Imports
 import functools
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -20,10 +21,17 @@ from loguru import logger
 # 1. Refined Type Hinting for clarity and correctness
 LabelValue = Union[str, int, float, bool]
 LabelDict = Dict[str, LabelValue]
+_METRICS_LOGGING_TRUTHY = {"1", "true", "yes", "on"}
 
 # 2. (Gold Standard) Define a custom "METRIC" level for powerful filtering
 # This allows separating metrics from regular application logs at the sink level.
 logger.level("METRIC", no=25, color="<blue>", icon="📊")
+
+
+def is_metrics_logging_enabled() -> bool:
+    """Return whether high-volume Loguru metric lines should be emitted."""
+
+    return os.environ.get("TLDW_METRICS_LOGGING", "").lower() in _METRICS_LOGGING_TRUTHY
 
 
 def _log_metric(
@@ -35,6 +43,9 @@ def _log_metric(
     """
     Private helper to log a structured metric using idiomatic loguru binding.
     """
+    if not is_metrics_logging_enabled():
+        return
+
     # 3. Bind each piece of data to the top level for a flatter, queryable JSON
     bound_logger = logger.bind(
         event=metric_name,

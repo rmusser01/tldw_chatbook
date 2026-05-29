@@ -164,6 +164,7 @@ class NotesScreen(BaseAppScreen):
             "sources": [],
             "artifacts": [],
         }
+        self._skip_next_resume_refresh = False
         logger.debug("NotesScreen initialized with scope-aware state")
 
     def compose_content(self) -> ComposeResult:
@@ -2655,10 +2656,15 @@ class NotesScreen(BaseAppScreen):
         logger.info("NotesScreen mounted")
         self._consume_pending_workspace_return_context()
         await self.refresh_current_scope()
+        self._skip_next_resume_refresh = True
         self._update_scope_context_ui()
 
     async def on_screen_resume(self) -> None:
         self._consume_pending_workspace_return_context()
+        if self._skip_next_resume_refresh:
+            self._skip_next_resume_refresh = False
+            self._update_scope_context_ui()
+            return
         await self.refresh_current_scope()
         self._update_scope_context_ui()
 
