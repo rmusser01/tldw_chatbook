@@ -103,6 +103,8 @@
 .sidebar-input {
     width: 100%;
     margin-bottom: 1;
+    border: solid $primary-lighten-2;
+    border-bottom: solid $primary-lighten-2;
 }
 
 .sidebar-textarea {

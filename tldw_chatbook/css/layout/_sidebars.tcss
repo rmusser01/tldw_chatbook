@@ -285,7 +285,12 @@
     text-style: bold;
 }
 .sidebar-label { margin-top: 1; text-style: bold; }
-.sidebar-input { width: 100%; margin-bottom: 1; }
+.sidebar-input {
+    width: 100%;
+    margin-bottom: 1;
+    border: solid $primary-lighten-2;
+    border-bottom: solid $primary-lighten-2;
+}
 .sidebar-textarea { 
     width: 100%; 
     height: 5;  /* Default height for text areas */
@@ -342,7 +347,8 @@
 .sidebar Select { 
     width: 100%; 
     margin-bottom: 1; 
-    border: round $primary-lighten-2;
+    border: solid $primary-lighten-2;
+    border-bottom: solid $primary-lighten-2;
 }
 
 .prompt-display-textarea {
