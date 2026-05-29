@@ -50,9 +50,9 @@
 }
 /* Active state for selected ingest nav button */
 .ingest-nav-pane .ingest-nav-button.active {
-    background: $accent;
-    color: $text;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Collapsible sidebar styles */

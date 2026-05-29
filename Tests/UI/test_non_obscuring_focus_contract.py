@@ -25,6 +25,9 @@ INGESTION_REBUILT = ROOT / "tldw_chatbook/css/features/_ingestion_rebuilt.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
 EVALUATION_UNIFIED = ROOT / "tldw_chatbook/css/features/_evaluation_unified.tcss"
 EMBEDDINGS = ROOT / "tldw_chatbook/css/features/_embeddings.tcss"
+INGEST = ROOT / "tldw_chatbook/css/features/_ingest.tcss"
+TOOLS_SETTINGS = ROOT / "tldw_chatbook/css/features/_tools-settings.tcss"
+TAB_DROPDOWN = ROOT / "tldw_chatbook/css/features/_tab_dropdown.tcss"
 RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
 
 
@@ -104,6 +107,16 @@ def assert_embeddings_focus_and_active_contracts(text: str) -> None:
         assert "background: $ds-focus-bg;" in block
         assert "color: $ds-focus-fg;" in block
         assert "text-style: bold underline;" in block
+
+
+def assert_feature_nav_active_contract(block: str) -> None:
+    assert "outline: heavy" not in block
+    assert "reverse" not in block
+    assert "$accent" not in block
+    assert "$primary" not in block
+    assert "background: $ds-focus-bg;" in block
+    assert "color: $ds-focus-fg;" in block
+    assert "text-style: bold underline;" in block
 
 
 def test_focus_tokens_are_defined_and_not_semantic_warning_or_error():
@@ -334,6 +347,39 @@ def test_embeddings_focus_and_active_states_follow_shared_contracts():
 def test_bundled_embeddings_focus_and_active_states_match_source_contracts():
     text = BUNDLE.read_text(encoding="utf-8")
     assert_embeddings_focus_and_active_contracts(text)
+
+
+def test_feature_navigation_active_and_dropdown_focus_states_follow_contracts():
+    tab_text = TAB_DROPDOWN.read_text(encoding="utf-8")
+    tab_base = css_block(tab_text, "#tab-dropdown-select")
+    tab_focus = css_block(tab_text, "#tab-dropdown-select:focus")
+    assert_stable_solid_border_geometry(tab_base, tab_focus)
+    assert_thin_input_focus(tab_focus)
+    assert "background: $ds-input-focus-bg;" in tab_focus
+
+    ingest_text = INGEST.read_text(encoding="utf-8")
+    assert_feature_nav_active_contract(
+        css_block(ingest_text, ".ingest-nav-pane .ingest-nav-button.active")
+    )
+
+    tools_text = TOOLS_SETTINGS.read_text(encoding="utf-8")
+    assert_feature_nav_active_contract(
+        css_block(tools_text, ".tools-nav-pane .ts-nav-button.active-nav")
+    )
+
+
+def test_bundled_feature_navigation_states_match_source_contracts():
+    text = BUNDLE.read_text(encoding="utf-8")
+    tab_base = css_block(text, "#tab-dropdown-select")
+    tab_focus = css_block(text, "#tab-dropdown-select:focus")
+    assert_stable_solid_border_geometry(tab_base, tab_focus)
+    assert_thin_input_focus(tab_focus)
+    assert_feature_nav_active_contract(
+        css_block(text, ".ingest-nav-pane .ingest-nav-button.active")
+    )
+    assert_feature_nav_active_contract(
+        css_block(text, ".tools-nav-pane .ts-nav-button.active-nav")
+    )
 
 
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():
