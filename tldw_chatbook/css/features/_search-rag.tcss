@@ -236,16 +236,21 @@
     align: center middle;
 }
 
-.search-input-enhanced {
+.search-query-input-enhanced {
     width: 1fr;
     background: transparent;
-    border: none;
+    border: solid transparent;
+    border-bottom: solid transparent;
     padding: 0 1;
     /* font-size: 14; - not supported in TCSS */
 }
 
-.search-input-enhanced:focus {
-    background: transparent;
+.search-query-input-enhanced:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    border: solid $ds-input-focus-border;
+    border-bottom: solid $ds-input-focus-accent;
+    outline: none;
 }
 
 .clear-button {

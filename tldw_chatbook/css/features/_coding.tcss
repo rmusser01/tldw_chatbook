@@ -49,10 +49,6 @@ CodingWindow {
     background: $primary;
 }
 
-.coding-nav-button:focus {
-    background: $primary-lighten-1;
-}
-
 /* Content pane */
 .coding-content-pane {
     height: 100%;

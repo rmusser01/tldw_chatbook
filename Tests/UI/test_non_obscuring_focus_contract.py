@@ -13,6 +13,11 @@ WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
+CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
+SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
+CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
+FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
+RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
 
 
 def css_blocks(text: str, selector: str) -> list[str]:
@@ -41,6 +46,23 @@ def assert_non_obscuring_focus(block: str) -> None:
     assert "outline: heavy" not in block
     assert "reverse" not in block
     assert "text-style: bold underline;" in block
+
+
+def assert_thin_input_focus(block: str) -> None:
+    assert "outline: heavy" not in block
+    assert "border: thick" not in block
+    assert "border: solid $ds-input-focus-border;" in block
+    assert "border-bottom: solid $ds-input-focus-accent;" in block
+    assert "$error" not in block
+    assert "$warning" not in block
+
+
+def assert_stable_solid_border_geometry(base: str, focus: str) -> None:
+    for block in (base, focus):
+        assert "border: thick" not in block
+        assert "border: none" not in block
+        assert "border: solid" in block
+        assert "border-bottom: solid" in block
 
 
 def test_focus_tokens_are_defined_and_not_semantic_warning_or_error():
@@ -192,3 +214,44 @@ def test_chat_tab_active_state_is_readable_without_dominant_fill():
     assert "text-style: bold;" in active
     assert_non_obscuring_focus(active_focus)
     assert "$ds-focus-bg" in active_focus or "$ds-surface-raised" in active_focus
+
+
+def test_feature_buttons_inherit_shared_button_focus_contract_without_duplicate_rules():
+    button_text = BUTTONS.read_text(encoding="utf-8")
+    for selector in ("Button:focus", "Button:hover:focus"):
+        block = css_block(button_text, selector)
+        assert_non_obscuring_focus(block)
+        assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
+
+    assert css_blocks(CODING.read_text(encoding="utf-8"), ".coding-nav-button:focus") == []
+    assert (
+        css_blocks(
+            FEATURE_ALERTS.read_text(encoding="utf-8"),
+            "FeatureNotAvailableDialog Button:focus",
+        )
+        == []
+    )
+
+
+def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():
+    ui_text = RAG_SEARCH_WINDOW.read_text(encoding="utf-8")
+    text = SEARCH_RAG.read_text(encoding="utf-8")
+    assert 'classes="search-query-input-enhanced"' in ui_text
+    base = css_block(text, ".search-query-input-enhanced")
+    focus = css_block(text, ".search-query-input-enhanced:focus")
+    assert_stable_solid_border_geometry(base, focus)
+    assert_thin_input_focus(focus)
+    assert "background: $ds-input-focus-bg;" in focus
+
+
+def test_config_search_highlight_focus_uses_thin_non_semantic_focus():
+    text = CONFIG_SEARCH.read_text(encoding="utf-8")
+    for base_selector, focus_selector in (
+        (".search-highlight", "Input.search-highlight:focus"),
+        ("TextArea.search-highlight", "TextArea.search-highlight:focus"),
+    ):
+        base = css_block(text, base_selector)
+        focus = css_block(text, focus_selector)
+        assert_stable_solid_border_geometry(base, focus)
+        assert_thin_input_focus(focus)
+        assert "background: $ds-input-focus-bg;" in focus
