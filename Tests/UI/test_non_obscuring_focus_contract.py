@@ -21,6 +21,7 @@ CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
 FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
+INGESTION_REBUILT = ROOT / "tldw_chatbook/css/features/_ingestion_rebuilt.tcss"
 RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
 
 
@@ -36,6 +37,18 @@ def css_blocks(text: str, selector: str) -> list[str]:
         if selector in selectors:
             blocks.append(match.group("body"))
     return blocks
+
+
+def css_selectors(text: str) -> list[str]:
+    """Return every selector from CSS rule selector lists."""
+    uncommented = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    selectors = []
+    for match in re.finditer(r"\{(?P<body>[^{}]*)\}", uncommented, flags=re.DOTALL):
+        prefix = uncommented[: match.start()]
+        selector_start = max(prefix.rfind("}"), prefix.rfind(";")) + 1
+        selector_text = prefix[selector_start : match.start()]
+        selectors.extend(item.strip() for item in selector_text.split(",") if item.strip())
+    return selectors
 
 
 def css_block(text: str, selector: str) -> str:
@@ -235,6 +248,17 @@ def test_feature_buttons_inherit_shared_button_focus_contract_without_duplicate_
         )
         == []
     )
+
+
+def test_ingestion_rebuilt_focus_overrides_defer_to_shared_contracts():
+    text = INGESTION_REBUILT.read_text(encoding="utf-8")
+    widget_focus_selector = re.compile(r"\b(Input|TextArea|Select|Button)\b.*:focus")
+    offenders = [
+        selector
+        for selector in css_selectors(text)
+        if widget_focus_selector.search(selector)
+    ]
+    assert offenders == []
 
 
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():
