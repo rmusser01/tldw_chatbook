@@ -946,7 +946,7 @@ git commit -m "Wire Console generic provider sends"
 **Files:**
 - Modify only if verification exposes issues.
 
-- [ ] **Step 1: Run focused provider test suite**
+- [x] **Step 1: Run focused provider test suite**
 
 Run:
 
@@ -956,7 +956,7 @@ python -m pytest -q Tests/Chat/test_console_provider_support.py Tests/Chat/test_
 
 Expected: PASS.
 
-- [ ] **Step 2: Run existing Console layout/session regressions**
+- [x] **Step 2: Run existing Console layout/session regressions**
 
 Run:
 
@@ -966,7 +966,7 @@ python -m pytest -q Tests/UI/test_console_internals_decomposition.py Tests/UI/te
 
 Expected: PASS or document unrelated baseline failures.
 
-- [ ] **Step 3: Run static diff check**
+- [x] **Step 3: Run static diff check**
 
 Run:
 
@@ -976,7 +976,7 @@ git diff --check
 
 Expected: no whitespace errors.
 
-- [ ] **Step 4: Capture actual CDP/textual-web screenshots**
+- [x] **Step 4: Capture actual CDP/textual-web screenshots**
 
 Use the project CDP workflow documented in:
 
@@ -988,7 +988,7 @@ Capture and request approval for:
 - Missing key blocked: draft text remains visible in composer and transcript/inspector show recovery.
 - Base URL override blocked: recovery copy says to save endpoint in Settings.
 
-- [ ] **Step 5: Final commit if verification fixes were needed**
+- [x] **Step 5: Final commit if verification fixes were needed**
 
 ```bash
 git status --short
@@ -998,14 +998,22 @@ git commit -m "Verify Console provider parity"
 
 Only commit if verification required changes.
 
+Evidence:
+
+- `Docs/superpowers/qa/product-maturity/screen-qa/console/provider-parity/notes.md`
+- `Docs/superpowers/qa/product-maturity/screen-qa/console/provider-parity/generic-success-2026-05-28.png`
+- `Docs/superpowers/qa/product-maturity/screen-qa/console/provider-parity/missing-key-blocked-2026-05-28.png`
+- `Docs/superpowers/qa/product-maturity/screen-qa/console/provider-parity/base-url-override-blocked-2026-05-28.png`
+- User approval received in Codex thread after actual textual-web/CDP screenshot review.
+
 ## Review Checklist
 
-- [ ] No supported `API_CALL_HANDLERS` key receives the old llama-only WIP copy.
-- [ ] Missing key blocks before composer clear.
-- [ ] Direct llama.cpp tests still pass.
-- [ ] Generic non-streaming provider returns one completed assistant message.
-- [ ] Generic sync generator provider streams without blocking the event loop.
-- [ ] Stop/cancel ignores late sync-worker chunks.
-- [ ] Provider/model labels, Console Settings readiness, composer preflight, and Run Inspector derive from the same provider identity/readiness path.
-- [ ] No visible copy prints raw API keys, bearer tokens, URL credentials, or raw provider exception text.
-- [ ] Actual CDP/textual-web screenshots are captured before PR approval.
+- [x] No supported `API_CALL_HANDLERS` key receives the old llama-only WIP copy.
+- [x] Missing key blocks before composer clear.
+- [x] Direct llama.cpp tests still pass.
+- [x] Generic non-streaming provider returns one completed assistant message.
+- [x] Generic sync generator provider streams without blocking the event loop.
+- [x] Stop/cancel ignores late sync-worker chunks.
+- [x] Provider/model labels, Console Settings readiness, composer preflight, and Run Inspector derive from the same provider identity/readiness path.
+- [x] No visible copy prints raw API keys, bearer tokens, URL credentials, or raw provider exception text.
+- [x] Actual CDP/textual-web screenshots are captured before PR approval.
