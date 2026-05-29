@@ -23,6 +23,8 @@ CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
 FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
 INGESTION_REBUILT = ROOT / "tldw_chatbook/css/features/_ingestion_rebuilt.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
+EVALUATION_UNIFIED = ROOT / "tldw_chatbook/css/features/_evaluation_unified.tcss"
+EMBEDDINGS = ROOT / "tldw_chatbook/css/features/_embeddings.tcss"
 RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
 
 
@@ -81,6 +83,27 @@ def assert_stable_solid_border_geometry(base: str, focus: str) -> None:
         assert "border: none" not in block
         assert "border: solid" in block
         assert "border-bottom: solid" in block
+
+
+def assert_embeddings_focus_and_active_contracts(text: str) -> None:
+    for selector in (
+        ".embeddings-nav-button:focus",
+        ".embeddings-toggle-button-enhanced:focus",
+    ):
+        block = css_block(text, selector)
+        assert_non_obscuring_focus(block)
+        assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
+        assert "$primary" not in block
+        assert "$accent" not in block
+
+    for selector in (".embeddings-nav-button.-active", ".filter-button.active"):
+        block = css_block(text, selector)
+        assert "outline: heavy" not in block
+        assert "$primary" not in block
+        assert "$accent" not in block
+        assert "background: $ds-focus-bg;" in block
+        assert "color: $ds-focus-fg;" in block
+        assert "text-style: bold underline;" in block
 
 
 def test_focus_tokens_are_defined_and_not_semantic_warning_or_error():
@@ -282,6 +305,35 @@ def test_new_ingest_focus_overrides_defer_to_shared_contracts():
         if widget_focus_selector.search(selector)
     ]
     assert offenders == []
+
+
+def test_evaluation_unified_focus_overrides_defer_to_shared_contracts():
+    text = EVALUATION_UNIFIED.read_text(encoding="utf-8")
+    widget_focus_selector = re.compile(r"\b(Input|TextArea|Select)\b.*:focus")
+    offenders = [
+        selector
+        for selector in css_selectors(text)
+        if widget_focus_selector.search(selector)
+    ]
+    assert offenders == []
+
+
+def test_embeddings_focus_and_active_states_follow_shared_contracts():
+    text = EMBEDDINGS.read_text(encoding="utf-8")
+    assert_embeddings_focus_and_active_contracts(text)
+
+    widget_focus_selector = re.compile(r"\b(Input|TextArea|Select|Button|Checkbox)\b.*:focus")
+    offenders = [
+        selector
+        for selector in css_selectors(text)
+        if widget_focus_selector.search(selector)
+    ]
+    assert offenders == []
+
+
+def test_bundled_embeddings_focus_and_active_states_match_source_contracts():
+    text = BUNDLE.read_text(encoding="utf-8")
+    assert_embeddings_focus_and_active_contracts(text)
 
 
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():

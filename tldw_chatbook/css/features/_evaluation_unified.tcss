@@ -379,13 +379,6 @@ Collapsible.-collapsed {
     text-style: italic;
 }
 
-/* Focus States */
-Input:focus,
-Select:focus,
-TextArea:focus {
-    border: tall $accent;
-}
-
 /* Disabled States */
 Button:disabled {
     opacity: 0.5;

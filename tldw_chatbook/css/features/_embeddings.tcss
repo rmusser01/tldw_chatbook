@@ -72,15 +72,11 @@ EmbeddingsWindow {
     color: $text;
 }
 
-.embeddings-nav-button:focus {
-    background: $primary-lighten-1;
-    color: $text;
-}
-
+.embeddings-nav-button:focus,
 .embeddings-nav-button.-active {
-    background: $accent;
-    color: $text;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* ========================================
@@ -564,8 +560,9 @@ EmbeddingsManagementWindow {
 }
 
 .embeddings-toggle-button-enhanced:focus {
-    background: $primary 50%;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Management specific styles */
@@ -1026,26 +1023,6 @@ CollectionListItem.-selected {
     background: $surface;
     border: round $primary-darken-1;
     padding: 1;
-}
-
-/* Enhanced focus states */
-Input:focus,
-Select:focus,
-TextArea:focus,
-Button:focus,
-Checkbox:focus {
-    outline: heavy $accent;
-
-}
-
-/* Show outline for keyboard focus */
-Input:focus,
-Select:focus,
-TextArea:focus,
-Button:focus,
-Checkbox:focus {
-    outline: heavy $accent;
-
 }
 
 /* Enhanced hover states */
@@ -1604,8 +1581,9 @@ Select:hover {
 }
 
 .filter-button.active {
-    background: $primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .log-search-input {
