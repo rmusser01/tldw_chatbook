@@ -1336,9 +1336,9 @@ ConsoleSettingsModal Select {
 }
 
 .settings-active-section {
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 Button.settings-category-button {
@@ -1354,9 +1354,9 @@ Button.settings-category-button {
 }
 
 Button.settings-category-button.settings-active-section {
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 Button.settings-category-button:focus {
@@ -1367,8 +1367,15 @@ Button.settings-category-button:focus {
 }
 
 Button.settings-category-button.settings-active-section:focus {
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+Button.settings-category-button.settings-active-section:hover,
+Button.settings-category-button.settings-active-section:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
     text-style: bold underline;
 }
 
