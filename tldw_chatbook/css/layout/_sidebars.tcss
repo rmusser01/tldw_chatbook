@@ -553,8 +553,9 @@ TabbedContent Tab {
 }
 
 TabbedContent Tab.-active {
-    background: $primary 20%;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Hide the tab underline indicator */
