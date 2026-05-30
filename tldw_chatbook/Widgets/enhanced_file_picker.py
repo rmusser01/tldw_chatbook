@@ -198,7 +198,9 @@ class PathBreadcrumbs(Horizontal):
     }
     
     PathBreadcrumbs .breadcrumb-button:focus {
-        background: $primary 30%;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
     }
     
     PathBreadcrumbs .breadcrumb-separator {
