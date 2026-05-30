@@ -178,6 +178,29 @@ def assert_custom_widget_focus_contract(block: str) -> None:
     assert "text-style: bold underline;" in block
 
 
+def assert_drop_zone_active_contract(text: str) -> None:
+    block = css_block(text, ".drop-zone.active")
+    assert "outline: heavy" not in block
+    assert "reverse" not in block
+    assert "border: thick" not in block
+    assert "border-color:" not in block
+    assert "transform:" not in block
+    assert "box-shadow" not in block
+    assert "$primary" not in block
+    assert "$accent" not in block
+    assert "background: $ds-focus-bg;" in block
+    assert "border: round $ds-focus-accent;" in block
+    assert "color: $ds-focus-fg;" in block
+    assert "text-style: bold underline;" in block
+
+    icon = css_block(text, ".drop-zone.active .drop-icon")
+    assert "animation:" not in icon
+    assert "$primary" not in icon
+    assert "$accent" not in icon
+    assert "color: $ds-focus-fg;" in icon
+    assert "text-style: bold underline;" in icon
+
+
 def test_focus_tokens_are_defined_and_not_semantic_warning_or_error():
     text = VARIABLES.read_text(encoding="utf-8")
     for token in (
@@ -377,6 +400,10 @@ def test_new_ingest_focus_overrides_defer_to_shared_contracts():
         if widget_focus_selector.search(selector)
     ]
     assert offenders == []
+
+
+def test_new_ingest_drop_zone_active_state_is_readable():
+    assert_drop_zone_active_contract(NEW_INGEST.read_text(encoding="utf-8"))
 
 
 def test_evaluation_unified_focus_overrides_defer_to_shared_contracts():

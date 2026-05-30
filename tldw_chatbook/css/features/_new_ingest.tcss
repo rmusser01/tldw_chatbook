@@ -198,11 +198,10 @@
 }
 
 .drop-zone.active {
-    background: linear-gradient(135deg, $accent 20%, $primary 20%);
-    border: thick solid $accent;
-    border-color: $accent;
-    transform: scale(1.02);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    background: $ds-focus-bg;
+    border: round $ds-focus-accent;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .drop-icon {
@@ -213,8 +212,8 @@
 }
 
 .drop-zone.active .drop-icon {
-    color: $accent;
-    animation: pulse 1s infinite;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .drop-message {
