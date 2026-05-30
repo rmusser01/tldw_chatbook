@@ -735,9 +735,17 @@ def test_bundled_native_listview_row_states_keep_effective_contracts():
     assert_native_row_hover_state_contract(css_block(text, "#chatbooks-list ListItem:hover"))
     for selector in (
         "#chatbooks-list ListItem.--highlight",
-        "ConfigSearchResult ListItem.--highlight",
+        "ConfigSearchResult.--highlight",
     ):
         assert_native_row_selected_state_contract(css_block(text, selector))
+
+    assert css_blocks(text, "ConfigSearchResult ListItem.--highlight") == []
+
+
+def test_config_search_result_highlight_targets_rendered_list_item():
+    text = CONFIG_SEARCH.read_text(encoding="utf-8")
+    assert css_blocks(text, "ConfigSearchResult ListItem.--highlight") == []
+    assert_native_row_selected_state_contract(css_block(text, "ConfigSearchResult.--highlight"))
 
 
 def test_native_datatable_row_states_follow_shared_contracts():
