@@ -200,6 +200,12 @@ def assert_drop_zone_active_contract(text: str) -> None:
     assert "color: $ds-focus-fg;" in icon
     assert "text-style: bold underline;" in icon
 
+    message = css_block(text, ".drop-zone.active .drop-message")
+    assert "$primary" not in message
+    assert "$accent" not in message
+    assert "color: $ds-focus-fg;" in message
+    assert "text-style: bold underline;" in message
+
 
 def test_focus_tokens_are_defined_and_not_semantic_warning_or_error():
     text = VARIABLES.read_text(encoding="utf-8")

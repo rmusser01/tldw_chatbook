@@ -211,7 +211,8 @@
     font-size: 24px;
 }
 
-.drop-zone.active .drop-icon {
+.drop-zone.active .drop-icon,
+.drop-zone.active .drop-message {
     color: $ds-focus-fg;
     text-style: bold underline;
 }
