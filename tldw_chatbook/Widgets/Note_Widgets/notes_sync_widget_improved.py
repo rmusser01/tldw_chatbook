@@ -184,6 +184,9 @@ class SyncProgressSection(Container):
     
     SyncProgressSection.active {
         display: block;
+        background: $surface;
+        border: solid $surface-lighten-1;
+        color: $text;
     }
     
     .progress-header {

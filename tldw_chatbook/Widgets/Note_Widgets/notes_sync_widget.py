@@ -79,6 +79,9 @@ class SyncProgressWidget(Container):
     
     SyncProgressWidget.active {
         display: block;
+        background: $surface;
+        border: solid $surface-lighten-1;
+        color: $text;
     }
     
     #sync-progress-bar {

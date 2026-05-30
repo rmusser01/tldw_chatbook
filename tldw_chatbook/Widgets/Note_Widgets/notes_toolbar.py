@@ -82,7 +82,9 @@ class NotesToolbar(Horizontal):
     }
     
     NotesToolbar Button.toggle.active {
-        background: $primary;
+        background: $surface;
+        color: $text;
+        text-style: bold underline;
     }
     
     .toolbar-separator {

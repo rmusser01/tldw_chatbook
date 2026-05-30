@@ -26,12 +26,16 @@ class NotesEditorWidget(TextArea):
     DEFAULT_CSS = """
     NotesEditorWidget {
         height: 100%;
-        border: none;
+        border: solid transparent;
+        border-bottom: solid transparent;
         padding: 1;
     }
     
     NotesEditorWidget:focus {
-        border: none;
+        border: solid $surface-lighten-1;
+        border-bottom: solid $surface-lighten-1;
+        background: $surface;
+        color: $text;
     }
     
     NotesEditorWidget.preview-mode {
