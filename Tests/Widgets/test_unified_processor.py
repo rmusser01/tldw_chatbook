@@ -7,7 +7,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch, AsyncMock
 from textual.app import App
-from textual.widgets import Button, RadioButton
+from textual.widgets import Button, RadioButton, Static
 
 from tldw_chatbook.Widgets.NewIngest.UnifiedProcessor import (
     UnifiedProcessor,
@@ -227,6 +227,13 @@ async def test_mode_toggle_mode_changes():
         assert toggle.current_mode == ProcessingMode.EXPERT
         assert toggle.query_one("#expert-mode", Button).has_class("active")
         assert not toggle.query_one("#advanced-mode", Button).has_class("active")
+
+        toggle.current_mode = "simple"
+        await pilot.pause()
+
+        assert toggle.query_one("#simple-mode", Button).has_class("active")
+        assert not toggle.query_one("#expert-mode", Button).has_class("active")
+        assert toggle.query_one("#mode-description", Static).renderable == "Simple processing mode"
 
 
 @pytest.mark.asyncio

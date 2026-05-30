@@ -126,9 +126,15 @@ class ModeToggle(Widget):
             yield Static("Simple processing mode", id="mode-description")
 
     def on_mount(self) -> None:
+        """Synchronize selected mode state after the widget is mounted."""
         self._sync_mode_buttons()
 
     def watch_current_mode(self, _mode: ProcessingMode) -> None:
+        """Refresh selected mode presentation when the reactive mode changes.
+
+        Args:
+            _mode: Updated processing mode value from the reactive watcher.
+        """
         if self.is_mounted:
             self._sync_mode_buttons()
 
@@ -143,12 +149,17 @@ class ModeToggle(Widget):
             self.current_mode = ProcessingMode.EXPERT
 
     def _sync_mode_buttons(self) -> None:
-        active_button_id = f"{self.button_id_prefix}{self.current_mode.value}-mode"
-        for button in self.query(Button):
+        mode_str = (
+            self.current_mode.value
+            if isinstance(self.current_mode, ProcessingMode)
+            else str(self.current_mode)
+        )
+        active_button_id = f"{self.button_id_prefix}{mode_str}-mode"
+        for button in self.query("#mode-selector Button"):
             button.set_class(button.id == active_button_id, "active")
 
         description = self.query_one("#mode-description", Static)
-        description.update(f"{self.current_mode.value.title()} processing mode")
+        description.update(f"{mode_str.title()} processing mode")
 
 
 class MediaSpecificOptions(Widget):

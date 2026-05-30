@@ -664,7 +664,7 @@
     text-style: bold underline;
 }
 
-.mode-description {
+#mode-description {
     color: $text-muted;
     font-style: italic;
     text-align: center;

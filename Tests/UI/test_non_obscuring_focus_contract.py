@@ -554,6 +554,8 @@ def test_new_ingest_focus_overrides_defer_to_shared_contracts():
     assert css_blocks(text, ".mode-selector RadioButton") == []
     assert css_blocks(text, ".mode-selector RadioButton:hover") == []
     assert css_blocks(text, ".mode-selector RadioButton.-active") == []
+    assert css_blocks(text, ".mode-description") == []
+    assert css_block(text, "#mode-description")
     mode_button_base = css_block(text, "#mode-selector Button")
     mode_button_active = css_block(text, "#mode-selector Button.active")
     assert "border: round $border;" in mode_button_base
