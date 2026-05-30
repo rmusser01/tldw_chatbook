@@ -125,6 +125,13 @@ class ModeToggle(Widget):
                 yield Button("Expert", id=f"{self.button_id_prefix}expert-mode")
             yield Static("Simple processing mode", id="mode-description")
 
+    def on_mount(self) -> None:
+        self._sync_mode_buttons()
+
+    def watch_current_mode(self, _mode: ProcessingMode) -> None:
+        if self.is_mounted:
+            self._sync_mode_buttons()
+
     @on(Button.Pressed)
     def _set_mode(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
@@ -134,6 +141,14 @@ class ModeToggle(Widget):
             self.current_mode = ProcessingMode.ADVANCED
         elif button_id.endswith("expert-mode"):
             self.current_mode = ProcessingMode.EXPERT
+
+    def _sync_mode_buttons(self) -> None:
+        active_button_id = f"{self.button_id_prefix}{self.current_mode.value}-mode"
+        for button in self.query(Button):
+            button.set_class(button.id == active_button_id, "active")
+
+        description = self.query_one("#mode-description", Static)
+        description.update(f"{self.current_mode.value.title()} processing mode")
 
 
 class MediaSpecificOptions(Widget):
