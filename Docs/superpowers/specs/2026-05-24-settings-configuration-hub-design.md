@@ -67,6 +67,23 @@ Non-goals:
 - Do not show full secret values in any guided Settings surface.
 - Do not make Settings the place to run agents, execute tools, attach context, or manage live work.
 
+## Configuration Ownership Matrix
+
+Settings owns persisted defaults, validation, safety copy, and recovery entry points. It does not own live runtime execution for destinations that already have dedicated operational surfaces.
+
+| Settings category | Writes allowed in Settings | Settings-owned config | Runtime owner | Boundary |
+| --- | --- | --- | --- | --- |
+| Overview | No | global defaults summary, validation status, recovery guidance | owning destinations | Summarizes readiness and ownership only. Console owns live chat/run state; MCP owns server/tool management; ACP owns runtime/session setup. |
+| Providers & Models | Yes | `chat_defaults.provider`, `chat_defaults.model`, `chat_defaults.streaming`, `chat_defaults.temperature`, `api_settings.<provider>.endpoint` | Settings persisted defaults; Console runtime selection | Provider, model, endpoint, streaming, and temperature defaults are shared with Console. Console owns active chat/run state. |
+| Appearance | No in this slice | `appearance`, `ui`, `theme` summaries | Appearance | Settings routes visual preferences to Appearance instead of duplicating the full editor. |
+| Storage | No in this slice | `paths`, `database` status | Storage services | Settings observes local paths and writability. It must not move local data or server handoff content without a dedicated source-of-truth task. |
+| Privacy / Security | No in this slice | encryption posture and credential-source status | Privacy and credential services | Settings exposes privacy posture and redaction status without printing raw secrets. |
+| Console Behavior | Yes | `[console].collapse_large_pastes`, `[console].paste_collapse_threshold` | Console | Settings owns global Console composer defaults; Console owns active chat/run state. |
+| Diagnostics | No | validation and reload status | Diagnostics | Diagnostics validates and reloads without mutating raw TOML. |
+| Advanced Config | Yes, guarded | raw TOML | Settings advanced editor | Raw TOML bypasses guided category controls and requires validation before save. |
+
+Read-only or WIP categories must visibly state their owner, recovery path, and why writes are blocked. They must not look like fully actionable configuration editors.
+
 ## UX Principles
 
 Follow Nielsen Norman usability principles with emphasis on:

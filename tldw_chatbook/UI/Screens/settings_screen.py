@@ -41,7 +41,12 @@ from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
 from .provider_model_resolution import resolve_effective_provider_model
 from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
-from .settings_config_models import SettingsCategoryId, SettingsCategorySummary, SettingsDraft
+from .settings_config_models import (
+    SettingsCategoryId,
+    SettingsCategorySummary,
+    SettingsDraft,
+    SettingsOwnershipRecord,
+)
 from ..Navigation.main_navigation import NavigateToScreen
 
 
@@ -97,6 +102,16 @@ GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
         SettingsCategoryId.CONSOLE_BEHAVIOR,
     }
 )
+SETTINGS_OVERVIEW_BOUNDARY_ROWS = (
+    ("Settings role", "Settings owns persisted defaults and validation"),
+    ("Console boundary", "Console owns live chat/run state"),
+    ("MCP boundary", "MCP owns server and tool management"),
+    ("ACP boundary", "ACP owns runtime/session setup"),
+    (
+        "Sync/workspace boundary",
+        "Sync and workspace handoff defaults are read-only until source contracts exist",
+    ),
+)
 
 
 class SettingsScreen(BaseAppScreen):
@@ -131,6 +146,7 @@ class SettingsScreen(BaseAppScreen):
         self._console_behavior_result = "Console behavior settings have not been saved this session."
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
+        self._ownership_by_category_cache = self._build_ownership_by_category()
 
     def _category_summaries(self) -> tuple[SettingsCategorySummary, ...]:
         return (
@@ -210,6 +226,137 @@ class SettingsScreen(BaseAppScreen):
             ("Troubleshooting", (SettingsCategoryId.DIAGNOSTICS,)),
             ("Expert", (SettingsCategoryId.ADVANCED_CONFIG,)),
         )
+
+    def _category_ownership_records(self) -> tuple[SettingsOwnershipRecord, ...]:
+        return (
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.OVERVIEW,
+                owns_config_sections=("global defaults", "validation status", "recovery guidance"),
+                reads_runtime_state_from=(
+                    "Console",
+                    "MCP",
+                    "ACP",
+                    "sync readiness",
+                    "workspace status",
+                ),
+                writes_allowed=False,
+                runtime_owner="owning destinations",
+                boundary_copy="; ".join(value for _, value in SETTINGS_OVERVIEW_BOUNDARY_ROWS),
+                recovery_copy=(
+                    "Open the owning category or destination before changing runtime behavior; "
+                    "sync and workspace handoff defaults stay read-only until source contracts exist."
+                ),
+                read_only_reason="Overview summarizes status and ownership only.",
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.PROVIDERS_MODELS,
+                owns_config_sections=(
+                    "chat_defaults.provider",
+                    "chat_defaults.model",
+                    "chat_defaults.streaming",
+                    "chat_defaults.temperature",
+                    "api_settings.<provider>.endpoint",
+                ),
+                reads_runtime_state_from=("Console provider readiness",),
+                writes_allowed=True,
+                runtime_owner="Settings persisted defaults; Console runtime selection",
+                boundary_copy=(
+                    "Provider, model, endpoint, streaming, and temperature defaults are shared with Console."
+                ),
+                recovery_copy=(
+                    "Test provider readiness before starting provider-backed Console work."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.APPEARANCE,
+                owns_config_sections=("appearance", "ui", "theme"),
+                reads_runtime_state_from=("Appearance destination",),
+                writes_allowed=False,
+                runtime_owner="Appearance",
+                boundary_copy="Settings routes visual preferences to Appearance.",
+                recovery_copy="Open Appearance for the full editor and preview flow.",
+                read_only_reason="Appearance editing remains destination-owned in this slice.",
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.STORAGE,
+                owns_config_sections=("paths", "database"),
+                reads_runtime_state_from=("local filesystem", "configured database paths"),
+                writes_allowed=False,
+                runtime_owner="Storage services",
+                boundary_copy="Settings observes local paths and writability without moving data.",
+                recovery_copy="Verify paths before changing storage roots outside this slice.",
+                read_only_reason="Storage edits require a dedicated source-of-truth and migration task.",
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.PRIVACY_SECURITY,
+                owns_config_sections=("encryption", "api_settings.<provider>.credential_source"),
+                reads_runtime_state_from=("config redaction", "environment credential status"),
+                writes_allowed=False,
+                runtime_owner="Privacy and credential services",
+                boundary_copy="Settings exposes privacy posture without printing raw secrets.",
+                recovery_copy="Rotate exposed credentials outside Chatbook and rerun privacy checks.",
+                read_only_reason="Encryption and credential migration need a dedicated recovery flow.",
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.CONSOLE_BEHAVIOR,
+                owns_config_sections=(
+                    "console.collapse_large_pastes",
+                    "console.paste_collapse_threshold",
+                ),
+                reads_runtime_state_from=("Console composer/session defaults",),
+                writes_allowed=True,
+                runtime_owner="Console",
+                boundary_copy=(
+                    "Settings owns global Console defaults; Console owns active chat/run state."
+                ),
+                recovery_copy="Save or revert category drafts before testing live Console behavior.",
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.DIAGNOSTICS,
+                owns_config_sections=("validation output", "reload status"),
+                reads_runtime_state_from=("config adapter", "diagnostic services"),
+                writes_allowed=False,
+                runtime_owner="Diagnostics",
+                boundary_copy="Diagnostics validates and reloads without mutating raw TOML.",
+                recovery_copy="Validate before reload; use Advanced Config only for expert repairs.",
+                read_only_reason="Diagnostic checks are non-destructive by design.",
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.ADVANCED_CONFIG,
+                owns_config_sections=("raw TOML",),
+                reads_runtime_state_from=("config file",),
+                writes_allowed=True,
+                runtime_owner="Settings advanced editor",
+                boundary_copy="Advanced Config bypasses guided category controls.",
+                recovery_copy="Validate exact current TOML before save; restore from backup if needed.",
+            ),
+        )
+
+    def _build_ownership_by_category(self) -> dict[SettingsCategoryId, SettingsOwnershipRecord]:
+        return {record.category: record for record in self._category_ownership_records()}
+
+    def _ownership_by_category(self) -> dict[SettingsCategoryId, SettingsOwnershipRecord]:
+        return self._ownership_by_category_cache
+
+    @staticmethod
+    def _missing_ownership_record(category: SettingsCategoryId) -> SettingsOwnershipRecord:
+        logger.warning("Settings ownership record missing for category %s", category.value)
+        return SettingsOwnershipRecord(
+            category=category,
+            reads_runtime_state_from=("unknown",),
+            writes_allowed=False,
+            runtime_owner="Settings ownership matrix",
+            boundary_copy="Ownership record missing; update the Settings ownership matrix.",
+            recovery_copy="Update the Settings ownership matrix before enabling writes.",
+            read_only_reason="Ownership record missing; update matrix before exposing actions.",
+        )
+
+    def _ownership_record(self, category: SettingsCategoryId) -> SettingsOwnershipRecord:
+        return self._ownership_by_category().get(category) or self._missing_ownership_record(category)
+
+    def _overview_ownership_rows(self) -> tuple[tuple[str, str], ...]:
+        ownership = self._ownership_record(SettingsCategoryId.OVERVIEW)
+        return (*SETTINGS_OVERVIEW_BOUNDARY_ROWS, ("Recovery", ownership.recovery_copy))
 
     def _active_summary(self) -> SettingsCategorySummary:
         for summary in self._category_summaries():
@@ -1423,9 +1570,15 @@ class SettingsScreen(BaseAppScreen):
                 ("Boundary", "runtime MCP, ACP, and tool control stay in their own destinations"),
             ),
             SettingsCategoryId.PROVIDERS_MODELS: (
-                ("Affected config", "chat_defaults provider, model, streaming, and temperature"),
-                ("Recovery", "test provider readiness before saving and revert if Console generation is blocked"),
-                ("Boundary", "provider routing is shared with Console but runtime tool approval stays in Console"),
+                ("Affected config", "provider, model, endpoint, streaming, and temperature defaults"),
+                (
+                    "Recovery",
+                    "test provider readiness before saving provider-backed Console defaults",
+                ),
+                (
+                    "Boundary",
+                    "Console owns active chat/run state; Settings owns persisted defaults only",
+                ),
             ),
             SettingsCategoryId.APPEARANCE: (
                 ("Affected config", "theme, density, and visual customization values"),
@@ -1519,6 +1672,9 @@ class SettingsScreen(BaseAppScreen):
         yield Static("Overview", classes="destination-section settings-column-title")
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
+            yield Static("Configuration ownership", classes="destination-section")
+            for label, value in self._overview_ownership_rows():
+                yield self._detail_row(label, value)
             yield Static("Provider readiness", classes="destination-section")
             yield self._detail_row(
                 "Provider readiness",
@@ -1825,6 +1981,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _render_impact_pane(self) -> ComposeResult:
         summary = self._active_summary()
+        ownership = self._ownership_record(summary.category)
         yield Static("Scope Inspector", classes="destination-section settings-column-title")
         yield Static(f"Selected category: {summary.title}", classes="destination-section")
         yield Static(
@@ -1867,6 +2024,18 @@ class SettingsScreen(BaseAppScreen):
         else:
             yield Static("Impact and boundaries", classes="destination-section")
             yield Static(summary.description)
+        yield self._detail_row("Runtime owner", ownership.runtime_owner)
+        yield self._detail_row(
+            "Writes allowed",
+            "Yes" if ownership.writes_allowed else "No",
+        )
+        if ownership.owns_config_sections:
+            yield self._detail_row(
+                "Owns",
+                ", ".join(ownership.owns_config_sections),
+            )
+        if ownership.read_only_reason:
+            yield self._detail_row("Read-only/WIP", ownership.read_only_reason)
         for label, value in self._inspector_guidance(summary.category):
             yield self._detail_row(
                 label,

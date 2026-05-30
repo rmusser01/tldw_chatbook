@@ -84,6 +84,20 @@ class SettingsCategorySummary:
 
 
 @dataclass(frozen=True)
+class SettingsOwnershipRecord:
+    """Ownership boundary for a Settings category."""
+
+    category: SettingsCategoryId
+    owns_config_sections: tuple[str, ...] = ()
+    reads_runtime_state_from: tuple[str, ...] = ()
+    writes_allowed: bool = False
+    runtime_owner: str = ""
+    boundary_copy: str = ""
+    recovery_copy: str = ""
+    read_only_reason: str = ""
+
+
+@dataclass(frozen=True)
 class SettingsImpactSummary:
     """Display impact metadata for a Settings selection."""
 

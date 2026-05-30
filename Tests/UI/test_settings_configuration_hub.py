@@ -296,6 +296,99 @@ async def test_settings_defaults_to_overview_category():
         assert "Console paste collapse" in text
 
 
+def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    records = screen._category_ownership_records()
+    records_by_category = {record.category: record for record in records}
+
+    assert set(records_by_category) == {
+        summary.category for summary in screen._category_summaries()
+    }
+    assert all(record.__class__.__name__ == "SettingsOwnershipRecord" for record in records)
+    assert records_by_category[SettingsCategoryId.PROVIDERS_MODELS].owns_config_sections == (
+        "chat_defaults.provider",
+        "chat_defaults.model",
+        "chat_defaults.streaming",
+        "chat_defaults.temperature",
+        "api_settings.<provider>.endpoint",
+    )
+    assert records_by_category[SettingsCategoryId.CONSOLE_BEHAVIOR].owns_config_sections == (
+        "console.collapse_large_pastes",
+        "console.paste_collapse_threshold",
+    )
+    assert not records_by_category[SettingsCategoryId.STORAGE].writes_allowed
+    assert records_by_category[SettingsCategoryId.STORAGE].read_only_reason
+
+    overview = records_by_category[SettingsCategoryId.OVERVIEW]
+    boundary_text = " ".join(
+        (
+            overview.boundary_copy,
+            overview.recovery_copy,
+            *overview.reads_runtime_state_from,
+        )
+    )
+    for owner in ("Console", "MCP", "ACP", "sync", "workspace"):
+        assert owner in boundary_text
+
+
+def test_settings_overview_ownership_rows_are_sourced_from_record():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    ownership = screen._ownership_record(SettingsCategoryId.OVERVIEW)
+    rows = dict(screen._overview_ownership_rows())
+    rendered_copy = " ".join(rows.values())
+
+    for boundary in ownership.boundary_copy.split("; "):
+        assert boundary in rendered_copy
+    assert rows["Recovery"] == ownership.recovery_copy
+
+
+def test_settings_ownership_record_falls_back_without_crashing():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen._ownership_by_category_cache = {}
+
+    record = screen._ownership_record(SettingsCategoryId.OVERVIEW)
+
+    assert record.category is SettingsCategoryId.OVERVIEW
+    assert not record.writes_allowed
+    assert "Ownership record missing" in record.read_only_reason
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_renders_ownership_contract_boundaries():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Settings owns persisted defaults and validation" in text
+        assert "Console owns live chat/run state" in text
+        assert "MCP owns server and tool management" in text
+        assert "ACP owns runtime/session setup" in text
+        assert "Sync and workspace handoff defaults are read-only until source contracts exist" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_inspector_excludes_console_sampling_ownership():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Affected config: provider, model, endpoint, streaming, and temperature defaults" in text
+        assert "Console owns active chat/run state; Settings owns persisted defaults only" in text
+        assert "credential source" not in text
+
+
 @pytest.mark.asyncio
 async def test_settings_category_selection_updates_detail_and_inspector():
     app = _build_test_app()
