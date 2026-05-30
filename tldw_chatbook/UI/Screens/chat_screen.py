@@ -16,7 +16,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
-from textual.events import Click, Key, Paste
+from textual.events import Click, Key, MouseUp, Paste
 from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
@@ -3177,6 +3177,10 @@ class ChatScreen(BaseAppScreen):
             event.prevent_default()
             return
         if event.key == "enter":
+            if composer.activate_focused_paste_token():
+                event.stop()
+                event.prevent_default()
+                return
             event.stop()
             event.prevent_default()
             try:
@@ -3207,6 +3211,22 @@ class ChatScreen(BaseAppScreen):
         self._dismiss_console_guidance()
         event.stop()
 
+    def on_mouse_up(self, event: MouseUp) -> None:
+        """Route terminal mouse-up events to paste tokens in textual-web."""
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+        screen_x = getattr(event, "screen_x", None)
+        screen_y = getattr(event, "screen_y", None)
+        if screen_x is None or screen_y is None:
+            return
+        if not composer.activate_visible_draft_screen_position(screen_x, screen_y):
+            return
+        composer.suppress_next_draft_click()
+        event.stop()
+        event.prevent_default()
+
     def on_click(self, event: Click) -> None:
         """Reset pending paste unfurl confirmation when clicking outside the token."""
         target = getattr(event, "widget", None) or getattr(event, "control", None)
@@ -3215,6 +3235,20 @@ class ChatScreen(BaseAppScreen):
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
+            return
+        if composer.consume_suppressed_draft_click():
+            event.stop()
+            event.prevent_default()
+            return
+        screen_x = getattr(event, "screen_x", None)
+        screen_y = getattr(event, "screen_y", None)
+        if (
+            screen_x is not None
+            and screen_y is not None
+            and composer.activate_visible_draft_screen_position(screen_x, screen_y)
+        ):
+            event.stop()
+            event.prevent_default()
             return
         composer.reset_pending_unfurl()
 

@@ -955,6 +955,103 @@ async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
 
 
 @pytest.mark.asyncio
+async def test_console_collapsed_paste_composer_row_click_enters_unfurl_prompt():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "container row paste " * 8
+
+        composer.insert_pasted_text(pasted_text)
+        await pilot.click("#console-native-composer", offset=(13, 1))
+        await pilot.pause(0.1)
+
+        assert visible_draft.renderable.plain == "Unfurl?"
+        assert composer.draft_text() == pasted_text
+
+
+@pytest.mark.asyncio
+async def test_console_collapsed_paste_textual_web_row_click_enters_unfurl_prompt():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(205, 62)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "textual web paste coordinate " * 6
+
+        composer.insert_pasted_text(pasted_text)
+        await pilot.pause(0.1)
+
+        assert composer.activate_visible_draft_screen_position(
+            visible_draft.region.x + 4,
+            visible_draft.region.y - 1,
+        )
+
+        assert visible_draft.renderable.plain == "Unfurl?"
+        assert composer.draft_text() == pasted_text
+
+
+@pytest.mark.asyncio
+async def test_console_collapsed_paste_textual_web_bottom_boundary_click_enters_unfurl_prompt():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(205, 62)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "textual web bottom boundary paste " * 5
+
+        composer.insert_pasted_text(pasted_text)
+        await pilot.pause(0.1)
+
+        assert composer.activate_visible_draft_screen_position(
+            visible_draft.region.x + 4,
+            visible_draft.region.y + visible_draft.size.height,
+        )
+
+        assert visible_draft.renderable.plain == "Unfurl?"
+        assert composer.draft_text() == pasted_text
+
+
+@pytest.mark.asyncio
+async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(205, 62)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "focused composer visible paste " * 6
+
+        composer.insert_pasted_text(pasted_text)
+        await pilot.pause(0.1)
+
+        assert composer.activate_visible_draft_screen_position(
+            visible_draft.region.x + 4,
+            visible_draft.region.y + visible_draft.size.height,
+        )
+
+        assert visible_draft.renderable.plain == "Unfurl?"
+        assert console.app.focused is composer
+        assert composer.draft_text() == pasted_text
+
+
+@pytest.mark.asyncio
 async def test_console_collapsed_paste_second_click_unfurls_literal_text():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -974,6 +1071,38 @@ async def test_console_collapsed_paste_second_click_unfurls_literal_text():
 
         visible_plain = visible_draft.renderable.plain
         assert "literal unfurled paste" in visible_plain
+        assert "Pasted Text:" not in visible_plain
+        assert "Unfurl?" not in visible_plain
+        assert composer.draft_text() == pasted_text
+
+
+@pytest.mark.asyncio
+async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_flow():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "keyboard unfurl paste " * 10
+
+        composer.insert_pasted_text(pasted_text)
+        composer.focus()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+
+        assert console.app.focused is composer
+        assert visible_draft.renderable.plain == "Unfurl?"
+        assert composer.draft_text() == pasted_text
+
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
+        assert "keyboard unfurl paste" in visible_plain
         assert "Pasted Text:" not in visible_plain
         assert "Unfurl?" not in visible_plain
         assert composer.draft_text() == pasted_text
@@ -1190,6 +1319,45 @@ async def test_console_native_composer_captures_printable_typing_from_non_text_f
         assert composer.draft_text() == "k"
         assert "k" in visible_draft.renderable.plain
         assert "k" in _visible_text(composer)
+
+
+@pytest.mark.asyncio
+async def test_console_native_composer_clicking_visible_draft_captures_typing():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+
+        await pilot.click("#console-command-visible-text")
+        await pilot.press("a", "b", "c")
+        await pilot.pause(0.1)
+
+        assert composer.draft_text() == "abc"
+        assert "abc" in visible_draft.renderable.plain
+
+
+@pytest.mark.asyncio
+async def test_console_native_composer_click_focuses_composer_not_visible_static():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+
+        await pilot.click("#console-command-visible-text")
+        await pilot.pause(0.1)
+
+        assert console.app.focused is composer
+        assert console.app.focused is not visible_draft
 
 
 @pytest.mark.asyncio

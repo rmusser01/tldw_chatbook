@@ -12,7 +12,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
-from textual.events import Click, DescendantBlur, DescendantFocus
+from textual.events import Click, DescendantBlur, DescendantFocus, MouseUp
 from textual.widgets import Button, Input, Static
 
 from ...config import (
@@ -94,6 +94,7 @@ class ConsoleComposerBar(Horizontal):
         self._send_blocked = False
         self._setup_blocked_reason = ""
         self._can_save_chatbook = False
+        self._suppress_next_draft_click = False
 
     @property
     def collapse_large_pastes_enabled(self) -> bool:
@@ -622,13 +623,60 @@ class ConsoleComposerBar(Horizontal):
             self._refresh_visible_draft()
         return changed
 
-    def _click_display_index(self, event: Click) -> int | None:
-        """Map a visible-draft click to an unwrapped display-string offset."""
-        widget = getattr(event, "widget", None) or getattr(event, "control", None)
-        padding_left = getattr(getattr(widget, "styles", None), "padding", None)
-        padding_left = getattr(padding_left, "left", 0)
-        click_x = max(0, event.x - padding_left)
-        click_y = max(0, event.y)
+    def has_pending_paste_confirmation(self) -> bool:
+        """Return whether a collapsed paste token is waiting on confirm."""
+        return any(segment.collapse_state == "confirm" for segment in self._segments)
+
+    def suppress_next_draft_click(self) -> None:
+        """Suppress the synthesized Click that may follow terminal mouse events."""
+        self._suppress_next_draft_click = True
+
+    def consume_suppressed_draft_click(self) -> bool:
+        """Return True when a mouse-event fallback already handled this click."""
+        if not self._suppress_next_draft_click:
+            return False
+        self._suppress_next_draft_click = False
+        return True
+
+    def activate_focused_paste_token(self) -> bool:
+        """Advance a collapsed paste token for keyboard-only users.
+
+        The visible composer draft renders paste tokens inline rather than as
+        individually focusable widgets. When the composer owns focus, Enter
+        advances the active confirmation if present, otherwise it prompts the
+        first collapsed paste token.
+        """
+        if not self._segments_initialized:
+            return False
+
+        try:
+            visible_draft = self.query_one("#console-command-visible-text", Static)
+            refocus_composer = self.app.focused in {self, visible_draft}
+        except NoMatches:
+            refocus_composer = self.app.focused is self
+
+        for segment in self._segments:
+            if segment.collapse_state == "confirm":
+                segment.collapse_state = "expanded"
+                self._refresh_visible_draft()
+                if refocus_composer:
+                    self.focus()
+                return True
+
+        for segment in self._segments:
+            if segment.collapse_state == "collapsed":
+                segment.collapse_state = "confirm"
+                self._refresh_visible_draft()
+                if refocus_composer:
+                    self.focus()
+                return True
+
+        return False
+
+    def _display_index_at(self, click_x: int, click_y: int, *, padding_left: int = 0) -> int | None:
+        """Map visible-draft coordinates to an unwrapped display-string offset."""
+        click_x = max(0, click_x - padding_left)
+        click_y = max(0, click_y)
         display_text = self._display_draft_text()
         visible_slices = self._visible_draft_line_slices(
             display_text,
@@ -645,9 +693,22 @@ class ConsoleComposerBar(Horizontal):
             return clicked_slice.start + click_x - clicked_slice.synthetic_prefix_columns
         return clicked_slice.start + click_x
 
-    def _target_unfurl_segment(self, event: Click) -> _DraftSegment | None:
-        """Return the collapsed paste segment targeted by the click position."""
-        display_index = self._click_display_index(event)
+    def _click_display_index(self, event: Click) -> int | None:
+        """Map a visible-draft click to an unwrapped display-string offset."""
+        widget = getattr(event, "widget", None) or getattr(event, "control", None)
+        padding_left = getattr(getattr(widget, "styles", None), "padding", None)
+        padding_left = getattr(padding_left, "left", 0)
+        return self._display_index_at(event.x, event.y, padding_left=padding_left)
+
+    def _target_unfurl_segment_at(
+        self,
+        click_x: int,
+        click_y: int,
+        *,
+        padding_left: int = 0,
+    ) -> _DraftSegment | None:
+        """Return the collapsed paste segment targeted by display coordinates."""
+        display_index = self._display_index_at(click_x, click_y, padding_left=padding_left)
         if display_index is None:
             return None
         for display_range in self._segment_display_ranges():
@@ -659,17 +720,140 @@ class ConsoleComposerBar(Horizontal):
                 return segment
         return None
 
-    @on(Click, "#console-command-visible-text")
-    def _handle_visible_draft_click(self, event: Click) -> None:
-        """Advance the simple two-step unfurl flow for collapsed paste segments."""
-        segment = self._target_unfurl_segment(event)
+    def _advance_targeted_paste_segment(
+        self,
+        click_x: int,
+        click_y: int,
+        *,
+        padding_left: int = 0,
+    ) -> bool:
+        """Advance the simple two-step unfurl flow for a targeted paste segment."""
+        segment = self._target_unfurl_segment_at(
+            click_x,
+            click_y,
+            padding_left=padding_left,
+        )
         if segment is None:
-            return
+            return False
         if segment.collapse_state == "collapsed":
             segment.collapse_state = "confirm"
         elif segment.collapse_state == "confirm":
             segment.collapse_state = "expanded"
         self._refresh_visible_draft()
+        return True
+
+    def activate_visible_draft_screen_position(self, screen_x: int, screen_y: int) -> bool:
+        """Advance a paste token from absolute screen coordinates in the draft row."""
+        try:
+            visible_draft = self.query_one("#console-command-visible-text", Static)
+        except NoMatches:
+            return False
+
+        local_y = screen_y - visible_draft.region.y
+        if local_y == -1 and screen_y >= self.region.y:
+            # textual-web reports some bottom-row composer clicks against the
+            # containing row above the Static while visually targeting the
+            # visible draft. Treat that boundary as the first draft row.
+            local_y = 0
+        elif (
+            local_y == visible_draft.size.height
+            and screen_y < self.region.y + self.region.height
+        ):
+            # textual-web can also report a composer-row click one row below the
+            # visible Static. Treat that boundary as the draft row when the x
+            # coordinate still targets the draft surface.
+            local_y = max(0, visible_draft.size.height - 1)
+
+        if (
+            screen_x < visible_draft.region.x
+            or screen_x >= visible_draft.region.x + visible_draft.size.width
+            or local_y < 0
+            or local_y >= visible_draft.size.height
+        ):
+            return False
+
+        self.focus()
+        padding_left = getattr(getattr(visible_draft, "styles", None), "padding", None)
+        padding_left = getattr(padding_left, "left", 0)
+        return self._advance_targeted_paste_segment(
+            screen_x - visible_draft.region.x,
+            local_y,
+            padding_left=padding_left,
+        )
+
+    @on(Click, "#console-command-visible-text")
+    def _handle_visible_draft_click(self, event: Click) -> None:
+        """Advance the simple two-step unfurl flow for collapsed paste segments."""
+        self.focus()
+        if self.consume_suppressed_draft_click():
+            event.stop()
+            event.prevent_default()
+            return
+        widget = getattr(event, "widget", None) or getattr(event, "control", None)
+        padding_left = getattr(getattr(widget, "styles", None), "padding", None)
+        padding_left = getattr(padding_left, "left", 0)
+        if not self._advance_targeted_paste_segment(
+            event.x,
+            event.y,
+            padding_left=padding_left,
+        ):
+            event.stop()
+            event.prevent_default()
+            return
+        event.stop()
+        event.prevent_default()
+
+    @on(MouseUp, "#console-command-visible-text")
+    def _handle_visible_draft_mouse_up(self, event: MouseUp) -> None:
+        """Advance paste tokens for terminal mouse events before Click synthesis."""
+        self.focus()
+        widget = getattr(event, "widget", None) or getattr(event, "control", None)
+        padding_left = getattr(getattr(widget, "styles", None), "padding", None)
+        padding_left = getattr(padding_left, "left", 0)
+        if not self._advance_targeted_paste_segment(
+            event.x,
+            event.y,
+            padding_left=padding_left,
+        ):
+            event.stop()
+            event.prevent_default()
+            return
+        self.suppress_next_draft_click()
+        event.stop()
+        event.prevent_default()
+
+    def on_click(self, event: Click) -> None:
+        """Route row-level terminal clicks in the composer to the visible draft."""
+        target = getattr(event, "widget", None) or getattr(event, "control", None)
+        target_id = getattr(target, "id", None)
+        if target_id == "console-command-visible-text" or isinstance(target, Button):
+            return
+        if self.consume_suppressed_draft_click():
+            event.stop()
+            event.prevent_default()
+            return
+        screen_x = getattr(event, "screen_x", None)
+        screen_y = getattr(event, "screen_y", None)
+        if screen_x is None or screen_y is None:
+            return
+        if not self.activate_visible_draft_screen_position(screen_x, screen_y):
+            return
+        event.stop()
+        event.prevent_default()
+
+    def on_mouse_up(self, event: MouseUp) -> None:
+        """Route terminal mouse-up events in the composer to the visible draft."""
+        target = getattr(event, "widget", None) or getattr(event, "control", None)
+        target_id = getattr(target, "id", None)
+        if target_id == "console-command-visible-text" or isinstance(target, Button):
+            return
+        screen_x = getattr(event, "screen_x", None)
+        screen_y = getattr(event, "screen_y", None)
+        if screen_x is None or screen_y is None:
+            return
+        if not self.activate_visible_draft_screen_position(screen_x, screen_y):
+            return
+        self.suppress_next_draft_click()
         event.stop()
         event.prevent_default()
 
@@ -706,7 +890,7 @@ class ConsoleComposerBar(Horizontal):
             id="console-command-visible-text",
             classes="console-command-visible-text",
         )
-        visible_draft.can_focus = True
+        visible_draft.can_focus = False
         visible_draft.styles.width = "1fr"
         visible_draft.styles.min_width = 0
         yield visible_draft
