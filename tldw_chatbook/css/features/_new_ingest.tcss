@@ -658,9 +658,10 @@
 }
 
 .mode-selector RadioButton.-active {
-    background: $primary;
-    color: $surface;
-    border: solid $primary;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: round $ds-focus-accent;
+    text-style: bold underline;
 }
 
 .mode-description {

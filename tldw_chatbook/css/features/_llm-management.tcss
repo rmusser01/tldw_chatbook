@@ -35,8 +35,9 @@
 }
 /* Active state for selected llm nav button */
 .llm-nav-pane .llm-nav-button.-active {
-    background: $accent;
-    color: $text;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .llm-content-pane { /* Style for the right content display area */

@@ -70,9 +70,9 @@
 
 /* Currently selected option (when dropdown is open) */
 #tab-dropdown-select SelectOverlay Option.-selected {
-    background: $accent-darken-1;
-    color: $text;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Disabled state (if needed in future) */
