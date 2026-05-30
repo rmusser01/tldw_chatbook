@@ -86,8 +86,10 @@
 }
 
 /* Highlight matches in search results */
-ConfigSearchResult ListItem.--highlight {
-    background: $accent 30%;
+ConfigSearchResult.--highlight {
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
 }
 
 /* Ensure the config editor has proper spacing when search is shown */

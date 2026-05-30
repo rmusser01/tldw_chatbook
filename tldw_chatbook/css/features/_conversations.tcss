@@ -352,20 +352,6 @@ Checkbox {
     height: 2;
 }
 
-/* ListView item styling */
-ListView ListItem {
-    padding: 0 1;
-    height: auto;
-}
-
-ListView ListItem:hover {
-    background: $primary-background-darken-1;
-}
-
-ListView ListItem.--highlight {
-    background: $primary-background;
-}
-
 /* Message display area */
 #ccp-conversation-messages-view {
     padding: 1;

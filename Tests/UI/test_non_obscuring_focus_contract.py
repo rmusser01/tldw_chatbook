@@ -12,6 +12,7 @@ VARIABLES = ROOT / "tldw_chatbook/css/core/_variables.tcss"
 RESET = ROOT / "tldw_chatbook/css/core/_reset.tcss"
 BUTTONS = ROOT / "tldw_chatbook/css/components/_buttons.tcss"
 FORMS = ROOT / "tldw_chatbook/css/components/_forms.tcss"
+LISTS = ROOT / "tldw_chatbook/css/components/_lists.tcss"
 AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
 BASE_COMPONENTS = ROOT / "tldw_chatbook/Widgets/base_components.py"
 WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
@@ -198,6 +199,28 @@ def assert_readable_inline_selected_state_contract(block: str) -> None:
     assert "background: $surface;" in block
     assert "color: $text;" in block
     assert "text-style: bold underline;" in block
+
+
+def assert_native_row_selected_state_contract(block: str) -> None:
+    assert_readable_inline_selected_state_contract(block)
+    assert_no_dominant_selected_geometry(block)
+    assert "$primary-background" not in block
+    assert "$primary" not in block
+    assert "$accent" not in block
+    assert "$warning" not in block
+    assert "$error" not in block
+
+
+def assert_native_row_hover_state_contract(block: str) -> None:
+    assert "outline: heavy" not in block
+    assert "reverse" not in block
+    assert "$primary-background" not in block
+    assert "$primary" not in block
+    assert "$accent" not in block
+    assert "$warning" not in block
+    assert "$error" not in block
+    assert "background: $surface;" in block or "background: $surface-lighten-1;" in block
+    assert "color: $text;" in block
 
 
 def assert_custom_widget_focus_contract(block: str) -> None:
@@ -692,6 +715,58 @@ def test_bundled_residual_active_selected_states_match_source_contracts():
         block = css_block(text, selector)
         assert_readable_selected_state_contract(block)
         assert_no_dominant_selected_geometry(block)
+
+
+def test_native_listview_row_states_follow_shared_contracts():
+    text = LISTS.read_text(encoding="utf-8")
+    assert "height: auto;" in css_block(text, "ListView ListItem")
+    assert_native_row_hover_state_contract(css_block(text, "ListView ListItem:hover"))
+    assert_native_row_selected_state_contract(css_block(text, "ListView ListItem.--highlight"))
+
+
+def test_bundled_native_listview_row_states_keep_effective_contracts():
+    text = BUNDLE.read_text(encoding="utf-8")
+    assert len(css_blocks(text, "ListView ListItem:hover")) == 1
+    assert len(css_blocks(text, "ListView ListItem.--highlight")) == 1
+    assert "height: auto;" in css_blocks(text, "ListView ListItem")[-1]
+    assert_native_row_hover_state_contract(css_blocks(text, "ListView ListItem:hover")[-1])
+    assert_native_row_selected_state_contract(css_blocks(text, "ListView ListItem.--highlight")[-1])
+
+    assert_native_row_hover_state_contract(css_block(text, "#chatbooks-list ListItem:hover"))
+    for selector in (
+        "#chatbooks-list ListItem.--highlight",
+        "ConfigSearchResult.--highlight",
+    ):
+        assert_native_row_selected_state_contract(css_block(text, selector))
+
+    assert css_blocks(text, "ConfigSearchResult ListItem.--highlight") == []
+
+
+def test_config_search_result_highlight_targets_rendered_list_item():
+    text = CONFIG_SEARCH.read_text(encoding="utf-8")
+    assert css_blocks(text, "ConfigSearchResult ListItem.--highlight") == []
+    assert_native_row_selected_state_contract(css_block(text, "ConfigSearchResult.--highlight"))
+
+
+def test_native_datatable_row_states_follow_shared_contracts():
+    text = LISTS.read_text(encoding="utf-8")
+    assert_native_row_selected_state_contract(css_block(text, "DataTable > .datatable--cursor"))
+    assert_native_row_hover_state_contract(css_block(text, "DataTable > .datatable--hover"))
+    assert_native_row_selected_state_contract(css_block(text, "DataTable > .datatable--selected"))
+
+
+def test_bundled_native_datatable_row_states_keep_effective_contracts():
+    text = BUNDLE.read_text(encoding="utf-8")
+    for selector in (
+        "DataTable > .datatable--cursor",
+        "DataTable > .datatable--hover",
+        "DataTable > .datatable--selected",
+    ):
+        assert len(css_blocks(text, selector)) == 1
+
+    for selector in ("DataTable > .datatable--cursor", "DataTable > .datatable--selected"):
+        assert_native_row_selected_state_contract(css_blocks(text, selector)[-1])
+    assert_native_row_hover_state_contract(css_blocks(text, "DataTable > .datatable--hover")[-1])
 
 
 def test_media_selected_and_active_states_follow_shared_contracts():
