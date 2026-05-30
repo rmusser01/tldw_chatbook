@@ -495,6 +495,17 @@ def test_console_and_library_visible_offenders_do_not_obscure_labels():
         assert "$ds-status-error" not in block
 
 
+def test_console_session_tab_active_state_uses_selected_contract():
+    for text in (
+        AGENTIC.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        active = css_block(text, ".console-session-tab-active")
+        assert_readable_selected_state_contract(active)
+        assert_no_dominant_selected_geometry(active)
+        assert "$ds-action-focus" not in active
+
+
 def test_library_mode_chip_active_states_use_selected_focus_contracts():
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
