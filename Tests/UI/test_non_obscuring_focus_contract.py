@@ -25,6 +25,7 @@ INGESTION_REBUILT = ROOT / "tldw_chatbook/css/features/_ingestion_rebuilt.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
 WIZARDS = ROOT / "tldw_chatbook/css/features/_wizards.tcss"
 EVALUATION_UNIFIED = ROOT / "tldw_chatbook/css/features/_evaluation_unified.tcss"
+EVAL_NAV_SCREEN = ROOT / "tldw_chatbook/UI/Evals/navigation/eval_nav_screen.py"
 EMBEDDINGS = ROOT / "tldw_chatbook/css/features/_embeddings.tcss"
 INGEST = ROOT / "tldw_chatbook/css/features/_ingest.tcss"
 TOOLS_SETTINGS = ROOT / "tldw_chatbook/css/features/_tools-settings.tcss"
@@ -625,6 +626,27 @@ def test_evals_sample_browser_selected_row_children_show_inline_selected_cue():
         assert "$accent" not in block
         assert "$primary" not in block
         assert "color: $text;" in block
+        assert "text-style: bold underline;" in block
+
+
+def test_evals_navigation_card_focus_is_non_obscuring_and_ordered_after_type_borders():
+    text = EVAL_NAV_SCREEN.read_text(encoding="utf-8")
+    focus = css_block(text, ".nav-card:focus")
+    assert_custom_widget_focus_contract(focus)
+    assert text.index(".nav-card.batch") < text.index(".nav-card:focus")
+
+    for selector in (
+        ".nav-card:focus .card-icon",
+        ".nav-card:focus .card-title",
+        ".nav-card:focus .card-description",
+        ".nav-card:focus .card-shortcut",
+    ):
+        block = css_block(text, selector)
+        assert "$text-muted" not in block
+        assert "$text-disabled" not in block
+        assert "$primary" not in block
+        assert "$accent" not in block
+        assert "color: $ds-focus-fg;" in block
         assert "text-style: bold underline;" in block
 
 
