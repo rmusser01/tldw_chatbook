@@ -91,12 +91,17 @@ class ModelCardViewer(Container):
     }
     
     ModelCardViewer .file-item.selected {
-        background: $primary 10%;
-        border-left: thick $primary;
+        background: $surface;
+        color: $text;
+        text-style: bold underline;
+        border-left: thick $surface-lighten-1;
     }
     
     ModelCardViewer .file-item.selected:hover {
-        background: $primary 20%;
+        background: $surface;
+        color: $text;
+        text-style: bold underline;
+        border-left: thick $surface-lighten-1;
     }
     
     ModelCardViewer .file-item-content {

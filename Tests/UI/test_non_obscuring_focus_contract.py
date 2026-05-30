@@ -37,6 +37,7 @@ SAMPLE_BROWSER_DIALOG = ROOT / "tldw_chatbook/Widgets/Evals/sample_browser_dialo
 RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
 EMOJI_PICKER = ROOT / "tldw_chatbook/Widgets/emoji_picker.py"
 ENHANCED_FILE_PICKER = ROOT / "tldw_chatbook/Widgets/enhanced_file_picker.py"
+MODEL_CARD_VIEWER = ROOT / "tldw_chatbook/Widgets/HuggingFace/model_card_viewer.py"
 
 
 def css_blocks(text: str, selector: str) -> list[str]:
@@ -528,6 +529,15 @@ def test_compact_custom_buttons_use_readable_focus_cues():
         assert "$accent" not in block
         assert "background: $ds-focus-bg;" in block
         assert "color: $ds-focus-fg;" in block
+
+
+def test_huggingface_model_card_selected_file_row_is_readable():
+    text = MODEL_CARD_VIEWER.read_text(encoding="utf-8")
+    for selector in (
+        "ModelCardViewer .file-item.selected",
+        "ModelCardViewer .file-item.selected:hover",
+    ):
+        assert_readable_inline_selected_state_contract(css_block(text, selector))
 
 
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():
