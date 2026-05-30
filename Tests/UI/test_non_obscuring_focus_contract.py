@@ -38,6 +38,10 @@ RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.p
 EMOJI_PICKER = ROOT / "tldw_chatbook/Widgets/emoji_picker.py"
 ENHANCED_FILE_PICKER = ROOT / "tldw_chatbook/Widgets/enhanced_file_picker.py"
 MODEL_CARD_VIEWER = ROOT / "tldw_chatbook/Widgets/HuggingFace/model_card_viewer.py"
+NOTES_TOOLBAR = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_toolbar.py"
+NOTES_EDITOR = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_editor_widget.py"
+NOTES_SYNC = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget.py"
+NOTES_SYNC_IMPROVED = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget_improved.py"
 
 
 def css_blocks(text: str, selector: str) -> list[str]:
@@ -538,6 +542,48 @@ def test_huggingface_model_card_selected_file_row_is_readable():
         "ModelCardViewer .file-item.selected:hover",
     ):
         assert_readable_inline_selected_state_contract(css_block(text, selector))
+
+
+def test_notes_toolbar_active_toggle_uses_readable_active_contract():
+    text = NOTES_TOOLBAR.read_text(encoding="utf-8")
+    assert_readable_inline_selected_state_contract(
+        css_block(text, "NotesToolbar Button.toggle.active")
+    )
+
+
+def test_notes_editor_focus_uses_stable_thin_input_contract():
+    from tldw_chatbook.Widgets.Note_Widgets.notes_editor_widget import NotesEditorWidget
+
+    text = NotesEditorWidget.DEFAULT_CSS
+    base = css_block(text, "NotesEditorWidget")
+    focus = css_block(text, "NotesEditorWidget:focus")
+    assert_stable_solid_border_geometry(base, focus)
+    assert "outline: heavy" not in focus
+    assert "border: solid $surface-lighten-1;" in focus
+    assert "border-bottom: solid $surface-lighten-1;" in focus
+    assert "background: $surface;" in focus
+    assert "color: $text;" in focus
+    assert "$primary" not in focus
+    assert "$accent" not in focus
+    assert "$error" not in focus
+    assert "$warning" not in focus
+
+
+def test_notes_sync_progress_active_states_are_readable():
+    for path, selector in (
+        (NOTES_SYNC, "SyncProgressWidget.active"),
+        (NOTES_SYNC_IMPROVED, "SyncProgressSection.active"),
+    ):
+        block = css_block(path.read_text(encoding="utf-8"), selector)
+        assert "display: block;" in block
+        assert "outline: heavy" not in block
+        assert "$primary" not in block
+        assert "$accent" not in block
+        assert "$warning" not in block
+        assert "$error" not in block
+        assert "background: $surface;" in block
+        assert "border: solid $surface-lighten-1;" in block
+        assert "color: $text;" in block
 
 
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():

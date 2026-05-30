@@ -87,10 +87,10 @@ Scope: PR 1 foundation plus app-wide inventory
 | `EmojiButton.emoji_button:focus` | `tldw_chatbook/Widgets/emoji_picker.py` | Emoji picker | button | compact button focus needs review | two-cue non-obscuring focus | PR 14 compact widget focus | source contract |
 | `PathBreadcrumbs .breadcrumb-button:focus` | `tldw_chatbook/Widgets/enhanced_file_picker.py` | File picker | breadcrumb button | compact button focus needs review | two-cue non-obscuring focus | PR 14 compact widget focus | source contract |
 | `ModelCardViewer .file-item.selected` | `tldw_chatbook/Widgets/HuggingFace/model_card_viewer.py` | HuggingFace model card | selected row | selected row needs review | readable selected row | PR 15 model-card focus | inline source contract |
-| `NotesToolbar Button.toggle.active` | `tldw_chatbook/Widgets/Note_Widgets/notes_toolbar.py` | Notes toolbar | active toggle | active fill needs review | active plus focus contract | Deferred PR 4+ | not yet migrated |
-| `NotesEditorWidget:focus` | `tldw_chatbook/Widgets/Note_Widgets/notes_editor_widget.py` | Notes editor | custom input | local focus style needs review | non-obscuring editor focus | Deferred PR 4+ | not yet migrated |
-| `SyncProgressWidget.active` | `tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget.py` | Notes sync | active progress | active state needs review | readable active progress state | Deferred PR 4+ | not yet migrated |
-| `SyncProgressSection.active` | `tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget_improved.py` | Notes sync | active progress | active state needs review | readable active progress state | Deferred PR 4+ | not yet migrated |
+| `NotesToolbar Button.toggle.active` | `tldw_chatbook/Widgets/Note_Widgets/notes_toolbar.py` | Notes toolbar | active toggle | active fill needs review | active plus focus contract | PR 16 notes widget focus | inline source contract |
+| `NotesEditorWidget:focus` | `tldw_chatbook/Widgets/Note_Widgets/notes_editor_widget.py` | Notes editor | custom input | local focus style needs review | non-obscuring editor focus | PR 16 notes widget focus | inline source contract |
+| `SyncProgressWidget.active` | `tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget.py` | Notes sync | active progress | active state needs review | readable active progress state | PR 16 notes widget focus | inline source contract |
+| `SyncProgressSection.active` | `tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget_improved.py` | Notes sync | active progress | active state needs review | readable active progress state | PR 16 notes widget focus | inline source contract |
 
 ## Audit Notes
 
