@@ -136,6 +136,24 @@ Select:focus {
     color: $ds-text-primary;
 }
 
+ToggleButton:focus {
+    border: solid $ds-focus-accent;
+    background: $surface;
+}
+
+ToggleButton:focus > .toggle--label,
+ToggleButton.-textual-compact:focus > .toggle--label,
+ToggleButton:blur:hover > .toggle--label {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+Switch:focus {
+    border: solid $ds-focus-accent;
+    background: $ds-focus-bg;
+}
+
 /* New base media ingestion form styling */
 .form-input {
     height: 3;

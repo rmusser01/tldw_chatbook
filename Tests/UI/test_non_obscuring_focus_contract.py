@@ -127,6 +127,21 @@ def assert_non_obscuring_focus(block: str) -> None:
     assert "text-style: bold underline;" in block
 
 
+def assert_native_toggle_focus_contract(block: str) -> None:
+    assert "outline: heavy" not in block
+    assert "reverse" not in block
+    assert "border: thick" not in block
+    assert "$block-cursor" not in block
+    assert "$block-hover" not in block
+    assert "$primary" not in block
+    assert "$accent" not in block
+    assert "$warning" not in block
+    assert "$error" not in block
+    assert "background: $ds-focus-bg;" in block
+    assert "color: $ds-focus-fg;" in block
+    assert "text-style: bold underline;" in block
+
+
 def assert_thin_input_focus(block: str) -> None:
     assert "outline: heavy" not in block
     assert "border: thick" not in block
@@ -414,6 +429,44 @@ def test_shared_form_and_native_inputs_use_thin_non_semantic_focus():
         assert "border-bottom: solid $ds-input-focus-accent;" in block
         assert "$error" not in block
         assert "$warning" not in block
+
+
+def test_native_toggle_focus_states_use_non_obscuring_contracts():
+    text = FORMS.read_text(encoding="utf-8")
+    for selector in (
+        "ToggleButton:focus > .toggle--label",
+        "ToggleButton.-textual-compact:focus > .toggle--label",
+        "ToggleButton:blur:hover > .toggle--label",
+    ):
+        assert_native_toggle_focus_contract(css_block(text, selector))
+
+    focus = css_block(text, "Switch:focus")
+    assert "border: thick" not in focus
+    assert "$primary" not in focus
+    assert "$accent" not in focus
+    assert "$warning" not in focus
+    assert "$error" not in focus
+    assert "border: solid $ds-focus-accent;" in focus
+    assert "background: $ds-focus-bg;" in focus
+
+
+def test_bundled_native_toggle_focus_states_match_source_contracts():
+    text = BUNDLE.read_text(encoding="utf-8")
+    for selector in (
+        "ToggleButton:focus > .toggle--label",
+        "ToggleButton.-textual-compact:focus > .toggle--label",
+        "ToggleButton:blur:hover > .toggle--label",
+    ):
+        assert_native_toggle_focus_contract(css_block(text, selector))
+
+    focus = css_block(text, "Switch:focus")
+    assert "border: thick" not in focus
+    assert "$primary" not in focus
+    assert "$accent" not in focus
+    assert "$warning" not in focus
+    assert "$error" not in focus
+    assert "border: solid $ds-focus-accent;" in focus
+    assert "background: $ds-focus-bg;" in focus
 
 
 def test_console_and_library_visible_offenders_do_not_obscure_labels():
