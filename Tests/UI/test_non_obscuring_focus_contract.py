@@ -342,12 +342,14 @@ def test_library_mode_chip_active_states_use_selected_focus_contracts():
         focus = css_block(text, ".library-mode-chip:focus")
         assert_non_obscuring_focus(focus)
 
-        assert_readable_selected_state_contract(
-            css_block(text, ".library-mode-chip.is-active")
-        )
+        active = css_block(text, ".library-mode-chip.is-active")
+        assert_readable_selected_state_contract(active)
+        assert "border: solid $ds-focus-accent;" in active
 
         active_focus = css_block(text, ".library-mode-chip.is-active:focus")
         assert_non_obscuring_focus(active_focus)
+        assert active_focus != active
+        assert "border: round $ds-focus-accent;" in active_focus
         assert "$primary" not in active_focus
         assert "$accent" not in active_focus
         assert "background: $ds-focus-bg;" in active_focus

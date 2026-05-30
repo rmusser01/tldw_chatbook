@@ -1648,6 +1648,7 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .library-mode-chip.is-active {
+    border: solid $ds-focus-accent;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
@@ -1655,6 +1656,7 @@ Button.settings-category-button.settings-secondary-search-match {
 
 .library-mode-chip.is-active:focus {
     outline: none;
+    border: round $ds-focus-accent;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
