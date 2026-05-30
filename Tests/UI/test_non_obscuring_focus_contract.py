@@ -204,6 +204,7 @@ def assert_readable_inline_selected_state_contract(block: str) -> None:
 def assert_native_row_selected_state_contract(block: str) -> None:
     assert_readable_inline_selected_state_contract(block)
     assert_no_dominant_selected_geometry(block)
+    assert "$block-cursor" not in block
     assert "$primary-background" not in block
     assert "$primary" not in block
     assert "$accent" not in block
@@ -214,6 +215,8 @@ def assert_native_row_selected_state_contract(block: str) -> None:
 def assert_native_row_hover_state_contract(block: str) -> None:
     assert "outline: heavy" not in block
     assert "reverse" not in block
+    assert "$block-hover" not in block
+    assert "$block-cursor" not in block
     assert "$primary-background" not in block
     assert "$primary" not in block
     assert "$accent" not in block
@@ -767,6 +770,46 @@ def test_bundled_native_datatable_row_states_keep_effective_contracts():
     for selector in ("DataTable > .datatable--cursor", "DataTable > .datatable--selected"):
         assert_native_row_selected_state_contract(css_blocks(text, selector)[-1])
     assert_native_row_hover_state_contract(css_blocks(text, "DataTable > .datatable--hover")[-1])
+
+
+def test_native_choice_and_tree_states_follow_shared_contracts():
+    text = LISTS.read_text(encoding="utf-8")
+    for selector in (
+        "OptionList > .option-list--option-highlighted",
+        "OptionList:focus > .option-list--option-highlighted",
+        "SelectionList > .selection-list--button-highlighted",
+        "SelectionList > .selection-list--button-selected",
+        "SelectionList > .selection-list--button-selected-highlighted",
+        "Tree > .tree--cursor",
+        "Tree:focus > .tree--cursor",
+    ):
+        assert_native_row_selected_state_contract(css_block(text, selector))
+
+    for selector in (
+        "OptionList > .option-list--option-hover",
+        "Tree > .tree--highlight-line",
+    ):
+        assert_native_row_hover_state_contract(css_block(text, selector))
+
+
+def test_bundled_native_choice_and_tree_states_match_source_contracts():
+    text = BUNDLE.read_text(encoding="utf-8")
+    for selector in (
+        "OptionList > .option-list--option-highlighted",
+        "OptionList:focus > .option-list--option-highlighted",
+        "SelectionList > .selection-list--button-highlighted",
+        "SelectionList > .selection-list--button-selected",
+        "SelectionList > .selection-list--button-selected-highlighted",
+        "Tree > .tree--cursor",
+        "Tree:focus > .tree--cursor",
+    ):
+        assert_native_row_selected_state_contract(css_block(text, selector))
+
+    for selector in (
+        "OptionList > .option-list--option-hover",
+        "Tree > .tree--highlight-line",
+    ):
+        assert_native_row_hover_state_contract(css_block(text, selector))
 
 
 def test_media_selected_and_active_states_follow_shared_contracts():
