@@ -236,7 +236,7 @@ def assert_wizard_progress_active_contracts(text: str) -> None:
     assert "visibility: visible;" in step
     assert "outline: heavy" not in step
     assert "reverse" not in step
-    assert "border:" not in step
+    assert "border" not in step
     assert "background:" not in step
     assert "box-shadow" not in step
     assert "transform:" not in step
