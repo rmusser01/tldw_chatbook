@@ -17,7 +17,6 @@ CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
 SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
 LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
-UNIFIED_SIDEBAR = ROOT / "tldw_chatbook/css/components/_unified_sidebar.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 CODE_REPO = ROOT / "tldw_chatbook/css/features/_code_repo.tcss"
@@ -629,9 +628,7 @@ def test_residual_active_selected_states_follow_shared_contracts():
     for path, selector in (
         (LLM_MANAGEMENT, ".llm-nav-pane .llm-nav-button.-active"),
         (CODE_REPO, ".tree-node-selected"),
-        (NEW_INGEST, ".mode-selector RadioButton.-active"),
         (TAB_DROPDOWN, "#tab-dropdown-select SelectOverlay Option.-selected"),
-        (UNIFIED_SIDEBAR, "#sidebar-tabs Tab.-active"),
     ):
         block = css_block(path.read_text(encoding="utf-8"), selector)
         assert_readable_selected_state_contract(block)

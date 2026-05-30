@@ -353,9 +353,8 @@
 }
 
 #sidebar-tabs Tab.-active {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+    background: $primary;
+    text-style: bold;
 }
 
 /* Note: Textual doesn't support @media queries for responsive design */
