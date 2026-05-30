@@ -630,15 +630,19 @@ def test_chat_rag_focus_within_uses_non_semantic_container_cue():
 
 
 def test_chat_tab_active_state_is_readable_without_dominant_fill():
-    text = CHAT_TABS.read_text(encoding="utf-8")
-    active = css_block(text, ".chat-tab.active")
-    active_focus = css_block(text, ".chat-tab.active:focus")
-    assert "$primary" not in active
-    assert "background: $ds-focus-bg;" in active
-    assert "color: $ds-focus-fg;" in active
-    assert "text-style: bold;" in active
-    assert_non_obscuring_focus(active_focus)
-    assert "$ds-focus-bg" in active_focus or "$ds-surface-raised" in active_focus
+    for text in (
+        CHAT_TABS.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        for selector in (
+            ".chat-tab.active",
+            ".chat-tab.active:focus",
+            ".chat-tab.active:hover",
+            ".chat-tab.active:hover:focus",
+        ):
+            active = css_block(text, selector)
+            assert_readable_selected_state_contract(active)
+            assert_no_dominant_selected_geometry(active)
 
 
 def test_layout_tab_active_states_use_underlined_selected_contracts():
