@@ -551,6 +551,23 @@ def test_settings_compact_input_focus_preserves_single_row_content():
     assert "background: $ds-input-focus-bg;" in block
 
 
+def test_settings_category_active_states_use_selected_contract():
+    for text in (
+        AGENTIC.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        for selector in (
+            ".settings-active-section",
+            "Button.settings-category-button.settings-active-section",
+            "Button.settings-category-button.settings-active-section:focus",
+            "Button.settings-category-button.settings-active-section:hover",
+            "Button.settings-category-button.settings-active-section:hover:focus",
+        ):
+            active = css_block(text, selector)
+            assert_readable_selected_state_contract(active)
+            assert_no_dominant_selected_geometry(active)
+
+
 def test_top_navigation_inline_focus_uses_hybrid_contract():
     from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 
