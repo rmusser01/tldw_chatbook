@@ -19,6 +19,7 @@ SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
 LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
+CODE_REPO = ROOT / "tldw_chatbook/css/features/_code_repo.tcss"
 SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
 FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
@@ -31,6 +32,7 @@ EMBEDDINGS = ROOT / "tldw_chatbook/css/features/_embeddings.tcss"
 INGEST = ROOT / "tldw_chatbook/css/features/_ingest.tcss"
 TOOLS_SETTINGS = ROOT / "tldw_chatbook/css/features/_tools-settings.tcss"
 TAB_DROPDOWN = ROOT / "tldw_chatbook/css/features/_tab_dropdown.tcss"
+LLM_MANAGEMENT = ROOT / "tldw_chatbook/css/features/_llm-management.tcss"
 MEDIA = ROOT / "tldw_chatbook/css/features/_media.tcss"
 MEDIA_NAVIGATION_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_navigation_panel.py"
 MEDIA_LIST_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_list_panel.py"
@@ -155,6 +157,13 @@ def assert_readable_selected_state_contract(block: str) -> None:
     assert "background: $ds-focus-bg;" in block
     assert "color: $ds-focus-fg;" in block
     assert "text-style: bold underline;" in block
+
+
+def assert_no_dominant_selected_geometry(block: str) -> None:
+    assert "border-left" not in block
+    assert "border-right" not in block
+    assert "border: thick" not in block
+    assert "border: heavy" not in block
 
 
 def assert_readable_inline_selected_state_contract(block: str) -> None:
@@ -613,6 +622,29 @@ def test_bundled_feature_navigation_states_match_source_contracts():
     assert_feature_nav_active_contract(
         css_block(text, ".tools-nav-pane .ts-nav-button.active-nav")
     )
+
+
+def test_residual_active_selected_states_follow_shared_contracts():
+    for path, selector in (
+        (LLM_MANAGEMENT, ".llm-nav-pane .llm-nav-button.-active"),
+        (CODE_REPO, ".tree-node-selected"),
+        (TAB_DROPDOWN, "#tab-dropdown-select SelectOverlay Option.-selected"),
+    ):
+        block = css_block(path.read_text(encoding="utf-8"), selector)
+        assert_readable_selected_state_contract(block)
+        assert_no_dominant_selected_geometry(block)
+
+
+def test_bundled_residual_active_selected_states_match_source_contracts():
+    text = BUNDLE.read_text(encoding="utf-8")
+    for selector in (
+        ".llm-nav-pane .llm-nav-button.-active",
+        ".tree-node-selected",
+        "#tab-dropdown-select SelectOverlay Option.-selected",
+    ):
+        block = css_block(text, selector)
+        assert_readable_selected_state_contract(block)
+        assert_no_dominant_selected_geometry(block)
 
 
 def test_media_selected_and_active_states_follow_shared_contracts():

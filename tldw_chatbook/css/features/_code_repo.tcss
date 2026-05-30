@@ -255,8 +255,9 @@ TreeNode {
 }
 
 .tree-node-selected {
-    background: $accent 20%;
-    border-left: thick $accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .tree-indent {
