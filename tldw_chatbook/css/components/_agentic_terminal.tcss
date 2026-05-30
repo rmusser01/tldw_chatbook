@@ -1648,17 +1648,15 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .library-mode-chip.is-active {
-    border: solid $primary;
-    background: $primary-darken-1;
-    color: $ds-text-primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .library-mode-chip.is-active:focus {
     outline: none;
-    border: solid $ds-focus-accent;
-    background: $primary-darken-1;
-    color: $ds-text-primary;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
     text-style: bold underline;
 }
 
