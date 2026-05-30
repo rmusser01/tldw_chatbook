@@ -1,3 +1,4 @@
+import ast
 import re
 from pathlib import Path
 
@@ -5,6 +6,8 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+CSS_DIR = ROOT / "tldw_chatbook/css"
+BUILD_CSS = CSS_DIR / "build_css.py"
 VARIABLES = ROOT / "tldw_chatbook/css/core/_variables.tcss"
 RESET = ROOT / "tldw_chatbook/css/core/_reset.tcss"
 BUTTONS = ROOT / "tldw_chatbook/css/components/_buttons.tcss"
@@ -25,6 +28,7 @@ CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
 FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
 INGESTION_REBUILT = ROOT / "tldw_chatbook/css/features/_ingestion_rebuilt.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
+UNIFIED_SIDEBAR = ROOT / "tldw_chatbook/css/components/_unified_sidebar.tcss"
 WIZARDS = ROOT / "tldw_chatbook/css/features/_wizards.tcss"
 EVALUATION_UNIFIED = ROOT / "tldw_chatbook/css/features/_evaluation_unified.tcss"
 EVAL_NAV_SCREEN = ROOT / "tldw_chatbook/UI/Evals/navigation/eval_nav_screen.py"
@@ -47,6 +51,17 @@ NOTES_TOOLBAR = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_toolbar.py"
 NOTES_EDITOR = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_editor_widget.py"
 NOTES_SYNC = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget.py"
 NOTES_SYNC_IMPROVED = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget_improved.py"
+
+BUNDLED_RESIDUAL_ACTIVE_SELECTED_CONTRACTS = (
+    (LLM_MANAGEMENT, ".llm-nav-pane .llm-nav-button.-active"),
+    (CODE_REPO, ".tree-node-selected"),
+    (TAB_DROPDOWN, "#tab-dropdown-select SelectOverlay Option.-selected"),
+)
+
+SOURCE_ONLY_CSS_MODULES = (
+    NEW_INGEST,
+    UNIFIED_SIDEBAR,
+)
 
 
 def css_blocks(text: str, selector: str) -> list[str]:
@@ -81,6 +96,26 @@ def css_block(text: str, selector: str) -> str:
     if blocks:
         return blocks[0]
     raise AssertionError(f"Missing CSS block for {selector}")
+
+
+def bundled_css_module_paths() -> set[Path]:
+    """Return stylesheet module paths included by the generated app bundle."""
+    tree = ast.parse(BUILD_CSS.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "CSS_MODULES"
+            for target in node.targets
+        ):
+            continue
+        modules = ast.literal_eval(node.value)
+        return {
+            (CSS_DIR / module).resolve()
+            for module in modules
+            if isinstance(module, str)
+        }
+    raise AssertionError("Missing CSS_MODULES in css/build_css.py")
 
 
 def assert_non_obscuring_focus(block: str) -> None:
@@ -625,23 +660,35 @@ def test_bundled_feature_navigation_states_match_source_contracts():
 
 
 def test_residual_active_selected_states_follow_shared_contracts():
-    for path, selector in (
-        (LLM_MANAGEMENT, ".llm-nav-pane .llm-nav-button.-active"),
-        (CODE_REPO, ".tree-node-selected"),
-        (TAB_DROPDOWN, "#tab-dropdown-select SelectOverlay Option.-selected"),
-    ):
+    for path, selector in BUNDLED_RESIDUAL_ACTIVE_SELECTED_CONTRACTS:
         block = css_block(path.read_text(encoding="utf-8"), selector)
         assert_readable_selected_state_contract(block)
         assert_no_dominant_selected_geometry(block)
 
 
+def test_bundled_residual_active_selected_source_files_are_shipped_modules():
+    shipped_modules = bundled_css_module_paths()
+    unshipped_contracts = [
+        f"{path.relative_to(CSS_DIR).as_posix()} :: {selector}"
+        for path, selector in BUNDLED_RESIDUAL_ACTIVE_SELECTED_CONTRACTS
+        if path.resolve() not in shipped_modules
+    ]
+    assert unshipped_contracts == []
+
+
+def test_source_only_css_modules_are_not_part_of_app_bundle():
+    shipped_modules = bundled_css_module_paths()
+    unexpectedly_shipped = [
+        path.relative_to(CSS_DIR).as_posix()
+        for path in SOURCE_ONLY_CSS_MODULES
+        if path.resolve() in shipped_modules
+    ]
+    assert unexpectedly_shipped == []
+
+
 def test_bundled_residual_active_selected_states_match_source_contracts():
     text = BUNDLE.read_text(encoding="utf-8")
-    for selector in (
-        ".llm-nav-pane .llm-nav-button.-active",
-        ".tree-node-selected",
-        "#tab-dropdown-select SelectOverlay Option.-selected",
-    ):
+    for _, selector in BUNDLED_RESIDUAL_ACTIVE_SELECTED_CONTRACTS:
         block = css_block(text, selector)
         assert_readable_selected_state_contract(block)
         assert_no_dominant_selected_geometry(block)
