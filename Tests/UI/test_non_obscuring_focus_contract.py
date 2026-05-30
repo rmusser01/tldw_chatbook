@@ -551,6 +551,17 @@ def test_new_ingest_focus_overrides_defer_to_shared_contracts():
     assert "border: solid $border;" in metadata_input_base
     assert "border: solid $primary;" not in metadata_input_base
 
+    assert css_blocks(text, ".mode-selector RadioButton") == []
+    assert css_blocks(text, ".mode-selector RadioButton:hover") == []
+    assert css_blocks(text, ".mode-selector RadioButton.-active") == []
+    assert css_blocks(text, ".mode-description") == []
+    assert css_block(text, "#mode-description")
+    mode_button_base = css_block(text, "#mode-selector Button")
+    mode_button_active = css_block(text, "#mode-selector Button.active")
+    assert "border: round $border;" in mode_button_base
+    assert_readable_selected_state_contract(mode_button_active)
+    assert_no_dominant_selected_geometry(mode_button_active)
+
     widget_focus_selector = re.compile(r"\b(Button|Input|RadioButton)\b.*:focus")
     offenders = [
         selector

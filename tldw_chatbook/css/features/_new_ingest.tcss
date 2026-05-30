@@ -635,35 +635,36 @@
     text-align: center;
 }
 
-.mode-selector {
+#mode-selector {
     layout: horizontal;
     height: auto;
     margin-bottom: 2;
     align: center middle;
 }
 
-.mode-selector RadioButton {
+#mode-selector Button {
     margin-right: 3;
     background: $surface;
-    border: solid $primary;
-    /* border-radius: 20px; - not supported in TCSS */
-    border: round $accent;
+    color: $text-muted;
+    border: round $border;
     padding: 1 2;
     transition: all 0.2s ease;
 }
 
-.mode-selector RadioButton:hover {
-    background: $primary 20%;
-    border: solid $accent;
+#mode-selector Button:hover {
+    background: $surface-lighten-1;
+    color: $text;
+    border: round $border;
 }
 
-.mode-selector RadioButton.-active {
-    background: $primary;
-    color: $surface;
-    border: solid $primary;
+#mode-selector Button.active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: round $ds-focus-accent;
+    text-style: bold underline;
 }
 
-.mode-description {
+#mode-description {
     color: $text-muted;
     font-style: italic;
     text-align: center;
