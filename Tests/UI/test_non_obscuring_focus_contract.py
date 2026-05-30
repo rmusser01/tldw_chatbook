@@ -208,8 +208,9 @@ def assert_drop_zone_active_contract(text: str) -> None:
     assert "text-style: bold underline;" in message
 
 
-def assert_wizard_progress_active_contracts(text: str) -> None:
-    number = css_block(text, ".step-number.active")
+def assert_wizard_progress_active_contracts(text: str, scope: str = "") -> None:
+    prefix = f"{scope} " if scope else ""
+    number = css_block(text, f"{prefix}.step-number.active")
     assert "outline: heavy" not in number
     assert "reverse" not in number
     assert "border: thick" not in number
@@ -222,7 +223,7 @@ def assert_wizard_progress_active_contracts(text: str) -> None:
     assert "color: $ds-focus-fg;" in number
     assert "text-style: bold underline;" in number
 
-    title = css_block(text, ".step-title.active")
+    title = css_block(text, f"{prefix}.step-title.active")
     assert "outline: heavy" not in title
     assert "reverse" not in title
     assert "$primary" not in title
@@ -231,6 +232,9 @@ def assert_wizard_progress_active_contracts(text: str) -> None:
     assert "$error" not in title
     assert "color: $ds-focus-fg;" in title
     assert "text-style: bold underline;" in title
+
+    if scope:
+        return
 
     step = css_block(text, ".wizard-step.active")
     assert "visibility: visible;" in step
@@ -455,6 +459,12 @@ def test_wizard_progress_active_states_are_readable_without_dominant_fill():
 
 def test_bundled_wizard_progress_active_states_match_source_contracts():
     assert_wizard_progress_active_contracts(BUNDLE.read_text(encoding="utf-8"))
+
+
+def test_wizard_progress_default_css_matches_active_state_contract():
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
+
+    assert_wizard_progress_active_contracts(WizardProgress.DEFAULT_CSS, scope="WizardProgress")
 
 
 def test_evaluation_unified_focus_overrides_defer_to_shared_contracts():
