@@ -924,6 +924,13 @@ ConsoleSettingsModal Select {
     text-style: bold underline;
 }
 
+.console-session-tab-active:hover,
+.console-session-tab-active:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 #console-native-transcript:focus {
     border: solid $ds-focus-accent;
 }
