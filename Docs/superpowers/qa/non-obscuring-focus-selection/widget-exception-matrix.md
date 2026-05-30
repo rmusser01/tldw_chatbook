@@ -11,8 +11,8 @@ Date: 2026-05-28
 | `Checkbox` | native check mark, foreground, outline | global fallback only in PR 1 | migrated after screen-by-screen review | deferred |
 | `RadioButton` | native check mark, foreground, outline | global fallback only in PR 1 | migrated after screen-by-screen review | deferred |
 | `DataTable` | cursor row and selected row styling | shared neutral row background, readable text, bold underline for cursor/selected rows | feature styles must not reintroduce primary/accent row fills | `Tests/UI/test_non_obscuring_focus_contract.py` |
-| `Tree` | cursor/selected row styling | deferred | row highlight fallback allowed if readable | deferred |
+| `Tree` | cursor/selected row styling | shared neutral cursor and hover backgrounds, readable text, bold underline for cursor rows | feature styles may scope local tree rows but must keep the shared row-state contract | `Tests/UI/test_non_obscuring_focus_contract.py` |
 | `ListView` | item hover and selected/highlight classes | shared neutral hover background, readable text, bold underline for highlighted rows | feature styles may scope local rows but must keep the shared row-state contract | `Tests/UI/test_non_obscuring_focus_contract.py` |
-| `SelectionList` | selected/highlight option styling | deferred | row highlight fallback allowed if readable | deferred |
+| `SelectionList` | selected/highlight option styling | shared neutral selected and highlighted button backgrounds, readable text, bold underline | feature styles may scope local choices but must keep the shared row-state contract | `Tests/UI/test_non_obscuring_focus_contract.py` |
 | `Tabs` | tab active/focus classes | top nav only in PR 1 | native `Tabs` deferred | deferred |
 | Custom button/list rows | background, marker text, classes, text-style | PR 1 for named Console/Library rows only | each custom row needs explicit selector audit | source contract or mounted test |

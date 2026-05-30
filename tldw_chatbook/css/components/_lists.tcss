@@ -36,3 +36,21 @@ DataTable > .datatable--selected {
     color: $text;
     text-style: bold underline;
 }
+
+OptionList > .option-list--option-highlighted,
+OptionList:focus > .option-list--option-highlighted,
+SelectionList > .selection-list--button-highlighted,
+SelectionList > .selection-list--button-selected,
+SelectionList > .selection-list--button-selected-highlighted,
+Tree > .tree--cursor,
+Tree:focus > .tree--cursor {
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
+}
+
+OptionList > .option-list--option-hover,
+Tree > .tree--highlight-line {
+    background: $surface-lighten-1;
+    color: $text;
+}
