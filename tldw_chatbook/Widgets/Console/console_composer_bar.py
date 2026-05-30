@@ -13,6 +13,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
 from textual.events import Click, DescendantBlur, DescendantFocus, MouseUp
+from textual.geometry import Region
+from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
 from ...config import (
@@ -112,7 +114,12 @@ class ConsoleComposerBar(Horizontal):
         return button
 
     def draft_text(self) -> str:
-        """Return the canonical native Console draft payload."""
+        """Return the canonical native Console draft payload.
+
+        Returns:
+            The full message text that will be sent, including expanded content
+            from any display-collapsed paste segments.
+        """
         if self._segments_initialized:
             return self._canonical_draft_text()
         try:
@@ -522,7 +529,11 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
 
     def load_draft(self, text: str) -> None:
-        """Replace the native Console draft with literal text."""
+        """Replace the native Console draft with literal text.
+
+        Args:
+            text: Draft payload to show and send literally.
+        """
         self._segments = [_DraftSegment(text)] if text else []
         self._segments_initialized = True
         self._sync_hidden_input()
@@ -540,7 +551,11 @@ class ConsoleComposerBar(Horizontal):
         self._sync_current_action_state()
 
     def insert_text(self, text: str) -> None:
-        """Append user-entered text to the Console draft as literal text."""
+        """Append user-entered text to the Console draft as literal text.
+
+        Args:
+            text: Typed text to append without paste-collapse transformation.
+        """
         if not text:
             self._sync_interaction_classes()
             self._sync_current_action_state()
@@ -557,7 +572,11 @@ class ConsoleComposerBar(Horizontal):
         self._sync_current_action_state()
 
     def insert_pasted_text(self, text: str) -> None:
-        """Append pasted text, collapsing only large inserted chunks for display."""
+        """Append pasted text, collapsing only large inserted chunks for display.
+
+        Args:
+            text: Raw text inserted through a paste event.
+        """
         if not text:
             self._sync_interaction_classes()
             self._sync_current_action_state()
@@ -617,22 +636,47 @@ class ConsoleComposerBar(Horizontal):
         return changed
 
     def reset_pending_unfurl(self) -> bool:
-        """Reset any pending paste unfurl confirmations back to collapsed tokens."""
+        """Reset any pending paste unfurl confirmations back to collapsed tokens.
+
+        Returns:
+            True when at least one visible confirmation prompt was reset.
+        """
         changed = self._reset_pending_unfurl_state()
         if changed:
             self._refresh_visible_draft()
         return changed
 
     def has_pending_paste_confirmation(self) -> bool:
-        """Return whether a collapsed paste token is waiting on confirm."""
+        """Return whether a collapsed paste token is waiting on confirm.
+
+        Returns:
+            True when at least one pasted segment is showing the `Unfurl?` prompt.
+        """
         return any(segment.collapse_state == "confirm" for segment in self._segments)
 
     def suppress_next_draft_click(self) -> None:
         """Suppress the synthesized Click that may follow terminal mouse events."""
         self._suppress_next_draft_click = True
 
+    def has_suppressed_draft_click(self) -> bool:
+        """Return whether a synthesized draft click is currently suppressed.
+
+        Returns:
+            True when a prior terminal mouse event already handled the visible draft
+            interaction and the next matching click should be ignored.
+        """
+        return self._suppress_next_draft_click
+
+    def clear_suppressed_draft_click(self) -> None:
+        """Clear any pending synthesized draft-click suppression."""
+        self._suppress_next_draft_click = False
+
     def consume_suppressed_draft_click(self) -> bool:
-        """Return True when a mouse-event fallback already handled this click."""
+        """Consume pending synthesized click suppression.
+
+        Returns:
+            True when a prior mouse-event fallback already handled this click.
+        """
         if not self._suppress_next_draft_click:
             return False
         self._suppress_next_draft_click = False
@@ -645,6 +689,9 @@ class ConsoleComposerBar(Horizontal):
         individually focusable widgets. When the composer owns focus, Enter
         advances the active confirmation if present, otherwise it prompts the
         first collapsed paste token.
+
+        Returns:
+            True when a paste token was advanced.
         """
         if not self._segments_initialized:
             return False
@@ -742,22 +789,38 @@ class ConsoleComposerBar(Horizontal):
         self._refresh_visible_draft()
         return True
 
-    def activate_visible_draft_screen_position(self, screen_x: int, screen_y: int) -> bool:
-        """Advance a paste token from absolute screen coordinates in the draft row."""
+    @staticmethod
+    def _screen_region(widget: Widget) -> Region:
+        """Return the mounted widget region in screen coordinates.
+
+        Textual versions used by this project do not expose `screen_region`.
+        Mounted `Widget.region` values are already screen-relative here, so this
+        helper centralizes that contract for event hit testing.
+        """
+        return widget.region
+
+    def _visible_draft_screen_hit(
+        self,
+        screen_x: int,
+        screen_y: int,
+    ) -> tuple[Static, int, int] | None:
+        """Map absolute screen coordinates to visible draft-local coordinates."""
         try:
             visible_draft = self.query_one("#console-command-visible-text", Static)
         except NoMatches:
-            return False
+            return None
 
-        local_y = screen_y - visible_draft.region.y
-        if local_y == -1 and screen_y >= self.region.y:
+        visible_region = self._screen_region(visible_draft)
+        composer_region = self._screen_region(self)
+        local_y = screen_y - visible_region.y
+        if local_y == -1 and screen_y >= composer_region.y:
             # textual-web reports some bottom-row composer clicks against the
             # containing row above the Static while visually targeting the
             # visible draft. Treat that boundary as the first draft row.
             local_y = 0
         elif (
             local_y == visible_draft.size.height
-            and screen_y < self.region.y + self.region.height
+            and screen_y < composer_region.y + composer_region.height
         ):
             # textual-web can also report a composer-row click one row below the
             # visible Static. Treat that boundary as the draft row when the x
@@ -765,18 +828,47 @@ class ConsoleComposerBar(Horizontal):
             local_y = max(0, visible_draft.size.height - 1)
 
         if (
-            screen_x < visible_draft.region.x
-            or screen_x >= visible_draft.region.x + visible_draft.size.width
+            screen_x < visible_region.x
+            or screen_x >= visible_region.x + visible_draft.size.width
             or local_y < 0
             or local_y >= visible_draft.size.height
         ):
+            return None
+        return visible_draft, screen_x - visible_region.x, local_y
+
+    def is_visible_draft_screen_position(self, screen_x: int, screen_y: int) -> bool:
+        """Return whether screen coordinates target the visible draft surface.
+
+        Args:
+            screen_x: Absolute screen column from a terminal mouse/click event.
+            screen_y: Absolute screen row from a terminal mouse/click event.
+
+        Returns:
+            True when the coordinates map to the visible draft row or supported
+            textual-web boundary fallback rows.
+        """
+        return self._visible_draft_screen_hit(screen_x, screen_y) is not None
+
+    def activate_visible_draft_screen_position(self, screen_x: int, screen_y: int) -> bool:
+        """Advance a paste token from absolute screen coordinates in the draft row.
+
+        Args:
+            screen_x: Absolute screen column from a terminal mouse/click event.
+            screen_y: Absolute screen row from a terminal mouse/click event.
+
+        Returns:
+            True when the coordinates targeted a collapsed/confirm paste token.
+        """
+        hit = self._visible_draft_screen_hit(screen_x, screen_y)
+        if hit is None:
             return False
+        visible_draft, local_x, local_y = hit
 
         self.focus()
         padding_left = getattr(getattr(visible_draft, "styles", None), "padding", None)
         padding_left = getattr(padding_left, "left", 0)
         return self._advance_targeted_paste_segment(
-            screen_x - visible_draft.region.x,
+            local_x,
             local_y,
             padding_left=padding_left,
         )

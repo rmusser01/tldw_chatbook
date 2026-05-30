@@ -991,9 +991,10 @@ async def test_console_collapsed_paste_textual_web_row_click_enters_unfurl_promp
         composer.insert_pasted_text(pasted_text)
         await pilot.pause(0.1)
 
+        visible_region = composer._screen_region(visible_draft)
         assert composer.activate_visible_draft_screen_position(
-            visible_draft.region.x + 4,
-            visible_draft.region.y - 1,
+            visible_region.x + 4,
+            visible_region.y - 1,
         )
 
         assert visible_draft.renderable.plain == "Unfurl?"
@@ -1016,9 +1017,10 @@ async def test_console_collapsed_paste_textual_web_bottom_boundary_click_enters_
         composer.insert_pasted_text(pasted_text)
         await pilot.pause(0.1)
 
+        visible_region = composer._screen_region(visible_draft)
         assert composer.activate_visible_draft_screen_position(
-            visible_draft.region.x + 4,
-            visible_draft.region.y + visible_draft.size.height,
+            visible_region.x + 4,
+            visible_region.y + visible_draft.size.height,
         )
 
         assert visible_draft.renderable.plain == "Unfurl?"
@@ -1041,9 +1043,10 @@ async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
         composer.insert_pasted_text(pasted_text)
         await pilot.pause(0.1)
 
+        visible_region = composer._screen_region(visible_draft)
         assert composer.activate_visible_draft_screen_position(
-            visible_draft.region.x + 4,
-            visible_draft.region.y + visible_draft.size.height,
+            visible_region.x + 4,
+            visible_region.y + visible_draft.size.height,
         )
 
         assert visible_draft.renderable.plain == "Unfurl?"
@@ -1262,6 +1265,35 @@ async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
         await pilot.pause(0.1)
         assert visible_draft.renderable.plain == "Unfurl?"
 
+        await pilot.click("#console-workspace-grid")
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
+        assert expected_token in visible_plain
+        assert "Unfurl?" not in visible_plain
+        assert composer.draft_text() == pasted_text
+
+
+@pytest.mark.asyncio
+async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "stale suppressed click reset paste " * 6
+        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+
+        composer.insert_pasted_text(pasted_text)
+        await pilot.click("#console-command-visible-text")
+        await pilot.pause(0.1)
+        assert visible_draft.renderable.plain == "Unfurl?"
+
+        composer.suppress_next_draft_click()
         await pilot.click("#console-workspace-grid")
         await pilot.pause(0.1)
 

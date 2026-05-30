@@ -3236,20 +3236,24 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return
-        if composer.consume_suppressed_draft_click():
-            event.stop()
-            event.prevent_default()
-            return
         screen_x = getattr(event, "screen_x", None)
         screen_y = getattr(event, "screen_y", None)
-        if (
+        targets_visible_draft = (
             screen_x is not None
             and screen_y is not None
-            and composer.activate_visible_draft_screen_position(screen_x, screen_y)
-        ):
-            event.stop()
-            event.prevent_default()
-            return
+            and composer.is_visible_draft_screen_position(screen_x, screen_y)
+        )
+        if targets_visible_draft:
+            if composer.consume_suppressed_draft_click():
+                event.stop()
+                event.prevent_default()
+                return
+            if composer.activate_visible_draft_screen_position(screen_x, screen_y):
+                event.stop()
+                event.prevent_default()
+                return
+        elif composer.has_suppressed_draft_click():
+            composer.clear_suppressed_draft_click()
         composer.reset_pending_unfurl()
 
     def _sync_compact_shell_controls(
