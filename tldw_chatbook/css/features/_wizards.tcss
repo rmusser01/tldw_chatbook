@@ -194,8 +194,10 @@
 }
 
 .content-type-card.selected {
-    background: $accent 20%;
-    border: thick $accent;
+    background: $ds-focus-bg;
+    border: round $ds-focus-accent;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .content-type-icon {
@@ -365,8 +367,10 @@
 }
 
 .preset-card.selected {
-    background: $accent 20%;
-    border: thick $accent;
+    background: $ds-focus-bg;
+    border: round $ds-focus-accent;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .preset-icon {
@@ -707,8 +711,9 @@ ProgressStep .status-item.completed {
 }
 
 ProgressStep .status-item.active {
-    color: $primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 ProgressStep .status-item.error {
@@ -1014,8 +1019,9 @@ ImportProgressStep .status-item.completed {
 }
 
 ImportProgressStep .status-item.active {
-    color: $primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 ImportProgressStep .status-item.error {
@@ -1125,6 +1131,7 @@ SmartContentTree Tree > .tree--cursor {
 }
 
 SmartContentTree Tree > .selected-node {
-    text-style: bold;
-    color: $success;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
