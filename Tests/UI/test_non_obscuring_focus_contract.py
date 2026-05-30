@@ -334,6 +334,28 @@ def test_console_and_library_visible_offenders_do_not_obscure_labels():
         assert "$ds-status-error" not in block
 
 
+def test_library_mode_chip_active_states_use_selected_focus_contracts():
+    for text in (
+        AGENTIC.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        focus = css_block(text, ".library-mode-chip:focus")
+        assert_non_obscuring_focus(focus)
+
+        active = css_block(text, ".library-mode-chip.is-active")
+        assert_readable_selected_state_contract(active)
+        assert "border: solid $ds-focus-accent;" in active
+
+        active_focus = css_block(text, ".library-mode-chip.is-active:focus")
+        assert_non_obscuring_focus(active_focus)
+        assert active_focus != active
+        assert "border: round $ds-focus-accent;" in active_focus
+        assert "$primary" not in active_focus
+        assert "$accent" not in active_focus
+        assert "background: $ds-focus-bg;" in active_focus
+        assert "color: $ds-focus-fg;" in active_focus
+
+
 def test_console_composer_focus_uses_thin_input_treatment():
     text = AGENTIC.read_text(encoding="utf-8")
     block = css_block(text, "#console-native-composer.console-composer-focused")
