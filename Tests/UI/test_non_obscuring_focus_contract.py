@@ -16,6 +16,8 @@ MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
 SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
+LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
+LAYOUT_CONTAINERS = ROOT / "tldw_chatbook/css/layout/_containers.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
@@ -445,6 +447,36 @@ def test_chat_tab_active_state_is_readable_without_dominant_fill():
     assert "text-style: bold;" in active
     assert_non_obscuring_focus(active_focus)
     assert "$ds-focus-bg" in active_focus or "$ds-surface-raised" in active_focus
+
+
+def test_layout_tab_active_states_use_underlined_selected_contracts():
+    for path, selector in (
+        (LAYOUT_TABS, "#tabs Button.-active"),
+        (LAYOUT_CONTAINERS, "#tabs Button.-active"),
+        (SIDEBARS, "TabbedContent Tab.-active"),
+    ):
+        blocks = css_blocks(path.read_text(encoding="utf-8"), selector)
+        assert blocks
+        for block in blocks:
+            assert_readable_selected_state_contract(block)
+            assert "border:" not in block
+
+    for text in (
+        LAYOUT_TABS.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        active_link = css_block(text, ".tab-link.-active")
+        assert "$accent" not in active_link
+        assert "$primary" not in active_link
+        assert "color: $ds-focus-fg;" in active_link
+        assert "background: transparent;" in active_link
+        assert "text-style: bold underline;" in active_link
+
+    for selector in ("#tabs Button.-active", "TabbedContent Tab.-active"):
+        blocks = css_blocks(BUNDLE.read_text(encoding="utf-8"), selector)
+        assert blocks
+        for block in blocks:
+            assert_readable_selected_state_contract(block)
 
 
 def test_feature_buttons_inherit_shared_button_focus_contract_without_duplicate_rules():

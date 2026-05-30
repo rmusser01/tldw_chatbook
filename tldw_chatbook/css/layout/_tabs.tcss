@@ -19,9 +19,9 @@
     color: $text;
 }
 #tabs Button.-active { 
-    background: $accent; 
-    color: $text; 
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Single-line tab links navigation */
@@ -63,8 +63,8 @@
 }
 
 .tab-link.-active {
-    color: $accent;
-    text-style: bold;
+    color: $ds-focus-fg;
+    text-style: bold underline;
     background: transparent;
 }
 
