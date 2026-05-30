@@ -216,6 +216,12 @@
     text-align: center;
 }
 
+.content-type-card.selected .content-type-title,
+.content-type-card.selected .content-type-description {
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 /* ========================================
  * Content Selection
  * ======================================== */
@@ -398,6 +404,13 @@
 .preset-detail {
     color: $text-muted;
     margin-bottom: 0;
+}
+
+.preset-card.selected .preset-name,
+.preset-card.selected .preset-description,
+.preset-card.selected .preset-detail {
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Advanced settings */

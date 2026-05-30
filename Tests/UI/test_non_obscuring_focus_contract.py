@@ -258,6 +258,20 @@ def assert_wizard_selection_active_contracts(text: str) -> None:
     ):
         assert_readable_selected_state_contract(css_block(text, selector))
 
+    for selector in (
+        ".content-type-card.selected .content-type-title",
+        ".content-type-card.selected .content-type-description",
+        ".preset-card.selected .preset-name",
+        ".preset-card.selected .preset-description",
+        ".preset-card.selected .preset-detail",
+    ):
+        block = css_block(text, selector)
+        assert "$text-muted" not in block
+        assert "$primary" not in block
+        assert "$accent" not in block
+        assert "color: $ds-focus-fg;" in block
+        assert "text-style: bold underline;" in block
+
 
 def test_focus_tokens_are_defined_and_not_semantic_warning_or_error():
     text = VARIABLES.read_text(encoding="utf-8")
