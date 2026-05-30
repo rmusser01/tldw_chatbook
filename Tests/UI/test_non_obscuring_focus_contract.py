@@ -157,6 +157,20 @@ def assert_readable_inline_selected_state_contract(block: str) -> None:
     assert "text-style: bold underline;" in block
 
 
+def assert_custom_widget_focus_contract(block: str) -> None:
+    assert "outline: heavy" not in block
+    assert "reverse" not in block
+    assert "border: thick" not in block
+    assert "$accent" not in block
+    assert "$primary" not in block
+    assert "$error" not in block
+    assert "$warning" not in block
+    assert "border: round $ds-focus-accent;" in block
+    assert "background: $ds-focus-bg;" in block
+    assert "color: $ds-focus-fg;" in block
+    assert "text-style: bold underline;" in block
+
+
 def test_focus_tokens_are_defined_and_not_semantic_warning_or_error():
     text = VARIABLES.read_text(encoding="utf-8")
     for token in (
@@ -484,6 +498,21 @@ def test_evals_sample_browser_selected_row_children_show_inline_selected_cue():
         assert "$primary" not in block
         assert "color: $text;" in block
         assert "text-style: bold underline;" in block
+
+
+def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():
+    from tldw_chatbook.Widgets.Tamagotchi.base_tamagotchi import BaseTamagotchi
+
+    text = BaseTamagotchi.DEFAULT_CSS
+    base = css_block(text, "BaseTamagotchi")
+    focus = css_block(text, "BaseTamagotchi:focus")
+    assert "border: round" in base
+    assert "background: $panel;" in base
+    assert "border: round $surface-lighten-1;" in base
+    assert_custom_widget_focus_contract(focus)
+
+    assert text.index("BaseTamagotchi.dead") < text.index("BaseTamagotchi:focus")
+    assert text.index("BaseTamagotchi:focus") < text.index("BaseTamagotchi.compact")
 
 
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():

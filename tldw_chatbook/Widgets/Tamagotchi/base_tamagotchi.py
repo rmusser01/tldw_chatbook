@@ -66,13 +66,9 @@ class BaseTamagotchi(Static):
         width: auto;
         height: 3;
         padding: 0 1;
-        background: $surface;
-        border: round $primary;
+        background: $panel;
+        border: round $surface-lighten-1;
         content-align: center middle;
-    }
-    
-    BaseTamagotchi:focus {
-        border: round $accent;
     }
     
     BaseTamagotchi.sleeping {
@@ -89,7 +85,14 @@ class BaseTamagotchi(Static):
         opacity: 0.5;
         border: round $surface-lighten-2;
     }
-    
+
+    BaseTamagotchi:focus {
+        border: round $ds-focus-accent;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
+    }
+
     BaseTamagotchi.compact {
         height: 1;
         border: none;
