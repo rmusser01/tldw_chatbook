@@ -304,18 +304,6 @@ EmbeddingsWindow {
     min-width: 10;
 }
 
-DataTable > .datatable--cursor {
-    background: $primary 20%;
-}
-
-DataTable > .datatable--hover {
-    background: $primary 10%;
-}
-
-DataTable > .datatable--selected {
-    background: $accent 30%;
-}
-
 /* Bottom spacer to ensure content is visible */
 .embeddings-bottom-spacer {
     height: 5;

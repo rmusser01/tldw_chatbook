@@ -3,3 +3,36 @@
  * ======================================== 
  * ListViews, list items, and list patterns
  * ======================================== */
+
+ListView ListItem {
+    padding: 0 1;
+    height: auto;
+}
+
+ListView ListItem:hover {
+    background: $surface-lighten-1;
+    color: $text;
+}
+
+ListView ListItem.--highlight {
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
+}
+
+DataTable > .datatable--cursor {
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
+}
+
+DataTable > .datatable--hover {
+    background: $surface-lighten-1;
+    color: $text;
+}
+
+DataTable > .datatable--selected {
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
+}
