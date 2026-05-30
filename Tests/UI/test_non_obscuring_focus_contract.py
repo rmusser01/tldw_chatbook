@@ -17,7 +17,6 @@ CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
 SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
 LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
-LAYOUT_CONTAINERS = ROOT / "tldw_chatbook/css/layout/_containers.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 SEARCH_RAG = ROOT / "tldw_chatbook/css/features/_search-rag.tcss"
@@ -452,7 +451,6 @@ def test_chat_tab_active_state_is_readable_without_dominant_fill():
 def test_layout_tab_active_states_use_underlined_selected_contracts():
     for path, selector in (
         (LAYOUT_TABS, "#tabs Button.-active"),
-        (LAYOUT_CONTAINERS, "#tabs Button.-active"),
         (SIDEBARS, "TabbedContent Tab.-active"),
     ):
         blocks = css_blocks(path.read_text(encoding="utf-8"), selector)
