@@ -428,7 +428,9 @@ class EmojiPickerScreen(ModalScreen[str]):
         background: $primary-background; 
     }
     EmojiButton.emoji_button:focus { 
-        background: $primary-background-lighten-1;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
     }
     .no_emojis_message { 
         width: 100%; 

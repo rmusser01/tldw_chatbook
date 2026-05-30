@@ -35,6 +35,8 @@ CHATBOOKS_IMPROVED = ROOT / "tldw_chatbook/css/features/_chatbooks_improved.tcss
 CHATBOOKS_WINDOW_IMPROVED = ROOT / "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
 SAMPLE_BROWSER_DIALOG = ROOT / "tldw_chatbook/Widgets/Evals/sample_browser_dialog.py"
 RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.py"
+EMOJI_PICKER = ROOT / "tldw_chatbook/Widgets/emoji_picker.py"
+ENHANCED_FILE_PICKER = ROOT / "tldw_chatbook/Widgets/enhanced_file_picker.py"
 
 
 def css_blocks(text: str, selector: str) -> list[str]:
@@ -513,6 +515,19 @@ def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():
 
     assert text.index("BaseTamagotchi.dead") < text.index("BaseTamagotchi:focus")
     assert text.index("BaseTamagotchi:focus") < text.index("BaseTamagotchi.compact")
+
+
+def test_compact_custom_buttons_use_readable_focus_cues():
+    for path, selector in (
+        (EMOJI_PICKER, "EmojiButton.emoji_button:focus"),
+        (ENHANCED_FILE_PICKER, "PathBreadcrumbs .breadcrumb-button:focus"),
+    ):
+        block = css_block(path.read_text(encoding="utf-8"), selector)
+        assert_non_obscuring_focus(block)
+        assert "$primary" not in block
+        assert "$accent" not in block
+        assert "background: $ds-focus-bg;" in block
+        assert "color: $ds-focus-fg;" in block
 
 
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():
