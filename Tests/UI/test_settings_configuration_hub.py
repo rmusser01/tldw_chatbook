@@ -310,8 +310,13 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     assert records_by_category[SettingsCategoryId.PROVIDERS_MODELS].owns_config_sections == (
         "chat_defaults.provider",
         "chat_defaults.model",
+        "chat_defaults.streaming",
+        "chat_defaults.temperature",
         "api_settings.<provider>.endpoint",
-        "api_settings.<provider>.credential_source",
+    )
+    assert records_by_category[SettingsCategoryId.CONSOLE_BEHAVIOR].owns_config_sections == (
+        "console.collapse_large_pastes",
+        "console.paste_collapse_threshold",
     )
     assert not records_by_category[SettingsCategoryId.STORAGE].writes_allowed
     assert records_by_category[SettingsCategoryId.STORAGE].read_only_reason
@@ -326,6 +331,31 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     )
     for owner in ("Console", "MCP", "ACP", "sync", "workspace"):
         assert owner in boundary_text
+
+
+def test_settings_overview_ownership_rows_are_sourced_from_record():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    ownership = screen._ownership_record(SettingsCategoryId.OVERVIEW)
+    rows = dict(screen._overview_ownership_rows())
+    rendered_copy = " ".join(rows.values())
+
+    for boundary in ownership.boundary_copy.split("; "):
+        assert boundary in rendered_copy
+    assert rows["Recovery"] == ownership.recovery_copy
+
+
+def test_settings_ownership_record_falls_back_without_crashing():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen._ownership_by_category_cache = {}
+
+    record = screen._ownership_record(SettingsCategoryId.OVERVIEW)
+
+    assert record.category is SettingsCategoryId.OVERVIEW
+    assert not record.writes_allowed
+    assert "Ownership record missing" in record.read_only_reason
 
 
 @pytest.mark.asyncio
@@ -354,9 +384,9 @@ async def test_settings_provider_inspector_excludes_console_sampling_ownership()
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Affected config: provider, model, endpoint, and credential source defaults" in text
-        assert "Console sampling and transport defaults live under Console Behavior" in text
-        assert "streaming, and temperature" not in text
+        assert "Affected config: provider, model, endpoint, streaming, and temperature defaults" in text
+        assert "Console owns active chat/run state; Settings owns persisted defaults only" in text
+        assert "credential source" not in text
 
 
 @pytest.mark.asyncio

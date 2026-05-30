@@ -47,7 +47,8 @@ Define and expose the Settings ownership contract so users and implementers can 
 - Updated Settings overview/detail/inspector rendering so ownership boundaries are visible without claiming Console, MCP, ACP, sync, or workspace runtime ownership.
 - Updated the configuration hub design spec with the ownership matrix and added mounted regressions for category coverage, boundary copy, and provider inspector scope.
 - Captured approved Textual-web/CDP QA evidence at `Docs/superpowers/qa/settings-configuration-hub/stage-1-ownership-overview-cdp-1200x1240.png`.
-- Verification: `python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short` passed with 84 tests; Backlog ID harness passed; `git diff --check` passed.
+- Addressed PR review follow-up by aligning ownership metadata with actual provider and Console save paths, centralizing Overview ownership rows, caching the ownership matrix, and adding a safe missing-record fallback.
+- Verification: `python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short` passed with 86 tests; Backlog ID harness passed; `git diff --check` passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
