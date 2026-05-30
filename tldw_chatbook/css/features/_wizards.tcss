@@ -1140,7 +1140,9 @@ SmartContentTree .tree-stats {
 
 /* Tree node styling */
 SmartContentTree Tree > .tree--cursor {
-    background: $primary 20%;
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
 }
 
 SmartContentTree Tree > .selected-node {
