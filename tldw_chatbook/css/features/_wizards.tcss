@@ -56,9 +56,10 @@
 }
 
 .step-number.active {
-    background: $accent;
-    color: $text;
-    border: thick $accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: round $ds-focus-accent;
+    text-style: bold underline;
 }
 
 .step-number.complete {
@@ -73,8 +74,8 @@
 }
 
 .step-title.active {
-    color: $text;
-    text-style: bold;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .step-title.complete {
