@@ -41,7 +41,7 @@
 .chat-tab.active {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
-    text-style: bold;
+    text-style: bold underline;
 }
 
 .chat-tab.active:focus {
@@ -49,6 +49,13 @@
     color: $ds-focus-fg;
     text-style: bold underline;
     outline: none;
+}
+
+.chat-tab.active:hover,
+.chat-tab.active:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Close tab button */
