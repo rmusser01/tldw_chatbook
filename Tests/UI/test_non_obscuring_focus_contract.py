@@ -248,6 +248,31 @@ def assert_wizard_progress_active_contracts(text: str, scope: str = "") -> None:
     assert "$accent" not in step
 
 
+def assert_wizard_selection_active_contracts(text: str) -> None:
+    for selector in (
+        ".content-type-card.selected",
+        ".preset-card.selected",
+        "ProgressStep .status-item.active",
+        "ImportProgressStep .status-item.active",
+        "SmartContentTree Tree > .selected-node",
+    ):
+        assert_readable_selected_state_contract(css_block(text, selector))
+
+    for selector in (
+        ".content-type-card.selected .content-type-title",
+        ".content-type-card.selected .content-type-description",
+        ".preset-card.selected .preset-name",
+        ".preset-card.selected .preset-description",
+        ".preset-card.selected .preset-detail",
+    ):
+        block = css_block(text, selector)
+        assert "$text-muted" not in block
+        assert "$primary" not in block
+        assert "$accent" not in block
+        assert "color: $ds-focus-fg;" in block
+        assert "text-style: bold underline;" in block
+
+
 def test_focus_tokens_are_defined_and_not_semantic_warning_or_error():
     text = VARIABLES.read_text(encoding="utf-8")
     for token in (
@@ -465,6 +490,14 @@ def test_wizard_progress_default_css_matches_active_state_contract():
     from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
 
     assert_wizard_progress_active_contracts(WizardProgress.DEFAULT_CSS, scope="WizardProgress")
+
+
+def test_wizard_selection_states_are_readable_without_dominant_fill():
+    assert_wizard_selection_active_contracts(WIZARDS.read_text(encoding="utf-8"))
+
+
+def test_bundled_wizard_selection_states_match_source_contracts():
+    assert_wizard_selection_active_contracts(BUNDLE.read_text(encoding="utf-8"))
 
 
 def test_evaluation_unified_focus_overrides_defer_to_shared_contracts():
