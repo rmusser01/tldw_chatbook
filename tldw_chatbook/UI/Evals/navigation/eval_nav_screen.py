@@ -108,7 +108,7 @@ class EvalNavigationScreen(Screen):
         border: round $accent;
     }
 
-    .nav-card.quick-test {
+    .nav-card.quick_test {
         border: round $success;
     }
 
@@ -116,7 +116,7 @@ class EvalNavigationScreen(Screen):
         border: round $warning;
     }
 
-    .nav-card.batch {
+    .nav-card.batch_eval {
         border: round $error;
     }
 
@@ -135,14 +135,6 @@ class EvalNavigationScreen(Screen):
     .nav-card:focus {
         background: $ds-focus-bg;
         border: round $ds-focus-accent;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
-
-    .nav-card:focus .card-icon,
-    .nav-card:focus .card-title,
-    .nav-card:focus .card-description,
-    .nav-card:focus .card-shortcut {
         color: $ds-focus-fg;
         text-style: bold underline;
     }

@@ -633,7 +633,12 @@ def test_evals_navigation_card_focus_is_non_obscuring_and_ordered_after_type_bor
     text = EVAL_NAV_SCREEN.read_text(encoding="utf-8")
     focus = css_block(text, ".nav-card:focus")
     assert_custom_widget_focus_contract(focus)
-    assert text.index(".nav-card.batch") < text.index(".nav-card:focus")
+    assert css_blocks(text, ".nav-card.quick-test") == []
+    assert css_blocks(text, ".nav-card.batch") == []
+
+    for selector in (".nav-card.quick_test", ".nav-card.batch_eval"):
+        assert css_blocks(text, selector)
+        assert text.index(selector) < text.index(".nav-card:focus")
 
     for selector in (
         ".nav-card:focus .card-icon",
@@ -641,13 +646,7 @@ def test_evals_navigation_card_focus_is_non_obscuring_and_ordered_after_type_bor
         ".nav-card:focus .card-description",
         ".nav-card:focus .card-shortcut",
     ):
-        block = css_block(text, selector)
-        assert "$text-muted" not in block
-        assert "$text-disabled" not in block
-        assert "$primary" not in block
-        assert "$accent" not in block
-        assert "color: $ds-focus-fg;" in block
-        assert "text-style: bold underline;" in block
+        assert css_blocks(text, selector) == []
 
 
 def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():
