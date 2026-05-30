@@ -1,13 +1,13 @@
-import ast
 import re
 from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.css.build_css import CSS_MODULES
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CSS_DIR = ROOT / "tldw_chatbook/css"
-BUILD_CSS = CSS_DIR / "build_css.py"
 VARIABLES = ROOT / "tldw_chatbook/css/core/_variables.tcss"
 RESET = ROOT / "tldw_chatbook/css/core/_reset.tcss"
 BUTTONS = ROOT / "tldw_chatbook/css/components/_buttons.tcss"
@@ -100,22 +100,11 @@ def css_block(text: str, selector: str) -> str:
 
 def bundled_css_module_paths() -> set[Path]:
     """Return stylesheet module paths included by the generated app bundle."""
-    tree = ast.parse(BUILD_CSS.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(
-            isinstance(target, ast.Name) and target.id == "CSS_MODULES"
-            for target in node.targets
-        ):
-            continue
-        modules = ast.literal_eval(node.value)
-        return {
-            (CSS_DIR / module).resolve()
-            for module in modules
-            if isinstance(module, str)
-        }
-    raise AssertionError("Missing CSS_MODULES in css/build_css.py")
+    return {
+        (CSS_DIR / module).resolve()
+        for module in CSS_MODULES
+        if isinstance(module, str)
+    }
 
 
 def assert_non_obscuring_focus(block: str) -> None:
