@@ -205,6 +205,8 @@ def assert_feature_nav_active_contract(block: str) -> None:
 def assert_readable_selected_state_contract(block: str) -> None:
     assert "outline: heavy" not in block
     assert "reverse" not in block
+    assert "$block-cursor" not in block
+    assert "$block-hover" not in block
     assert "$accent" not in block
     assert "$primary" not in block
     assert "background: $ds-focus-bg;" in block
@@ -273,6 +275,18 @@ def assert_all_native_choice_selectors_follow_contracts(text: str) -> None:
     for selector in hover_selectors:
         for block in css_blocks(text, selector):
             assert_native_row_hover_state_contract(block)
+
+
+def assert_all_native_tab_selectors_follow_contracts(text: str) -> None:
+    active_selectors = [
+        selector
+        for selector in css_selectors(text)
+        if ("Tab" in selector or "Tabs" in selector) and ".-active" in selector
+    ]
+    assert active_selectors
+    for selector in active_selectors:
+        for block in css_blocks(text, selector):
+            assert_readable_selected_state_contract(block)
 
 
 def assert_custom_widget_focus_contract(block: str) -> None:
@@ -597,6 +611,8 @@ def test_chat_tab_active_state_is_readable_without_dominant_fill():
 def test_layout_tab_active_states_use_underlined_selected_contracts():
     for path, selector in (
         (LAYOUT_TABS, "#tabs Button.-active"),
+        (LAYOUT_TABS, "Tab.-active"),
+        (LAYOUT_TABS, "Tabs:focus .-active"),
         (SIDEBARS, "TabbedContent Tab.-active"),
     ):
         blocks = css_blocks(path.read_text(encoding="utf-8"), selector)
@@ -621,6 +637,9 @@ def test_layout_tab_active_states_use_underlined_selected_contracts():
         assert blocks
         for block in blocks:
             assert_readable_selected_state_contract(block)
+
+    assert_all_native_tab_selectors_follow_contracts(LAYOUT_TABS.read_text(encoding="utf-8"))
+    assert_all_native_tab_selectors_follow_contracts(BUNDLE.read_text(encoding="utf-8"))
 
 
 def test_feature_buttons_inherit_shared_button_focus_contract_without_duplicate_rules():

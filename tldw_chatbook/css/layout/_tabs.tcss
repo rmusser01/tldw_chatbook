@@ -72,6 +72,13 @@
     text-style: bold underline;
 }
 
+Tab.-active,
+Tabs:focus .-active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 .tab-separator {
     color: $text-muted;
     padding: 0;
