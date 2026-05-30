@@ -23,6 +23,7 @@ CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
 FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
 INGESTION_REBUILT = ROOT / "tldw_chatbook/css/features/_ingestion_rebuilt.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
+WIZARDS = ROOT / "tldw_chatbook/css/features/_wizards.tcss"
 EVALUATION_UNIFIED = ROOT / "tldw_chatbook/css/features/_evaluation_unified.tcss"
 EMBEDDINGS = ROOT / "tldw_chatbook/css/features/_embeddings.tcss"
 INGEST = ROOT / "tldw_chatbook/css/features/_ingest.tcss"
@@ -205,6 +206,46 @@ def assert_drop_zone_active_contract(text: str) -> None:
     assert "$accent" not in message
     assert "color: $ds-focus-fg;" in message
     assert "text-style: bold underline;" in message
+
+
+def assert_wizard_progress_active_contracts(text: str, scope: str = "") -> None:
+    prefix = f"{scope} " if scope else ""
+    number = css_block(text, f"{prefix}.step-number.active")
+    assert "outline: heavy" not in number
+    assert "reverse" not in number
+    assert "border: thick" not in number
+    assert "$primary" not in number
+    assert "$accent" not in number
+    assert "$warning" not in number
+    assert "$error" not in number
+    assert "background: $ds-focus-bg;" in number
+    assert "border: round $ds-focus-accent;" in number
+    assert "color: $ds-focus-fg;" in number
+    assert "text-style: bold underline;" in number
+
+    title = css_block(text, f"{prefix}.step-title.active")
+    assert "outline: heavy" not in title
+    assert "reverse" not in title
+    assert "$primary" not in title
+    assert "$accent" not in title
+    assert "$warning" not in title
+    assert "$error" not in title
+    assert "color: $ds-focus-fg;" in title
+    assert "text-style: bold underline;" in title
+
+    if scope:
+        return
+
+    step = css_block(text, ".wizard-step.active")
+    assert "visibility: visible;" in step
+    assert "outline: heavy" not in step
+    assert "reverse" not in step
+    assert "border" not in step
+    assert "background:" not in step
+    assert "box-shadow" not in step
+    assert "transform:" not in step
+    assert "$primary" not in step
+    assert "$accent" not in step
 
 
 def test_focus_tokens_are_defined_and_not_semantic_warning_or_error():
@@ -410,6 +451,20 @@ def test_new_ingest_focus_overrides_defer_to_shared_contracts():
 
 def test_new_ingest_drop_zone_active_state_is_readable():
     assert_drop_zone_active_contract(NEW_INGEST.read_text(encoding="utf-8"))
+
+
+def test_wizard_progress_active_states_are_readable_without_dominant_fill():
+    assert_wizard_progress_active_contracts(WIZARDS.read_text(encoding="utf-8"))
+
+
+def test_bundled_wizard_progress_active_states_match_source_contracts():
+    assert_wizard_progress_active_contracts(BUNDLE.read_text(encoding="utf-8"))
+
+
+def test_wizard_progress_default_css_matches_active_state_contract():
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
+
+    assert_wizard_progress_active_contracts(WizardProgress.DEFAULT_CSS, scope="WizardProgress")
 
 
 def test_evaluation_unified_focus_overrides_defer_to_shared_contracts():
