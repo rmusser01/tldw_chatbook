@@ -752,7 +752,11 @@ class ChatScreen(BaseAppScreen):
         settings = self._ensure_active_console_session_settings()
         selection = self._build_console_provider_selection()
         selected_model = selection.explicit_model or selection.configured_model
-        effective_settings = replace(settings, model=selected_model)
+        effective_settings = replace(
+            settings,
+            model=selected_model,
+            base_url=selection.base_url,
+        )
         if not _has_selected_text(selected_model):
             return effective_settings, ConsoleSettingsReadiness(
                 label="Missing model",

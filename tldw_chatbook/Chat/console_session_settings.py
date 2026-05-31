@@ -13,7 +13,9 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
+    first_configured_endpoint,
     generic_endpoint_differs,
+    normalize_generic_endpoint_for_compare,
     provider_uses_endpoint,
     safe_endpoint_display,
     unsaved_endpoint_copy,
@@ -317,7 +319,7 @@ def build_console_settings_readiness(
     if (
         base_url
         and _is_url_based_provider(provider_key, provider_settings)
-        and generic_endpoint_differs(base_url, provider_settings)
+        and _endpoint_differs_for_provider(provider_key, base_url, provider_settings)
     ):
         return ConsoleSettingsReadiness(
             label="Endpoint not saved",
@@ -555,6 +557,22 @@ def _default_base_url(provider_key: str, provider_settings: Mapping[str, object]
 
 def _is_url_based_provider(provider_key: str, provider_settings: Mapping[str, object]) -> bool:
     return provider_uses_endpoint(provider_key, provider_settings)
+
+
+def _endpoint_differs_for_provider(
+    provider_key: str,
+    base_url: str | None,
+    provider_settings: Mapping[str, object],
+) -> bool:
+    """Return whether a selected endpoint differs from persisted provider settings."""
+    if provider_key in {"llama_cpp", "local_llamacpp"}:
+        configured_endpoint = first_configured_endpoint(provider_settings)
+        if not configured_endpoint:
+            return bool(normalize_generic_endpoint_for_compare(base_url))
+        selected = normalize_generic_endpoint_for_compare(normalize_llamacpp_base_url(base_url))
+        configured = normalize_generic_endpoint_for_compare(normalize_llamacpp_base_url(configured_endpoint))
+        return selected != configured
+    return generic_endpoint_differs(base_url, provider_settings)
 
 
 def _valid_base_url(provider_key: str, base_url: str) -> bool:

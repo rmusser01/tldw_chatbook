@@ -17,6 +17,11 @@ from textual.reactive import reactive
 from textual.widgets import Button, Input, Rule, Static, TextArea
 
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
+from ...Chat.console_provider_support import (
+    ConsoleProviderCatalogEntry,
+    supported_console_provider_catalog,
+)
+from ...Chat.console_session_settings import CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
 from ...Sync_Interop.sync_promotion_state import SyncPromotionState, build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Widgets.destination_workbench import DestinationModeStrip
@@ -71,6 +76,26 @@ API_URL_PROVIDER_KEYS = {
     "tabbyapi",
     "vllm",
 }
+PROVIDER_ENDPOINT_PLACEHOLDERS = {
+    "anthropic": "https://api.anthropic.com",
+    "custom": "https://your-openai-compatible-host/v1",
+    "custom_2": "https://your-openai-compatible-host/v1",
+    "google": "https://generativelanguage.googleapis.com",
+    "groq": "https://api.groq.com/openai/v1",
+    "koboldcpp": "http://127.0.0.1:5001",
+    "llama_cpp": "http://127.0.0.1:9099/v1",
+    "local_llamacpp": "http://127.0.0.1:9099/v1",
+    "local_ollama": "http://127.0.0.1:11434",
+    "local_vllm": "http://127.0.0.1:8000/v1",
+    "mistral": "https://api.mistral.ai/v1",
+    "mistralai": "https://api.mistral.ai/v1",
+    "ollama": "http://127.0.0.1:11434",
+    "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "oobabooga": "http://127.0.0.1:5000/v1",
+    "vllm": "http://127.0.0.1:8000/v1",
+}
+PROVIDER_CREDENTIAL_ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 SENSITIVE_CONFIG_EXACT_KEYS = frozenset(
     {
         "api_key",
@@ -253,18 +278,17 @@ class SettingsScreen(BaseAppScreen):
                 owns_config_sections=(
                     "chat_defaults.provider",
                     "chat_defaults.model",
-                    "chat_defaults.streaming",
-                    "chat_defaults.temperature",
                     "api_settings.<provider>.endpoint",
+                    "api_settings.<provider>.api_key_env_var",
                 ),
                 reads_runtime_state_from=("Console provider readiness",),
                 writes_allowed=True,
                 runtime_owner="Settings persisted defaults; Console runtime selection",
                 boundary_copy=(
-                    "Provider, model, endpoint, streaming, and temperature defaults are shared with Console."
+                    "Provider identity, model, endpoint, and credential source are shared with Console."
                 ),
                 recovery_copy=(
-                    "Test provider readiness before starting provider-backed Console work."
+                    "Test provider readiness, then use Console Defaults for sampling and transport settings."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -1348,17 +1372,13 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _provider_loaded_setting_values(self) -> dict[str, object]:
-        defaults = self._chat_defaults()
         resolved = resolve_effective_provider_model(self.app_instance)
+        provider = str(resolved.provider or "").strip()
         return {
-            "provider": str(resolved.provider or "").strip(),
+            "provider": provider,
             "model": str(resolved.model or "").strip(),
-            "endpoint": self._provider_endpoint_value(str(resolved.provider or "")),
-            "streaming": coerce_bool_setting(
-                defaults.get("streaming", True),
-                True,
-            ),
-            "temperature": defaults.get("temperature", 0.7),
+            "endpoint": self._provider_endpoint_value(provider),
+            "credential_env_var": self._provider_credential_env_var(provider),
         }
 
     def _provider_setting_values(self) -> dict[str, object]:
@@ -1369,10 +1389,6 @@ class SettingsScreen(BaseAppScreen):
             else value
             for key, value in loaded.items()
         }
-
-    @staticmethod
-    def _normalise_temperature(value: object) -> float:
-        return float(str(value).strip())
 
     def _provider_form_values_from_widgets(self) -> dict[str, object]:
         loaded_values = self._provider_loaded_setting_values()
@@ -1390,20 +1406,16 @@ class SettingsScreen(BaseAppScreen):
             self.query_one("#settings-model-value", Input).value.strip()
             or str(loaded_values["model"])
         )
-        streaming = coerce_bool_setting(
-            self.query_one("#settings-streaming-default", Input).value,
-            True,
-        )
-        temperature = self._normalise_temperature(
-            self.query_one("#settings-temperature-default", Input).value
-        )
         endpoint = self.query_one("#settings-provider-endpoint-value", Input).value.strip()
+        credential_env_var = self.query_one(
+            "#settings-provider-credential-env-var",
+            Input,
+        ).value.strip()
         return {
             "provider": provider,
             "model": model,
             "endpoint": endpoint,
-            "streaming": streaming,
-            "temperature": temperature,
+            "credential_env_var": credential_env_var,
         }
 
     def _stage_provider_value(self, key: str, value: object) -> None:
@@ -1414,13 +1426,52 @@ class SettingsScreen(BaseAppScreen):
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
 
-    def _provider_config(self, provider: str) -> Mapping[str, object]:
+    def _provider_config_entry(self, provider: str) -> tuple[str | None, Mapping[str, object]]:
         app_config = getattr(self.app_instance, "app_config", {}) or {}
         api_settings = app_config.get("api_settings", {}) if isinstance(app_config, Mapping) else {}
         if not isinstance(api_settings, Mapping):
-            return {}
-        provider_config = api_settings.get(provider_config_key(provider), {})
-        return provider_config if isinstance(provider_config, Mapping) else {}
+            return None, {}
+        target_key = provider_config_key(provider)
+        if not target_key:
+            return None, {}
+        for configured_provider, configured_settings in api_settings.items():
+            if provider_config_key(str(configured_provider)) == target_key:
+                if isinstance(configured_settings, Mapping):
+                    return str(configured_provider), configured_settings
+                return str(configured_provider), {}
+        return None, {}
+
+    def _provider_config(self, provider: str) -> Mapping[str, object]:
+        _section_key, provider_config = self._provider_config_entry(provider)
+        return provider_config
+
+    def _provider_credential_env_var(self, provider: str) -> str:
+        env_var = self._provider_config(provider).get("api_key_env_var", "")
+        return str(env_var or "").strip()
+
+    def _provider_catalog_entries(self) -> tuple[ConsoleProviderCatalogEntry, ...]:
+        return supported_console_provider_catalog(
+            handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+        )
+
+    def _provider_catalog_summary(self) -> str:
+        catalog = ", ".join(entry.readiness_key for entry in self._provider_catalog_entries())
+        return f"Provider catalog: {catalog}"
+
+    def _provider_catalog_key_policy(self) -> str:
+        entries = self._provider_catalog_entries()
+        key_required = sum(1 for entry in entries if entry.requires_api_key)
+        keyless = sum(1 for entry in entries if not entry.requires_api_key)
+        return f"Credential policy: {key_required} require keys; {keyless} local/keyless providers"
+
+    def _sync_provider_runtime_defaults(self, provider: str, model: str) -> None:
+        """Keep Console-facing app defaults aligned after a Settings save."""
+        if hasattr(self.app_instance, "chat_api_provider_value"):
+            self.app_instance.chat_api_provider_value = provider
+        if hasattr(self.app_instance, "chat_api_model_value"):
+            self.app_instance.chat_api_model_value = model
+        if hasattr(self.app_instance, "chat_model_value"):
+            self.app_instance.chat_model_value = model
 
     def _provider_endpoint_setting_key(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -1440,6 +1491,16 @@ class SettingsScreen(BaseAppScreen):
                 if value is not None:
                     break
         return str(value or "").strip()
+
+    def _provider_endpoint_placeholder(self, provider: str) -> str:
+        provider_key = provider_config_key(provider)
+        if not provider_key:
+            return "Select a provider before setting an endpoint"
+        if provider_key in PROVIDER_ENDPOINT_PLACEHOLDERS:
+            return PROVIDER_ENDPOINT_PLACEHOLDERS[provider_key]
+        if provider_key in API_URL_PROVIDER_KEYS:
+            return "https://host:port/v1"
+        return "Optional provider endpoint override"
 
     def _provider_endpoint_summary(self, provider: str, endpoint: object | None = None) -> str:
         provider_key = provider_config_key(provider)
@@ -1471,6 +1532,23 @@ class SettingsScreen(BaseAppScreen):
             return "Endpoint must start with http:// or https:// and include a valid host."
         return None
 
+    @staticmethod
+    def _validate_credential_env_var(credential_env_var: object) -> str | None:
+        env_var = str(credential_env_var or "").strip()
+        if not env_var:
+            return None
+        sanitized = sanitize_string(env_var, max_length=128)
+        if (
+            sanitized != env_var
+            or not validate_text_input(env_var, max_length=128, allow_html=False)
+            or PROVIDER_CREDENTIAL_ENV_VAR_PATTERN.fullmatch(env_var) is None
+        ):
+            return (
+                "Credential env var must use environment variable syntax: "
+                "letters, numbers, and underscores; start with a letter or underscore."
+            )
+        return None
+
     def _provider_key_status(self, provider: str) -> str:
         readiness = get_provider_readiness(
             provider,
@@ -1478,10 +1556,10 @@ class SettingsScreen(BaseAppScreen):
         )
         if readiness.api_key_source:
             return f"API key: {readiness.api_key_source}"
-        if readiness.env_var:
-            return f"{readiness.env_var}=missing"
         if not readiness.requires_api_key:
             return "API key: not required for this provider"
+        if readiness.env_var:
+            return f"{readiness.env_var}=missing"
         return "API key: missing"
 
     def _run_provider_readiness_test(self) -> str:
@@ -1570,14 +1648,17 @@ class SettingsScreen(BaseAppScreen):
                 ("Boundary", "runtime MCP, ACP, and tool control stay in their own destinations"),
             ),
             SettingsCategoryId.PROVIDERS_MODELS: (
-                ("Affected config", "provider, model, endpoint, streaming, and temperature defaults"),
+                (
+                    "Affected config",
+                    "provider, model, endpoint, and credential source defaults",
+                ),
                 (
                     "Recovery",
                     "test provider readiness before saving provider-backed Console defaults",
                 ),
                 (
                     "Boundary",
-                    "Console owns active chat/run state; Settings owns persisted defaults only",
+                    "Sampling and transport defaults are routed to Console Defaults",
                 ),
             ),
             SettingsCategoryId.APPEARANCE: (
@@ -1731,29 +1812,41 @@ class SettingsScreen(BaseAppScreen):
                     value=str(values["endpoint"]),
                     id="settings-provider-endpoint-value",
                     classes="settings-compact-input",
-                    placeholder="http://127.0.0.1:9099/v1",
+                    placeholder=self._provider_endpoint_placeholder(str(values["provider"])),
                 )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("API key env var", classes="settings-input-label")
+                yield Input(
+                    value=str(values["credential_env_var"]),
+                    id="settings-provider-credential-env-var",
+                    classes="settings-compact-input",
+                    placeholder="OPENAI_API_KEY",
+                )
+            yield Static(
+                self._provider_catalog_summary(),
+                id="settings-provider-catalog",
+                classes="settings-status-row",
+            )
+            yield Static(
+                self._provider_catalog_key_policy(),
+                id="settings-provider-catalog-policy",
+                classes="settings-status-row",
+            )
+            yield Static(
+                "Manual provider entry remains available for custom/local aliases.",
+                id="settings-provider-manual-entry-policy",
+                classes="settings-status-row",
+            )
+            yield Static(
+                "Sampling and transport defaults are routed to Console Defaults.",
+                id="settings-provider-sampling-route",
+                classes="settings-status-row",
+            )
             yield self._detail_row(
                 "Endpoint key",
                 self._provider_endpoint_row(str(values["provider"])).removeprefix("Endpoint key: "),
                 identifier="settings-provider-endpoint-key",
             )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Streaming", classes="settings-input-label")
-                yield Input(
-                    value=str(values["streaming"]).lower(),
-                    id="settings-streaming-default",
-                    classes="settings-compact-input",
-                    placeholder="true or false",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Temperature", classes="settings-input-label")
-                yield Input(
-                    value=str(values["temperature"]),
-                    id="settings-temperature-default",
-                    classes="settings-compact-input",
-                    placeholder="0.0 - 2.0",
-                )
             yield Static("Provider readiness", classes="destination-section")
             yield self._detail_row(
                 "Readiness",
@@ -2203,12 +2296,21 @@ class SettingsScreen(BaseAppScreen):
             self._syncing_provider_endpoint = True
             try:
                 endpoint_input.value = self._provider_endpoint_value(provider)
+                endpoint_input.placeholder = self._provider_endpoint_placeholder(provider)
             finally:
                 self._syncing_provider_endpoint = False
+        try:
+            self.query_one("#settings-provider-credential-env-var", Input).value = (
+                self._provider_credential_env_var(provider)
+            )
+        except QueryError:
+            pass
         draft = self._provider_draft()
         if draft is not None:
             draft.values.pop("endpoint", None)
             draft.originals.pop("endpoint", None)
+            draft.values.pop("credential_env_var", None)
+            draft.originals.pop("credential_env_var", None)
             if not draft.is_dirty:
                 self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
         self._update_provider_dynamic_widgets()
@@ -2229,19 +2331,9 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
-    @on(Input.Changed, "#settings-streaming-default")
-    def handle_streaming_default_changed(self, event: Input.Changed) -> None:
-        self._stage_provider_value("streaming", coerce_bool_setting(event.value, True))
-        self._update_provider_dynamic_widgets()
-        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
-
-    @on(Input.Changed, "#settings-temperature-default")
-    def handle_temperature_default_changed(self, event: Input.Changed) -> None:
-        try:
-            value = self._normalise_temperature(event.value)
-        except ValueError:
-            value = event.value
-        self._stage_provider_value("temperature", value)
+    @on(Input.Changed, "#settings-provider-credential-env-var")
+    def handle_provider_credential_env_var_changed(self, event: Input.Changed) -> None:
+        self._stage_provider_value("credential_env_var", event.value.strip())
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -2311,15 +2403,12 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify(self._guided_action_message(category), severity="information")
             return
         if category is SettingsCategoryId.PROVIDERS_MODELS:
-            try:
-                values = self._provider_form_values_from_widgets()
-            except ValueError:
-                self.app.notify("Temperature must be a number.", severity="error")
-                return
+            values = self._provider_form_values_from_widgets()
             loaded_values = self._provider_loaded_setting_values()
-            chat_defaults_keys = {"provider", "model", "streaming", "temperature"}
+            chat_defaults_keys = {"provider", "model"}
             provider = str(values.get("provider") or "").strip()
             endpoint = str(values.get("endpoint") or "").strip()
+            credential_env_var = str(values.get("credential_env_var") or "").strip()
             draft = self._settings_drafts.get(category)
             endpoint_touched = draft is not None and "endpoint" in draft.dirty_keys
             loaded_endpoint = str(loaded_values.get("endpoint") or "").strip()
@@ -2340,20 +2429,36 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text("#settings-provider-save-result", self._provider_save_result)
                 self.app.notify(endpoint_validation_error, severity="error")
                 return
+            credential_validation_error = self._validate_credential_env_var(credential_env_var)
+            if credential_validation_error:
+                self._provider_save_result = credential_validation_error
+                self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self.app.notify(credential_validation_error, severity="error")
+                return
             dirty_values = {
                 key: value
                 for key, value in values.items()
                 if key in chat_defaults_keys and loaded_values.get(key) != value
             }
             provider_key = provider_config_key(provider)
+            provider_section_key, _provider_config = self._provider_config_entry(provider)
             current_provider_endpoint = self._provider_endpoint_value(provider)
+            current_credential_env_var = self._provider_credential_env_var(provider)
             endpoint_dirty = endpoint != current_provider_endpoint
+            credential_dirty = credential_env_var != current_credential_env_var
             if endpoint_dirty and not provider_key:
                 self._provider_save_result = "Provider is required before saving an endpoint."
                 self._set_static_text("#settings-provider-save-result", self._provider_save_result)
                 self.app.notify(self._provider_save_result, severity="error")
                 return
-            if not dirty_values and not endpoint_dirty:
+            if credential_dirty and not provider_key:
+                self._provider_save_result = (
+                    "Provider is required before saving a credential source."
+                )
+                self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self.app.notify(self._provider_save_result, severity="error")
+                return
+            if not dirty_values and not endpoint_dirty and not credential_dirty:
                 self._settings_drafts.pop(category, None)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)
@@ -2365,16 +2470,27 @@ class SettingsScreen(BaseAppScreen):
             if dirty_values:
                 saved = SettingsConfigAdapter().save_values("chat_defaults", dirty_values)
             endpoint_key = self._provider_endpoint_setting_key(provider)
-            if endpoint_dirty and provider_key:
-                endpoint_saved = SettingsConfigAdapter().save_values(
-                    f"api_settings.{provider_key}",
-                    {endpoint_key: endpoint},
+            provider_settings_values = {}
+            if endpoint_dirty:
+                provider_settings_values[endpoint_key] = endpoint
+            if credential_dirty:
+                provider_settings_values["api_key_env_var"] = credential_env_var
+            if provider_settings_values and provider_key:
+                provider_save_key = provider_section_key or provider_key
+                provider_settings_saved = SettingsConfigAdapter().save_values(
+                    f"api_settings.{provider_save_key}",
+                    provider_settings_values,
                 )
-                saved = saved and endpoint_saved
+                saved = saved and provider_settings_saved
             if saved:
                 defaults = self._chat_defaults()
                 defaults.update(dirty_values)
-                if endpoint_dirty and provider_key:
+                if dirty_values:
+                    self._sync_provider_runtime_defaults(
+                        str(values.get("provider") or "").strip(),
+                        str(values.get("model") or "").strip(),
+                    )
+                if provider_settings_values and provider_key:
                     app_config = getattr(self.app_instance, "app_config", None)
                     if not isinstance(app_config, dict):
                         self.app_instance.app_config = {}
@@ -2383,11 +2499,12 @@ class SettingsScreen(BaseAppScreen):
                     if not isinstance(api_settings, dict):
                         api_settings = {}
                         app_config["api_settings"] = api_settings
-                    provider_settings = api_settings.setdefault(provider_key, {})
+                    provider_save_key = provider_section_key or provider_key
+                    provider_settings = api_settings.setdefault(provider_save_key, {})
                     if not isinstance(provider_settings, dict):
                         provider_settings = {}
-                        api_settings[provider_key] = provider_settings
-                    provider_settings[endpoint_key] = endpoint
+                        api_settings[provider_save_key] = provider_settings
+                    provider_settings.update(provider_settings_values)
                 self._settings_drafts.pop(category, None)
                 self._provider_save_result = "Provider settings saved."
                 self._set_static_text("#settings-provider-save-result", self._provider_save_result)
@@ -2458,8 +2575,9 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one("#settings-provider-value", Input).value = str(values["provider"])
                 self.query_one("#settings-model-value", Input).value = str(values["model"])
                 self.query_one("#settings-provider-endpoint-value", Input).value = str(values["endpoint"])
-                self.query_one("#settings-streaming-default", Input).value = str(values["streaming"]).lower()
-                self.query_one("#settings-temperature-default", Input).value = str(values["temperature"])
+                self.query_one("#settings-provider-credential-env-var", Input).value = str(
+                    values["credential_env_var"]
+                )
             except QueryError:
                 pass
             self._provider_save_result = "Provider settings reverted to last loaded values."

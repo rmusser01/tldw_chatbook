@@ -2,6 +2,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     DIRECT_CONSOLE_PROVIDER_KEYS,
     ConsoleProviderIdentity,
     resolve_console_provider_identity,
+    supported_console_provider_catalog,
     supported_console_provider_readiness_keys,
 )
 
@@ -105,6 +106,37 @@ def test_all_chat_api_call_handlers_are_known_to_console_support() -> None:
     assert "local_vllm" in keys
     assert "custom" in keys
     assert "custom_2" in keys
+
+
+def test_supported_console_provider_catalog_describes_handler_identities() -> None:
+    catalog = supported_console_provider_catalog(
+        handler_keys={
+            "openai",
+            "anthropic",
+            "custom-openai-api",
+            "custom-openai-api-2",
+            "llama_cpp",
+            "local_vllm",
+            "mlx_lm",
+            "local_mlx_lm",
+        }
+    )
+    by_readiness_key = {entry.readiness_key: entry for entry in catalog}
+
+    assert set(by_readiness_key) == {
+        "anthropic",
+        "custom",
+        "custom_2",
+        "llama_cpp",
+        "local_mlx_lm",
+        "local_vllm",
+        "openai",
+    }
+    assert by_readiness_key["custom"].execution_key == "custom-openai-api"
+    assert by_readiness_key["custom_2"].execution_key == "custom-openai-api-2"
+    assert by_readiness_key["llama_cpp"].requires_api_key is False
+    assert by_readiness_key["openai"].requires_api_key is True
+    assert by_readiness_key["openai"].display_name == "OpenAI"
 
 
 def test_all_chat_api_call_handlers_resolve_to_supported_console_identity() -> None:

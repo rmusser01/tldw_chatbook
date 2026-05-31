@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Collection
 from dataclasses import dataclass
 
-from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.provider_readiness import (
+    PROVIDERS_REQUIRING_API_KEY_KEYS,
+    provider_config_key,
+)
 
 
 DIRECT_CONSOLE_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
@@ -44,6 +47,48 @@ class ConsoleProviderIdentity:
     execution_key: str
     is_supported: bool
     uses_direct_llama_path: bool = False
+
+
+@dataclass(frozen=True)
+class ConsoleProviderCatalogEntry:
+    """Provider option Settings can display for Console-compatible sends."""
+
+    readiness_key: str
+    execution_key: str
+    display_name: str
+    requires_api_key: bool
+    uses_direct_llama_path: bool = False
+
+
+_PROVIDER_DISPLAY_NAMES = {
+    "anthropic": "Anthropic",
+    "cohere": "Cohere",
+    "custom": "Custom OpenAI",
+    "custom_2": "Custom OpenAI 2",
+    "deepseek": "DeepSeek",
+    "google": "Google",
+    "groq": "Groq",
+    "huggingface": "Hugging Face",
+    "llama_cpp": "llama.cpp",
+    "local_llamacpp": "local llama.cpp",
+    "local_mlx_lm": "MLX LM",
+    "local_vllm": "local vLLM",
+    "mistral": "Mistral",
+    "mistralai": "MistralAI",
+    "moonshot": "Moonshot",
+    "openai": "OpenAI",
+    "openrouter": "OpenRouter",
+    "vllm": "vLLM",
+    "zai": "Z.ai",
+}
+
+
+def _provider_display_name(provider_key: str) -> str:
+    """Return a compact human-readable label for a provider key."""
+    return _PROVIDER_DISPLAY_NAMES.get(
+        provider_key,
+        provider_key.replace("_", " ").replace("-", " ").title(),
+    )
 
 
 def _handler_keys(handler_keys: Collection[str] | None = None) -> frozenset[str]:
@@ -107,6 +152,40 @@ def resolve_console_provider_identity(
         is_supported=execution_key in handlers,
         uses_direct_llama_path=False,
     )
+
+
+def supported_console_provider_catalog(
+    handler_keys: Collection[str] | None = None,
+) -> tuple[ConsoleProviderCatalogEntry, ...]:
+    """Return Console-sendable provider catalog entries for Settings.
+
+    Args:
+        handler_keys: Optional ``chat_api_call`` handler keys for deterministic
+            tests or side-effect-free callers.
+
+    Returns:
+        Stable, de-duplicated provider entries keyed by readiness/config key.
+    """
+    handlers = _handler_keys(handler_keys)
+    entries: dict[str, ConsoleProviderCatalogEntry] = {}
+    for handler_key in sorted(handlers):
+        identity = resolve_console_provider_identity(
+            handler_key,
+            handler_keys=handlers,
+        )
+        if not identity.is_supported:
+            continue
+        entries.setdefault(
+            identity.readiness_key,
+            ConsoleProviderCatalogEntry(
+                readiness_key=identity.readiness_key,
+                execution_key=identity.execution_key,
+                display_name=_provider_display_name(identity.readiness_key),
+                requires_api_key=identity.readiness_key in PROVIDERS_REQUIRING_API_KEY_KEYS,
+                uses_direct_llama_path=identity.uses_direct_llama_path,
+            ),
+        )
+    return tuple(sorted(entries.values(), key=lambda entry: entry.readiness_key))
 
 
 def supported_console_provider_readiness_keys(

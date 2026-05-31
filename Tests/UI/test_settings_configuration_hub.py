@@ -1,5 +1,6 @@
 import re
 import time
+import builtins
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -310,9 +311,8 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     assert records_by_category[SettingsCategoryId.PROVIDERS_MODELS].owns_config_sections == (
         "chat_defaults.provider",
         "chat_defaults.model",
-        "chat_defaults.streaming",
-        "chat_defaults.temperature",
         "api_settings.<provider>.endpoint",
+        "api_settings.<provider>.api_key_env_var",
     )
     assert records_by_category[SettingsCategoryId.CONSOLE_BEHAVIOR].owns_config_sections == (
         "console.collapse_large_pastes",
@@ -384,9 +384,26 @@ async def test_settings_provider_inspector_excludes_console_sampling_ownership()
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Affected config: provider, model, endpoint, streaming, and temperature defaults" in text
-        assert "Console owns active chat/run state; Settings owns persisted defaults only" in text
-        assert "credential source" not in text
+        assert "Affected config: provider, model, endpoint, and credential source defaults" in text
+        assert "Sampling and transport defaults are routed to Console Defaults" in text
+        assert "streaming, and temperature" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_lists_console_supported_catalog():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Provider catalog" in text
+        for provider in ("openai", "anthropic", "custom", "custom_2", "llama_cpp", "local_vllm"):
+            assert provider in text
+        assert "Manual provider entry remains available for custom/local aliases." in text
 
 
 @pytest.mark.asyncio
@@ -857,6 +874,47 @@ async def test_settings_provider_category_uses_effective_console_source():
 
 
 @pytest.mark.asyncio
+async def test_settings_provider_keyless_local_provider_does_not_report_missing_env_var():
+    app = _build_test_app()
+    app.chat_api_provider_value = "OpenAI"
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099/v1",
+            "api_key_env_var": "LLAMA_CPP_API_KEY",
+        }
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "API key: not required for this provider" in text
+        assert "LLAMA_CPP_API_KEY=missing" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_openai_endpoint_placeholder_uses_provider_context():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "OPENAI_API_KEY"}
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+
+        assert endpoint.value == ""
+        assert endpoint.placeholder == "https://api.openai.com/v1"
+        assert "127.0.0.1:9099" not in endpoint.placeholder
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_guided_save_revert_enable_only_when_dirty():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
@@ -904,7 +962,7 @@ async def test_settings_provider_test_redacts_secrets(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_chat_defaults(monkeypatch):
+async def test_settings_provider_category_saves_provider_defaults_without_sampling(monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -912,6 +970,7 @@ async def test_settings_provider_category_saves_chat_defaults(monkeypatch):
         "streaming": True,
         "temperature": 0.7,
     }
+    assert app.chat_api_provider_value == "OpenAI"
     saved = []
 
     monkeypatch.setattr(
@@ -925,23 +984,20 @@ async def test_settings_provider_category_saves_chat_defaults(monkeypatch):
         screen = _active_destination_screen(host)
         screen.query_one("#settings-provider-value", Input).value = "llama_cpp"
         screen.query_one("#settings-model-value", Input).value = "qwen"
-        screen.query_one("#settings-streaming-default", Input).value = "false"
-        screen.query_one("#settings-temperature-default", Input).value = "0.2"
 
         await pilot.click("#settings-save-category")
 
     assert saved == [
         ("chat_defaults", "provider", "llama_cpp"),
         ("chat_defaults", "model", "qwen"),
-        ("chat_defaults", "streaming", False),
-        ("chat_defaults", "temperature", 0.2),
     ]
     assert app.app_config["chat_defaults"] == {
         "provider": "llama_cpp",
         "model": "qwen",
-        "streaming": False,
-        "temperature": 0.2,
+        "streaming": True,
+        "temperature": 0.7,
     }
+    assert app.chat_api_provider_value == "llama_cpp"
 
 
 @pytest.mark.asyncio
@@ -1069,6 +1125,128 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
         ("api_settings.openai", "api_base_url", "https://proxy.example.com/v1"),
     ]
     assert app.app_config["api_settings"]["openai"]["api_base_url"] == "https://proxy.example.com/v1"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_saves_credential_env_var(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "OPENAI_API_KEY"}
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        env_var = screen.query_one("#settings-provider-credential-env-var", Input)
+        assert env_var.value == "OPENAI_API_KEY"
+        env_var.value = "CHATBOOK_OPENAI_API_KEY"
+        screen.handle_provider_credential_env_var_changed(
+            Input.Changed(env_var, env_var.value)
+        )
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [
+        ("api_settings.openai", "api_key_env_var", "CHATBOOK_OPENAI_API_KEY"),
+    ]
+    assert app.app_config["api_settings"]["openai"]["api_key_env_var"] == (
+        "CHATBOOK_OPENAI_API_KEY"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_rejects_invalid_credential_env_var(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "OPENAI_API_KEY"}
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        env_var = screen.query_one("#settings-provider-credential-env-var", Input)
+        env_var.value = "OPENAI_API_KEY;rm"
+        screen.handle_provider_credential_env_var_changed(
+            Input.Changed(env_var, env_var.value)
+        )
+
+        await pilot.click("#settings-save-category")
+        text = _visible_text(screen)
+
+        assert "Credential env var must use environment variable syntax" in text
+
+    assert saved == []
+    assert app.app_config["api_settings"]["openai"]["api_key_env_var"] == "OPENAI_API_KEY"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_updates_existing_non_normalized_provider_section(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    app.app_config["api_settings"] = {
+        "OpenAI": {
+            "api_base_url": "https://api.openai.com/v1",
+            "api_key_env_var": "OPENAI_API_KEY",
+        }
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        assert endpoint.value == "https://api.openai.com/v1"
+        endpoint.value = "https://proxy.example.com/v1"
+
+        env_var = screen.query_one("#settings-provider-credential-env-var", Input)
+        assert env_var.value == "OPENAI_API_KEY"
+        env_var.value = "CHATBOOK_OPENAI_API_KEY"
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [
+        ("api_settings.OpenAI", "api_base_url", "https://proxy.example.com/v1"),
+        ("api_settings.OpenAI", "api_key_env_var", "CHATBOOK_OPENAI_API_KEY"),
+    ]
+    assert "openai" not in app.app_config["api_settings"]
+    assert app.app_config["api_settings"]["OpenAI"] == {
+        "api_base_url": "https://proxy.example.com/v1",
+        "api_key_env_var": "CHATBOOK_OPENAI_API_KEY",
+    }
 
 
 @pytest.mark.asyncio
@@ -1221,21 +1399,42 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_tolerates_invalid_temperature_text():
+async def test_settings_provider_test_does_not_depend_on_console_sampling_defaults():
     app = _build_test_app()
-    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    app.app_config["chat_defaults"] = {
+        "provider": "Ollama",
+        "model": "llama3",
+        "streaming": True,
+        "temperature": "not-a-number",
+    }
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-temperature-default", Input).value = "not-a-number"
 
         await pilot.click("#settings-test-provider")
         text = _visible_text(screen)
 
         assert "Provider test" in text
         assert "status=ready" in text
+
+
+def test_settings_provider_catalog_entries_do_not_import_chat_functions(monkeypatch):
+    real_import = builtins.__import__
+
+    def guarded_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "tldw_chatbook.Chat.Chat_Functions":
+            raise AssertionError(f"unexpected import: {name}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    screen = SettingsScreen(_app(defaults={"provider": "openai", "model": "gpt-4.1"}))
+
+    entries = screen._provider_catalog_entries()
+
+    assert entries
+    assert {entry.readiness_key for entry in entries} >= {"openai", "llama_cpp"}
 
 
 @pytest.mark.parametrize(
