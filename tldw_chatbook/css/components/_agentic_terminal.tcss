@@ -1283,8 +1283,9 @@ ConsoleSettingsModal Select {
     min-height: 1;
     margin: 0 0 1 0;
     padding: 0 1;
-    background: $ds-surface-raised;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .acp-inspector-group-title {
