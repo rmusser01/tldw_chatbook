@@ -1337,7 +1337,7 @@ class SettingsScreen(BaseAppScreen):
         adapter = SettingsConfigAdapter()
         try:
             config_path = self._config_path()
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             message = redact_secret_text(str(exc))
             source = "Config source: invalid"
             return (
