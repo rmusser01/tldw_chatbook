@@ -281,6 +281,40 @@ def test_adapter_save_values_attempts_all_keys_when_one_save_fails(monkeypatch):
     ]
 
 
+def test_adapter_save_sections_batches_sections(monkeypatch):
+    calls = []
+
+    def fake_save(section_values):
+        calls.append(section_values)
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        fake_save,
+    )
+
+    assert SettingsConfigAdapter().save_sections(
+        {
+            "console": {"collapse_large_pastes": False},
+            "chat_defaults": {"streaming": False},
+        }
+    )
+
+    assert calls == [
+        {
+            "console": {"collapse_large_pastes": False},
+            "chat_defaults": {"streaming": False},
+        }
+    ]
+
+
+def test_settings_console_default_max_tokens_rejects_raw_zero():
+    screen = SettingsScreen(_build_test_app())
+
+    with pytest.raises(ValueError, match="Max tokens"):
+        screen._normalise_console_default_max_tokens(0)
+
+
 @pytest.mark.asyncio
 async def test_settings_defaults_to_overview_category():
     app = _build_test_app()
@@ -770,10 +804,12 @@ async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
     app.app_config["console"] = {"collapse_large_pastes": True}
     saved = []
 
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -785,8 +821,9 @@ async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
         assert app.app_config["console"]["collapse_large_pastes"] is True
 
         await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
 
-    assert saved == [("console", "collapse_large_pastes", False)]
+    assert saved == [{"console": {"collapse_large_pastes": False}}]
     assert app.app_config["console"]["collapse_large_pastes"] is False
 
 
@@ -799,10 +836,12 @@ async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
     }
     saved = []
 
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -816,8 +855,9 @@ async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
         assert "Unsaved" in _visible_text(screen)
 
         await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
 
-    assert saved == [("console", "paste_collapse_threshold", 120)]
+    assert saved == [{"console": {"paste_collapse_threshold": 120}}]
     assert app.app_config["console"]["paste_collapse_threshold"] == 120
 
 
@@ -860,10 +900,12 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
     }
     saved = []
 
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
-        lambda section, key, value: saved.append((section, key, value)) or True,
-    )
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -886,12 +928,17 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
         assert "Unsaved" in _visible_text(screen)
 
         await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
 
     assert saved == [
-        ("chat_defaults", "streaming", False),
-        ("chat_defaults", "temperature", 0.33),
-        ("chat_defaults", "top_p", 0.81),
-        ("chat_defaults", "max_tokens", 2048),
+        {
+            "chat_defaults": {
+                "streaming": False,
+                "temperature": 0.33,
+                "top_p": 0.81,
+                "max_tokens": 2048,
+            }
+        }
     ]
     assert app.app_config["chat_defaults"] == {
         "streaming": False,
@@ -899,6 +946,59 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
         "top_p": 0.81,
         "max_tokens": 2048,
     }
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "collapse_large_pastes": True,
+        "paste_collapse_threshold": 50,
+    }
+    app.app_config["chat_defaults"] = {
+        "streaming": True,
+        "temperature": 0.7,
+        "top_p": 0.95,
+    }
+    legacy_calls = []
+    batched_calls = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            batched_calls.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "save_setting_to_cli_config",
+        lambda *args, **kwargs: legacy_calls.append(args) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        threshold = screen.query_one("#settings-console-paste-collapse-threshold", Input)
+        streaming = screen.query_one("#settings-console-default-streaming", Input)
+
+        threshold.value = "120"
+        screen.handle_console_paste_threshold_changed(Input.Changed(threshold, threshold.value))
+        streaming.value = "false"
+        screen.handle_console_default_streaming_changed(Input.Changed(streaming, streaming.value))
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
+
+    assert legacy_calls == []
+    assert batched_calls == [
+        {
+            "console": {"paste_collapse_threshold": 120},
+            "chat_defaults": {"streaming": False},
+        }
+    ]
+    assert app.app_config["console"]["paste_collapse_threshold"] == 120
+    assert app.app_config["chat_defaults"]["streaming"] is False
 
 
 @pytest.mark.asyncio

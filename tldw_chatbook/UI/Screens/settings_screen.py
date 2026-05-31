@@ -903,7 +903,7 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _normalise_console_default_max_tokens(value: object) -> int | str:
-        text_value = str(value or "").strip()
+        text_value = "" if value is None else str(value).strip()
         if not text_value:
             return ""
         if not text_value.isdecimal() or int(text_value) < 1:
@@ -3134,27 +3134,15 @@ class SettingsScreen(BaseAppScreen):
                 for key, value in dirty_values.items()
                 if key in CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS
             }
-            saved = True
-            for key, value in console_values.items():
-                if not save_setting_to_cli_config("console", key, value):
-                    saved = False
-            for key, value in chat_default_values.items():
-                if not save_setting_to_cli_config("chat_defaults", key, value):
-                    saved = False
-            if saved:
-                self._console_settings().update(console_values)
-                self._chat_defaults().update(chat_default_values)
-                self._settings_drafts.pop(category, None)
-                self._console_behavior_result = "Console behavior settings saved."
-                self._sync_console_behavior_widgets()
-                self.app.notify("Console behavior settings saved.", severity="information")
-            else:
-                self._console_behavior_result = "Failed to save Console behavior settings."
-                self._set_static_text(
-                    "#settings-console-behavior-result",
-                    self._console_behavior_result,
-                )
-                self.app.notify("Failed to save Console behavior settings.", severity="error")
+            self._console_behavior_result = "Console behavior settings saving..."
+            self._set_static_text(
+                "#settings-console-behavior-result",
+                self._console_behavior_result,
+            )
+            self._settings_save_console_behavior_worker(
+                dict(console_values),
+                dict(chat_default_values),
+            )
             return
 
         self.app.notify("This Settings category has no save action yet.", severity="warning")
@@ -3233,6 +3221,55 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify("Privacy check started.", severity="information")
             return
         self.app.notify("No test action is available for this Settings category yet.", severity="warning")
+
+    @staticmethod
+    def _save_console_behavior_values(
+        console_values: Mapping[str, object],
+        chat_default_values: Mapping[str, object],
+    ) -> bool:
+        section_values = {}
+        if console_values:
+            section_values["console"] = dict(console_values)
+        if chat_default_values:
+            section_values["chat_defaults"] = dict(chat_default_values)
+        if not section_values:
+            return True
+        return SettingsConfigAdapter().save_sections(section_values)
+
+    def _apply_console_behavior_save_result(
+        self,
+        saved: bool,
+        console_values: Mapping[str, object],
+        chat_default_values: Mapping[str, object],
+    ) -> None:
+        if saved:
+            self._console_settings().update(console_values)
+            self._chat_defaults().update(chat_default_values)
+            self._settings_drafts.pop(SettingsCategoryId.CONSOLE_BEHAVIOR, None)
+            self._console_behavior_result = "Console behavior settings saved."
+            self._sync_console_behavior_widgets()
+            self.app.notify("Console behavior settings saved.", severity="information")
+            return
+        self._console_behavior_result = "Failed to save Console behavior settings."
+        self._set_static_text(
+            "#settings-console-behavior-result",
+            self._console_behavior_result,
+        )
+        self.app.notify("Failed to save Console behavior settings.", severity="error")
+
+    @work(exclusive=True, thread=True)
+    def _settings_save_console_behavior_worker(
+        self,
+        console_values: Mapping[str, object],
+        chat_default_values: Mapping[str, object],
+    ) -> None:
+        saved = self._save_console_behavior_values(console_values, chat_default_values)
+        self.app.call_from_thread(
+            self._apply_console_behavior_save_result,
+            saved,
+            dict(console_values),
+            dict(chat_default_values),
+        )
 
     def _sync_console_behavior_widgets(self) -> None:
         try:

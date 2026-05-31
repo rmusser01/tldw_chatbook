@@ -84,3 +84,49 @@ def test_save_setting_respects_tldw_config_path_override(tmp_path, monkeypatch):
     saved_override = tomllib.loads(override_config.read_text(encoding="utf-8"))
     assert saved_override["console"]["collapse_large_pastes"] is False
     assert not default_config.exists()
+
+
+def test_save_settings_batches_multiple_sections(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[console]\ncollapse_large_pastes = true\n[chat_defaults]\nstreaming = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    assert config_module.save_settings_to_cli_config(
+        {
+            "console": {"collapse_large_pastes": False},
+            "chat_defaults": {
+                "streaming": False,
+                "temperature": 0.33,
+            },
+        }
+    )
+
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["console"]["collapse_large_pastes"] is False
+    assert saved["chat_defaults"]["streaming"] is False
+    assert saved["chat_defaults"]["temperature"] == 0.33
+
+
+def test_chat_defaults_streaming_prefers_canonical_key(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[chat_defaults]\nstreaming = true\nenable_streaming = false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    assert config_module.get_chat_defaults_streaming(default=False) is True
+
+
+def test_chat_defaults_streaming_uses_legacy_fallback(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[chat_defaults]\nenable_streaming = false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    assert config_module.get_chat_defaults_streaming(default=True) is False

@@ -48,8 +48,8 @@ Expand Console Behavior into a real global-defaults category for supported Conso
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 - Added canonical Console fallback loading for `chat_defaults.streaming`, with legacy `enable_streaming` treated only as a compatibility fallback when `streaming` is absent.
 - Expanded Settings > Console Behavior with editable global fallbacks for streaming, temperature, top_p, max_tokens, and the existing Console composer paste-collapse settings.
-- Added validation and visible recovery copy for invalid boolean and numeric values, plus save/revert coverage through the existing Settings persistence helpers used by this screen.
-- Plan deviation: reused the screen's existing `save_setting_to_cli_config` persistence path instead of introducing a separate `SettingsConfigAdapter` write path, keeping the change consistent with current Settings save behavior.
+- Added validation and visible recovery copy for invalid boolean and numeric values, plus save/revert coverage through a batched `SettingsConfigAdapter.save_sections(...)` persistence path.
+- Added a single-write config helper for multi-section saves so Console Behavior no longer performs per-key TOML read/write/reload calls on the UI thread.
 - Preserved active Console session and provider+model profile ownership: the new settings are global fallbacks, not replacements for per-session or provider/model overrides.
 - Reworked the Console Behavior inspector into a category-specific control guide that explains each visible setting and its precedence instead of generic Settings ownership copy.
 - Added pure and mounted regressions covering effective default loading, legacy compatibility, invalid value rejection, save/revert behavior, large-paste collapse controls, and inspector guidance.
