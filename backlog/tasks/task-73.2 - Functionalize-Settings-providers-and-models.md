@@ -1,7 +1,7 @@
 ---
 id: TASK-73.2
 title: Functionalize Settings Providers and Models
-status: In Progress
+status: Done
 labels:
 - settings
 - providers
@@ -63,10 +63,10 @@ Providers & Models is now a functional Settings category for Console-backed prov
 ## Definition of Done
 <!-- DOD:BEGIN -->
 - [x] #1 Acceptance criteria completed
-- [ ] #2 Unit, mounted, and integration tests relevant to changed behavior pass
-- [ ] #3 Static analysis and diff hygiene checks pass
+- [x] #2 Unit, mounted, and integration tests relevant to changed behavior pass
+- [x] #3 Static analysis and diff hygiene checks pass
 - [x] #4 Actual app QA walkthrough completed with screenshots
 - [x] #5 User approval recorded for visible Settings changes
 - [x] #6 Documentation and task notes updated
-- [ ] #7 Task status moved to Done after implementation notes are added
+- [x] #7 Task status moved to Done after implementation notes are added
 <!-- DOD:END -->
