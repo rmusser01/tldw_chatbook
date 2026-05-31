@@ -59,7 +59,9 @@ class CustomizeWindow(Container):
     }
     
     .customize-nav-button.active-nav {
-        background: $primary;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
     }
     
     .sidebar-title {
