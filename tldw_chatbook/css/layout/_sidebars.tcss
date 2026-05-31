@@ -426,8 +426,8 @@
 }
 
 .sidebar-section-collapsible:focus-within {
-    border: round $accent;
-    background: $surface-lighten-1;
+    border: round $ds-focus-accent;
+    background: $ds-focus-bg;
 }
 
 /* Section loading state */

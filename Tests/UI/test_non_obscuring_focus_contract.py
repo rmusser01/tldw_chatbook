@@ -1216,6 +1216,22 @@ def test_legacy_sidebar_focus_overrides_defer_to_shared_contracts():
         assert css_blocks(text, selector) == []
 
 
+def test_sidebar_section_focus_within_uses_non_semantic_container_cue():
+    for text in (
+        SIDEBARS.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        block = css_block(text, ".sidebar-section-collapsible:focus-within")
+        assert "outline: heavy" not in block
+        assert "border: thick" not in block
+        assert "$primary" not in block
+        assert "$accent" not in block
+        assert "$warning" not in block
+        assert "$error" not in block
+        assert "border: round $ds-focus-accent;" in block
+        assert "background: $ds-focus-bg;" in block
+
+
 @pytest.mark.parametrize("selector", (".setting-input", ".sidebar-input", ".sidebar Select"))
 def test_sidebar_inputs_use_stable_base_geometry_for_shared_focus(selector: str):
     text = SIDEBARS.read_text(encoding="utf-8")
