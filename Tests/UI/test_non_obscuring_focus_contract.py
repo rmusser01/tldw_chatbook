@@ -1170,10 +1170,10 @@ def test_bundled_native_choice_and_tree_states_match_source_contracts():
 def test_media_selected_and_active_states_follow_shared_contracts():
     media_text = MEDIA.read_text(encoding="utf-8")
     for selector in (
-        ".keyword-item.selected",
-        ".keyword-item.selected:hover",
-        ".review-item.selected",
-        ".review-item.selected:hover",
+        ".keyword-list .keyword-item.selected",
+        ".keyword-list .keyword-item.selected:hover",
+        ".review-items-list .review-item.selected",
+        ".review-items-list .review-item.selected:hover",
     ):
         assert_readable_selected_state_contract(css_block(media_text, selector))
 
@@ -1197,12 +1197,49 @@ def test_media_selected_and_active_states_follow_shared_contracts():
 def test_bundled_media_selected_states_match_source_contracts():
     text = BUNDLE.read_text(encoding="utf-8")
     for selector in (
-        ".keyword-item.selected",
-        ".keyword-item.selected:hover",
-        ".review-item.selected",
-        ".review-item.selected:hover",
+        ".keyword-list .keyword-item.selected",
+        ".keyword-list .keyword-item.selected:hover",
+        ".review-items-list .review-item.selected",
+        ".review-items-list .review-item.selected:hover",
     ):
         assert_readable_selected_state_contract(css_block(text, selector))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "selector",
+    (
+        ".keyword-list .keyword-item:hover",
+        ".review-items-list .review-item:hover",
+    ),
+)
+def test_media_keyword_and_review_hover_states_use_neutral_surface(selector: str):
+    for label, text in (
+        ("_media.tcss", MEDIA.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        blocks = css_blocks(text, selector)
+        assert blocks, f"{label} is missing {selector}"
+        assert len(blocks) == 1, f"{label} should define exactly one {selector}"
+        assert_native_row_hover_state_contract(blocks[0])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "selector",
+    (
+        ".review-item",
+        ".review-item.selected",
+        ".review-item.selected:hover",
+        ".review-item:hover",
+    ),
+)
+def test_media_review_item_styles_are_scoped_to_media_review_list(selector: str):
+    for label, text in (
+        ("_media.tcss", MEDIA.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        assert css_blocks(text, selector) == [], f"{label} should not define unscoped {selector}"
 
 
 def test_repo_tree_widget_states_match_code_repo_contract():
