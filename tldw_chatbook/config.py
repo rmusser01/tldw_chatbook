@@ -12,7 +12,7 @@ else:
 import os
 from pathlib import Path
 import toml
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Mapping
 #
 # Third-Party Imports
 from loguru import logger
@@ -2768,6 +2768,113 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
     return _CONFIG_CACHE
 
 
+def _is_sensitive_setting_key(key: Any) -> bool:
+    key_lower = str(key).lower()
+    sensitive_exact = [
+        'api_key', 'apikey', 'api-key', 'secret', 'token', 'password',
+        'auth_token', 'api_token', 'access_token', 'secret_key',
+        'refresh_token', 'client_secret'
+    ]
+    sensitive_patterns = ['api_key', 'apikey', 'api-key', '_key', '_token', '_secret', '_password']
+    return key_lower in sensitive_exact or any(pattern in key_lower for pattern in sensitive_patterns)
+
+
+def _maybe_encrypt_setting_value(config_data: Dict[str, Any], key: Any, value: Any) -> Any:
+    encryption_config = config_data.get("encryption", {})
+    if not (
+        isinstance(encryption_config, dict)
+        and encryption_config.get("enabled", False)
+        and _is_sensitive_setting_key(key)
+        and isinstance(value, str)
+        and value
+        and not value.startswith("enc:")
+        and not (value.startswith("<") and value.endswith(">"))
+    ):
+        return value
+
+    password = get_encryption_password()
+    if not password:
+        return value
+    try:
+        enc_module = get_encryption_module()
+        encrypted_value = enc_module.encrypt_value(value, password)
+        logger.info(f"Encrypted {key} in config section")
+        return encrypted_value
+    except Exception as e:
+        logger.error(f"Failed to encrypt value: {e}")
+        return value
+
+
+def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[str, Any]:
+    current_level = config_data
+    for part in section.split('.'):
+        next_level = current_level.setdefault(part, {})
+        if not isinstance(next_level, dict):
+            raise TypeError(part)
+        current_level = next_level
+    return current_level
+
+
+def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]]) -> bool:
+    """Persist multiple config values with one TOML read/write and one cache reload."""
+    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
+    logged_keys = {
+        section: list(values.keys())
+        for section, values in section_values.items()
+    }
+    logger.info(f"Attempting to save settings batch: {logged_keys!r}")
+    config_path = _get_effective_config_path()
+
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.error(f"Could not create config directory {config_path.parent}: {e}")
+        return False
+
+    config_data: Dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            with open(config_path, "rb") as f:
+                config_data = tomllib.load(f)
+        except tomllib.TOMLDecodeError as e:
+            logger.error(f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}")
+            # Consider creating a backup of the corrupt file for the user.
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error reading {config_path}: {e}", exc_info=True)
+            return False
+
+    try:
+        for section, values in section_values.items():
+            if not values:
+                continue
+            current_level = _target_config_section(config_data, section)
+            for key, value in values.items():
+                current_level[key] = _maybe_encrypt_setting_value(config_data, key, value)
+    except (TypeError, AttributeError):
+        logger.error(
+            "Configuration structure conflict. Could not save settings batch "
+            f"because a part of the path is not a table/dictionary. Please check your config file."
+        )
+        return False
+
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            toml.dump(config_data, f)
+        logger.success(f"Successfully saved settings batch to {config_path}")
+
+        _CONFIG_CACHE = None
+        _SETTINGS_CACHE = None
+        load_cli_config_and_ensure_existence(force_reload=True)
+        settings = load_settings(force_reload=True)
+        logger.info("Global configuration caches invalidated and reloaded.")
+
+        return True
+    except (IOError, toml.TomlDecodeError) as e:
+        logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
+        return False
+
+
 def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
     """
     Saves a specific setting to the user's CLI TOML configuration file.
@@ -2785,106 +2892,8 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
     Returns:
         True if the setting was saved successfully, False otherwise.
     """
-    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     logger.info(f"Attempting to save setting: [{section}].{key} = {repr(value)}")
-    config_path = _get_effective_config_path()
-
-    # Ensure the parent directory for the config file exists.
-    try:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        logger.error(f"Could not create config directory {config_path.parent}: {e}")
-        return False
-
-    # Step 1: Read the current configuration from the user's file.
-    # If the file doesn't exist, we start with an empty dictionary.
-    config_data: Dict[str, Any] = {}
-    if config_path.exists():
-        try:
-            with open(config_path, "rb") as f:
-                config_data = tomllib.load(f)
-        except tomllib.TOMLDecodeError as e:
-            logger.error(f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}")
-            # Consider creating a backup of the corrupt file for the user.
-            return False
-        except Exception as e:
-            logger.error(f"Unexpected error reading {config_path}: {e}", exc_info=True)
-            return False
-
-    # Step 2: Modify the configuration data in memory.
-    # This handles nested sections by splitting the section string.
-    keys = section.split('.')
-    current_level = config_data
-
-    try:
-        for part in keys:
-            # Traverse or create the nested dictionary structure.
-            current_level = current_level.setdefault(part, {})
-        # Assign the new value to the key in the target section.
-        current_level[key] = value
-    except (TypeError, AttributeError):
-        # This error occurs if a key in the path (e.g., 'api_settings') is a value, not a table.
-        logger.error(
-            f"Configuration structure conflict. Could not set '{key}' in section '{section}' "
-            f"because a part of the path is not a table/dictionary. Please check your config file."
-        )
-        return False
-
-    # Step 3: Check if we need to encrypt the value
-    # If encryption is enabled and this is a sensitive field, encrypt the value
-    encryption_config = config_data.get("encryption", {})
-    key_lower = key.lower()
-    # Check exact matches and also patterns
-    sensitive_exact = ['api_key', 'apikey', 'api-key', 'secret', 'token', 'password', 
-                      'auth_token', 'api_token', 'access_token', 'secret_key',
-                      'refresh_token', 'client_secret']
-    # Also check if key contains these patterns
-    sensitive_patterns = ['api_key', 'apikey', 'api-key', '_key', '_token', '_secret', '_password']
-    
-    is_sensitive = key_lower in sensitive_exact
-    if not is_sensitive:
-        # Check if key contains any sensitive pattern
-        for pattern in sensitive_patterns:
-            if pattern in key_lower:
-                is_sensitive = True
-                break
-    
-    if (encryption_config.get("enabled", False) and 
-        is_sensitive and 
-        isinstance(value, str) and 
-        value and 
-        not value.startswith("enc:") and
-        not (value.startswith('<') and value.endswith('>'))):
-        
-        password = get_encryption_password()
-        if password:
-            try:
-                enc_module = get_encryption_module()
-                encrypted_value = enc_module.encrypt_value(value, password)
-                current_level[key] = encrypted_value
-                logger.info(f"Encrypted {key} in section {section}")
-            except Exception as e:
-                logger.error(f"Failed to encrypt value: {e}")
-                # Continue with unencrypted value
-    
-    # Step 4: Write the updated configuration back to the TOML file.
-    try:
-        with open(config_path, "w", encoding="utf-8") as f:
-            toml.dump(config_data, f)
-        logger.success(f"Successfully saved setting to {config_path}")
-
-        # Step 4: Invalidate and reload global config caches to reflect changes immediately.
-        # Clear both caches
-        _CONFIG_CACHE = None
-        _SETTINGS_CACHE = None
-        load_cli_config_and_ensure_existence(force_reload=True)
-        settings = load_settings(force_reload=True)
-        logger.info("Global configuration caches invalidated and reloaded.")
-
-        return True
-    except (IOError, toml.TomlDecodeError) as e:
-        logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
-        return False
+    return save_settings_to_cli_config({section: {key: value}})
 
 
 # --- CLI Setting Getter ---
@@ -2923,6 +2932,19 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
     if isinstance(section_data, dict):
         return section_data.get(key, default)
     # If section is not a dict or not found, return default
+    return default
+
+
+def get_chat_defaults_streaming(default: bool = True) -> bool:
+    """Return chat default streaming with canonical-first legacy fallback."""
+    config = load_cli_config_and_ensure_existence()
+    chat_defaults = config.get("chat_defaults")
+    if not isinstance(chat_defaults, dict):
+        return default
+    if "streaming" in chat_defaults:
+        return coerce_bool_setting(chat_defaults.get("streaming"), default)
+    if "enable_streaming" in chat_defaults:
+        return coerce_bool_setting(chat_defaults.get("enable_streaming"), default)
     return default
 
 

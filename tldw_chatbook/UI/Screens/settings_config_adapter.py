@@ -16,7 +16,11 @@ if sys.version_info < (3, 11):
 else:
     import tomllib
 
-from ...config import load_cli_config_and_ensure_existence, save_setting_to_cli_config
+from ...config import (
+    load_cli_config_and_ensure_existence,
+    save_setting_to_cli_config,
+    save_settings_to_cli_config,
+)
 from .settings_config_models import SettingsValidationResult
 
 
@@ -60,6 +64,10 @@ class SettingsConfigAdapter:
             if not save_setting_to_cli_config(section, key, value):
                 all_saved = False
         return all_saved
+
+    def save_sections(self, section_values: Mapping[str, Mapping[str, Any]]) -> bool:
+        """Persist values across one or more sections in a single config write."""
+        return save_settings_to_cli_config(section_values)
 
     def validate_raw_toml(self, text: str) -> SettingsValidationResult:
         """Validate TOML text and require a top-level table/mapping."""

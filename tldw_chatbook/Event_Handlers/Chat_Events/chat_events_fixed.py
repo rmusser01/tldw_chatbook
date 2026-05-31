@@ -40,7 +40,7 @@ from tldw_chatbook.Utils.Utils import safe_float, safe_int
 from tldw_chatbook.Utils.input_validation import validate_text_input, validate_number_range, sanitize_string
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
 from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError, InputError
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import get_chat_defaults_streaming, get_cli_setting
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 if TYPE_CHECKING:
@@ -281,7 +281,7 @@ async def get_chat_configuration(app: 'TldwCli', prefix: str) -> Optional[Dict[s
             'model': str(model_widget.value) if model_widget.value else None,
             'system_prompt': system_prompt_widget.text,
             'temperature': safe_float(temp_widget.value, 0.7),
-            'streaming': get_cli_setting('chat_defaults', 'enable_streaming', True),
+            'streaming': get_chat_defaults_streaming(default=True),
             'extra_params': {}
         }
         
