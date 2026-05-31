@@ -445,6 +445,14 @@ def test_global_button_focus_uses_two_non_obscuring_cues():
         assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
 
 
+def test_shared_button_hover_uses_non_obscuring_surface_contract():
+    for text in (
+        BUTTONS.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        assert_native_row_hover_state_contract(css_block(text, "Button:hover"))
+
+
 def test_shared_form_and_native_inputs_use_thin_non_semantic_focus():
     text = FORMS.read_text(encoding="utf-8")
     for selector in (

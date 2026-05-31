@@ -10,9 +10,10 @@ Button {
     border: none;
 }
 
-/* Enhanced hover state with cursor indication */
+/* Shared hover state with readable, non-obscuring cues */
 Button:hover {
-    background: $primary-lighten-1;
+    background: $surface-lighten-1;
+    color: $text;
     text-style: bold;
 }
 
