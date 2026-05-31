@@ -1260,6 +1260,18 @@ def test_repo_tree_widget_states_match_code_repo_contract():
         assert_native_row_hover_state_contract(css_block(text, ".tree-expand-btn:hover"))
 
 
+@pytest.mark.unit
+def test_code_repo_filter_quick_button_hover_uses_neutral_surface():
+    for label, text in (
+        ("_code_repo.tcss", CODE_REPO.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        blocks = css_blocks(text, ".filter-quick-btn:hover")
+        assert blocks, f"{label} is missing .filter-quick-btn:hover"
+        assert len(blocks) == 1, f"{label} should define exactly one .filter-quick-btn:hover"
+        assert_native_row_hover_state_contract(blocks[0])
+
+
 def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
     text = CHATBOOKS_IMPROVED.read_text(encoding="utf-8")
     base = css_block(text, "ChatbooksWindowImproved .search-input")

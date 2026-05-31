@@ -110,8 +110,9 @@
 }
 
 .filter-quick-btn:hover {
-    background: $primary 30%;
-    border: solid $primary;
+    background: $surface-lighten-1;
+    color: $text;
+    border: solid $border;
 }
 
 /* ========================================
