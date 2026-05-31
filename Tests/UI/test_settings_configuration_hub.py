@@ -2137,6 +2137,20 @@ def test_settings_diagnostics_invalid_config_source_does_not_duplicate_error(
     assert loaded_config is None
 
 
+def test_settings_diagnostics_unexpected_config_path_errors_are_not_masked(
+    monkeypatch,
+):
+    screen = SettingsScreen(_build_test_app())
+
+    def raise_unexpected_config_path_error():
+        raise AssertionError("programming regression")
+
+    monkeypatch.setattr(screen, "_config_path", raise_unexpected_config_path_error)
+
+    with pytest.raises(AssertionError, match="programming regression"):
+        screen._diagnostics_validation_and_reload_results()
+
+
 def test_settings_diagnostics_strictly_reports_corrupt_toml(monkeypatch, tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text("[chat_defaults\nprovider = \"OpenAI\"\n", encoding="utf-8")
