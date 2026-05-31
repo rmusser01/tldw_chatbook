@@ -3285,6 +3285,24 @@ class ChatScreen(BaseAppScreen):
             settings = self._ensure_active_console_session_settings()
             next_settings = settings
             if provider is not None or model is not None:
+                app_config = getattr(self.app_instance, "app_config", {}) or {}
+                current_defaults = build_default_console_session_settings(
+                    app_config,
+                    settings.provider,
+                    settings.model,
+                )
+                override_fields = {
+                    field: getattr(settings, field)
+                    for field in (
+                        "temperature",
+                        "top_p",
+                        "min_p",
+                        "top_k",
+                        "max_tokens",
+                        "streaming",
+                    )
+                    if getattr(settings, field) != getattr(current_defaults, field)
+                }
                 target_provider = (
                     str(provider).strip()
                     if provider is not None and _has_selected_text(provider)
@@ -3296,7 +3314,7 @@ class ChatScreen(BaseAppScreen):
                     else settings.model
                 )
                 next_settings = build_default_console_session_settings(
-                    getattr(self.app_instance, "app_config", {}) or {},
+                    app_config,
                     target_provider,
                     target_model,
                 )
@@ -3304,6 +3322,7 @@ class ChatScreen(BaseAppScreen):
                     next_settings = replace(next_settings, model=None)
                 next_settings = replace(
                     next_settings,
+                    **override_fields,
                     persona_label=settings.persona_label,
                     character_label=settings.character_label,
                 )

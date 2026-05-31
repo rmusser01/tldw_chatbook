@@ -242,7 +242,7 @@ def build_default_console_session_settings(
         chat_defaults.get("model"),
     )
     model_profile = _model_default_profile(provider_settings, configured_model)
-    default_sources = (model_profile, provider_settings, chat_defaults)
+    default_sources = (model_profile, chat_defaults, provider_settings)
 
     return ConsoleSessionSettings(
         provider=configured_provider,
@@ -652,7 +652,9 @@ def _setting_value_from_sources(
 ) -> object:
     for source in sources:
         if key in source:
-            return source.get(key)
+            value = source.get(key)
+            if not _is_blank_value(value):
+                return value
     return default
 
 
@@ -661,31 +663,50 @@ def _float_setting_from_sources(
     key: str,
     default: float,
 ) -> float:
-    value = _setting_value_from_sources(sources, key, default)
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+    for source in sources:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if _is_blank_value(value):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
 
 
 def _optional_float_setting_from_sources(
     sources: Sequence[Mapping[str, object]],
     key: str,
 ) -> float | None:
-    value = _setting_value_from_sources(sources, key)
-    if _is_blank_value(value):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    for source in sources:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if _is_blank_value(value):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def _optional_int_setting_from_sources(
     sources: Sequence[Mapping[str, object]],
     key: str,
 ) -> int | None:
-    return _parse_optional_int(_setting_value_from_sources(sources, key))
+    for source in sources:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if _is_blank_value(value):
+            continue
+        parsed = _parse_optional_int(value)
+        if parsed is not None:
+            return parsed
+    return None
 
 
 def _bool_setting_from_sources(
@@ -693,8 +714,19 @@ def _bool_setting_from_sources(
     key: str,
     default: bool,
 ) -> bool:
-    value = _setting_value_from_sources(sources, key, default)
-    return value if isinstance(value, bool) else default
+    for source in sources:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1"}:
+                return True
+            if normalized in {"false", "0"}:
+                return False
+    return default
 
 
 def _optional_float_setting(

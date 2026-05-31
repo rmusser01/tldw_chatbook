@@ -1405,14 +1405,49 @@ class SettingsScreen(BaseAppScreen):
         }
 
     @staticmethod
-    def _normalise_optional_float(value: object) -> float | str:
+    def _normalise_optional_float(
+        value: object,
+        *,
+        min_value: float,
+        max_value: float,
+        label: str,
+    ) -> float | str:
         text = str(value or "").strip()
-        return float(text) if text else ""
+        if not text:
+            return ""
+        if not validate_number_range(text, min_val=min_value, max_val=max_value):
+            raise ValueError(f"{label} must be between {min_value:.1f} and {max_value:.1f}.")
+        return float(text)
+
+    def _normalise_model_profile_temperature(self, value: object) -> float | str:
+        return self._normalise_optional_float(
+            value,
+            min_value=0.0,
+            max_value=2.0,
+            label="Temperature",
+        )
+
+    def _normalise_model_profile_top_p(self, value: object) -> float | str:
+        return self._normalise_optional_float(
+            value,
+            min_value=0.0,
+            max_value=1.0,
+            label="Top P",
+        )
 
     @staticmethod
     def _normalise_optional_bool(value: object) -> bool | str:
+        if isinstance(value, bool):
+            return value
         text = str(value or "").strip()
-        return coerce_bool_setting(text, True) if text else ""
+        if not text:
+            return ""
+        normalized = text.lower()
+        if normalized in {"true", "1"}:
+            return True
+        if normalized in {"false", "0"}:
+            return False
+        raise ValueError("Streaming must be true or false.")
 
     def _provider_form_values_from_widgets(self) -> dict[str, object]:
         loaded_values = self._provider_loaded_setting_values()
@@ -1435,10 +1470,10 @@ class SettingsScreen(BaseAppScreen):
             "#settings-provider-credential-env-var",
             Input,
         ).value.strip()
-        model_profile_temperature = self._normalise_optional_float(
+        model_profile_temperature = self._normalise_model_profile_temperature(
             self.query_one("#settings-model-profile-temperature", Input).value
         )
-        model_profile_top_p = self._normalise_optional_float(
+        model_profile_top_p = self._normalise_model_profile_top_p(
             self.query_one("#settings-model-profile-top-p", Input).value
         )
         model_profile_streaming = self._normalise_optional_bool(
@@ -2497,7 +2532,7 @@ class SettingsScreen(BaseAppScreen):
         if self._syncing_provider_model_profile:
             return
         try:
-            value = self._normalise_optional_float(event.value)
+            value = self._normalise_model_profile_temperature(event.value)
         except ValueError:
             value = event.value
         self._stage_provider_value("model_profile_temperature", value)
@@ -2509,7 +2544,7 @@ class SettingsScreen(BaseAppScreen):
         if self._syncing_provider_model_profile:
             return
         try:
-            value = self._normalise_optional_float(event.value)
+            value = self._normalise_model_profile_top_p(event.value)
         except ValueError:
             value = event.value
         self._stage_provider_value("model_profile_top_p", value)
@@ -2520,9 +2555,13 @@ class SettingsScreen(BaseAppScreen):
     def handle_model_profile_streaming_changed(self, event: Input.Changed) -> None:
         if self._syncing_provider_model_profile:
             return
+        try:
+            value = self._normalise_optional_bool(event.value)
+        except ValueError:
+            value = event.value
         self._stage_provider_value(
             "model_profile_streaming",
-            self._normalise_optional_bool(event.value),
+            value,
         )
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
@@ -2595,8 +2634,10 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             try:
                 values = self._provider_form_values_from_widgets()
-            except ValueError:
-                self.app.notify("Model profile numeric values must be valid numbers.", severity="error")
+            except ValueError as exc:
+                self._provider_save_result = str(exc) or "Model profile values are invalid."
+                self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self.app.notify(self._provider_save_result, severity="error")
                 return
             loaded_values = self._provider_loaded_setting_values()
             chat_defaults_keys = {"provider", "model"}

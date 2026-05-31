@@ -1066,6 +1066,68 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field_id", "value", "message"),
+    (
+        ("#settings-model-profile-temperature", "2.1", "Temperature must be between 0.0 and 2.0."),
+        ("#settings-model-profile-top-p", "1.1", "Top P must be between 0.0 and 1.0."),
+    ),
+)
+async def test_settings_provider_category_rejects_out_of_range_model_profile(
+    monkeypatch,
+    field_id,
+    value,
+    message,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"model_defaults": {}}}
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one(field_id, Input).value = value
+
+        await pilot.click("#settings-save-category")
+
+        assert message in _visible_text(screen)
+
+    assert saved == []
+    assert app.app_config["api_settings"]["openai"]["model_defaults"] == {}
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_rejects_invalid_streaming_profile(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"model_defaults": {}}}
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-model-profile-streaming", Input).value = "tru"
+
+        await pilot.click("#settings-save-category")
+
+        assert "Streaming must be true or false." in _visible_text(screen)
+
+    assert saved == []
+    assert app.app_config["api_settings"]["openai"]["model_defaults"] == {}
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_model_switch_loads_selected_model_profile():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}

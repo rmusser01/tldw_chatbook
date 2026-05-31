@@ -47,10 +47,11 @@ Make Providers and Models the first fully functional Settings category by suppor
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-- Added provider+model profile resolution so Console defaults prefer `api_settings.<provider>.model_defaults.<model>` before provider/global fallbacks.
+- Added provider+model profile resolution so Console defaults prefer `api_settings.<provider>.model_defaults.<model>`, then `chat_defaults`, then provider-level fallbacks.
 - Updated Settings Providers & Models to own provider, model, endpoint, credential env var, and selected model profile fields while routing global sampling/transport defaults to Console Defaults.
 - Added safe save/revert handling for provider endpoints, credential env vars, and model profile values without persisting unedited stale profile values after model switches.
 - Added focused pure and mounted regressions for model profile loading/saving, Console model-switch inheritance, credential validation, endpoint handling, and provider readiness agreement.
+- Addressed PR review findings by preserving explicit Console session overrides across model switches, rejecting out-of-range model profile floats, strictly validating streaming input, and avoiding literal API key fixtures in tests.
 - Captured actual Textual-web/CDP screenshots for Settings provider/model profile and Console inherited defaults under `Docs/superpowers/qa/product-maturity/screen-qa/settings/`; user approved both screenshots before PR.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 

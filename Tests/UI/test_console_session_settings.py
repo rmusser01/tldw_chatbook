@@ -305,6 +305,69 @@ def test_default_console_session_settings_prefers_provider_model_profile() -> No
     assert settings.streaming is True
 
 
+def test_default_console_session_settings_prefers_chat_defaults_over_provider_scalars() -> None:
+    app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1",
+            "temperature": 0.9,
+            "top_p": 0.8,
+            "streaming": False,
+        },
+        "api_settings": {
+            "openai": {
+                "temperature": 0.7,
+                "top_p": 0.95,
+                "streaming": True,
+            },
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    assert settings.temperature == 0.9
+    assert settings.top_p == 0.8
+    assert settings.streaming is False
+
+
+def test_default_console_session_settings_skips_blank_model_profile_values() -> None:
+    app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1",
+            "temperature": 0.9,
+            "top_p": 0.8,
+            "streaming": False,
+        },
+        "api_settings": {
+            "openai": {
+                "temperature": 0.7,
+                "top_p": 0.95,
+                "streaming": True,
+                "model_defaults": {
+                    "gpt-4.1": {
+                        "temperature": "",
+                        "top_p": " ",
+                    },
+                },
+            },
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    assert settings.temperature == 0.9
+    assert settings.top_p == 0.8
+
+
 def test_summary_state_keeps_missing_model_row_compact() -> None:
     state = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="llama_cpp", model=None),
@@ -1470,7 +1533,7 @@ async def test_console_model_switch_inherits_selected_model_default_profile() ->
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {
         "openai": {
-            "api_key": "test-key",
+            "api_key_env_var": "OPENAI_API_KEY",
             "model_defaults": {
                 "gpt-4.1": {"temperature": 0.2, "top_p": 0.8, "streaming": True},
                 "gpt-4.1-mini": {"temperature": 0.45, "top_p": 0.9, "streaming": False},
@@ -1498,5 +1561,41 @@ async def test_console_model_switch_inherits_selected_model_default_profile() ->
         assert updated_settings is not None
         assert updated_settings.model == "gpt-4.1-mini"
         assert updated_settings.temperature == 0.45
+        assert updated_settings.top_p == 0.9
+        assert updated_settings.streaming is False
+
+
+@pytest.mark.asyncio
+async def test_console_model_switch_preserves_explicit_session_overrides() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-4.1"
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_key_env_var": "OPENAI_API_KEY",
+            "model_defaults": {
+                "gpt-4.1": {"temperature": 0.2, "top_p": 0.8, "streaming": True},
+                "gpt-4.1-mini": {"temperature": 0.45, "top_p": 0.9, "streaming": False},
+            },
+        },
+    }
+    app.providers_models = {"openai": ["gpt-4.1", "gpt-4.1-mini"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+
+        console._sync_compact_shell_controls(temperature="0.33")
+        console._sync_compact_shell_controls(model="gpt-4.1-mini")
+        await pilot.pause()
+
+        updated_settings = store.session_settings(session.id)
+        assert updated_settings is not None
+        assert updated_settings.model == "gpt-4.1-mini"
+        assert updated_settings.temperature == 0.33
         assert updated_settings.top_p == 0.9
         assert updated_settings.streaming is False
