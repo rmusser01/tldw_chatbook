@@ -581,7 +581,7 @@ class NavigationButton(Button):
     }
     
     NavigationButton:hover {
-        background: $accent 30%;
+        background: $surface-lighten-1;
         color: $text;
     }
     

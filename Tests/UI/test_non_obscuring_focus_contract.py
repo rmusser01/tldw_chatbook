@@ -611,9 +611,11 @@ def test_top_navigation_inline_focus_uses_hybrid_contract():
 
 def test_shared_navigation_button_uses_non_obscuring_active_and_focus_states():
     text = BASE_COMPONENTS.read_text(encoding="utf-8")
+    hover = css_block(text, "NavigationButton:hover")
     focus = css_block(text, "NavigationButton:focus")
     active = css_block(text, "NavigationButton.active")
     active_focus = css_block(text, "NavigationButton.active:focus")
+    assert_native_row_hover_state_contract(hover)
     assert_non_obscuring_focus(focus)
     assert "$ds-focus-bg" in focus or "$ds-surface-raised" in focus
     assert "border-left: thick" not in active
