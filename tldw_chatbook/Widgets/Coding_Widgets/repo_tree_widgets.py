@@ -77,7 +77,8 @@ class TreeNode(Widget):
     }
     
     .tree-expand-btn:hover {
-        background: $primary 20%;
+        background: $surface-lighten-1;
+        color: $text;
     }
     
     .tree-expand-spacer {

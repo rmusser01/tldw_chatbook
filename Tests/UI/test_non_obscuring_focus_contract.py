@@ -1107,7 +1107,9 @@ def test_bundled_media_selected_states_match_source_contracts():
 def test_repo_tree_widget_selected_state_matches_code_repo_contract():
     from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeNode
 
+    hover = css_block(TreeNode.DEFAULT_CSS, ".tree-expand-btn:hover")
     selected = css_block(TreeNode.DEFAULT_CSS, ".tree-node-selected")
+    assert_native_row_hover_state_contract(hover)
     assert_readable_selected_state_contract(selected)
     assert_no_dominant_selected_geometry(selected)
 
