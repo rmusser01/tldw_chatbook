@@ -1335,6 +1335,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _diagnostics_validation_and_reload_results(self) -> tuple[str, str, dict | None]:
         adapter = SettingsConfigAdapter()
+        try:
+            config_path = self._config_path()
         except Exception as exc:
             message = redact_secret_text(str(exc))
             source = "Config source: invalid"

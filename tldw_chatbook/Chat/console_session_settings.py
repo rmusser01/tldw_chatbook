@@ -603,7 +603,11 @@ def _endpoint_differs_for_provider(
     if provider_key in {"llama_cpp", "local_llamacpp"}:
         configured_endpoint = first_configured_endpoint(provider_settings)
         if not configured_endpoint:
-            return bool(normalize_generic_endpoint_for_compare(base_url))
+            selected = normalize_generic_endpoint_for_compare(
+                normalize_llamacpp_base_url(base_url)
+            )
+            default = normalize_generic_endpoint_for_compare(DEFAULT_LLAMACPP_BASE_URL)
+            return bool(selected) and selected != default
         selected = normalize_generic_endpoint_for_compare(normalize_llamacpp_base_url(base_url))
         configured = normalize_generic_endpoint_for_compare(normalize_llamacpp_base_url(configured_endpoint))
         return selected != configured
