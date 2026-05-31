@@ -539,6 +539,81 @@ def test_console_session_tab_active_state_uses_selected_contract():
             assert "$ds-action-focus" not in active
 
 
+def test_console_composer_action_availability_states_are_visually_distinct():
+    variables = VARIABLES.read_text(encoding="utf-8")
+    assert "$ds-text-disabled: $text-disabled;" in variables
+
+    for text in (
+        AGENTIC.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        console_button_base = next(
+            block
+            for block in css_blocks(text, "#console-send-message")
+            if "height: 1;" in block
+        )
+        secondary = css_block(text, ".console-action-secondary")
+        subdued = css_block(text, ".console-action-subdued")
+        disabled = css_block(text, ".console-action-disabled")
+        stop_active = css_block(text, "#console-stop-generation.console-stop-active")
+
+        assert "height: 1;" in console_button_base
+        assert "min-height: 1;" in console_button_base
+        assert "color:" not in console_button_base
+        assert "text-style:" not in console_button_base
+
+        assert "border: none;" in secondary
+        assert "background: $ds-surface-raised;" in secondary
+        assert "color: $ds-text-primary;" in secondary
+        assert "text-style: bold;" in secondary
+
+        assert "border: none;" in subdued
+        assert "background: $ds-surface-raised;" in subdued
+        assert "color: $ds-text-muted;" in subdued
+        assert "text-style: none;" in subdued
+        assert "text-style: bold underline;" not in subdued
+        assert "$primary" not in subdued
+        assert "$accent" not in subdued
+        assert "$warning" not in subdued
+        assert "$error" not in subdued
+
+        assert "border: none;" in disabled
+        assert "background: $ds-surface-panel;" in disabled
+        assert "color: $ds-text-disabled;" in disabled
+        assert "text-style: none;" in disabled
+        assert "text-style: bold underline;" not in disabled
+        assert "$primary" not in disabled
+        assert "$accent" not in disabled
+        assert "$warning" not in disabled
+        assert "$error" not in disabled
+
+        for selector in (
+            ".console-action-disabled:hover",
+            ".console-action-disabled:focus",
+            ".console-action-disabled:hover:focus",
+        ):
+            disabled_interaction = css_block(text, selector)
+            assert "border: none;" in disabled_interaction
+            assert "background: $ds-surface-panel;" in disabled_interaction
+            assert "color: $ds-text-disabled;" in disabled_interaction
+            assert "text-style: none;" in disabled_interaction
+            assert "text-style: bold underline;" not in disabled_interaction
+            assert "$ds-focus-bg" not in disabled_interaction
+            assert "$ds-focus-fg" not in disabled_interaction
+            assert "$primary" not in disabled_interaction
+            assert "$accent" not in disabled_interaction
+            assert "$warning" not in disabled_interaction
+            assert "$error" not in disabled_interaction
+
+        assert "border: none;" in stop_active
+        assert "background: $ds-status-warning 20%;" in stop_active
+        assert "color: $ds-text-primary;" in stop_active
+        assert "text-style: bold;" in stop_active
+        assert "$primary" not in stop_active
+        assert "$accent" not in stop_active
+        assert "$error" not in stop_active
+
+
 def test_library_mode_chip_active_states_use_selected_focus_contracts():
     for text in (
         AGENTIC.read_text(encoding="utf-8"),

@@ -1055,8 +1055,6 @@ ConsoleSettingsModal Select:focus {
 #console-save-chatbook {
     height: 1;
     min-height: 1;
-    color: $ds-text-primary;
-    text-style: bold;
 }
 
 #console-attach-context {
@@ -1083,12 +1081,28 @@ ConsoleSettingsModal Select:focus {
     text-style: bold;
 }
 
-.console-action-subdued,
-.console-action-disabled {
+.console-action-subdued {
     border: none;
     background: $ds-surface-raised;
-    color: $ds-text-primary;
-    text-style: bold;
+    color: $ds-text-muted;
+    text-style: none;
+}
+
+.console-action-disabled {
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-disabled;
+    text-style: none;
+}
+
+.console-action-disabled:hover,
+.console-action-disabled:focus,
+.console-action-disabled:hover:focus {
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-disabled;
+    text-style: none;
+    outline: none;
 }
 
 #console-stop-generation.console-stop-active {
