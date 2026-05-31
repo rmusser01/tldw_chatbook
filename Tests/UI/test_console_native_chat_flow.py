@@ -137,6 +137,11 @@ async def _wait_for_console_screen(host: ConsoleHarness, console, pilot) -> None
 
 def _select_llamacpp_console(console: ChatScreen) -> None:
     """Select the native llama.cpp path after mounted controls initialize."""
+    app_config = console.app_instance.app_config
+    api_settings = app_config.setdefault("api_settings", {})
+    llama_settings = api_settings.setdefault("llama_cpp", {})
+    llama_settings.setdefault("api_url", "http://127.0.0.1:9099/v1")
+    llama_settings.setdefault("model", "test-model")
     console._console_control_provider = "llama_cpp"
     console._console_control_model = "test-model"
     console._sync_console_control_bar()

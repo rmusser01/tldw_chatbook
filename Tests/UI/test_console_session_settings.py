@@ -1230,6 +1230,24 @@ def test_console_default_settings_keep_configured_model_without_legacy_model() -
     assert settings.model == "configured-model"
 
 
+def test_console_settings_summary_uses_effective_config_endpoint_for_llamacpp_defaults() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = None
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099/v1",
+            "model": "configured-model",
+        },
+    }
+    screen = ChatScreen(app)
+
+    summary_state = screen._build_console_settings_summary_state()
+
+    assert summary_state.endpoint_row == "Endpoint: http://127.0.0.1:9099"
+
+
 def test_console_readiness_uses_saved_session_settings_over_stale_global_provider() -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "openai"

@@ -251,6 +251,17 @@ def test_readiness_allows_configured_url_with_trailing_slash() -> None:
     assert readiness.native_send_supported is True
 
 
+def test_readiness_allows_llamacpp_configured_v1_endpoint_normalized_to_root() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="llama_cpp", model="llama3", base_url="http://127.0.0.1:9099"),
+        app_config={"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099/v1"}}},
+        environ={},
+    )
+
+    assert readiness.label == "Ready"
+    assert readiness.native_send_supported is True
+
+
 def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:
     readiness = build_console_settings_readiness(
         ConsoleSessionSettings(
