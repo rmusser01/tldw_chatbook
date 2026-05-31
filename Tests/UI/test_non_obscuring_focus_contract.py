@@ -1104,7 +1104,7 @@ def test_bundled_media_selected_states_match_source_contracts():
         assert_readable_selected_state_contract(css_block(text, selector))
 
 
-def test_repo_tree_widget_selected_state_matches_code_repo_contract():
+def test_repo_tree_widget_states_match_code_repo_contract():
     from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeNode
 
     hover = css_block(TreeNode.DEFAULT_CSS, ".tree-expand-btn:hover")
@@ -1114,6 +1114,12 @@ def test_repo_tree_widget_selected_state_matches_code_repo_contract():
     assert_native_row_hover_state_contract(source_hover)
     assert_readable_selected_state_contract(selected)
     assert_no_dominant_selected_geometry(selected)
+
+    for text in (
+        CODE_REPO.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        assert_native_row_hover_state_contract(css_block(text, ".tree-expand-btn:hover"))
 
 
 def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
