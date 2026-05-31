@@ -262,6 +262,38 @@ def test_readiness_allows_llamacpp_configured_v1_endpoint_normalized_to_root() -
     assert readiness.native_send_supported is True
 
 
+def test_readiness_allows_llamacpp_default_endpoint_without_saved_config() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="llama3",
+            base_url=session_settings.DEFAULT_LLAMACPP_BASE_URL,
+        ),
+        app_config={"chat_defaults": {"provider": "llama_cpp", "model": "llama3"}},
+        environ={},
+    )
+
+    assert readiness.label == "Ready"
+    assert readiness.native_send_supported is True
+
+
+def test_readiness_blocks_llamacpp_custom_endpoint_without_saved_config() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="llama3",
+            base_url="http://127.0.0.1:9191",
+        ),
+        app_config={"chat_defaults": {"provider": "llama_cpp", "model": "llama3"}},
+        environ={},
+    )
+
+    assert readiness.label == "Endpoint not saved"
+    assert readiness.native_send_supported is False
+    assert "Selected endpoint: http://127.0.0.1:9191" in readiness.detail
+    assert "Saved endpoint: not saved" in readiness.detail
+
+
 def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:
     readiness = build_console_settings_readiness(
         ConsoleSessionSettings(
