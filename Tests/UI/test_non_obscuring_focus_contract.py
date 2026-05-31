@@ -581,7 +581,7 @@ def test_console_settings_modal_controls_use_compact_focus_outline(
     base_selector: str,
     focus_selector: str,
 ):
-    for label, text in (
+    for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
     ):
@@ -605,7 +605,7 @@ def test_console_settings_modal_controls_use_compact_focus_outline(
 
 @pytest.mark.unit
 def test_console_transcript_focus_uses_stable_border_geometry():
-    for label, text in (
+    for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
     ):
@@ -621,7 +621,7 @@ def test_console_transcript_focus_uses_stable_border_geometry():
 
 @pytest.mark.unit
 def test_console_transcript_selected_message_uses_selected_contract_without_geometry():
-    for label, text in (
+    for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
     ):

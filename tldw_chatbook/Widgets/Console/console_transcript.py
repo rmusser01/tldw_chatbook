@@ -73,8 +73,6 @@ class ConsoleTranscriptMessage(Static):
             id=f"console-message-{message.id}",
             classes=classes,
         )
-        if selected:
-            self.styles.border = ("solid", "grey")
 
     def sync_message(self, message: ConsoleChatMessage, *, selected: bool = False) -> None:
         """Update row content and selection styling without remounting the row."""
@@ -82,10 +80,8 @@ class ConsoleTranscriptMessage(Static):
         self.update(f"{_message_role_label(message)}\n{_message_body(message)}")
         if selected:
             self.add_class("console-transcript-message-selected")
-            self.styles.border = ("solid", "grey")
         else:
             self.remove_class("console-transcript-message-selected")
-            self.styles.border = ("none", "grey")
 
     def on_click(self, event: Click) -> None:
         event.stop()

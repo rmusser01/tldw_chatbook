@@ -14,7 +14,10 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_message_actions import ConsoleSaveDestination
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
-from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.Widgets.Console.console_transcript import (
+    ConsoleTranscript,
+    ConsoleTranscriptMessage,
+)
 
 
 class TranscriptHarness(App):
@@ -241,6 +244,24 @@ def test_console_transcript_selected_message_shows_action_row():
     assert "|" not in plain
 
 
+def test_console_transcript_selected_message_does_not_apply_inline_border_geometry():
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1")
+    widget = ConsoleTranscriptMessage(message, selected=True)
+
+    assert widget.has_class("console-transcript-message-selected")
+    assert "solid" not in repr(widget.styles.border)
+
+    widget.sync_message(message, selected=False)
+
+    assert not widget.has_class("console-transcript-message-selected")
+    assert "solid" not in repr(widget.styles.border)
+
+    widget.sync_message(message, selected=True)
+
+    assert widget.has_class("console-transcript-message-selected")
+    assert "solid" not in repr(widget.styles.border)
+
+
 def test_console_transcript_action_row_stays_within_terminal_width_budget():
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1")
     transcript = ConsoleTranscript()
@@ -350,7 +371,7 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
 
 
 @pytest.mark.asyncio
-async def test_console_selected_message_has_visible_terminal_frame():
+async def test_console_selected_message_uses_class_without_inline_frame():
     app = TranscriptHarness()
 
     async with app.run_test(size=(100, 32)) as pilot:
@@ -359,10 +380,7 @@ async def test_console_selected_message_has_visible_terminal_frame():
         selected = app.query_one("#console-message-m2")
 
     assert "console-transcript-message-selected" in selected.classes
-    assert selected.styles.border.top[0] == "solid"
-    assert selected.styles.border.right[0] == "solid"
-    assert selected.styles.border.bottom[0] == "solid"
-    assert selected.styles.border.left[0] == "solid"
+    assert "solid" not in repr(selected.styles.border)
 
 
 @pytest.mark.asyncio
