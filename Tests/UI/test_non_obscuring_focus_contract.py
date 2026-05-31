@@ -1062,11 +1062,17 @@ def test_media_selected_and_active_states_follow_shared_contracts():
         assert_readable_selected_state_contract(css_block(media_text, selector))
 
     nav_text = MEDIA_NAVIGATION_PANEL.read_text(encoding="utf-8")
+    assert_native_row_hover_state_contract(
+        css_block(nav_text, "MediaNavigationPanel .media-type-button:hover")
+    )
     assert_readable_inline_selected_state_contract(
         css_block(nav_text, "MediaNavigationPanel .media-type-button.active")
     )
 
     list_text = MEDIA_LIST_PANEL.read_text(encoding="utf-8")
+    assert_native_row_hover_state_contract(
+        css_block(list_text, "MediaListPanel .media-item:hover")
+    )
     assert_readable_inline_selected_state_contract(
         css_block(list_text, "MediaListPanel .media-item.selected")
     )

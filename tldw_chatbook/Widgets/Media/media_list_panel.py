@@ -94,7 +94,8 @@ class MediaListPanel(Container):
     }
     
     MediaListPanel .media-item:hover {
-        background: $accent 50%;
+        background: $surface-lighten-1;
+        color: $text;
     }
     
     MediaListPanel .media-item.selected {

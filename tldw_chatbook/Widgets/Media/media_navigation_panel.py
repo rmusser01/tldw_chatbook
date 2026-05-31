@@ -78,7 +78,8 @@ class MediaNavigationPanel(Container):
     }
     
     MediaNavigationPanel .media-type-button:hover {
-        background: $accent 75%;
+        background: $surface-lighten-1;
+        color: $text;
     }
     
     MediaNavigationPanel .media-type-button.active {
