@@ -200,7 +200,7 @@ Implementation rules:
 - Normalize providers with `provider_config_key()` from `tldw_chatbook.Chat.provider_readiness`.
 - Normalize llama.cpp base URLs with `normalize_llamacpp_base_url()` from `tldw_chatbook.Chat.console_provider_gateway`.
 - Implement `build_console_provider_options()` and `build_console_model_options()` as pure helpers over the configured provider/model registry. They must include all configured providers and never filter to Console-ready providers.
-- Use `chat_defaults` first for scalar sampling values, then provider-specific `api_settings.<provider>` where `chat_defaults` is absent.
+- Use provider+model profile defaults first for scalar sampling values, then `chat_defaults`, then provider-specific `api_settings.<provider>` where `chat_defaults` is absent.
 - Prefer the explicit `model` argument, then `api_settings.<provider>.model`, `api_model`, `default_model`, then `chat_defaults.model`.
 - Keep functions side-effect-free and network-free.
 

@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsContextEstimate,
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
+    build_default_console_session_settings,
     build_console_settings_summary_state,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -258,6 +259,113 @@ def test_summary_state_appends_non_ready_readiness_to_model_row() -> None:
     assert state.provider_row == "Provider: llama_cpp"
     assert state.model_row == "Model: model-a (WIP)"
     assert state.readiness_label == "WIP"
+
+
+def test_default_console_session_settings_prefers_provider_model_profile() -> None:
+    app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1",
+            "temperature": 0.9,
+            "top_p": 0.8,
+            "streaming": False,
+        },
+        "api_settings": {
+            "openai": {
+                "temperature": 0.7,
+                "top_p": 0.95,
+                "streaming": False,
+                "model_defaults": {
+                    "gpt-4.1": {
+                        "temperature": 0.2,
+                        "top_p": 0.88,
+                        "min_p": 0.04,
+                        "top_k": 40,
+                        "max_tokens": 1234,
+                        "streaming": True,
+                    },
+                },
+            },
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    assert settings.provider == "openai"
+    assert settings.model == "gpt-4.1"
+    assert settings.temperature == 0.2
+    assert settings.top_p == 0.88
+    assert settings.min_p == 0.04
+    assert settings.top_k == 40
+    assert settings.max_tokens == 1234
+    assert settings.streaming is True
+
+
+def test_default_console_session_settings_prefers_chat_defaults_over_provider_scalars() -> None:
+    app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1",
+            "temperature": 0.9,
+            "top_p": 0.8,
+            "streaming": False,
+        },
+        "api_settings": {
+            "openai": {
+                "temperature": 0.7,
+                "top_p": 0.95,
+                "streaming": True,
+            },
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    assert settings.temperature == 0.9
+    assert settings.top_p == 0.8
+    assert settings.streaming is False
+
+
+def test_default_console_session_settings_skips_blank_model_profile_values() -> None:
+    app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1",
+            "temperature": 0.9,
+            "top_p": 0.8,
+            "streaming": False,
+        },
+        "api_settings": {
+            "openai": {
+                "temperature": 0.7,
+                "top_p": 0.95,
+                "streaming": True,
+                "model_defaults": {
+                    "gpt-4.1": {
+                        "temperature": "",
+                        "top_p": " ",
+                    },
+                },
+            },
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    assert settings.temperature == 0.9
+    assert settings.top_p == 0.8
 
 
 def test_summary_state_keeps_missing_model_row_compact() -> None:
@@ -1415,3 +1523,79 @@ async def test_console_new_native_tab_receives_default_settings_snapshot() -> No
         assert settings is not None
         assert settings.provider == "llama_cpp"
         assert settings.model == "configured-model"
+
+
+@pytest.mark.asyncio
+async def test_console_model_switch_inherits_selected_model_default_profile() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-4.1"
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_key_env_var": "OPENAI_API_KEY",
+            "model_defaults": {
+                "gpt-4.1": {"temperature": 0.2, "top_p": 0.8, "streaming": True},
+                "gpt-4.1-mini": {"temperature": 0.45, "top_p": 0.9, "streaming": False},
+            },
+        },
+    }
+    app.providers_models = {"openai": ["gpt-4.1", "gpt-4.1-mini"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+
+        initial_settings = store.session_settings(session.id)
+        assert initial_settings is not None
+        assert initial_settings.model == "gpt-4.1"
+        assert initial_settings.temperature == 0.2
+
+        console._sync_compact_shell_controls(model="gpt-4.1-mini")
+        await pilot.pause()
+
+        updated_settings = store.session_settings(session.id)
+        assert updated_settings is not None
+        assert updated_settings.model == "gpt-4.1-mini"
+        assert updated_settings.temperature == 0.45
+        assert updated_settings.top_p == 0.9
+        assert updated_settings.streaming is False
+
+
+@pytest.mark.asyncio
+async def test_console_model_switch_preserves_explicit_session_overrides() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-4.1"
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_key_env_var": "OPENAI_API_KEY",
+            "model_defaults": {
+                "gpt-4.1": {"temperature": 0.2, "top_p": 0.8, "streaming": True},
+                "gpt-4.1-mini": {"temperature": 0.45, "top_p": 0.9, "streaming": False},
+            },
+        },
+    }
+    app.providers_models = {"openai": ["gpt-4.1", "gpt-4.1-mini"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+
+        console._sync_compact_shell_controls(temperature="0.33")
+        console._sync_compact_shell_controls(model="gpt-4.1-mini")
+        await pilot.pause()
+
+        updated_settings = store.session_settings(session.id)
+        assert updated_settings is not None
+        assert updated_settings.model == "gpt-4.1-mini"
+        assert updated_settings.temperature == 0.33
+        assert updated_settings.top_p == 0.9
+        assert updated_settings.streaming is False

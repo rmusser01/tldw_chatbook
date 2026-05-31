@@ -234,23 +234,26 @@ def build_default_console_session_settings(
     chat_defaults = _mapping_value(app_config, "chat_defaults")
     configured_provider = provider_config_key(_string_value(provider) or _string_setting(chat_defaults, "provider"))
     provider_settings = _provider_settings(app_config, configured_provider)
+    configured_model = _first_string(
+        model,
+        provider_settings.get("model"),
+        provider_settings.get("api_model"),
+        provider_settings.get("default_model"),
+        chat_defaults.get("model"),
+    )
+    model_profile = _model_default_profile(provider_settings, configured_model)
+    default_sources = (model_profile, chat_defaults, provider_settings)
 
     return ConsoleSessionSettings(
         provider=configured_provider,
-        model=_first_string(
-            model,
-            provider_settings.get("model"),
-            provider_settings.get("api_model"),
-            provider_settings.get("default_model"),
-            chat_defaults.get("model"),
-        ),
+        model=configured_model,
         base_url=_default_base_url(configured_provider, provider_settings),
-        temperature=_float_setting(chat_defaults, provider_settings, "temperature", 0.7),
-        top_p=_float_setting(chat_defaults, provider_settings, "top_p", 0.95),
-        min_p=_optional_float_setting(chat_defaults, provider_settings, "min_p"),
-        top_k=_optional_int_setting(chat_defaults, provider_settings, "top_k"),
-        max_tokens=_optional_int_setting(chat_defaults, provider_settings, "max_tokens"),
-        streaming=_bool_setting(chat_defaults, provider_settings, "streaming", True),
+        temperature=_float_setting_from_sources(default_sources, "temperature", 0.7),
+        top_p=_float_setting_from_sources(default_sources, "top_p", 0.95),
+        min_p=_optional_float_setting_from_sources(default_sources, "min_p"),
+        top_k=_optional_int_setting_from_sources(default_sources, "top_k"),
+        max_tokens=_optional_int_setting_from_sources(default_sources, "max_tokens"),
+        streaming=_bool_setting_from_sources(default_sources, "streaming", True),
     )
 
 
@@ -539,6 +542,20 @@ def _provider_settings(app_config: Mapping[str, object], provider_key: str) -> M
     return value if isinstance(value, Mapping) else {}
 
 
+def _model_default_profile(
+    provider_settings: Mapping[str, object],
+    model: str | None,
+) -> Mapping[str, object]:
+    model_name = _string_value(model)
+    if not model_name:
+        return {}
+    model_defaults = provider_settings.get("model_defaults", {})
+    if not isinstance(model_defaults, Mapping):
+        return {}
+    profile = model_defaults.get(model_name, {})
+    return profile if isinstance(profile, Mapping) else {}
+
+
 def _has_provider_settings_key(app_config: Mapping[str, object], provider_key: str) -> bool:
     api_settings = _mapping_value(app_config, "api_settings")
     return any(provider_config_key(configured_provider) == provider_key for configured_provider in api_settings)
@@ -626,6 +643,90 @@ def _float_setting(
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _setting_value_from_sources(
+    sources: Sequence[Mapping[str, object]],
+    key: str,
+    default: object = None,
+) -> object:
+    for source in sources:
+        if key in source:
+            value = source.get(key)
+            if not _is_blank_value(value):
+                return value
+    return default
+
+
+def _float_setting_from_sources(
+    sources: Sequence[Mapping[str, object]],
+    key: str,
+    default: float,
+) -> float:
+    for source in sources:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if _is_blank_value(value):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _optional_float_setting_from_sources(
+    sources: Sequence[Mapping[str, object]],
+    key: str,
+) -> float | None:
+    for source in sources:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if _is_blank_value(value):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _optional_int_setting_from_sources(
+    sources: Sequence[Mapping[str, object]],
+    key: str,
+) -> int | None:
+    for source in sources:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if _is_blank_value(value):
+            continue
+        parsed = _parse_optional_int(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _bool_setting_from_sources(
+    sources: Sequence[Mapping[str, object]],
+    key: str,
+    default: bool,
+) -> bool:
+    for source in sources:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1"}:
+                return True
+            if normalized in {"false", "0"}:
+                return False
+    return default
 
 
 def _optional_float_setting(

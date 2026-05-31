@@ -59,6 +59,11 @@ logger = logging.getLogger(__name__)
 
 MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
+PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
+    "model_profile_temperature": "temperature",
+    "model_profile_top_p": "top_p",
+    "model_profile_streaming": "streaming",
+}
 API_URL_PROVIDER_KEYS = {
     "aphrodite",
     "custom",
@@ -157,6 +162,8 @@ class SettingsScreen(BaseAppScreen):
         self._provider_test_result = "Provider test has not run."
         self._provider_save_result = "Provider settings have not been saved this session."
         self._syncing_provider_endpoint = False
+        self._syncing_provider_credential_env_var = False
+        self._syncing_provider_model_profile = False
         self._syncing_console_threshold = False
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
@@ -280,12 +287,14 @@ class SettingsScreen(BaseAppScreen):
                     "chat_defaults.model",
                     "api_settings.<provider>.endpoint",
                     "api_settings.<provider>.api_key_env_var",
+                    "api_settings.<provider>.model_defaults.<model>",
                 ),
                 reads_runtime_state_from=("Console provider readiness",),
                 writes_allowed=True,
                 runtime_owner="Settings persisted defaults; Console runtime selection",
                 boundary_copy=(
-                    "Provider identity, model, endpoint, and credential source are shared with Console."
+                    "Provider, default model, endpoint, credential source, and selected "
+                    "provider+model profile defaults are shared with Console."
                 ),
                 recovery_copy=(
                     "Test provider readiness, then use Console Defaults for sampling and transport settings."
@@ -1374,11 +1383,16 @@ class SettingsScreen(BaseAppScreen):
     def _provider_loaded_setting_values(self) -> dict[str, object]:
         resolved = resolve_effective_provider_model(self.app_instance)
         provider = str(resolved.provider or "").strip()
+        model = str(resolved.model or "").strip()
+        profile = self._provider_model_profile(provider, model)
         return {
             "provider": provider,
-            "model": str(resolved.model or "").strip(),
+            "model": model,
             "endpoint": self._provider_endpoint_value(provider),
             "credential_env_var": self._provider_credential_env_var(provider),
+            "model_profile_temperature": profile.get("temperature", ""),
+            "model_profile_top_p": profile.get("top_p", ""),
+            "model_profile_streaming": profile.get("streaming", ""),
         }
 
     def _provider_setting_values(self) -> dict[str, object]:
@@ -1389,6 +1403,51 @@ class SettingsScreen(BaseAppScreen):
             else value
             for key, value in loaded.items()
         }
+
+    @staticmethod
+    def _normalise_optional_float(
+        value: object,
+        *,
+        min_value: float,
+        max_value: float,
+        label: str,
+    ) -> float | str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if not validate_number_range(text, min_val=min_value, max_val=max_value):
+            raise ValueError(f"{label} must be between {min_value:.1f} and {max_value:.1f}.")
+        return float(text)
+
+    def _normalise_model_profile_temperature(self, value: object) -> float | str:
+        return self._normalise_optional_float(
+            value,
+            min_value=0.0,
+            max_value=2.0,
+            label="Temperature",
+        )
+
+    def _normalise_model_profile_top_p(self, value: object) -> float | str:
+        return self._normalise_optional_float(
+            value,
+            min_value=0.0,
+            max_value=1.0,
+            label="Top P",
+        )
+
+    @staticmethod
+    def _normalise_optional_bool(value: object) -> bool | str:
+        if isinstance(value, bool):
+            return value
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        normalized = text.lower()
+        if normalized in {"true", "1"}:
+            return True
+        if normalized in {"false", "0"}:
+            return False
+        raise ValueError("Streaming must be true or false.")
 
     def _provider_form_values_from_widgets(self) -> dict[str, object]:
         loaded_values = self._provider_loaded_setting_values()
@@ -1411,11 +1470,23 @@ class SettingsScreen(BaseAppScreen):
             "#settings-provider-credential-env-var",
             Input,
         ).value.strip()
+        model_profile_temperature = self._normalise_model_profile_temperature(
+            self.query_one("#settings-model-profile-temperature", Input).value
+        )
+        model_profile_top_p = self._normalise_model_profile_top_p(
+            self.query_one("#settings-model-profile-top-p", Input).value
+        )
+        model_profile_streaming = self._normalise_optional_bool(
+            self.query_one("#settings-model-profile-streaming", Input).value
+        )
         return {
             "provider": provider,
             "model": model,
             "endpoint": endpoint,
             "credential_env_var": credential_env_var,
+            "model_profile_temperature": model_profile_temperature,
+            "model_profile_top_p": model_profile_top_p,
+            "model_profile_streaming": model_profile_streaming,
         }
 
     def _stage_provider_value(self, key: str, value: object) -> None:
@@ -1472,6 +1543,97 @@ class SettingsScreen(BaseAppScreen):
             self.app_instance.chat_api_model_value = model
         if hasattr(self.app_instance, "chat_model_value"):
             self.app_instance.chat_model_value = model
+
+    def _provider_model_defaults(self, provider: str) -> Mapping[str, object]:
+        model_defaults = self._provider_config(provider).get("model_defaults", {})
+        return model_defaults if isinstance(model_defaults, Mapping) else {}
+
+    def _provider_model_profile(self, provider: str, model: str) -> Mapping[str, object]:
+        model_name = str(model or "").strip()
+        if not model_name:
+            return {}
+        profile = self._provider_model_defaults(provider).get(model_name, {})
+        return profile if isinstance(profile, Mapping) else {}
+
+    def _updated_model_defaults_for_values(
+        self,
+        provider: str,
+        model: str,
+        values: Mapping[str, object],
+    ) -> dict[str, object]:
+        model_name = str(model or "").strip()
+        model_defaults = copy.deepcopy(dict(self._provider_model_defaults(provider)))
+        current_profile = model_defaults.get(model_name, {})
+        next_profile = copy.deepcopy(current_profile) if isinstance(current_profile, Mapping) else {}
+        for draft_key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items():
+            value = values.get(draft_key, "")
+            if value == "":
+                next_profile.pop(profile_key, None)
+            else:
+                next_profile[profile_key] = value
+        if next_profile:
+            model_defaults[model_name] = next_profile
+        else:
+            model_defaults.pop(model_name, None)
+        return model_defaults
+
+    @staticmethod
+    def _profile_input_value(value: object) -> str:
+        if isinstance(value, bool):
+            return str(value).lower()
+        return str(value if value is not None else "")
+
+    def _clear_provider_auxiliary_draft_keys(self) -> None:
+        draft = self._provider_draft()
+        if draft is None:
+            return
+        for key in (
+            "endpoint",
+            "credential_env_var",
+            *PROVIDER_MODEL_PROFILE_FIELD_KEYS,
+        ):
+            draft.values.pop(key, None)
+            draft.originals.pop(key, None)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
+
+    def _clear_provider_model_profile_draft_keys(self) -> None:
+        draft = self._provider_draft()
+        if draft is None:
+            return
+        for key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
+            draft.values.pop(key, None)
+            draft.originals.pop(key, None)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
+
+    def _sync_provider_credential_widget(self, provider: str) -> None:
+        try:
+            credential_input = self.query_one("#settings-provider-credential-env-var", Input)
+        except QueryError:
+            return
+        self._syncing_provider_credential_env_var = True
+        try:
+            credential_input.value = self._provider_credential_env_var(provider)
+        finally:
+            self._syncing_provider_credential_env_var = False
+
+    def _sync_provider_model_profile_widgets(self, provider: str, model: str) -> None:
+        profile = self._provider_model_profile(provider, model)
+        input_values = {
+            "#settings-model-profile-temperature": profile.get("temperature", ""),
+            "#settings-model-profile-top-p": profile.get("top_p", ""),
+            "#settings-model-profile-streaming": profile.get("streaming", ""),
+        }
+        self._syncing_provider_model_profile = True
+        try:
+            for selector, value in input_values.items():
+                try:
+                    self.query_one(selector, Input).value = self._profile_input_value(value)
+                except QueryError:
+                    pass
+        finally:
+            self._syncing_provider_model_profile = False
 
     def _provider_endpoint_setting_key(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -1815,7 +1977,7 @@ class SettingsScreen(BaseAppScreen):
                     placeholder=self._provider_endpoint_placeholder(str(values["provider"])),
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("API key env var", classes="settings-input-label")
+                yield Static("Credential env", classes="settings-input-label")
                 yield Input(
                     value=str(values["credential_env_var"]),
                     id="settings-provider-credential-env-var",
@@ -1847,6 +2009,38 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_endpoint_row(str(values["provider"])).removeprefix("Endpoint key: "),
                 identifier="settings-provider-endpoint-key",
             )
+            yield Static("Selected model defaults", classes="destination-section")
+            yield Static(
+                "Global fallbacks live under Console Defaults; this panel saves only "
+                "the selected provider+model profile.",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Temperature", classes="settings-input-label")
+                yield Input(
+                    value=str(values["model_profile_temperature"]),
+                    id="settings-model-profile-temperature",
+                    classes="settings-compact-input",
+                    placeholder="0.0 - 2.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Top P", classes="settings-input-label")
+                yield Input(
+                    value=str(values["model_profile_top_p"]),
+                    id="settings-model-profile-top-p",
+                    classes="settings-compact-input",
+                    placeholder="0.0 - 1.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Streaming", classes="settings-input-label")
+                yield Input(
+                    value=str(values["model_profile_streaming"]).lower()
+                    if isinstance(values["model_profile_streaming"], bool)
+                    else str(values["model_profile_streaming"]),
+                    id="settings-model-profile-streaming",
+                    classes="settings-compact-input",
+                    placeholder="true or false",
+                )
             yield Static("Provider readiness", classes="destination-section")
             yield self._detail_row(
                 "Readiness",
@@ -2299,26 +2493,19 @@ class SettingsScreen(BaseAppScreen):
                 endpoint_input.placeholder = self._provider_endpoint_placeholder(provider)
             finally:
                 self._syncing_provider_endpoint = False
-        try:
-            self.query_one("#settings-provider-credential-env-var", Input).value = (
-                self._provider_credential_env_var(provider)
-            )
-        except QueryError:
-            pass
-        draft = self._provider_draft()
-        if draft is not None:
-            draft.values.pop("endpoint", None)
-            draft.originals.pop("endpoint", None)
-            draft.values.pop("credential_env_var", None)
-            draft.originals.pop("credential_env_var", None)
-            if not draft.is_dirty:
-                self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
+        self._sync_provider_credential_widget(provider)
+        model = str(self._provider_setting_values().get("model") or "")
+        self._sync_provider_model_profile_widgets(provider, model)
+        self._clear_provider_auxiliary_draft_keys()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
     @on(Input.Changed, "#settings-model-value")
     def handle_model_value_changed(self, event: Input.Changed) -> None:
         self._stage_provider_value("model", event.value.strip() or None)
+        provider = str(self._provider_setting_values().get("provider") or "")
+        self._sync_provider_model_profile_widgets(provider, event.value.strip())
+        self._clear_provider_model_profile_draft_keys()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -2333,7 +2520,49 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-provider-credential-env-var")
     def handle_provider_credential_env_var_changed(self, event: Input.Changed) -> None:
+        if self._syncing_provider_credential_env_var:
+            self._update_provider_dynamic_widgets()
+            return
         self._stage_provider_value("credential_env_var", event.value.strip())
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Input.Changed, "#settings-model-profile-temperature")
+    def handle_model_profile_temperature_changed(self, event: Input.Changed) -> None:
+        if self._syncing_provider_model_profile:
+            return
+        try:
+            value = self._normalise_model_profile_temperature(event.value)
+        except ValueError:
+            value = event.value
+        self._stage_provider_value("model_profile_temperature", value)
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Input.Changed, "#settings-model-profile-top-p")
+    def handle_model_profile_top_p_changed(self, event: Input.Changed) -> None:
+        if self._syncing_provider_model_profile:
+            return
+        try:
+            value = self._normalise_model_profile_top_p(event.value)
+        except ValueError:
+            value = event.value
+        self._stage_provider_value("model_profile_top_p", value)
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Input.Changed, "#settings-model-profile-streaming")
+    def handle_model_profile_streaming_changed(self, event: Input.Changed) -> None:
+        if self._syncing_provider_model_profile:
+            return
+        try:
+            value = self._normalise_optional_bool(event.value)
+        except ValueError:
+            value = event.value
+        self._stage_provider_value(
+            "model_profile_streaming",
+            value,
+        )
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -2403,10 +2632,17 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify(self._guided_action_message(category), severity="information")
             return
         if category is SettingsCategoryId.PROVIDERS_MODELS:
-            values = self._provider_form_values_from_widgets()
+            try:
+                values = self._provider_form_values_from_widgets()
+            except ValueError as exc:
+                self._provider_save_result = str(exc) or "Model profile values are invalid."
+                self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self.app.notify(self._provider_save_result, severity="error")
+                return
             loaded_values = self._provider_loaded_setting_values()
             chat_defaults_keys = {"provider", "model"}
             provider = str(values.get("provider") or "").strip()
+            model = str(values.get("model") or "").strip()
             endpoint = str(values.get("endpoint") or "").strip()
             credential_env_var = str(values.get("credential_env_var") or "").strip()
             draft = self._settings_drafts.get(category)
@@ -2440,6 +2676,13 @@ class SettingsScreen(BaseAppScreen):
                 for key, value in values.items()
                 if key in chat_defaults_keys and loaded_values.get(key) != value
             }
+            dirty_keys = draft.dirty_keys if draft is not None else set()
+            selected_profile = self._provider_model_profile(provider, model)
+            model_profile_dirty = any(
+                key in dirty_keys
+                and values.get(key, "") != selected_profile.get(profile_key, "")
+                for key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
+            )
             provider_key = provider_config_key(provider)
             provider_section_key, _provider_config = self._provider_config_entry(provider)
             current_provider_endpoint = self._provider_endpoint_value(provider)
@@ -2458,7 +2701,19 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text("#settings-provider-save-result", self._provider_save_result)
                 self.app.notify(self._provider_save_result, severity="error")
                 return
-            if not dirty_values and not endpoint_dirty and not credential_dirty:
+            if model_profile_dirty and not model:
+                self._provider_save_result = "Model is required before saving a model default profile."
+                self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self.app.notify(self._provider_save_result, severity="error")
+                return
+            if model_profile_dirty and not provider_key:
+                self._provider_save_result = (
+                    "Provider is required before saving a model default profile."
+                )
+                self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self.app.notify(self._provider_save_result, severity="error")
+                return
+            if not dirty_values and not endpoint_dirty and not credential_dirty and not model_profile_dirty:
                 self._settings_drafts.pop(category, None)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)
@@ -2482,6 +2737,19 @@ class SettingsScreen(BaseAppScreen):
                     provider_settings_values,
                 )
                 saved = saved and provider_settings_saved
+            next_model_defaults = None
+            if model_profile_dirty and provider_key and model:
+                provider_save_key = provider_section_key or provider_key
+                next_model_defaults = self._updated_model_defaults_for_values(
+                    provider,
+                    model,
+                    values,
+                )
+                profile_saved = SettingsConfigAdapter().save_values(
+                    f"api_settings.{provider_save_key}",
+                    {"model_defaults": next_model_defaults},
+                )
+                saved = saved and profile_saved
             if saved:
                 defaults = self._chat_defaults()
                 defaults.update(dirty_values)
@@ -2490,7 +2758,7 @@ class SettingsScreen(BaseAppScreen):
                         str(values.get("provider") or "").strip(),
                         str(values.get("model") or "").strip(),
                     )
-                if provider_settings_values and provider_key:
+                if (endpoint_dirty or credential_dirty or next_model_defaults is not None) and provider_key:
                     app_config = getattr(self.app_instance, "app_config", None)
                     if not isinstance(app_config, dict):
                         self.app_instance.app_config = {}
@@ -2505,6 +2773,8 @@ class SettingsScreen(BaseAppScreen):
                         provider_settings = {}
                         api_settings[provider_save_key] = provider_settings
                     provider_settings.update(provider_settings_values)
+                    if next_model_defaults is not None:
+                        provider_settings["model_defaults"] = next_model_defaults
                 self._settings_drafts.pop(category, None)
                 self._provider_save_result = "Provider settings saved."
                 self._set_static_text("#settings-provider-save-result", self._provider_save_result)
@@ -2577,6 +2847,18 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one("#settings-provider-endpoint-value", Input).value = str(values["endpoint"])
                 self.query_one("#settings-provider-credential-env-var", Input).value = str(
                     values["credential_env_var"]
+                )
+                self.query_one("#settings-model-profile-temperature", Input).value = str(
+                    values["model_profile_temperature"]
+                )
+                self.query_one("#settings-model-profile-top-p", Input).value = str(
+                    values["model_profile_top_p"]
+                )
+                profile_streaming = values["model_profile_streaming"]
+                self.query_one("#settings-model-profile-streaming", Input).value = (
+                    str(profile_streaming).lower()
+                    if isinstance(profile_streaming, bool)
+                    else str(profile_streaming)
                 )
             except QueryError:
                 pass

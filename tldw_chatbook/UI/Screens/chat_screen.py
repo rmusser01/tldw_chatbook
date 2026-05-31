@@ -3284,11 +3284,48 @@ class ChatScreen(BaseAppScreen):
         try:
             settings = self._ensure_active_console_session_settings()
             next_settings = settings
-            if provider is not None:
-                next_settings = replace(next_settings, provider=str(provider).strip())
-            if model is not None:
-                model_value = str(model).strip() if _has_selected_text(model) else None
-                next_settings = replace(next_settings, model=model_value)
+            if provider is not None or model is not None:
+                app_config = getattr(self.app_instance, "app_config", {}) or {}
+                current_defaults = build_default_console_session_settings(
+                    app_config,
+                    settings.provider,
+                    settings.model,
+                )
+                override_fields = {
+                    field: getattr(settings, field)
+                    for field in (
+                        "temperature",
+                        "top_p",
+                        "min_p",
+                        "top_k",
+                        "max_tokens",
+                        "streaming",
+                    )
+                    if getattr(settings, field) != getattr(current_defaults, field)
+                }
+                target_provider = (
+                    str(provider).strip()
+                    if provider is not None and _has_selected_text(provider)
+                    else settings.provider
+                )
+                target_model = (
+                    str(model).strip()
+                    if model is not None and _has_selected_text(model)
+                    else settings.model
+                )
+                next_settings = build_default_console_session_settings(
+                    app_config,
+                    target_provider,
+                    target_model,
+                )
+                if model is not None and not _has_selected_text(model):
+                    next_settings = replace(next_settings, model=None)
+                next_settings = replace(
+                    next_settings,
+                    **override_fields,
+                    persona_label=settings.persona_label,
+                    character_label=settings.character_label,
+                )
             if temperature is not None:
                 try:
                     next_settings = replace(
