@@ -46,7 +46,8 @@
     height: 3;
 }
 .ingest-nav-pane .ingest-nav-button:hover {
-    background: $accent 60%; /* Slightly different hover potentially */
+    background: $surface-lighten-1;
+    color: $text;
 }
 /* Active state for selected ingest nav button */
 .ingest-nav-pane .ingest-nav-button.active {

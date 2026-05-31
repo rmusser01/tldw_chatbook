@@ -48,7 +48,8 @@
     padding: 0 1;
 }
 .media-nav-pane .media-nav-button:hover {
-    background: $accent 75%;
+    background: $surface-lighten-1;
+    color: $text;
 }
 
 .media-content-pane {

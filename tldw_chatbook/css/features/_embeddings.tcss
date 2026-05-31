@@ -68,7 +68,7 @@ EmbeddingsWindow {
 }
 
 .embeddings-nav-button:hover {
-    background: $primary 50%;
+    background: $surface-lighten-1;
     color: $text;
 }
 

@@ -897,6 +897,32 @@ def test_feature_navigation_active_and_dropdown_focus_states_follow_contracts():
     )
 
 
+@pytest.mark.parametrize(
+    ("path", "selector"),
+    (
+        (MEDIA, ".media-nav-pane .media-nav-button:hover"),
+        (SEARCH_RAG, ".search-nav-pane .search-nav-button:hover"),
+        (LLM_MANAGEMENT, ".llm-nav-pane .llm-nav-button:hover"),
+        (TOOLS_SETTINGS, ".tools-nav-pane .ts-nav-button:hover"),
+        (INGEST, ".ingest-nav-pane .ingest-nav-button:hover"),
+        (EMBEDDINGS, ".embeddings-nav-button:hover"),
+        (CODING, ".coding-nav-button:hover"),
+    ),
+)
+def test_feature_navigation_hover_states_use_neutral_readable_surface(
+    path: Path,
+    selector: str,
+):
+    source_blocks = css_blocks(path.read_text(encoding="utf-8"), selector)
+    assert source_blocks, f"{path.name} is missing {selector}"
+    assert len(source_blocks) == 1, f"{path.name} should define exactly one {selector}"
+    assert_native_row_hover_state_contract(source_blocks[0])
+
+    bundled_blocks = css_blocks(BUNDLE.read_text(encoding="utf-8"), selector)
+    assert bundled_blocks, f"tldw_cli_modular.tcss is missing {selector}"
+    assert_native_row_hover_state_contract(bundled_blocks[-1])
+
+
 def test_customize_window_default_css_nav_active_state_follows_contract():
     from tldw_chatbook.UI.Customize_Window import CustomizeWindow
 
