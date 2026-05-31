@@ -720,6 +720,25 @@ def test_chat_tab_active_state_is_readable_without_dominant_fill():
             assert_no_dominant_selected_geometry(active)
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "selector",
+    (
+        ".close-tab-button:hover",
+        ".new-tab-button:hover",
+    ),
+)
+def test_chat_tab_action_hover_states_use_neutral_readable_surface(selector: str):
+    for label, text in (
+        ("_chat_tabs.tcss", CHAT_TABS.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        blocks = css_blocks(text, selector)
+        assert blocks, f"{label} is missing {selector}"
+        assert len(blocks) == 1, f"{label} should define exactly one {selector}"
+        assert_native_row_hover_state_contract(blocks[0])
+
+
 def test_layout_tab_active_states_use_underlined_selected_contracts():
     for path, selector in (
         (LAYOUT_TABS, "#tabs Button.-active"),
