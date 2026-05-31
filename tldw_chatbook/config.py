@@ -2671,6 +2671,7 @@ enabled = true  # Enable web server functionality
 host = "localhost"  # Host address to bind to
 port = 8000  # Port to bind to
 title = "tldw chatbook"  # Title for the web page
+font_size = 12  # Browser terminal font size; 12 keeps Textual Web close to native terminal density
 debug = false  # Enable debug mode for development
 """
 
