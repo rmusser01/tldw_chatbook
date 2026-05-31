@@ -52,8 +52,13 @@ enabled = true
 host = "localhost"
 port = 8000
 title = "tldw chatbook"
+font_size = 12
 debug = false
 ```
+
+`font_size` controls the browser terminal cell density. The default `12` keeps
+the web UI close to native terminal screenshots; use `?fontsize=16` in the URL
+or set `font_size = 16` if you prefer larger text.
 
 ## Security Considerations
 
