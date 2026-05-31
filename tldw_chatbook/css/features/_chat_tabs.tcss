@@ -72,7 +72,7 @@
 }
 
 .close-tab-button:hover {
-    background: $error;
+    background: $surface-lighten-1;
     color: $text;
 }
 
@@ -90,7 +90,7 @@
 }
 
 .new-tab-button:hover {
-    background: $accent;
+    background: $surface-lighten-1;
     color: $text;
 }
 
