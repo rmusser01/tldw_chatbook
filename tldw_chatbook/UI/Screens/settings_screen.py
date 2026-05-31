@@ -1122,11 +1122,17 @@ class SettingsScreen(BaseAppScreen):
             return f"{label}: invalid - {redact_secret_text(str(exc))}"
 
         target = path if directory else path.parent
-        existing_target = target if target.exists() else self._nearest_existing_ancestor(target)
+        if target.exists():
+            if not target.is_dir():
+                return f"{label}: invalid - expected directory"
+            writable = os.access(target, os.W_OK | os.X_OK)
+            return f"{label}: {'writable' if writable else 'not writable'}"
+
+        existing_target = self._nearest_existing_ancestor(target)
         if existing_target is None or not existing_target.is_dir():
             return f"{label}: not writable"
         writable = os.access(existing_target, os.W_OK | os.X_OK)
-        return f"{label}: {'writable' if writable else 'not writable'}"
+        return f"{label}: missing - parent {'writable' if writable else 'not writable'}"
 
     def _storage_check_results(self) -> tuple[str, ...]:
         rows = ["Storage check: complete"]
@@ -1230,6 +1236,24 @@ class SettingsScreen(BaseAppScreen):
                     missing += 1
         return present, missing, present + missing
 
+    def _provider_config_secret_count(self, app_config: object) -> int:
+        if not isinstance(app_config, Mapping):
+            return 0
+        api_settings = app_config.get("api_settings", {})
+        if not isinstance(api_settings, Mapping):
+            return 0
+        count = 0
+        for provider_config in api_settings.values():
+            if not isinstance(provider_config, Mapping):
+                continue
+            count += sum(
+                1
+                for key, value in self._iter_config_leaf_values(provider_config)
+                if self._is_sensitive_config_key(key)
+                and self._is_configured_secret_value(value)
+            )
+        return count
+
     def _privacy_check_results(self, app_config: object | None = None) -> tuple[str, ...]:
         if app_config is None:
             app_config = getattr(self.app_instance, "app_config", {}) or {}
@@ -1240,6 +1264,7 @@ class SettingsScreen(BaseAppScreen):
             else False
         )
         secret_count = self._sensitive_config_field_count(app_config)
+        provider_secret_count = self._provider_config_secret_count(app_config)
         env_present, env_missing, env_total = self._provider_env_var_status_counts(app_config)
         return (
             "Privacy check: complete",
@@ -1249,6 +1274,13 @@ class SettingsScreen(BaseAppScreen):
                 "Provider env vars: "
                 f"{env_present} present / {env_missing} missing / {env_total} configured"
             ),
+            (
+                "Provider key source: "
+                f"environment {env_present} present / {env_missing} missing; "
+                f"provider config secrets {provider_secret_count} present"
+            ),
+            "Data boundary: local data stays local unless explicit server handoff or sync is enabled",
+            "Server boundary: server tokens are reported as configured/missing only",
             "Redaction: active; raw secret values hidden",
             "Privacy safety: no secret values were printed or written.",
         )
@@ -1303,25 +1335,34 @@ class SettingsScreen(BaseAppScreen):
 
     def _diagnostics_validation_and_reload_results(self) -> tuple[str, str, dict | None]:
         adapter = SettingsConfigAdapter()
+        except Exception as exc:
+            message = redact_secret_text(str(exc))
+            source = "Config source: invalid"
+            return (
+                f"Config validation: invalid - {message}\n{source}",
+                f"Config reload: failed - {message}\n{source}",
+                None,
+            )
+        source = f"Config source: {redact_secret_text(str(config_path))}"
         try:
-            validation = adapter.validate_config_file(self._config_path())
+            validation = adapter.validate_config_file(config_path)
         except Exception as exc:
             message = redact_secret_text(str(exc))
             return (
-                f"Config validation: invalid - {message}",
-                f"Config reload: failed - {message}",
+                f"Config validation: invalid - {message}\n{source}",
+                f"Config reload: failed - {message}\n{source}",
                 None,
             )
 
         validation_result = (
-            f"Config validation: valid - {redact_secret_text(validation.message)}"
+            f"Config validation: valid - {redact_secret_text(validation.message)}\n{source}"
             if validation.valid
-            else f"Config validation: invalid - {redact_secret_text(validation.message)}"
+            else f"Config validation: invalid - {redact_secret_text(validation.message)}\n{source}"
         )
         if not validation.valid:
             return (
                 validation_result,
-                f"Config reload: failed - {redact_secret_text(validation.message)}",
+                f"Config reload: failed - {redact_secret_text(validation.message)}\n{source}",
                 None,
             )
 
@@ -1330,14 +1371,14 @@ class SettingsScreen(BaseAppScreen):
         except Exception as exc:
             return (
                 validation_result,
-                f"Config reload: failed - {redact_secret_text(str(exc))}",
+                f"Config reload: failed - {redact_secret_text(str(exc))}\n{source}",
                 None,
             )
         if isinstance(loaded, dict):
-            return validation_result, "Config reload: loaded", loaded
+            return validation_result, f"Config reload: loaded\n{source}", loaded
         return (
             validation_result,
-            "Config reload: failed - loaded config was not a table",
+            f"Config reload: failed - loaded config was not a table\n{source}",
             None,
         )
 
@@ -2370,6 +2411,10 @@ class SettingsScreen(BaseAppScreen):
                     "Handoff boundary",
                     "database and media paths remain local unless a server handoff is explicit",
                 )
+                yield self._detail_row(
+                    "Storage mutation",
+                    "unavailable/WIP - validation only; no files are moved or rewritten",
+                )
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
             yield Static("Privacy & Security", classes="destination-section settings-column-title")
             with Vertical(id="settings-privacy-security-card", classes="settings-focus-card"):
@@ -2386,6 +2431,10 @@ class SettingsScreen(BaseAppScreen):
                 yield self._detail_row("Encryption", "not configured from this Settings slice")
                 yield self._detail_row("Secret redaction", "enabled for diagnostics and validation errors")
                 yield self._detail_row("Audit posture", "expose status, not raw credentials")
+                yield self._detail_row(
+                    "Credential mutation",
+                    "unavailable/WIP - rotate or edit secrets in the owning credential source",
+                )
                 with Horizontal(id="settings-privacy-actions", classes="settings-action-row"):
                     yield Button(
                         "Check Privacy",
@@ -2407,6 +2456,10 @@ class SettingsScreen(BaseAppScreen):
                 yield self._detail_row("Reload", "load current config into the running app")
                 yield self._detail_row("Redaction", "actionable errors without secrets")
                 yield self._detail_row("Write safety", "validation is read-only")
+                yield self._detail_row(
+                    "Diagnostics writes",
+                    "unavailable/WIP - raw edits remain gated in Advanced Config",
+                )
                 with Horizontal(id="settings-diagnostics-actions", classes="settings-action-row"):
                     yield Button(
                         "Validate Config",

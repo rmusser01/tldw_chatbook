@@ -1969,6 +1969,26 @@ async def test_settings_first_slice_categories_have_real_content(button_id, expe
 
 
 @pytest.mark.asyncio
+async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_as_wip():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        for button_id, expected in (
+            ("#settings-category-storage", "Storage mutation: unavailable/WIP"),
+            ("#settings-category-privacy-security", "Credential mutation: unavailable/WIP"),
+            ("#settings-category-diagnostics", "Diagnostics writes: unavailable/WIP"),
+        ):
+            await pilot.click(button_id)
+            screen = _active_destination_screen(host)
+            text = _visible_text(screen)
+
+            assert expected in text
+            assert screen.query_one("#settings-save-category", Button).disabled is True
+            assert screen.query_one("#settings-revert-category", Button).disabled is True
+
+
+@pytest.mark.asyncio
 async def test_settings_diagnostics_validate_and_reload_config_actions():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -2024,8 +2044,10 @@ def test_settings_diagnostics_combined_helper_validates_once(monkeypatch, tmp_pa
 
     assert FakeAdapter.validate_calls == 1
     assert FakeAdapter.load_calls == 1
-    assert validation_result == "Config validation: valid - valid once"
-    assert reload_result == "Config reload: loaded"
+    assert "Config validation: valid - valid once" in validation_result
+    assert f"Config source: {config_path}" in validation_result
+    assert "Config reload: loaded" in reload_result
+    assert f"Config source: {config_path}" in reload_result
     assert loaded_config == {"chat_defaults": {"provider": "OpenAI"}}
 
 
@@ -2052,8 +2074,66 @@ def test_settings_diagnostics_combined_helper_skips_reload_when_invalid(monkeypa
 
     assert FakeAdapter.validate_calls == 1
     assert FakeAdapter.load_calls == 0
-    assert validation_result == "Config validation: invalid - broken TOML"
-    assert reload_result == "Config reload: failed - broken TOML"
+    assert "Config validation: invalid - broken TOML" in validation_result
+    assert f"Config source: {config_path}" in validation_result
+    assert "Config reload: failed - broken TOML" in reload_result
+    assert f"Config source: {config_path}" in reload_result
+    assert loaded_config is None
+
+
+def test_settings_diagnostics_results_include_config_source_and_redact_errors(
+    monkeypatch,
+    tmp_path,
+):
+    class FakeAdapter:
+        def validate_config_file(self, path):
+            return SettingsValidationResult(
+                False,
+                f"OPENAI_API_KEY={DUMMY_REDACTION_CONFIG_VALUE} parse failure",
+            )
+
+        def load(self, *, force_reload: bool = False):
+            raise AssertionError("invalid config must not reload")
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("OPENAI_API_KEY='raw'\n[broken", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+
+    screen = SettingsScreen(_build_test_app())
+    validation_result, reload_result, loaded_config = (
+        screen._diagnostics_validation_and_reload_results()
+    )
+
+    assert f"Config source: {config_path}" in validation_result
+    assert f"Config source: {config_path}" in reload_result
+    assert DUMMY_REDACTION_CONFIG_VALUE not in validation_result
+    assert DUMMY_REDACTION_CONFIG_VALUE not in reload_result
+    assert "OPENAI_API_KEY=<redacted>" in validation_result
+    assert "OPENAI_API_KEY=<redacted>" in reload_result
+    assert loaded_config is None
+
+
+def test_settings_diagnostics_invalid_config_source_does_not_duplicate_error(
+    monkeypatch,
+):
+    screen = SettingsScreen(_build_test_app())
+
+    def raise_invalid_config_path():
+        raise ValueError(f"OPENAI_API_KEY={DUMMY_REDACTION_CONFIG_VALUE} path failure")
+
+    monkeypatch.setattr(screen, "_config_path", raise_invalid_config_path)
+
+    validation_result, reload_result, loaded_config = (
+        screen._diagnostics_validation_and_reload_results()
+    )
+
+    assert validation_result.endswith("\nConfig source: invalid")
+    assert reload_result.endswith("\nConfig source: invalid")
+    assert "Config source: invalid - OPENAI_API_KEY=<redacted>" not in validation_result
+    assert "Config source: invalid - OPENAI_API_KEY=<redacted>" not in reload_result
+    assert DUMMY_REDACTION_CONFIG_VALUE not in validation_result
+    assert DUMMY_REDACTION_CONFIG_VALUE not in reload_result
     assert loaded_config is None
 
 
@@ -2085,7 +2165,7 @@ def test_settings_storage_check_reports_path_readiness(monkeypatch, tmp_path):
     result = screen._storage_check_results()
 
     assert result[0] == "Storage check: complete"
-    assert "Config path parent: writable" in result
+    assert "Config path parent: missing - parent writable" in result
     assert "User data directory: writable" in result
     assert "Notifications DB parent: writable" in result
     assert "Watchlists DB parent: writable" in result
@@ -2127,20 +2207,28 @@ def test_settings_storage_check_does_not_create_missing_config(monkeypatch, tmp_
     assert not config_path.parent.exists()
 
 
-def test_settings_storage_check_rejects_file_ancestor(monkeypatch, tmp_path):
+def test_settings_storage_check_reports_file_targets_as_invalid(monkeypatch, tmp_path):
     config_path = tmp_path / "config.toml"
     file_ancestor = tmp_path / "not-a-dir"
     file_ancestor.write_text("not a directory", encoding="utf-8")
+    existing_file = tmp_path / "data-dir"
+    existing_file.write_text("not a directory", encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     screen = SettingsScreen(SimpleNamespace(app_config={}))
 
-    result = screen._storage_path_status(
+    file_parent_result = screen._storage_path_status(
         "Workspaces DB parent",
         file_ancestor / "workspaces.db",
         directory=False,
     )
+    directory_result = screen._storage_path_status(
+        "User data directory",
+        existing_file,
+        directory=True,
+    )
 
-    assert result == "Workspaces DB parent: not writable"
+    assert file_parent_result == "Workspaces DB parent: invalid - expected directory"
+    assert directory_result == "User data directory: invalid - expected directory"
 
 
 def test_settings_storage_check_reports_empty_path_as_unconfigured(monkeypatch, tmp_path):
@@ -2154,6 +2242,28 @@ def test_settings_storage_check_reports_empty_path_as_unconfigured(monkeypatch, 
     assert screen._storage_path_status("User data directory", "", directory=True) == (
         "User data directory: not configured"
     )
+
+
+def test_settings_storage_check_reports_missing_path_with_parent_readiness(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    missing_dir = tmp_path / "missing-data-dir"
+    missing_db = tmp_path / "missing-db" / "chatbook.db"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    directory_status = screen._storage_path_status(
+        "User data directory",
+        missing_dir,
+        directory=True,
+    )
+    file_status = screen._storage_path_status(
+        "Notifications DB parent",
+        missing_db,
+        directory=False,
+    )
+
+    assert directory_status == "User data directory: missing - parent writable"
+    assert file_status == "Notifications DB parent: missing - parent writable"
 
 
 def test_settings_privacy_check_reports_redacted_secret_status(monkeypatch):
@@ -2183,6 +2293,39 @@ def test_settings_privacy_check_reports_redacted_secret_status(monkeypatch):
     assert "Sensitive config fields: 2 present" in result
     assert "Provider env vars: 1 present / 1 missing / 2 configured" in result
     assert "Redaction: active; raw secret values hidden" in result
+    assert DUMMY_REDACTION_ENV_VALUE not in text
+    assert DUMMY_REDACTION_CONFIG_VALUE not in text
+    assert DUMMY_REDACTION_SERVER_VALUE not in text
+
+
+def test_settings_privacy_check_reports_key_sources_and_data_boundaries(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", DUMMY_REDACTION_ENV_VALUE)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    app = SimpleNamespace(
+        app_config={
+            "encryption": {"enabled": True},
+            "api_settings": {
+                "openai": {
+                    "api_key_env_var": "OPENAI_API_KEY",
+                    "api_key": DUMMY_REDACTION_CONFIG_VALUE,
+                },
+                "groq": {"api_key_env_var": "GROQ_API_KEY"},
+            },
+            "tldw_api": {"auth_token": DUMMY_REDACTION_SERVER_VALUE},
+        }
+    )
+    screen = SettingsScreen(app)
+
+    result = screen._privacy_check_results()
+    text = "\n".join(result)
+
+    assert "Sensitive config fields: 2 present" in result
+    assert (
+        "Provider key source: environment 1 present / 1 missing; "
+        "provider config secrets 1 present"
+    ) in result
+    assert "Data boundary: local data stays local unless explicit server handoff or sync is enabled" in result
+    assert "Server boundary: server tokens are reported as configured/missing only" in result
     assert DUMMY_REDACTION_ENV_VALUE not in text
     assert DUMMY_REDACTION_CONFIG_VALUE not in text
     assert DUMMY_REDACTION_SERVER_VALUE not in text
