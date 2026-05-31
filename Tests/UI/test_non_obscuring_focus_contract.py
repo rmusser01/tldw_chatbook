@@ -883,6 +883,25 @@ def test_bundled_feature_navigation_states_match_source_contracts():
     )
 
 
+def test_llm_management_default_css_nav_states_follow_contracts():
+    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+
+    text = LLMManagementWindow.DEFAULT_CSS
+    hover = css_block(text, ".llm-nav-button:hover")
+    assert "outline: heavy" not in hover
+    assert "border: thick" not in hover
+    assert "$primary" not in hover
+    assert "$accent" not in hover
+    assert "$warning" not in hover
+    assert "$error" not in hover
+    assert "background: $ds-surface-raised;" in hover
+    assert "color: $ds-text-primary;" in hover
+
+    active = css_block(text, ".llm-nav-button.-active")
+    assert_readable_selected_state_contract(active)
+    assert_no_dominant_selected_geometry(active)
+
+
 def test_ingest_selected_files_list_uses_non_obscuring_container_cue():
     for path in (INGEST, BUNDLE):
         blocks = css_blocks(path.read_text(encoding="utf-8"), ".ingest-selected-files-list")
