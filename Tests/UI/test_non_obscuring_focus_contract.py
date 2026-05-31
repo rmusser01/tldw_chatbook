@@ -547,10 +547,20 @@ def test_console_composer_action_availability_states_are_visually_distinct():
         AGENTIC.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
     ):
+        console_button_base = next(
+            block
+            for block in css_blocks(text, "#console-send-message")
+            if "height: 1;" in block
+        )
         secondary = css_block(text, ".console-action-secondary")
         subdued = css_block(text, ".console-action-subdued")
         disabled = css_block(text, ".console-action-disabled")
         stop_active = css_block(text, "#console-stop-generation.console-stop-active")
+
+        assert "height: 1;" in console_button_base
+        assert "min-height: 1;" in console_button_base
+        assert "color:" not in console_button_base
+        assert "text-style:" not in console_button_base
 
         assert "border: none;" in secondary
         assert "background: $ds-surface-raised;" in secondary
@@ -576,6 +586,24 @@ def test_console_composer_action_availability_states_are_visually_distinct():
         assert "$accent" not in disabled
         assert "$warning" not in disabled
         assert "$error" not in disabled
+
+        for selector in (
+            ".console-action-disabled:hover",
+            ".console-action-disabled:focus",
+            ".console-action-disabled:hover:focus",
+        ):
+            disabled_interaction = css_block(text, selector)
+            assert "border: none;" in disabled_interaction
+            assert "background: $ds-surface-panel;" in disabled_interaction
+            assert "color: $ds-text-disabled;" in disabled_interaction
+            assert "text-style: none;" in disabled_interaction
+            assert "text-style: bold underline;" not in disabled_interaction
+            assert "$ds-focus-bg" not in disabled_interaction
+            assert "$ds-focus-fg" not in disabled_interaction
+            assert "$primary" not in disabled_interaction
+            assert "$accent" not in disabled_interaction
+            assert "$warning" not in disabled_interaction
+            assert "$error" not in disabled_interaction
 
         assert "border: none;" in stop_active
         assert "background: $ds-status-warning 20%;" in stop_active
