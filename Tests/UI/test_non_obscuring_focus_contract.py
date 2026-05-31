@@ -864,6 +864,14 @@ def test_feature_navigation_active_and_dropdown_focus_states_follow_contracts():
     )
 
 
+def test_customize_window_default_css_nav_active_state_follows_contract():
+    from tldw_chatbook.UI.Customize_Window import CustomizeWindow
+
+    active = css_block(CustomizeWindow.DEFAULT_CSS, ".customize-nav-button.active-nav")
+    assert_feature_nav_active_contract(active)
+    assert_no_dominant_selected_geometry(active)
+
+
 def test_bundled_feature_navigation_states_match_source_contracts():
     text = BUNDLE.read_text(encoding="utf-8")
     tab_base = css_block(text, "#tab-dropdown-select")
