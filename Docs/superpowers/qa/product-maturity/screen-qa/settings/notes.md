@@ -40,3 +40,25 @@ Fallback reason: none
 ## Residual Risks
 
 - Settings remains a destination shell for global preferences. Deeper category navigation and additional persisted preference controls remain later product-depth work, outside this screenshot QA pass.
+
+## Providers And Models Functional QA
+
+Date: 2026-05-30
+Branch: `codex/settings-provider-model-profiles`
+Backlog task: TASK-73.2
+Screen: Settings Providers & Models plus Console inherited defaults
+Launch method: `tldw-serve --host 127.0.0.1 --port 8898` with isolated HOME/XDG config and `default_tab = "settings"`
+Screenshot method: Playwright Chromium screenshot of textual-web through CDP
+Fallback reason: none
+
+### Screenshots
+
+- Settings selected provider+model profile: `Docs/superpowers/qa/product-maturity/screen-qa/settings/2026-05-30-settings-provider-model-profile.png`
+- Console inherited profile defaults: `Docs/superpowers/qa/product-maturity/screen-qa/settings/2026-05-30-console-provider-model-profile-defaults.png`
+
+### Verification Scope
+
+- Confirmed Providers & Models exposes provider, model, endpoint, credential env var, and selected model default profile fields.
+- Confirmed API key values are represented by env var name only; no token value appears in the screenshots.
+- Confirmed Console session summary uses the same selected model profile defaults from config: OpenAI `gpt-4.1`, streaming off, and profile sampling values.
+- User approval: approved in Codex thread after actual screenshot review.

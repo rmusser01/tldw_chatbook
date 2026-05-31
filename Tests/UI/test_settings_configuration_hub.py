@@ -313,6 +313,7 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "chat_defaults.model",
         "api_settings.<provider>.endpoint",
         "api_settings.<provider>.api_key_env_var",
+        "api_settings.<provider>.model_defaults.<model>",
     )
     assert records_by_category[SettingsCategoryId.CONSOLE_BEHAVIOR].owns_config_sections == (
         "console.collapse_large_pastes",
@@ -1001,6 +1002,129 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
 
 
 @pytest.mark.asyncio
+async def test_settings_provider_category_saves_selected_model_profile(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    app.app_config["api_settings"] = {
+        "openai": {
+            "model_defaults": {
+                "gpt-4.1": {
+                    "temperature": 0.7,
+                    "top_p": 0.95,
+                    "streaming": True,
+                },
+            },
+        },
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen.query_one("#settings-model-profile-temperature", Input).value = "0.2"
+        screen.query_one("#settings-model-profile-top-p", Input).value = "0.88"
+        screen.query_one("#settings-model-profile-streaming", Input).value = "false"
+        assert "Global fallbacks live under Console Defaults" in _visible_text(screen)
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [
+        (
+            "api_settings.openai",
+            "model_defaults",
+            {
+                "gpt-4.1": {
+                    "temperature": 0.2,
+                    "top_p": 0.88,
+                    "streaming": False,
+                },
+            },
+        ),
+    ]
+    assert app.app_config["chat_defaults"] == {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    assert app.app_config["api_settings"]["openai"]["model_defaults"]["gpt-4.1"] == {
+        "temperature": 0.2,
+        "top_p": 0.88,
+        "streaming": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_model_switch_loads_selected_model_profile():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {
+            "model_defaults": {
+                "gpt-4.1": {"temperature": 0.2, "top_p": 0.8, "streaming": True},
+                "gpt-4.1-mini": {"temperature": 0.45, "top_p": 0.9, "streaming": False},
+            },
+        },
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-model-profile-temperature", Input).value == "0.2"
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "gpt-4.1-mini"
+        screen.handle_model_value_changed(Input.Changed(model, "gpt-4.1-mini"))
+
+        assert screen.query_one("#settings-model-profile-temperature", Input).value == "0.45"
+        assert screen.query_one("#settings-model-profile-top-p", Input).value == "0.9"
+        assert screen.query_one("#settings-model-profile-streaming", Input).value == "false"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_model_switch_does_not_save_unedited_profile(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {
+            "model_defaults": {
+                "gpt-4.1": {"temperature": 0.2, "top_p": 0.8, "streaming": True},
+                "gpt-4.1-mini": {"temperature": 0.45, "top_p": 0.9, "streaming": False},
+            },
+        },
+    }
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "gpt-4.1-mini"
+        screen.handle_model_value_changed(Input.Changed(model, "gpt-4.1-mini"))
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [("chat_defaults", "model", "gpt-4.1-mini")]
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_category_does_not_save_unedited_effective_defaults(monkeypatch):
     app = _build_test_app()
     app.chat_api_provider_value = "OpenAI"
@@ -1412,6 +1536,7 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
         screen = _active_destination_screen(host)
+        screen.query_one("#settings-model-profile-temperature", Input).value = "not-a-number"
 
         await pilot.click("#settings-test-provider")
         text = _visible_text(screen)
