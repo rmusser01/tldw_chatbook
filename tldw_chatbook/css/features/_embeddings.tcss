@@ -395,8 +395,10 @@ EmbeddingsManagementWindow {
 }
 
 .embeddings-list-item.-selected {
-    background: $accent-darken-1;
-    border: round $accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border: round $ds-focus-accent;
 }
 
 .embeddings-info-label {
@@ -940,8 +942,9 @@ CollectionListItem:hover {
 
 ModelListItem.-selected,
 CollectionListItem.-selected {
-    background: $accent 20%;
-    border-left: thick $accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* ========================================
