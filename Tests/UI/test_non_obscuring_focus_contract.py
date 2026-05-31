@@ -569,6 +569,68 @@ def test_console_composer_focus_uses_thin_input_treatment():
     assert "border-bottom: solid $ds-input-focus-accent;" in block
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("base_selector", "focus_selector"),
+    (
+        ("ConsoleSettingsModal Input", "ConsoleSettingsModal Input:focus"),
+        ("ConsoleSettingsModal Select", "ConsoleSettingsModal Select:focus"),
+    ),
+)
+def test_console_settings_modal_controls_use_compact_focus_outline(
+    base_selector: str,
+    focus_selector: str,
+):
+    for label, text in (
+        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        base = css_block(text, base_selector)
+        focus = css_block(text, focus_selector)
+        assert "height: 1;" in base
+        assert "border: none;" in base
+        assert "border: none;" in focus
+        assert "border-bottom: none;" in focus
+        assert "border: solid" not in focus
+        assert "border-bottom: solid" not in focus
+        assert "border: thick" not in focus
+        assert "outline: solid $ds-input-focus-accent;" in focus
+        assert "background: $ds-input-focus-bg;" in focus
+        assert "color: $ds-text-primary;" in focus
+        assert "$primary" not in focus
+        assert "$accent" not in focus
+        assert "$warning" not in focus
+        assert "$error" not in focus
+
+
+@pytest.mark.unit
+def test_console_transcript_focus_uses_stable_border_geometry():
+    for label, text in (
+        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        base = css_block(text, "#console-native-transcript")
+        focus = css_block(text, "#console-native-transcript:focus")
+        assert_stable_solid_border_geometry(base, focus)
+        assert "border: solid $ds-focus-accent;" in focus
+        assert "border-bottom: solid $ds-focus-accent;" in focus
+        assert "outline: heavy" not in focus
+        assert "$primary" not in focus
+        assert "$accent" not in focus
+
+
+@pytest.mark.unit
+def test_console_transcript_selected_message_uses_selected_contract_without_geometry():
+    for label, text in (
+        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        selected = css_block(text, ".console-transcript-message-selected")
+        assert_readable_selected_state_contract(selected)
+        assert_no_dominant_selected_geometry(selected)
+        assert "border:" not in selected
+
+
 def test_settings_compact_input_focus_preserves_single_row_content():
     text = AGENTIC.read_text(encoding="utf-8")
     block = css_block(text, ".settings-compact-input:focus")

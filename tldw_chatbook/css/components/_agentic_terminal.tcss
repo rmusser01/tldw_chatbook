@@ -174,6 +174,15 @@ ConsoleSettingsModal Select {
     color: $ds-text-primary;
 }
 
+ConsoleSettingsModal Input:focus,
+ConsoleSettingsModal Select:focus {
+    border: none;
+    border-bottom: none;
+    outline: solid $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
 .console-settings-modal-actions {
     height: 1;
     min-height: 1;
@@ -868,6 +877,8 @@ ConsoleSettingsModal Select {
     height: 1fr;
     min-height: 0;
     padding: 0 1;
+    border: solid $ds-grid-line;
+    border-bottom: solid $ds-grid-line;
     background: $ds-surface-panel;
     color: $ds-text-primary;
     scrollbar-background: $ds-surface-panel;
@@ -933,6 +944,7 @@ ConsoleSettingsModal Select {
 
 #console-native-transcript:focus {
     border: solid $ds-focus-accent;
+    border-bottom: solid $ds-focus-accent;
 }
 
 .console-transcript-rule {
@@ -951,10 +963,9 @@ ConsoleSettingsModal Select {
 }
 
 .console-transcript-message-selected {
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
     text-style: bold underline;
-    border: solid $ds-focus-accent;
 }
 
 .console-transcript-action-row {
