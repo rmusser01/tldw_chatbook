@@ -101,7 +101,9 @@ class TreeNode(Widget):
     }
     
     .tree-node-selected {
-        background: $accent 20%;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
     }
     """
     
