@@ -33,9 +33,9 @@
 }
 /* Active state for selected search nav button */
 .search-nav-pane .search-nav-button.-active-search-sub-view {
-    background: $accent;
-    color: $text;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 .search-content-pane { /* Style for the right content display area in Search Tab */
     width: 1fr;

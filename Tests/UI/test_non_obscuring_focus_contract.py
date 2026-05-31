@@ -813,6 +813,14 @@ def test_feature_navigation_active_and_dropdown_focus_states_follow_contracts():
         css_block(tools_text, ".tools-nav-pane .ts-nav-button.active-nav")
     )
 
+    search_text = SEARCH_RAG.read_text(encoding="utf-8")
+    assert_feature_nav_active_contract(
+        css_block(
+            search_text,
+            ".search-nav-pane .search-nav-button.-active-search-sub-view",
+        )
+    )
+
 
 def test_bundled_feature_navigation_states_match_source_contracts():
     text = BUNDLE.read_text(encoding="utf-8")
@@ -825,6 +833,12 @@ def test_bundled_feature_navigation_states_match_source_contracts():
     )
     assert_feature_nav_active_contract(
         css_block(text, ".tools-nav-pane .ts-nav-button.active-nav")
+    )
+    assert_feature_nav_active_contract(
+        css_block(
+            text,
+            ".search-nav-pane .search-nav-button.-active-search-sub-view",
+        )
     )
 
 
