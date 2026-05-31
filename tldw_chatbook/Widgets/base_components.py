@@ -588,7 +588,7 @@ class NavigationButton(Button):
     NavigationButton.active {
         background: $ds-focus-bg;
         color: $ds-focus-fg;
-        text-style: bold;
+        text-style: bold underline;
         border: none;
     }
     

@@ -618,9 +618,8 @@ def test_shared_navigation_button_uses_non_obscuring_active_and_focus_states():
     assert_native_row_hover_state_contract(hover)
     assert_non_obscuring_focus(focus)
     assert "$ds-focus-bg" in focus or "$ds-surface-raised" in focus
-    assert "border-left: thick" not in active
-    assert "outline: heavy" not in active
-    assert "text-style: bold;" in active
+    assert_readable_selected_state_contract(active)
+    assert_no_dominant_selected_geometry(active)
     assert_non_obscuring_focus(active_focus)
     assert "$ds-focus-bg" in active_focus or "$ds-surface-raised" in active_focus
 
