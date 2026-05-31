@@ -2114,6 +2114,29 @@ def test_settings_diagnostics_results_include_config_source_and_redact_errors(
     assert loaded_config is None
 
 
+def test_settings_diagnostics_invalid_config_source_does_not_duplicate_error(
+    monkeypatch,
+):
+    screen = SettingsScreen(_build_test_app())
+
+    def raise_invalid_config_path():
+        raise ValueError(f"OPENAI_API_KEY={DUMMY_REDACTION_CONFIG_VALUE} path failure")
+
+    monkeypatch.setattr(screen, "_config_path", raise_invalid_config_path)
+
+    validation_result, reload_result, loaded_config = (
+        screen._diagnostics_validation_and_reload_results()
+    )
+
+    assert validation_result.endswith("\nConfig source: invalid")
+    assert reload_result.endswith("\nConfig source: invalid")
+    assert "Config source: invalid - OPENAI_API_KEY=<redacted>" not in validation_result
+    assert "Config source: invalid - OPENAI_API_KEY=<redacted>" not in reload_result
+    assert DUMMY_REDACTION_CONFIG_VALUE not in validation_result
+    assert DUMMY_REDACTION_CONFIG_VALUE not in reload_result
+    assert loaded_config is None
+
+
 def test_settings_diagnostics_strictly_reports_corrupt_toml(monkeypatch, tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text("[chat_defaults\nprovider = \"OpenAI\"\n", encoding="utf-8")
@@ -2184,20 +2207,28 @@ def test_settings_storage_check_does_not_create_missing_config(monkeypatch, tmp_
     assert not config_path.parent.exists()
 
 
-def test_settings_storage_check_rejects_file_ancestor(monkeypatch, tmp_path):
+def test_settings_storage_check_reports_file_targets_as_invalid(monkeypatch, tmp_path):
     config_path = tmp_path / "config.toml"
     file_ancestor = tmp_path / "not-a-dir"
     file_ancestor.write_text("not a directory", encoding="utf-8")
+    existing_file = tmp_path / "data-dir"
+    existing_file.write_text("not a directory", encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     screen = SettingsScreen(SimpleNamespace(app_config={}))
 
-    result = screen._storage_path_status(
+    file_parent_result = screen._storage_path_status(
         "Workspaces DB parent",
         file_ancestor / "workspaces.db",
         directory=False,
     )
+    directory_result = screen._storage_path_status(
+        "User data directory",
+        existing_file,
+        directory=True,
+    )
 
-    assert result == "Workspaces DB parent: not writable"
+    assert file_parent_result == "Workspaces DB parent: invalid - expected directory"
+    assert directory_result == "User data directory: invalid - expected directory"
 
 
 def test_settings_storage_check_reports_empty_path_as_unconfigured(monkeypatch, tmp_path):
@@ -2288,7 +2319,11 @@ def test_settings_privacy_check_reports_key_sources_and_data_boundaries(monkeypa
     result = screen._privacy_check_results()
     text = "\n".join(result)
 
-    assert "Key source: environment 1 present / 1 missing; config secrets 2 present" in result
+    assert "Sensitive config fields: 2 present" in result
+    assert (
+        "Provider key source: environment 1 present / 1 missing; "
+        "provider config secrets 1 present"
+    ) in result
     assert "Data boundary: local data stays local unless explicit server handoff or sync is enabled" in result
     assert "Server boundary: server tokens are reported as configured/missing only" in result
     assert DUMMY_REDACTION_ENV_VALUE not in text

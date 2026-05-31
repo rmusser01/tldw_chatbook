@@ -49,8 +49,9 @@ Make Storage, Privacy, and Diagnostics actionable and safe by exposing real vali
 - Expanded Diagnostics validation/reload output with redacted config source copy and preserved Advanced Config as the only raw-edit path.
 - Labeled unsupported Storage, Privacy, and Diagnostics mutation paths as unavailable/WIP and kept guided Save/Revert disabled for those read-only categories.
 - Added mounted/helper regressions in `Tests/UI/test_settings_configuration_hub.py` for WIP labels, missing-path parent readiness, privacy boundary output, and redacted diagnostics config-source output.
+- Addressed PR review follow-up by classifying file-at-directory paths as invalid, separating provider config secret counts from global sensitive field counts, and avoiding duplicated diagnostics config-source errors.
 - Captured approved Textual-web QA screenshots in `Docs/superpowers/qa/settings-configuration-hub/`: `stage-4-storage.png`, `stage-4-privacy.png`, and `stage-4-diagnostics.png`.
-- Verification run: `python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short` passed with 114 tests.
+- Verification run: `python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short` passed with 115 tests.
 - Verification run: `python -m py_compile tldw_chatbook/UI/Screens/settings_screen.py Tests/UI/test_settings_configuration_hub.py` passed.
 - Verification run: `git diff --check` passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

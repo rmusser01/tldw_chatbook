@@ -1124,7 +1124,7 @@ class SettingsScreen(BaseAppScreen):
         target = path if directory else path.parent
         if target.exists():
             if not target.is_dir():
-                return f"{label}: not writable"
+                return f"{label}: invalid - expected directory"
             writable = os.access(target, os.W_OK | os.X_OK)
             return f"{label}: {'writable' if writable else 'not writable'}"
 
@@ -1236,6 +1236,24 @@ class SettingsScreen(BaseAppScreen):
                     missing += 1
         return present, missing, present + missing
 
+    def _provider_config_secret_count(self, app_config: object) -> int:
+        if not isinstance(app_config, Mapping):
+            return 0
+        api_settings = app_config.get("api_settings", {})
+        if not isinstance(api_settings, Mapping):
+            return 0
+        count = 0
+        for provider_config in api_settings.values():
+            if not isinstance(provider_config, Mapping):
+                continue
+            count += sum(
+                1
+                for key, value in self._iter_config_leaf_values(provider_config)
+                if self._is_sensitive_config_key(key)
+                and self._is_configured_secret_value(value)
+            )
+        return count
+
     def _privacy_check_results(self, app_config: object | None = None) -> tuple[str, ...]:
         if app_config is None:
             app_config = getattr(self.app_instance, "app_config", {}) or {}
@@ -1246,6 +1264,7 @@ class SettingsScreen(BaseAppScreen):
             else False
         )
         secret_count = self._sensitive_config_field_count(app_config)
+        provider_secret_count = self._provider_config_secret_count(app_config)
         env_present, env_missing, env_total = self._provider_env_var_status_counts(app_config)
         return (
             "Privacy check: complete",
@@ -1256,9 +1275,9 @@ class SettingsScreen(BaseAppScreen):
                 f"{env_present} present / {env_missing} missing / {env_total} configured"
             ),
             (
-                "Key source: "
+                "Provider key source: "
                 f"environment {env_present} present / {env_missing} missing; "
-                f"config secrets {secret_count} present"
+                f"provider config secrets {provider_secret_count} present"
             ),
             "Data boundary: local data stays local unless explicit server handoff or sync is enabled",
             "Server boundary: server tokens are reported as configured/missing only",
@@ -1320,7 +1339,7 @@ class SettingsScreen(BaseAppScreen):
             config_path = self._config_path()
         except Exception as exc:
             message = redact_secret_text(str(exc))
-            source = f"Config source: invalid - {message}"
+            source = "Config source: invalid"
             return (
                 f"Config validation: invalid - {message}\n{source}",
                 f"Config reload: failed - {message}\n{source}",
