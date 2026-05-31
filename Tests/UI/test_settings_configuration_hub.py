@@ -318,6 +318,10 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     assert records_by_category[SettingsCategoryId.CONSOLE_BEHAVIOR].owns_config_sections == (
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
+        "chat_defaults.streaming",
+        "chat_defaults.temperature",
+        "chat_defaults.top_p",
+        "chat_defaults.max_tokens",
     )
     assert not records_by_category[SettingsCategoryId.STORAGE].writes_allowed
     assert records_by_category[SettingsCategoryId.STORAGE].read_only_reason
@@ -419,7 +423,34 @@ async def test_settings_category_selection_updates_detail_and_inspector():
 
         assert "Console Behavior" in text
         assert "Collapse large pasted chunks" in text
-        assert "Affects Console" in text
+        assert "Control guide" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_inspector_explains_visible_controls():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Control guide" in text
+        assert (
+            "Streaming: Global fallback for streaming responses when no Console session "
+            "or provider+model profile overrides it"
+        ) in text
+        assert "Temperature: Creativity fallback, 0.0 is focused and 2.0 is exploratory" in text
+        assert "Top P: Probability cutoff fallback; lower values narrow token choices" in text
+        assert "Max tokens: Optional response cap for new/default Console sends" in text
+        assert (
+            "Paste collapse: Only pasted chunks over the threshold become compact placeholders; "
+            "typed text stays literal"
+        ) in text
+        assert "Threshold: Minimum pasted chunk size before collapse" in text
+        assert "Affected config: chat_defaults fallbacks plus Console composer paste behavior" not in text
+        assert "Mutation replay: disabled" not in text
 
 
 @pytest.mark.asyncio
@@ -788,6 +819,197 @@ async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
 
     assert saved == [("console", "paste_collapse_threshold", 120)]
     assert app.app_config["console"]["paste_collapse_threshold"] == 120
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_renders_global_default_controls():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "streaming": False,
+        "temperature": 0.33,
+        "top_p": 0.81,
+        "max_tokens": 2048,
+    }
+    app.app_config["console"] = {
+        "collapse_large_pastes": True,
+        "paste_collapse_threshold": 50,
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-console-default-streaming", Input).value == "false"
+        assert screen.query_one("#settings-console-default-temperature", Input).value == "0.33"
+        assert screen.query_one("#settings-console-default-top-p", Input).value == "0.81"
+        assert screen.query_one("#settings-console-default-max-tokens", Input).value == "2048"
+        assert screen.query_one("#settings-console-paste-collapse-threshold", Input).value == "50"
+        text = _visible_text(screen)
+        assert "Used when no provider+model profile or active Console session overrides them." in text
+        assert "chat_defaults.streaming is canonical; enable_streaming is read as fallback only." in text
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "streaming": True,
+        "temperature": 0.7,
+        "top_p": 0.95,
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        streaming = screen.query_one("#settings-console-default-streaming", Input)
+        temperature = screen.query_one("#settings-console-default-temperature", Input)
+        top_p = screen.query_one("#settings-console-default-top-p", Input)
+        max_tokens = screen.query_one("#settings-console-default-max-tokens", Input)
+
+        streaming.value = "false"
+        screen.handle_console_default_streaming_changed(Input.Changed(streaming, streaming.value))
+        temperature.value = "0.33"
+        screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
+        top_p.value = "0.81"
+        screen.handle_console_default_top_p_changed(Input.Changed(top_p, top_p.value))
+        max_tokens.value = "2048"
+        screen.handle_console_default_max_tokens_changed(Input.Changed(max_tokens, max_tokens.value))
+
+        assert "Unsaved" in _visible_text(screen)
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [
+        ("chat_defaults", "streaming", False),
+        ("chat_defaults", "temperature", 0.33),
+        ("chat_defaults", "top_p", 0.81),
+        ("chat_defaults", "max_tokens", 2048),
+    ]
+    assert app.app_config["chat_defaults"] == {
+        "streaming": False,
+        "temperature": 0.33,
+        "top_p": 0.81,
+        "max_tokens": 2048,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field_id", "handler_name", "value", "message"),
+    (
+        (
+            "#settings-console-default-streaming",
+            "handle_console_default_streaming_changed",
+            "tru",
+            "Streaming must be true or false.",
+        ),
+        (
+            "#settings-console-default-temperature",
+            "handle_console_default_temperature_changed",
+            "2.1",
+            "Temperature must be between 0.0 and 2.0.",
+        ),
+        (
+            "#settings-console-default-top-p",
+            "handle_console_default_top_p_changed",
+            "1.1",
+            "Top P must be between 0.0 and 1.0.",
+        ),
+        (
+            "#settings-console-default-max-tokens",
+            "handle_console_default_max_tokens_changed",
+            "0",
+            "Max tokens must be a whole number of at least 1.",
+        ),
+    ),
+)
+async def test_settings_console_behavior_rejects_invalid_global_defaults(
+    monkeypatch,
+    field_id,
+    handler_name,
+    value,
+    message,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "streaming": True,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 2048,
+    }
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        field = screen.query_one(field_id, Input)
+        field.value = value
+        getattr(screen, handler_name)(Input.Changed(field, value))
+
+        await pilot.click("#settings-save-category")
+
+        assert message in _visible_text(screen)
+
+    assert saved == []
+    assert app.app_config["chat_defaults"] == {
+        "streaming": True,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 2048,
+    }
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_revert_restores_global_defaults(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "streaming": True,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 2048,
+    }
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        temperature = screen.query_one("#settings-console-default-temperature", Input)
+        temperature.value = "0.33"
+        screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
+
+        assert "Unsaved" in _visible_text(screen)
+
+        await pilot.click("#settings-revert-category")
+
+        assert screen.query_one("#settings-console-default-temperature", Input).value == "0.7"
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert "No unsaved changes" in _visible_text(screen)
+
+    assert saved == []
+    assert app.app_config["chat_defaults"] == {
+        "streaming": True,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 2048,
+    }
 
 
 @pytest.mark.asyncio

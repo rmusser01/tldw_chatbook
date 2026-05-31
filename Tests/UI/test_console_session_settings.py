@@ -334,6 +334,80 @@ def test_default_console_session_settings_prefers_chat_defaults_over_provider_sc
     assert settings.streaming is False
 
 
+def test_default_console_session_settings_reads_enable_streaming_as_compatibility_fallback() -> None:
+    app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1",
+            "enable_streaming": False,
+        },
+        "api_settings": {
+            "openai": {
+                "streaming": True,
+            },
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    assert settings.streaming is False
+
+
+def test_default_console_session_settings_prefers_canonical_streaming_over_enable_streaming() -> None:
+    app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1",
+            "streaming": True,
+            "enable_streaming": False,
+        },
+        "api_settings": {
+            "openai": {
+                "streaming": False,
+            },
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    assert settings.streaming is True
+
+
+def test_default_console_session_settings_uses_global_fallbacks_when_profile_is_absent() -> None:
+    app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1",
+            "temperature": 0.33,
+            "top_p": 0.81,
+            "max_tokens": 2048,
+            "streaming": False,
+        },
+        "api_settings": {
+            "openai": {},
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config,
+        provider="openai",
+        model="gpt-4.1",
+    )
+
+    assert settings.temperature == 0.33
+    assert settings.top_p == 0.81
+    assert settings.max_tokens == 2048
+    assert settings.streaming is False
+
+
 def test_default_console_session_settings_skips_blank_model_profile_values() -> None:
     app_config = {
         "chat_defaults": {

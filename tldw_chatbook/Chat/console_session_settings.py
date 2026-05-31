@@ -231,7 +231,9 @@ def build_default_console_session_settings(
     model: str | None = None,
 ) -> ConsoleSessionSettings:
     """Build default Console settings from chat defaults and provider config."""
-    chat_defaults = _mapping_value(app_config, "chat_defaults")
+    chat_defaults = _chat_defaults_with_streaming_compat(
+        _mapping_value(app_config, "chat_defaults")
+    )
     configured_provider = provider_config_key(_string_value(provider) or _string_setting(chat_defaults, "provider"))
     provider_settings = _provider_settings(app_config, configured_provider)
     configured_model = _first_string(
@@ -530,6 +532,22 @@ def build_console_context_estimate(
 def _mapping_value(source: Mapping[str, object], key: str) -> Mapping[str, object]:
     value = source.get(key, {})
     return value if isinstance(value, Mapping) else {}
+
+
+def _chat_defaults_with_streaming_compat(
+    chat_defaults: Mapping[str, object],
+) -> Mapping[str, object]:
+    """Return chat defaults with the legacy streaming key bridged.
+
+    `chat_defaults.streaming` is the canonical Console default. Older config can
+    still provide `chat_defaults.enable_streaming`; it is only read when the
+    canonical key is absent.
+    """
+    if "streaming" in chat_defaults or "enable_streaming" not in chat_defaults:
+        return chat_defaults
+    compatible_defaults = dict(chat_defaults)
+    compatible_defaults["streaming"] = chat_defaults.get("enable_streaming")
+    return compatible_defaults
 
 
 def _provider_settings(app_config: Mapping[str, object], provider_key: str) -> Mapping[str, object]:

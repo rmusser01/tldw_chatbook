@@ -64,6 +64,28 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_top_p": "top_p",
     "model_profile_streaming": "streaming",
 }
+CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
+    {
+        "collapse_large_pastes",
+        "paste_collapse_threshold",
+    }
+)
+CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
+    {
+        "streaming",
+        "temperature",
+        "top_p",
+        "max_tokens",
+    }
+)
+CONSOLE_BEHAVIOR_SAVE_ORDER = (
+    "collapse_large_pastes",
+    "paste_collapse_threshold",
+    "streaming",
+    "temperature",
+    "top_p",
+    "max_tokens",
+)
 API_URL_PROVIDER_KEYS = {
     "aphrodite",
     "custom",
@@ -165,6 +187,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
         self._syncing_console_threshold = False
+        self._syncing_console_defaults = False
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
         self._storage_check_rows: tuple[str, ...] = (
@@ -335,12 +358,17 @@ class SettingsScreen(BaseAppScreen):
                 owns_config_sections=(
                     "console.collapse_large_pastes",
                     "console.paste_collapse_threshold",
+                    "chat_defaults.streaming",
+                    "chat_defaults.temperature",
+                    "chat_defaults.top_p",
+                    "chat_defaults.max_tokens",
                 ),
                 reads_runtime_state_from=("Console composer/session defaults",),
                 writes_allowed=True,
                 runtime_owner="Console",
                 boundary_copy=(
-                    "Settings owns global Console defaults; Console owns active chat/run state."
+                    "Settings owns global Console fallbacks; provider+model profiles and "
+                    "active Console sessions can override them."
                 ),
                 recovery_copy="Save or revert category drafts before testing live Console behavior.",
             ),
@@ -435,6 +463,77 @@ class SettingsScreen(BaseAppScreen):
             minimum=MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
             maximum=MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
         )
+
+    @staticmethod
+    def _coerce_float_default(
+        value: object,
+        fallback: float,
+        *,
+        minimum: float,
+        maximum: float,
+    ) -> float:
+        if isinstance(value, bool):
+            return fallback
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return fallback
+        if minimum <= number <= maximum:
+            return number
+        return fallback
+
+    def _loaded_console_default_streaming(self) -> bool:
+        chat_defaults = self._chat_defaults()
+        if "streaming" in chat_defaults:
+            return coerce_bool_setting(chat_defaults.get("streaming"), True)
+        if "enable_streaming" in chat_defaults:
+            return coerce_bool_setting(chat_defaults.get("enable_streaming"), True)
+        return True
+
+    def _loaded_console_default_temperature(self) -> float:
+        return self._coerce_float_default(
+            self._chat_defaults().get("temperature", 0.7),
+            0.7,
+            minimum=0.0,
+            maximum=2.0,
+        )
+
+    def _loaded_console_default_top_p(self) -> float:
+        return self._coerce_float_default(
+            self._chat_defaults().get("top_p", 0.95),
+            0.95,
+            minimum=0.0,
+            maximum=1.0,
+        )
+
+    def _loaded_console_default_max_tokens(self) -> int | str:
+        chat_defaults = self._chat_defaults()
+        value = chat_defaults.get("max_tokens", "")
+        if value is None or str(value).strip() == "":
+            return ""
+        return coerce_int_setting(value, 0, minimum=1) or ""
+
+    def _console_behavior_loaded_values(self) -> dict[str, object]:
+        return {
+            "collapse_large_pastes": self._loaded_collapse_large_pastes_enabled(),
+            "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
+            "streaming": self._loaded_console_default_streaming(),
+            "temperature": self._loaded_console_default_temperature(),
+            "top_p": self._loaded_console_default_top_p(),
+            "max_tokens": self._loaded_console_default_max_tokens(),
+        }
+
+    def _console_behavior_value(self, key: str) -> object:
+        draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        if draft is not None and key in draft.values:
+            return draft.values[key]
+        return self._console_behavior_loaded_values().get(key, "")
+
+    @staticmethod
+    def _console_input_value(value: object) -> str:
+        if isinstance(value, bool):
+            return str(value).lower()
+        return str(value if value is not None else "")
 
     def _collapse_large_pastes_enabled(self) -> bool:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -689,7 +788,7 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             return "State: Shared with Console"
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
-            return "State: Console scoped | Changes affect composer behavior after save."
+            return "State: Console scoped | Changes affect global Console fallbacks after save."
         if category is SettingsCategoryId.DIAGNOSTICS:
             return "State: Safe to run | Validation and reload expose status without writing raw TOML."
         if category is SettingsCategoryId.APPEARANCE:
@@ -732,6 +831,17 @@ class SettingsScreen(BaseAppScreen):
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
 
+    def _stage_console_default_value(self, key: str, value: object) -> None:
+        category = SettingsCategoryId.CONSOLE_BEHAVIOR
+        draft = self._settings_drafts.setdefault(category, SettingsDraft(category=category))
+        draft.set_value(
+            key,
+            self._console_behavior_loaded_values().get(key),
+            value,
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
     def _normalise_paste_collapse_threshold(self, value: object) -> int:
         text_value = str(value).strip()
         if not text_value or not text_value.isdigit():
@@ -762,6 +872,43 @@ class SettingsScreen(BaseAppScreen):
         )
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
+
+    def _normalise_console_default_streaming(self, value: object) -> bool:
+        normalized = self._normalise_optional_bool(value)
+        if normalized == "":
+            raise ValueError("Streaming must be true or false.")
+        return bool(normalized)
+
+    def _normalise_console_default_temperature(self, value: object) -> float:
+        normalized = self._normalise_optional_float(
+            value,
+            min_value=0.0,
+            max_value=2.0,
+            label="Temperature",
+        )
+        if normalized == "":
+            raise ValueError("Temperature must be between 0.0 and 2.0.")
+        return float(normalized)
+
+    def _normalise_console_default_top_p(self, value: object) -> float:
+        normalized = self._normalise_optional_float(
+            value,
+            min_value=0.0,
+            max_value=1.0,
+            label="Top P",
+        )
+        if normalized == "":
+            raise ValueError("Top P must be between 0.0 and 1.0.")
+        return float(normalized)
+
+    @staticmethod
+    def _normalise_console_default_max_tokens(value: object) -> int | str:
+        text_value = str(value or "").strip()
+        if not text_value:
+            return ""
+        if not text_value.isdecimal() or int(text_value) < 1:
+            raise ValueError("Max tokens must be a whole number of at least 1.")
+        return int(text_value)
 
     def _sync_safety_states(self) -> tuple[SyncPromotionState, ...]:
         labels = {
@@ -1412,7 +1559,7 @@ class SettingsScreen(BaseAppScreen):
         max_value: float,
         label: str,
     ) -> float | str:
-        text = str(value or "").strip()
+        text = "" if value is None else str(value).strip()
         if not text:
             return ""
         if not validate_number_range(text, min_val=min_value, max_val=max_value):
@@ -1839,9 +1986,9 @@ class SettingsScreen(BaseAppScreen):
                 ("Boundary", "raw secret values are not displayed in Settings validation results"),
             ),
             SettingsCategoryId.CONSOLE_BEHAVIOR: (
-                ("Affected config", "composer behavior, paste collapse, and chat-flow defaults"),
+                ("Affected config", "chat_defaults fallbacks plus Console composer paste behavior"),
                 ("Recovery", "revert unsaved changes or disable paste collapse if composer flow is disrupted"),
-                ("Boundary", "normal typing remains literal; only large paste chunks are transformed"),
+                ("Boundary", "active sessions and provider+model profiles override these global fallbacks"),
             ),
             SettingsCategoryId.DIAGNOSTICS: (
                 ("Affected config", "read-only validation, reload status, and troubleshooting output"),
@@ -2073,6 +2220,51 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(id="settings-console-behavior-card", classes="settings-secondary-card"):
             title = "Console paste collapse" if compact else "Console Behavior"
             yield Static(title, classes="destination-section")
+            yield Static("Global fallback defaults", classes="destination-section")
+            yield Static(
+                "Used when no provider+model profile or active Console session overrides them.",
+                id="settings-console-defaults-help",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Streaming", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("streaming")),
+                    id="settings-console-default-streaming",
+                    classes="settings-compact-input",
+                    placeholder="true or false",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Temperature", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("temperature")),
+                    id="settings-console-default-temperature",
+                    classes="settings-compact-input",
+                    placeholder="0.0 - 2.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Top P", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("top_p")),
+                    id="settings-console-default-top-p",
+                    classes="settings-compact-input",
+                    placeholder="0.0 - 1.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Max tokens", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("max_tokens")),
+                    id="settings-console-default-max-tokens",
+                    classes="settings-compact-input",
+                    placeholder="optional whole number",
+                    restrict=r"^[0-9]*$",
+                )
+            yield Static(
+                "chat_defaults.streaming is canonical; enable_streaming is read as fallback only.",
+                id="settings-console-streaming-compatibility",
+                classes="settings-status-row",
+            )
+            yield Static("Composer paste handling", classes="destination-section")
             yield Static(
                 "Collapse large pasted chunks only when they exceed the threshold.",
                 id="settings-console-collapse-large-pastes-label",
@@ -2123,11 +2315,27 @@ class SettingsScreen(BaseAppScreen):
                     "normal typing remains literal and never auto-collapses",
                 )
                 yield self._detail_row("Current default", self._collapse_large_pastes_label())
+                yield Static("Global fallback defaults", classes="destination-section")
+                yield self._detail_row(
+                    "Fallback source",
+                    "[chat_defaults].streaming, temperature, top_p, max_tokens",
+                )
+                yield self._detail_row(
+                    "Compatibility",
+                    "streaming is canonical; enable_streaming is read only when streaming is absent",
+                )
+                yield self._detail_row(
+                    "Override order",
+                    "active Console session, then provider+model profile, then global fallback",
+                )
                 yield self._detail_row(
                     "Save targets",
-                    "[console].collapse_large_pastes, [console].paste_collapse_threshold",
+                    "[console] paste settings and [chat_defaults] global fallbacks",
                 )
-                yield self._detail_row("Console impact", "composer display only; message payload is preserved")
+                yield self._detail_row(
+                    "Console impact",
+                    "new/default sessions use these only when no narrower override applies",
+                )
         elif category is SettingsCategoryId.APPEARANCE:
             yield Static("Appearance", classes="destination-section settings-column-title")
             with Vertical(id="settings-appearance-card", classes="settings-focus-card"):
@@ -2296,8 +2504,43 @@ class SettingsScreen(BaseAppScreen):
         revert_button.disabled = not self._guided_actions_enabled(summary.category)
         yield revert_button
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
-            yield Static("Affects Console", classes="destination-section")
-            yield Static("Composer paste display, chat-flow defaults, and user input feedback.")
+            yield Static("Control guide", classes="destination-section")
+            yield self._detail_row(
+                "Streaming",
+                "Global fallback for streaming responses when no Console session "
+                "or provider+model profile overrides it",
+            )
+            yield self._detail_row(
+                "Temperature",
+                "Creativity fallback, 0.0 is focused and 2.0 is exploratory",
+            )
+            yield self._detail_row(
+                "Top P",
+                "Probability cutoff fallback; lower values narrow token choices",
+            )
+            yield self._detail_row(
+                "Max tokens",
+                "Optional response cap for new/default Console sends",
+            )
+            yield self._detail_row(
+                "Paste collapse",
+                "Only pasted chunks over the threshold become compact placeholders; "
+                "typed text stays literal",
+            )
+            yield self._detail_row(
+                "Threshold",
+                "Minimum pasted chunk size before collapse",
+            )
+            yield Static("Override rules", classes="destination-section")
+            yield self._detail_row(
+                "Priority",
+                "active Console session, then provider+model profile, then these global fallbacks",
+            )
+            yield self._detail_row(
+                "Save scope",
+                "[chat_defaults] response fallbacks and [console] paste display settings",
+            )
+            return
         elif summary.category is SettingsCategoryId.PROVIDERS_MODELS:
             yield Static("Affects Console and provider-backed generation.", classes="destination-section")
             yield Static(self._provider_readiness_label())
@@ -2476,6 +2719,58 @@ class SettingsScreen(BaseAppScreen):
         self._console_behavior_result = "Console behavior settings staged."
         self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
         self._update_console_paste_summary()
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Input.Changed, "#settings-console-default-streaming")
+    def handle_console_default_streaming_changed(self, event: Input.Changed) -> None:
+        if self._syncing_console_defaults:
+            return
+        try:
+            value = self._normalise_console_default_streaming(event.value)
+        except ValueError:
+            value = event.value
+        self._stage_console_default_value("streaming", value)
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Input.Changed, "#settings-console-default-temperature")
+    def handle_console_default_temperature_changed(self, event: Input.Changed) -> None:
+        if self._syncing_console_defaults:
+            return
+        try:
+            value = self._normalise_console_default_temperature(event.value)
+        except ValueError:
+            value = event.value
+        self._stage_console_default_value("temperature", value)
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Input.Changed, "#settings-console-default-top-p")
+    def handle_console_default_top_p_changed(self, event: Input.Changed) -> None:
+        if self._syncing_console_defaults:
+            return
+        try:
+            value = self._normalise_console_default_top_p(event.value)
+        except ValueError:
+            value = event.value
+        self._stage_console_default_value("top_p", value)
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Input.Changed, "#settings-console-default-max-tokens")
+    def handle_console_default_max_tokens_changed(self, event: Input.Changed) -> None:
+        if self._syncing_console_defaults:
+            return
+        try:
+            value = self._normalise_console_default_max_tokens(event.value)
+        except ValueError:
+            value = event.value
+        self._stage_console_default_value("max_tokens", value)
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     @on(Input.Changed, "#settings-provider-value")
@@ -2793,28 +3088,62 @@ class SettingsScreen(BaseAppScreen):
             return
 
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
-            dirty_values = {key: draft.values[key] for key in draft.dirty_keys}
-            if "paste_collapse_threshold" in dirty_values:
-                try:
+            dirty_values = {
+                key: draft.values[key]
+                for key in CONSOLE_BEHAVIOR_SAVE_ORDER
+                if key in draft.dirty_keys
+            }
+            try:
+                if "paste_collapse_threshold" in dirty_values:
                     dirty_values["paste_collapse_threshold"] = (
                         self._normalise_paste_collapse_threshold(
                             dirty_values["paste_collapse_threshold"]
                         )
                     )
-                except ValueError as exc:
-                    self._console_behavior_result = str(exc)
-                    self._set_static_text(
-                        "#settings-console-behavior-result",
-                        self._console_behavior_result,
+                if "streaming" in dirty_values:
+                    dirty_values["streaming"] = self._normalise_console_default_streaming(
+                        dirty_values["streaming"]
                     )
-                    self.app.notify(self._console_behavior_result, severity="error")
-                    return
+                if "temperature" in dirty_values:
+                    dirty_values["temperature"] = self._normalise_console_default_temperature(
+                        dirty_values["temperature"]
+                    )
+                if "top_p" in dirty_values:
+                    dirty_values["top_p"] = self._normalise_console_default_top_p(
+                        dirty_values["top_p"]
+                    )
+                if "max_tokens" in dirty_values:
+                    dirty_values["max_tokens"] = self._normalise_console_default_max_tokens(
+                        dirty_values["max_tokens"]
+                    )
+            except ValueError as exc:
+                self._console_behavior_result = str(exc)
+                self._set_static_text(
+                    "#settings-console-behavior-result",
+                    self._console_behavior_result,
+                )
+                self.app.notify(self._console_behavior_result, severity="error")
+                return
+            console_values = {
+                key: value
+                for key, value in dirty_values.items()
+                if key in CONSOLE_BEHAVIOR_CONSOLE_KEYS
+            }
+            chat_default_values = {
+                key: value
+                for key, value in dirty_values.items()
+                if key in CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS
+            }
             saved = True
-            for key, value in dirty_values.items():
+            for key, value in console_values.items():
                 if not save_setting_to_cli_config("console", key, value):
                     saved = False
+            for key, value in chat_default_values.items():
+                if not save_setting_to_cli_config("chat_defaults", key, value):
+                    saved = False
             if saved:
-                self._console_settings().update(dirty_values)
+                self._console_settings().update(console_values)
+                self._chat_defaults().update(chat_default_values)
                 self._settings_drafts.pop(category, None)
                 self._console_behavior_result = "Console behavior settings saved."
                 self._sync_console_behavior_widgets()
@@ -2922,6 +3251,21 @@ class SettingsScreen(BaseAppScreen):
                 self._syncing_console_threshold = False
         except QueryError:
             pass
+        input_values = {
+            "#settings-console-default-streaming": self._console_behavior_value("streaming"),
+            "#settings-console-default-temperature": self._console_behavior_value("temperature"),
+            "#settings-console-default-top-p": self._console_behavior_value("top_p"),
+            "#settings-console-default-max-tokens": self._console_behavior_value("max_tokens"),
+        }
+        self._syncing_console_defaults = True
+        try:
+            for selector, value in input_values.items():
+                try:
+                    self.query_one(selector, Input).value = self._console_input_value(value)
+                except QueryError:
+                    pass
+        finally:
+            self._syncing_console_defaults = False
         self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
