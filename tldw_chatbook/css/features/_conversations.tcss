@@ -335,8 +335,10 @@ Collapsible > .collapsible--header {
 }
 
 Collapsible.-active > .collapsible--header {
-    background: $primary-background;
-    color: $text;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-bottom: solid $ds-focus-accent;
 }
 
 /* Select widget styling */

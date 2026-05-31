@@ -19,6 +19,7 @@ WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CHAT_TABS = ROOT / "tldw_chatbook/css/features/_chat_tabs.tcss"
+CONVERSATIONS = ROOT / "tldw_chatbook/css/features/_conversations.tcss"
 SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
 LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
@@ -628,6 +629,19 @@ def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
     assert_non_obscuring_focus(block)
     assert "outline: heavy" not in block
     assert "border-bottom: solid $ds-focus-accent;" in collapsed_focus
+
+
+def test_conversations_collapsible_active_header_uses_selected_contract():
+    for text in (
+        CONVERSATIONS.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        blocks = css_blocks(text, "Collapsible.-active > .collapsible--header")
+        assert blocks, "Missing CSS block for Collapsible.-active > .collapsible--header"
+        active = blocks[-1]
+        assert_readable_selected_state_contract(active)
+        assert_no_dominant_selected_geometry(active)
+        assert "border-bottom: solid $ds-focus-accent;" in active
 
 
 def test_message_action_buttons_focus_without_obscuring_labels():
