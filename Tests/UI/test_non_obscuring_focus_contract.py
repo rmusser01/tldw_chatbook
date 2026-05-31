@@ -540,6 +540,9 @@ def test_console_session_tab_active_state_uses_selected_contract():
 
 
 def test_console_composer_action_availability_states_are_visually_distinct():
+    variables = VARIABLES.read_text(encoding="utf-8")
+    assert "$ds-text-disabled: $text-disabled;" in variables
+
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
@@ -566,7 +569,7 @@ def test_console_composer_action_availability_states_are_visually_distinct():
 
         assert "border: none;" in disabled
         assert "background: $ds-surface-panel;" in disabled
-        assert "color: $text-disabled;" in disabled
+        assert "color: $ds-text-disabled;" in disabled
         assert "text-style: none;" in disabled
         assert "text-style: bold underline;" not in disabled
         assert "$primary" not in disabled

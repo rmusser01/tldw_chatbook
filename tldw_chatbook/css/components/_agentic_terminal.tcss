@@ -1093,7 +1093,7 @@ ConsoleSettingsModal Select:focus {
 .console-action-disabled {
     border: none;
     background: $ds-surface-panel;
-    color: $text-disabled;
+    color: $ds-text-disabled;
     text-style: none;
 }
 

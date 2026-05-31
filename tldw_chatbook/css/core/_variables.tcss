@@ -12,6 +12,7 @@ $ds-grid-line: $surface-lighten-1;
 $ds-column-line: $surface-lighten-2;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
+$ds-text-disabled: $text-disabled;
 $ds-action-focus: $primary;
 $ds-focus-fg: $ds-text-primary;
 $ds-focus-bg: $ds-surface-raised;
