@@ -1217,11 +1217,15 @@ def test_legacy_sidebar_focus_overrides_defer_to_shared_contracts():
 
 
 def test_sidebar_section_focus_within_uses_non_semantic_container_cue():
-    for text in (
-        SIDEBARS.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
-    ):
-        block = css_block(text, ".sidebar-section-collapsible:focus-within")
+    for path in (SIDEBARS, BUNDLE):
+        blocks = css_blocks(
+            path.read_text(encoding="utf-8"),
+            ".sidebar-section-collapsible:focus-within",
+        )
+        assert blocks, "Missing CSS block for .sidebar-section-collapsible:focus-within"
+        if path == SIDEBARS:
+            assert len(blocks) == 1
+        block = blocks[-1]
         assert "outline: heavy" not in block
         assert "border: thick" not in block
         assert "$primary" not in block
