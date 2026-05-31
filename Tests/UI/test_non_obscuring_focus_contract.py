@@ -917,6 +917,19 @@ def test_feature_navigation_active_and_dropdown_focus_states_follow_contracts():
 
 
 @pytest.mark.unit
+def test_tab_dropdown_option_hover_uses_neutral_readable_surface():
+    selector = "#tab-dropdown-select SelectOverlay Option:hover"
+    for label, text in (
+        ("_tab_dropdown.tcss", TAB_DROPDOWN.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        blocks = css_blocks(text, selector)
+        assert blocks, f"{label} is missing {selector}"
+        assert len(blocks) == 1, f"{label} should define exactly one {selector}"
+        assert_native_row_hover_state_contract(blocks[0])
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("path", "selector"),
     (

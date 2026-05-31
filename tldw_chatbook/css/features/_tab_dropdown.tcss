@@ -64,7 +64,7 @@
 
 /* Option hover state */
 #tab-dropdown-select SelectOverlay Option:hover {
-    background: $accent;
+    background: $surface-lighten-1;
     color: $text;
 }
 
