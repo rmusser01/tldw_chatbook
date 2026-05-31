@@ -123,7 +123,7 @@
     min-height: 5;
     max-height: 10;
     height: auto;
-    border: round $primary;
+    border: round $ds-focus-accent;
     margin-bottom: 1;
     background: $surface;
 }
@@ -421,7 +421,7 @@ IngestWindowTabbed {
     min-height: 3;
     max-height: 8;
     height: auto;
-    border: round $primary;
+    border: round $ds-focus-accent;
     margin-bottom: 1;
     background: $surface;
 }
