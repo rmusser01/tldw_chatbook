@@ -883,6 +883,23 @@ def test_bundled_feature_navigation_states_match_source_contracts():
     )
 
 
+def test_ingest_selected_files_list_uses_non_obscuring_container_cue():
+    for path in (INGEST, BUNDLE):
+        blocks = css_blocks(path.read_text(encoding="utf-8"), ".ingest-selected-files-list")
+        assert blocks, "Missing CSS block for .ingest-selected-files-list"
+        for block in blocks:
+            assert "outline: heavy" not in block
+            assert "border: thick" not in block
+            assert "border-left" not in block
+            assert "border-right" not in block
+            assert "$primary" not in block
+            assert "$accent" not in block
+            assert "$warning" not in block
+            assert "$error" not in block
+            assert "border: round $ds-focus-accent;" in block
+            assert "background: $surface;" in block
+
+
 def test_residual_active_selected_states_follow_shared_contracts():
     for path, selector in BUNDLED_RESIDUAL_ACTIVE_SELECTED_CONTRACTS:
         block = css_block(path.read_text(encoding="utf-8"), selector)
