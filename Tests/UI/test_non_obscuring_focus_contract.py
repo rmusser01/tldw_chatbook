@@ -1084,8 +1084,9 @@ def test_bundled_media_selected_states_match_source_contracts():
 
 
 def test_repo_tree_widget_selected_state_matches_code_repo_contract():
-    text = REPO_TREE_WIDGETS.read_text(encoding="utf-8")
-    selected = css_block(text, ".tree-node-selected")
+    from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeNode
+
+    selected = css_block(TreeNode.DEFAULT_CSS, ".tree-node-selected")
     assert_readable_selected_state_contract(selected)
     assert_no_dominant_selected_geometry(selected)
 
