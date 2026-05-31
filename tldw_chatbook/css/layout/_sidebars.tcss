@@ -56,7 +56,8 @@
 }
 
 .preset-button:hover {
-    background: $primary 15%;
+    background: $surface-lighten-1;
+    color: $text;
 }
 
 /* Search container with better visibility */
@@ -280,7 +281,7 @@
 }
 
 .sidebar-resize-button:hover {
-    background: $primary-lighten-1;
+    background: $surface-lighten-1;
     color: $text;
     text-style: bold;
 }
@@ -577,8 +578,9 @@ TabbedContent Underline {
 }
 
 .search-result-item:hover {
-    background: $primary 10%;
-    border: round $primary;
+    background: $surface-lighten-1;
+    color: $text;
+    border: round $surface-lighten-2;
 }
 
 /* Highlight matched text in search */
@@ -609,7 +611,8 @@ TabbedContent Underline {
 }
 
 .reset-button:hover {
-    background: $warning 30%;
+    background: $surface-lighten-1;
+    color: $text;
 }
 
 /* Note: Textual doesn't support @media queries for responsive design

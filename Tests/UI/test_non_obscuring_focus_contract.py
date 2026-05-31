@@ -1371,3 +1371,23 @@ def test_sidebar_preset_active_state_is_readable_without_dominant_fill():
     assert "background: $ds-focus-bg;" in active
     assert "color: $ds-focus-fg;" in active
     assert "text-style: bold underline;" in active
+
+
+@pytest.mark.parametrize(
+    "selector",
+    (
+        ".preset-button:hover",
+        ".sidebar-resize-button:hover",
+        ".search-result-item:hover",
+        ".reset-button:hover",
+    ),
+)
+def test_sidebar_hover_states_use_neutral_readable_surface(selector: str):
+    for label, text in (
+        ("layout/_sidebars.tcss", SIDEBARS.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        blocks = css_blocks(text, selector)
+        assert blocks, f"{label} is missing {selector}"
+        assert len(blocks) == 1, f"{label} should define exactly one {selector}"
+        assert_native_row_hover_state_contract(blocks[0])
