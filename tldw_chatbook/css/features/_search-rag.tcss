@@ -29,7 +29,13 @@
     height: 3;
 }
 .search-nav-pane .search-nav-button:hover {
-    background: $accent 80%; /* Example: accent color with 80% opacity */
+    background: $surface-lighten-1;
+    color: $text;
+}
+.search-nav-pane .search-nav-button:disabled:hover {
+    background: $surface-darken-1;
+    color: $text-disabled;
+    text-style: none;
 }
 /* Active state for selected search nav button */
 .search-nav-pane .search-nav-button.-active-search-sub-view {

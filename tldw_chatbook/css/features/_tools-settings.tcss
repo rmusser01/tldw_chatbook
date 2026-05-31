@@ -29,7 +29,8 @@
     height: 3;
 }
 .tools-nav-pane .ts-nav-button:hover {
-    background: $accent 50%;
+    background: $surface-lighten-1;
+    color: $text;
 }
 
 .tools-nav-pane .ts-nav-button.active-nav {

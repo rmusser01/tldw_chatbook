@@ -46,7 +46,8 @@ CodingWindow {
 }
 
 .coding-nav-button:hover {
-    background: $primary;
+    background: $surface-lighten-1;
+    color: $text;
 }
 
 /* Content pane */
