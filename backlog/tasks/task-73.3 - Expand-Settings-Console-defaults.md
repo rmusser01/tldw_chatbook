@@ -24,9 +24,9 @@ Expand Console Behavior into a real global-defaults category for supported Conso
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Console global defaults load from config and distinguish global defaults from per-session Console overrides.
+- [ ] #1 Console global defaults load from config and distinguish global fallbacks from provider+model defaults and per-session Console overrides.
 - [ ] #2 The `streaming` and `enable_streaming` compatibility seam has one documented effective source of truth before new controls are added.
-- [ ] #3 Supported defaults can be edited, validated, saved, reverted, and reflected in Console behavior.
+- [ ] #3 Supported global fallback defaults can be edited, validated, saved, reverted, and reflected in Console behavior when no provider+model default or session override applies.
 - [ ] #4 Invalid numeric or boolean values are blocked with visible recovery copy.
 - [ ] #5 Existing large-paste collapse behavior remains intact and covered.
 - [ ] #6 Mounted tests verify save/revert and Console reflection for changed defaults.

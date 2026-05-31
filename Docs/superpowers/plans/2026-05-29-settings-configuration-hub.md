@@ -58,11 +58,24 @@ The main gap is completeness: Settings does not yet provide guided, end-to-end c
 
 These decisions prevent Settings categories from creating contradictory writes.
 
-- Providers & Models owns provider identity, default model, provider endpoint/base URL, and credential source. It may display sampling and transport defaults as read-only context, but it must not save `streaming`, `temperature`, `top_p`, `max_tokens`, or other Console run defaults.
-- Console Defaults owns sampling and transport defaults. It must normalize the existing `streaming` / `enable_streaming` compatibility seam before adding more controls.
+- Providers & Models owns provider identity, default model, provider endpoint/base URL, credential source, and provider+model default profiles. A model default profile may include model-scoped sampling and transport defaults because those values are part of choosing that specific model.
+- Console Defaults owns global fallback sampling and transport defaults. It must normalize the existing `streaming` / `enable_streaming` compatibility seam before adding more controls.
 - Provider credentials and endpoints live under `api_settings.<provider>`. Chat defaults live under `chat_defaults`. Console runtime/session overrides remain Console-owned.
+- Provider+model default profiles live under the provider config, for example `api_settings.<provider>.model_defaults[<exact model id>]`. Persist the profile map as data under the provider section instead of relying on dotted section paths for model names, because model IDs may contain dots, slashes, colons, spaces, or provider-specific punctuation.
 - Server, sync, workspace, and handoff Settings rows must be sourced from existing runtime-policy, sync, workspace, or destination state contracts. If no source contract exists, Settings renders explicit WIP/read-only ownership copy instead of inventing status.
 - Domain configuration categories are added first as an ownership/status contract pass. A domain only gets save/revert controls after a separate PR-sized task identifies the concrete source of truth and destination owner.
+
+## Console Default Resolution Hierarchy
+
+Console settings must resolve in this order:
+
+1. Active Console session override, when the user changed the value in the current tab.
+2. Provider+model default profile from Settings, keyed by normalized provider and exact model id.
+3. Provider fallback defaults from `api_settings.<provider>`.
+4. Global Console defaults from `chat_defaults` or the Stage 3 Console Defaults canonical section.
+5. Hardcoded safe defaults only when config is missing or invalid.
+
+When a user changes the model in Console, the new model inherits its provider+model default profile. Existing session overrides must not be silently carried onto the new model unless the user explicitly keeps them. Console should expose recovery copy such as "Using model defaults" or "Modified in this session" plus a reset action back to model defaults.
 
 ## Non-Negotiable Gates
 
@@ -170,23 +183,23 @@ Do not proceed to PR until the user approves the actual screenshot.
 
 Backlog: `TASK-73.2`
 
-- [ ] **Step 1: Add failing provider catalog tests**
+- [ ] **Step 1: Add failing provider catalog and model-default tests**
 
-Extend `Tests/UI/test_settings_configuration_hub.py` and `Tests/Chat/test_console_provider_support.py` so Settings can list all providers supported by `chat_api_call()` while preserving custom entry paths.
+Extend `Tests/UI/test_settings_configuration_hub.py`, `Tests/UI/test_console_session_settings.py`, and `Tests/Chat/test_console_provider_support.py` so Settings can list all providers supported by `chat_api_call()` while preserving custom entry paths, and so Console can inherit provider+model default profiles when a user switches models.
 
 Run:
 
 ```bash
-python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/Chat/test_console_provider_support.py --tb=short
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_session_settings.py Tests/Chat/test_console_provider_support.py --tb=short
 ```
 
-Expected: fail until Settings uses the provider registry/catalog instead of only freeform inputs.
+Expected: fail until Settings uses the provider registry/catalog instead of only freeform inputs and until Console has a model-default inheritance layer.
 
 - [ ] **Step 2: Add guided provider controls**
 
 Update `settings_screen.py` to expose provider and model selection from the existing provider catalog. Keep a custom/manual provider escape hatch for providers that exist in config but are not catalog-discovered.
 
-Do not add editable sampling or transport defaults in this stage. `streaming`, `temperature`, `top_p`, and `max_tokens` belong to Stage 3.
+Add an explicit model-default profile panel for the selected provider+model. The panel may edit model-scoped defaults such as `temperature`, `top_p`, `min_p`, `top_k`, `max_tokens`, and `streaming` because they apply only when that model is selected. Do not add global sampling or transport defaults in this stage; global fallbacks belong to Stage 3.
 
 - [ ] **Step 3: Add credential source controls**
 
@@ -205,11 +218,11 @@ Reuse `provider_readiness.py`, `console_provider_support.py`, and `console_sessi
 
 - [ ] **Step 5: Save to config and refresh runtime state**
 
-Use `SettingsConfigAdapter` and existing config save helpers. Save only provider identity, model, endpoint/base URL, and credential-source fields. After save, update `app_instance.app_config` and any relevant app reactive values so Console and Settings do not contradict each other.
+Use `SettingsConfigAdapter` and existing config save helpers. Save provider identity, default model, endpoint/base URL, credential-source fields, and the selected provider+model default profile. Store model profiles as a nested mapping under the provider section, not as dotted section names derived from model IDs. After save, update `app_instance.app_config` and any relevant app reactive values so Console and Settings do not contradict each other.
 
 - [ ] **Step 6: Console smoke coverage**
 
-Add focused tests that change provider defaults in Settings, then assert Console readiness and blocked/ready feedback use the same effective provider/model.
+Add focused tests that change provider defaults in Settings, then assert Console readiness and blocked/ready feedback use the same effective provider/model. Add Console tests that switch from one model to another and prove the new model inherits its model-default profile while session edits are marked as overrides and can be reset to model defaults.
 
 Run:
 
@@ -223,7 +236,9 @@ Capture and approve:
 
 - provider category with missing key
 - provider category with configured local endpoint
+- provider category with a selected model-default profile
 - Console after provider save
+- Console after switching models and inheriting the new model defaults
 
 Save under:
 
@@ -237,7 +252,7 @@ Backlog: `TASK-73.3`
 
 - [ ] **Step 1: Add failing Console default tests**
 
-Assert Settings can load, edit, validate, save, and revert Console defaults beyond paste collapse.
+Assert Settings can load, edit, validate, save, and revert global Console defaults beyond paste collapse. These are fallbacks only; model-specific defaults remain in Providers & Models.
 
 Candidate defaults:
 
