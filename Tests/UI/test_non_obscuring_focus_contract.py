@@ -1373,6 +1373,17 @@ def test_sidebar_preset_active_state_is_readable_without_dominant_fill():
     assert "text-style: bold underline;" in active
 
 
+def test_sidebar_preset_active_hover_preserves_active_cue():
+    for label, text in (
+        ("layout/_sidebars.tcss", SIDEBARS.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        blocks = css_blocks(text, ".preset-button.active:hover")
+        assert blocks, f"{label} is missing .preset-button.active:hover"
+        assert_readable_selected_state_contract(blocks[-1])
+        assert "border: tall $ds-focus-accent;" in blocks[-1]
+
+
 @pytest.mark.parametrize(
     "selector",
     (
@@ -1383,11 +1394,11 @@ def test_sidebar_preset_active_state_is_readable_without_dominant_fill():
     ),
 )
 def test_sidebar_hover_states_use_neutral_readable_surface(selector: str):
-    for label, text in (
-        ("layout/_sidebars.tcss", SIDEBARS.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
-    ):
-        blocks = css_blocks(text, selector)
-        assert blocks, f"{label} is missing {selector}"
-        assert len(blocks) == 1, f"{label} should define exactly one {selector}"
-        assert_native_row_hover_state_contract(blocks[0])
+    source_blocks = css_blocks(SIDEBARS.read_text(encoding="utf-8"), selector)
+    assert source_blocks, f"layout/_sidebars.tcss is missing {selector}"
+    assert len(source_blocks) == 1, f"layout/_sidebars.tcss should define exactly one {selector}"
+    assert_native_row_hover_state_contract(source_blocks[0])
+
+    bundled_blocks = css_blocks(BUNDLE.read_text(encoding="utf-8"), selector)
+    assert bundled_blocks, f"tldw_cli_modular.tcss is missing {selector}"
+    assert_native_row_hover_state_contract(bundled_blocks[-1])

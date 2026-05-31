@@ -60,6 +60,13 @@
     color: $text;
 }
 
+.preset-button.active:hover {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: tall $ds-focus-accent;
+    text-style: bold underline;
+}
+
 /* Search container with better visibility */
 .search-container {
     height: 3;
