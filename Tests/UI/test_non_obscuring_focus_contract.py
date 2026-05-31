@@ -445,6 +445,17 @@ def test_global_button_focus_uses_two_non_obscuring_cues():
         assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
 
 
+def test_shared_button_hover_uses_non_obscuring_surface_contract():
+    for label, text in (
+        ("components/_buttons.tcss", BUTTONS.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        blocks = css_blocks(text, "Button:hover")
+        assert blocks, f"{label} is missing Button:hover"
+        assert len(blocks) == 1, f"{label} should define exactly one Button:hover rule"
+        assert_native_row_hover_state_contract(blocks[0])
+
+
 def test_shared_form_and_native_inputs_use_thin_non_semantic_focus():
     text = FORMS.read_text(encoding="utf-8")
     for selector in (
