@@ -89,7 +89,8 @@ class SectionContainer(Container):
     }
     
     .collapse-button:hover {
-        background: $primary 20%;
+        background: $surface-lighten-1;
+        color: $text;
     }
     
     .section-content {

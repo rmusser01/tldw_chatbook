@@ -624,6 +624,12 @@ def test_shared_navigation_button_uses_non_obscuring_active_and_focus_states():
     assert "$ds-focus-bg" in active_focus or "$ds-surface-raised" in active_focus
 
 
+def test_shared_section_container_collapse_button_hover_is_non_obscuring():
+    text = BASE_COMPONENTS.read_text(encoding="utf-8")
+    hover = css_block(text, ".collapse-button:hover")
+    assert_native_row_hover_state_contract(hover)
+
+
 def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
     text = WIDGETS.read_text(encoding="utf-8")
     block = css_block(text, "Collapsible > .collapsible--header:focus")
