@@ -32,7 +32,7 @@ Collapsible > .collapsible--header {
 }
 
 Collapsible > .collapsible--header:hover {
-    background: $primary-background-lighten-2;
+    background: $surface;
     color: $text;
 }
 

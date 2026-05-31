@@ -641,6 +641,21 @@ def test_shared_section_container_collapse_button_hover_is_non_obscuring():
     assert_native_row_hover_state_contract(hover)
 
 
+@pytest.mark.unit
+def test_shared_collapsible_header_hover_uses_non_obscuring_surface_contract():
+    for label, text in (
+        ("components/_widgets.tcss", WIDGETS.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        base = css_block(text, "Collapsible > .collapsible--header")
+        blocks = css_blocks(text, "Collapsible > .collapsible--header:hover")
+        assert "background: $surface-lighten-1;" in base
+        assert blocks, f"{label} is missing Collapsible header hover"
+        assert len(blocks) == 1, f"{label} should define exactly one Collapsible header hover"
+        assert "background: $surface;" in blocks[0]
+        assert_native_row_hover_state_contract(blocks[0])
+
+
 def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
     text = WIDGETS.read_text(encoding="utf-8")
     block = css_block(text, "Collapsible > .collapsible--header:focus")
