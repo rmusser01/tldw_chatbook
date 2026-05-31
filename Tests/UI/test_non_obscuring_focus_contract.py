@@ -191,6 +191,21 @@ def assert_embeddings_focus_and_active_contracts(text: str) -> None:
         assert "color: $ds-focus-fg;" in block
         assert "text-style: bold underline;" in block
 
+    for selector in (
+        "#embeddings-model-list ModelListItem.--highlight",
+        "#embeddings-collection-list CollectionListItem.--highlight",
+    ):
+        block = css_block(text, selector)
+        assert_readable_selected_state_contract(block)
+        assert_no_dominant_selected_geometry(block)
+
+    for selector in (
+        ".embeddings-list-item.-selected",
+        "ModelListItem.-selected",
+        "CollectionListItem.-selected",
+    ):
+        assert css_blocks(text, selector) == []
+
 
 def assert_feature_nav_active_contract(block: str) -> None:
     assert "outline: heavy" not in block
