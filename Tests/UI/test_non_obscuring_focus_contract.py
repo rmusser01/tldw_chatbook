@@ -588,7 +588,9 @@ def test_acp_selected_session_row_uses_selected_contract():
         AGENTIC.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
     ):
-        selected = css_block(text, ".acp-selected-session-row")
+        blocks = css_blocks(text, ".acp-selected-session-row")
+        assert len(blocks) == 1
+        selected = blocks[0]
         assert_readable_selected_state_contract(selected)
         assert_no_dominant_selected_geometry(selected)
 
