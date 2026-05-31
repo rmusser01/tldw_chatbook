@@ -394,13 +394,6 @@ EmbeddingsManagementWindow {
     border: round $accent;
 }
 
-.embeddings-list-item.-selected {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    border: round $ds-focus-accent;
-}
-
 .embeddings-info-label {
     text-style: bold;
     margin-top: 1;
@@ -940,8 +933,8 @@ CollectionListItem:hover {
     background: $panel-lighten-1;
 }
 
-ModelListItem.-selected,
-CollectionListItem.-selected {
+#embeddings-model-list ModelListItem.--highlight,
+#embeddings-collection-list CollectionListItem.--highlight {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
