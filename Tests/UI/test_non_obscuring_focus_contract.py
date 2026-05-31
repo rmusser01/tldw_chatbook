@@ -42,6 +42,7 @@ LLM_MANAGEMENT = ROOT / "tldw_chatbook/css/features/_llm-management.tcss"
 MEDIA = ROOT / "tldw_chatbook/css/features/_media.tcss"
 MEDIA_NAVIGATION_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_navigation_panel.py"
 MEDIA_LIST_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_list_panel.py"
+REPO_TREE_WIDGETS = ROOT / "tldw_chatbook/Widgets/Coding_Widgets/repo_tree_widgets.py"
 CHATBOOKS_IMPROVED = ROOT / "tldw_chatbook/css/features/_chatbooks_improved.tcss"
 CHATBOOKS_WINDOW_IMPROVED = ROOT / "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
 SAMPLE_BROWSER_DIALOG = ROOT / "tldw_chatbook/Widgets/Evals/sample_browser_dialog.py"
@@ -1080,6 +1081,14 @@ def test_bundled_media_selected_states_match_source_contracts():
         ".review-item.selected:hover",
     ):
         assert_readable_selected_state_contract(css_block(text, selector))
+
+
+def test_repo_tree_widget_selected_state_matches_code_repo_contract():
+    from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeNode
+
+    selected = css_block(TreeNode.DEFAULT_CSS, ".tree-node-selected")
+    assert_readable_selected_state_contract(selected)
+    assert_no_dominant_selected_geometry(selected)
 
 
 def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
