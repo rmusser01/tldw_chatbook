@@ -583,6 +583,16 @@ def test_settings_category_active_states_use_selected_contract():
             assert_no_dominant_selected_geometry(active)
 
 
+def test_acp_selected_session_row_uses_selected_contract():
+    for text in (
+        AGENTIC.read_text(encoding="utf-8"),
+        BUNDLE.read_text(encoding="utf-8"),
+    ):
+        selected = css_block(text, ".acp-selected-session-row")
+        assert_readable_selected_state_contract(selected)
+        assert_no_dominant_selected_geometry(selected)
+
+
 def test_top_navigation_inline_focus_uses_hybrid_contract():
     from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 
