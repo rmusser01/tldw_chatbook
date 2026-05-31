@@ -7,17 +7,15 @@ allowing users to access the TUI through their web browser.
 """
 
 import sys
-from typing import Optional
 from pathlib import Path
+from typing import Optional
+from urllib.parse import urlparse, urlunparse
+
 from loguru import logger
 
+from ..Utils.input_validation import validate_number_range
 from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE, require_dependency
 from ..config import get_cli_setting
-
-try:
-    from textual_serve.server import Server as TextualServeServer
-except ImportError:  # pragma: no cover - create_server reports the missing optional dep.
-    TextualServeServer = object
 
 
 _TEXTUAL_SERVE_RESIZE_HOOK = "window.onresize=()=>{this.fit()}"
@@ -27,14 +25,27 @@ _TEXTUAL_SERVE_CANVAS_RENDERERS = (
 )
 _CHATBOOK_VIEWPORT_PATCH_MARKER = "this._chatbookViewportResize"
 _CHATBOOK_DEFAULT_WEB_FONT_SIZE = 12
+_CHATBOOK_MIN_WEB_FONT_SIZE = 6
+_CHATBOOK_MAX_WEB_FONT_SIZE = 32
 
 
-def _to_int(value: object, default: int) -> int:
-    """Convert a value to int or return the supplied default."""
+def _coerce_web_font_size(value: object, default: int) -> int:
+    """Validate and coerce a configured or requested web terminal font size."""
+    if not validate_number_range(
+        value,
+        min_val=_CHATBOOK_MIN_WEB_FONT_SIZE,
+        max_val=_CHATBOOK_MAX_WEB_FONT_SIZE,
+    ):
+        return default
+
     try:
-        return int(value)
+        numeric_value = float(value)
     except (TypeError, ValueError):
         return default
+
+    if not numeric_value.is_integer():
+        return default
+    return int(numeric_value)
 
 
 def resolve_web_font_size(query_value: str | None) -> int:
@@ -44,10 +55,13 @@ def resolve_web_font_size(query_value: str | None) -> int:
         "font_size",
         default=_CHATBOOK_DEFAULT_WEB_FONT_SIZE,
     )
-    configured_font_size = _to_int(configured_value, _CHATBOOK_DEFAULT_WEB_FONT_SIZE)
+    configured_font_size = _coerce_web_font_size(
+        configured_value,
+        _CHATBOOK_DEFAULT_WEB_FONT_SIZE,
+    )
     if query_value is None:
         return configured_font_size
-    return _to_int(query_value, configured_font_size)
+    return _coerce_web_font_size(query_value, configured_font_size)
 
 
 def patch_textual_serve_viewport_js(source: str) -> str:
@@ -79,13 +93,12 @@ def patch_textual_serve_viewport_js(source: str) -> str:
         "requestAnimationFrame(this._chatbookViewportRepaint)"
         "};"
         "window.addEventListener(\"resize\",this._chatbookViewportResize);"
-        "window.onresize=this._chatbookViewportResize;"
         "try{new ResizeObserver(this._chatbookViewportResize).observe(this.element)}catch(e){}"
     )
     return patched.replace(_TEXTUAL_SERVE_RESIZE_HOOK, resize_replacement, 1)
 
 
-class ChatbookWebServer(TextualServeServer):
+class ChatbookWebServerMixin:
     """Textual web server with Chatbook-specific viewport resize hardening."""
 
     async def _make_app(self):
@@ -102,7 +115,7 @@ class ChatbookWebServer(TextualServeServer):
             web.get("/ws", self.handle_websocket, name="websocket"),
             web.get("/download/{key}", self.handle_download, name="download"),
             web.get("/static/js/textual.js", self.handle_textual_js, name="textual_js"),
-            web.static("/static", self.statics_path, show_index=True, name="static"),
+            web.static("/static", self.statics_path, show_index=False, name="static"),
         ]
         app.add_routes(routes)
 
@@ -113,15 +126,14 @@ class ChatbookWebServer(TextualServeServer):
     @property
     def _static_url(self) -> str:
         """Return the public static asset URL with a trailing slash."""
-        return f"{self.public_url}/static/"
+        return f"{self.public_url.rstrip('/')}/static/"
 
     @property
     def _app_websocket_url(self) -> str:
         """Return the public websocket URL used by textual-serve's browser client."""
-        websocket_url = f"{self.public_url}/ws"
-        if websocket_url.startswith("https"):
-            return "wss:" + websocket_url.split(":", 1)[1]
-        return "ws:" + websocket_url.split(":", 1)[1]
+        parsed_url = urlparse(f"{self.public_url.rstrip('/')}/ws")
+        websocket_scheme = "wss" if parsed_url.scheme == "https" else "ws"
+        return urlunparse(parsed_url._replace(scheme=websocket_scheme))
 
     async def handle_index(self, request):
         """Serve the HTML shell with Chatbook's denser terminal default."""
@@ -136,16 +148,47 @@ class ChatbookWebServer(TextualServeServer):
         }
         return aiohttp_jinja2.render_template("app_index.html", request, context)
 
+    def _patched_textual_js(self) -> str:
+        """Return cached patched textual-serve JS, refreshing when the file changes."""
+        source_path = Path(self.statics_path) / "js" / "textual.js"
+        source_stat = source_path.stat()
+        cached_mtime = getattr(self, "_cached_textual_js_mtime_ns", None)
+        cached_text = getattr(self, "_cached_textual_js", None)
+
+        if cached_text is not None and cached_mtime == source_stat.st_mtime_ns:
+            return cached_text
+
+        source = source_path.read_text(encoding="utf-8")
+        patched = patch_textual_serve_viewport_js(source)
+        self._cached_textual_js = patched
+        self._cached_textual_js_mtime_ns = source_stat.st_mtime_ns
+        return patched
+
     async def handle_textual_js(self, request):
         """Serve textual-serve JS with a full repaint after browser viewport resize."""
         from aiohttp import web
 
-        source_path = Path(self.statics_path) / "js" / "textual.js"
-        source = source_path.read_text(encoding="utf-8")
         return web.Response(
-            text=patch_textual_serve_viewport_js(source),
+            text=self._patched_textual_js(),
             content_type="application/javascript",
         )
+
+
+def _load_textual_serve_server_class() -> type:
+    """Load textual-serve's Server class after the optional dependency gate."""
+    require_dependency('textual_serve', 'web')
+    from textual_serve.server import Server as TextualServeServer
+
+    return TextualServeServer
+
+
+def build_chatbook_web_server_class(textual_serve_server_class: type) -> type:
+    """Build the Chatbook server subclass from a provided textual-serve base."""
+    class ChatbookWebServer(ChatbookWebServerMixin, textual_serve_server_class):
+        pass
+
+    ChatbookWebServer.__name__ = "ChatbookWebServer"
+    return ChatbookWebServer
 
 
 def check_web_server_available() -> bool:
@@ -174,8 +217,10 @@ def create_server(
     Raises:
         ImportError: If textual-serve is not installed
     """
-    # Require the dependency
-    textual_serve = require_dependency('textual_serve', 'web')
+    textual_serve_server_class = _load_textual_serve_server_class()
+    chatbook_web_server_class = build_chatbook_web_server_class(
+        textual_serve_server_class,
+    )
     
     # Create the command to run the app
     # textual-serve expects a command string, not a list
@@ -187,7 +232,7 @@ def create_server(
     
     # Create the server
     logger.info(f"Creating web server on {host}:{port}")
-    server = ChatbookWebServer(
+    server = chatbook_web_server_class(
         command=command,
         host=host,
         port=port,
