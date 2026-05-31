@@ -636,9 +636,12 @@ def test_conversations_collapsible_active_header_uses_selected_contract():
         CONVERSATIONS.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
     ):
-        active = css_blocks(text, "Collapsible.-active > .collapsible--header")[-1]
+        blocks = css_blocks(text, "Collapsible.-active > .collapsible--header")
+        assert blocks, "Missing CSS block for Collapsible.-active > .collapsible--header"
+        active = blocks[-1]
         assert_readable_selected_state_contract(active)
         assert_no_dominant_selected_geometry(active)
+        assert "border-bottom: solid $ds-focus-accent;" in active
 
 
 def test_message_action_buttons_focus_without_obscuring_labels():
