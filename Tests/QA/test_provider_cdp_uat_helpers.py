@@ -8,10 +8,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY_PATH = ROOT / "Docs/superpowers/qa/provider-cdp-uat/provider_inventory.py"
+LAUNCH_PATH = ROOT / "Docs/superpowers/qa/provider-cdp-uat/run_textual_web_with_env.py"
 
 
 def load_inventory_module():
     spec = importlib.util.spec_from_file_location("provider_inventory", INVENTORY_PATH)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_launch_module():
+    spec = importlib.util.spec_from_file_location("run_textual_web_with_env", LAUNCH_PATH)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -40,6 +50,135 @@ def test_importing_inventory_module_does_not_import_chatbook_runtime_modules() -
     )
 
     assert json.loads(result.stdout) == []
+
+
+def test_build_launch_environment_sets_isolated_home_and_redacted_env(tmp_path: Path) -> None:
+    launch = load_launch_module()
+    env_values = {"OPENAI_API_KEY": "sk-real", "PLACEHOLDER": "<api_key>"}
+    qa_root = tmp_path / "qa-root"
+
+    launch_env = launch.build_launch_environment(
+        worktree=tmp_path,
+        qa_root=qa_root,
+        env_values=env_values,
+        port=8765,
+    )
+
+    assert launch_env["HOME"] == str(qa_root / "home")
+    assert launch_env["XDG_CONFIG_HOME"] == str(qa_root / "config")
+    assert launch_env["XDG_DATA_HOME"] == str(qa_root / "data")
+    assert launch_env["TLDW_CONFIG_PATH"] == str(qa_root / "home" / ".config" / "tldw_cli" / "config.toml")
+    assert launch_env["PYTHONPATH"] == str(tmp_path)
+    assert launch_env["TLDW_TEXTUAL_WEB_PORT"] == "8765"
+    assert launch_env["OPENAI_API_KEY"] == "sk-real"
+    assert "PLACEHOLDER" not in launch_env
+
+
+def test_build_launch_environment_scrubs_inherited_provider_keys_and_config(tmp_path: Path) -> None:
+    launch = load_launch_module()
+    qa_root = tmp_path / "qa-root"
+
+    launch_env = launch.build_launch_environment(
+        worktree=tmp_path,
+        qa_root=qa_root,
+        env_values={
+            "OPENAI_API_KEY": "sk-from-env-file",
+            "ANTHROPIC_API_KEY": "<api_key>",
+        },
+        base_environ={
+            "PATH": "/usr/bin",
+            "OPENAI_API_KEY": "sk-inherited-openai",
+            "ANTHROPIC_API_KEY": "sk-inherited-anthropic",
+            "TLDW_CONFIG_PATH": "/Users/example/.config/tldw_cli/config.toml",
+        },
+    )
+
+    assert launch_env["PATH"] == "/usr/bin"
+    assert launch_env["OPENAI_API_KEY"] == "sk-from-env-file"
+    assert "ANTHROPIC_API_KEY" not in launch_env
+    assert "sk-inherited-openai" not in launch_env.values()
+    assert "sk-inherited-anthropic" not in launch_env.values()
+    assert launch_env["TLDW_CONFIG_PATH"] == str(qa_root / "home" / ".config" / "tldw_cli" / "config.toml")
+
+
+def test_write_isolated_configs_writes_home_and_xdg_configs(tmp_path: Path) -> None:
+    launch = load_launch_module()
+    qa_root = tmp_path / "qa-root"
+
+    home_config, xdg_config = launch.write_isolated_configs(qa_root)
+
+    assert home_config == qa_root / "home" / ".config" / "tldw_cli" / "config.toml"
+    assert xdg_config == qa_root / "config" / "tldw_cli" / "config.toml"
+    assert home_config.read_text(encoding="utf-8") == launch.ISOLATED_CONFIG
+    assert xdg_config.read_text(encoding="utf-8") == launch.ISOLATED_CONFIG
+
+
+def test_print_launch_summary_masks_key_values_and_shell_quotes_command(tmp_path: Path, capsys) -> None:
+    launch = load_launch_module()
+    raw_key = "sk-secret-value-123456"
+    command = [str(tmp_path / "bin with space" / "tldw-serve"), "--port", "8765"]
+
+    launch.print_launch_summary(
+        worktree=tmp_path,
+        qa_root=tmp_path / "qa-root",
+        env_file=tmp_path / ".env",
+        config_files=[tmp_path / "qa-root" / "home" / ".config" / "tldw_cli" / "config.toml"],
+        command=command,
+        port=8765,
+        env_values={"OPENAI_API_KEY": raw_key, "PLACEHOLDER": "<api_key>"},
+    )
+
+    captured = capsys.readouterr()
+
+    assert raw_key not in captured.out
+    assert "OPENAI_API_KEY=sk-s...3456" in captured.out
+    assert "PLACEHOLDER" not in captured.out
+    assert shlex.join(command) in captured.out
+
+
+def test_normalize_qa_root_resolves_relative_path(tmp_path: Path, monkeypatch) -> None:
+    launch = load_launch_module()
+    monkeypatch.chdir(tmp_path)
+
+    qa_root = launch.normalize_qa_root(Path("qa-root"))
+
+    assert qa_root == tmp_path / "qa-root"
+    assert qa_root.is_absolute()
+
+
+def test_validate_launch_inputs_rejects_invalid_worktree_port_and_missing_server(tmp_path: Path) -> None:
+    launch = load_launch_module()
+
+    missing_errors = launch.validate_launch_inputs(tmp_path / "missing", 0)
+    missing_text = "\n".join(missing_errors)
+    assert "worktree does not exist" in missing_text
+    assert "port must be between 1 and 65535" in missing_text
+
+    missing_server_errors = launch.validate_launch_inputs(tmp_path, 8765)
+    assert any(".venv/bin/tldw-serve" in error for error in missing_server_errors)
+
+
+def test_main_returns_nonzero_for_invalid_inputs_without_writing_config(tmp_path: Path, capsys) -> None:
+    launch = load_launch_module()
+    qa_root = tmp_path / "qa-root"
+
+    result = launch.main(
+        [
+            "--worktree",
+            str(tmp_path / "missing-worktree"),
+            "--qa-root",
+            str(qa_root),
+            "--port",
+            "70000",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert result == 2
+    assert "worktree does not exist" in captured.err
+    assert "port must be between 1 and 65535" in captured.err
+    assert not qa_root.exists()
 
 
 def test_load_env_values_expands_simple_references_without_shelling_out(tmp_path: Path) -> None:
