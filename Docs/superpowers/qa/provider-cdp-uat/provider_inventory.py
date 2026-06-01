@@ -419,13 +419,19 @@ def write_json_inventory(path: Path, rows: Sequence[Mapping[str, object]]) -> No
     """Write inventory rows as redacted JSON."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_json_inventory_payload(rows)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def build_json_inventory_payload(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    """Build the redacted JSON payload used by file and stdout output."""
+
     redacted_rows = [redact_inventory_row(row) for row in rows]
-    payload = {
+    return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "provider_count": len(redacted_rows),
         "providers": redacted_rows,
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def write_markdown_inventory(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
@@ -634,6 +640,8 @@ def provider_can_use_server_default(provider_key: str) -> bool:
 def classify_inventory_row(initial_reason: str, initial_status: str) -> str:
     """Return the explicit QA classification for an inventory row."""
 
+    # Classification is the pre-CDP decision reason; initial_status remains the
+    # coarse execution bucket such as pending_cdp or skip.
     return initial_reason or initial_status
 
 
@@ -870,7 +878,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.markdown:
         write_markdown_inventory(args.markdown, rows)
     if not args.json and not args.markdown:
-        json.dump({"providers": rows}, sys.stdout, indent=2, sort_keys=True)
+        json.dump(build_json_inventory_payload(rows), sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
     else:
         outputs = [str(path) for path in (args.json, args.markdown) if path]

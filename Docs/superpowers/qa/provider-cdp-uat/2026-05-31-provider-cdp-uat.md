@@ -1,14 +1,14 @@
 # Provider CDP UAT
 
 Date: 2026-05-31
-Branch:
-Spec:
-Backlog task:
-Textual-web URL:
-Isolated HOME:
-Isolated XDG config:
-Isolated data:
-App log:
+Branch: codex/provider-cdp-uat-execution
+Spec: Docs/superpowers/specs/2026-05-31-provider-cdp-uat-design.md
+Backlog task: TASK-75 - Provider CDP UAT sweep
+Textual-web URL: Pending Task 7 launch.
+Isolated HOME: Pending Task 7 launch.
+Isolated XDG config: Pending Task 7 launch.
+Isolated data: Pending Task 7 launch.
+App log: Pending Task 7 launch.
 
 ## Provider Inventory
 

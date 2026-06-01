@@ -420,6 +420,44 @@ def test_persisted_inventory_redacts_masked_key_prefixes(tmp_path: Path) -> None
         assert forbidden not in persisted
 
 
+def test_stdout_inventory_uses_redacted_rows(monkeypatch, capsys) -> None:
+    inventory = load_inventory_module()
+    row = {
+        "provider_name": "Google",
+        "display_key": "google",
+        "readiness_key": "google",
+        "execution_key": "google",
+        "model": "gemini-2.0-flash-lite",
+        "model_source": "override:google",
+        "requires_api_key": True,
+        "key_source": "env_file:GOOGLE_API_KEY",
+        "has_usable_key": True,
+        "masked_key": "AIza...FJ44",
+        "endpoint": "http://user:pass@127.0.0.1:8000/v1?api_key=secret-token",
+        "endpoint_source": "api_url",
+        "endpoint_reachable": False,
+        "endpoint_probe_url": "http://user:pass@127.0.0.1:8000/v1/models?api_key=secret-token",
+        "endpoint_probe_status": "unreachable:URLError",
+        "initial_status": "pending_cdp",
+        "initial_reason": "ready_for_cdp",
+        "classification": "ready_for_cdp",
+    }
+
+    monkeypatch.setattr(inventory, "build_provider_inventory", lambda **_: [row])
+
+    result = inventory.main([])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert result == 0
+    assert payload["provider_count"] == 1
+    assert payload["providers"][0]["masked_key"] == "***REDACTED***"
+    assert payload["providers"][0]["endpoint"] == "http://127.0.0.1:8000/v1"
+    assert payload["providers"][0]["endpoint_probe_url"] == "http://127.0.0.1:8000/v1/models"
+    for forbidden in ("AIza", "user", "pass", "secret-token"):
+        assert forbidden not in captured.out
+
+
 def test_inventory_redacts_endpoint_credentials_and_query_tokens(tmp_path: Path) -> None:
     inventory = load_inventory_module()
     sensitive_endpoint = "http://user:pass@127.0.0.1:8000/v1?api_key=secret-token&safe=ok"
