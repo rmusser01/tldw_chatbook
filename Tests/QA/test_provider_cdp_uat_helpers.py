@@ -113,6 +113,15 @@ def test_write_isolated_configs_writes_home_and_xdg_configs(tmp_path: Path) -> N
     assert xdg_config.read_text(encoding="utf-8") == launch.ISOLATED_CONFIG
 
 
+def test_isolated_config_places_uat_models_first_without_keys() -> None:
+    launch = load_launch_module()
+
+    assert 'OpenAI = ["gpt-4o-mini-2024-07-18"]' in launch.ISOLATED_CONFIG
+    assert 'Mistral = ["open-mistral-nemo"]' in launch.ISOLATED_CONFIG
+    assert '[api_settings.openai]\nmodel = "gpt-4o-mini-2024-07-18"' in launch.ISOLATED_CONFIG
+    assert "api_key" not in launch.ISOLATED_CONFIG.lower()
+
+
 def test_print_launch_summary_masks_key_values_and_shell_quotes_command(tmp_path: Path, capsys) -> None:
     launch = load_launch_module()
     raw_key = "sk-secret-value-123456"

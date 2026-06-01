@@ -1,14 +1,14 @@
 # Provider CDP UAT
 
-Date: 2026-05-31
+Date: 2026-06-01
 Branch: codex/provider-cdp-uat-execution
 Spec: Docs/superpowers/specs/2026-05-31-provider-cdp-uat-design.md
 Backlog task: TASK-75 - Provider CDP UAT sweep
-Textual-web URL: Pending Task 7 launch.
-Isolated HOME: Pending Task 7 launch.
-Isolated XDG config: Pending Task 7 launch.
-Isolated data: Pending Task 7 launch.
-App log: Pending Task 7 launch.
+Textual-web URL: http://127.0.0.1:8897
+Isolated HOME: /private/tmp/tldw-chatbook-provider-cdp-uat/home
+Isolated XDG config: /private/tmp/tldw-chatbook-provider-cdp-uat/config
+Isolated data: /private/tmp/tldw-chatbook-provider-cdp-uat/data
+App log: /private/tmp/tldw-chatbook-provider-cdp-uat/home/.local/share/tldw_cli/default_user/tldw_cli_app.log
 
 ## Provider Inventory
 
@@ -45,6 +45,55 @@ App log: Pending Task 7 launch.
 
 ## Run Notes
 
+Final full sweep: `Docs/superpowers/qa/provider-cdp-uat/provider-sweep-results.json`
+
+Generated at: 2026-06-01T07:31:58.333Z
+
+Attempted hosted providers with usable keys: 11
+
+Status counts:
+
+- success: 7
+- fail_external: 4
+- fail_chatbook: 0
+
+Acceptance rule: a provider is accepted only when the second assistant reply is visible in the same rendered Console session after selecting provider and model through dropdown controls.
+
+| Provider | Execution key | Model | Result | Evidence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| anthropic | anthropic | claude-3-5-haiku-20241022 | fail_external | screenshots/anthropic-turn-1-fail_external.png | Entered provider path but remained in streaming state until timeout. |
+| cohere | cohere | command-r-08-2024 | success | screenshots/cohere-success.png | Second assistant reply completed. |
+| deepseek | deepseek | deepseek-chat | success | screenshots/deepseek-success.png | Second assistant reply completed. |
+| google | google | gemini-2.0-flash-lite | fail_external | screenshots/google-turn-1-fail_external.png | Provider returned HTTP 400 through the rendered Console flow. |
+| groq | groq | llama-3.1-8b-instant | fail_external | screenshots/groq-turn-1-fail_external.png | Provider returned HTTP 400 through the rendered Console flow. |
+| huggingface | huggingface | meta-llama/Meta-Llama-3.1-8B-Instruct | fail_external | screenshots/huggingface-turn-1-fail_external.png | Provider returned HTTP 400 through the rendered Console flow. |
+| mistral | mistral | open-mistral-nemo | success | screenshots/mistral-success.png | Second assistant reply completed after readiness fix. |
+| mistralai | mistralai | open-mistral-nemo | success | screenshots/mistralai-success.png | Second assistant reply completed. |
+| moonshot | moonshot | kimi-latest | success | screenshots/moonshot-success.png | Second assistant reply completed. |
+| openai | openai | gpt-4o-mini-2024-07-18 | success | screenshots/openai-success.png | Second assistant reply completed. |
+| openrouter | openrouter | openai/gpt-4o-mini | success | screenshots/openrouter-success.png | Second assistant reply completed. |
+
+Skipped rows were not attempted through CDP because inventory classified them before launch:
+
+- local/custom endpoints with unreachable probes: aphrodite, custom_openai_api, custom_openai_api_2, koboldcpp, llama_cpp, local_llm, local_llamacpp, local_llamafile, local_mlx_lm, local_ollama, local_vllm, mlx_lm, ollama, tabbyapi, vllm
+- explicit model missing: oobabooga
+- missing key: zai
+
 ## Fixes And Reruns
 
+- Added Console Settings provider options for all Console-sendable handler providers, including providers that are not represented by the model registry.
+- Changed Console Settings model selection to remain dropdown-backed at all times. When no configured model exists, the visible control is a disabled dropdown with `No configured models`; the freeform input is hidden/internal only.
+- Added UAT-first model configuration in the isolated Textual-web launch helper so provider/model dropdowns have deterministic UAT choices.
+- Fixed keyed-provider readiness fallback to use conventional env var names when config supplies only a model. This fixed `mistral` with `MISTRAL_API_KEY`; `mistralai` also aliases to `MISTRAL_API_KEY`.
+- Hardened the CDP runner to use provider/model dropdown keyboard navigation, wait for `Run: Response complete.` before sending turn 2, and focus the composer before each send.
+- Reruns:
+  - OpenAI canary passed after composer focus fix.
+  - Cohere passed after response-complete gating.
+  - Mistral passed after readiness env-var fallback.
+  - Final full sweep completed with no `fail_chatbook` rows.
+
 ## Residual Risks
+
+- Anthropic remained in streaming state until the 120s harness timeout. It was attempted with a ready credential and selected model, but did not meet acceptance.
+- Google, Groq, and HuggingFace returned HTTP 400 from their provider calls. The rendered flow reached provider execution, but the UI/log evidence does not expose enough provider response detail to distinguish model availability from provider-specific request validation.
+- Local/custom providers were not exercised because endpoint probes were unreachable in the isolated profile.

@@ -19,6 +19,21 @@ const COMMANDS = new Set([
   "-h",
   "help",
   "screenshot",
+  "inspectDom",
+  "clickTextThenInspect",
+  "clickTwoTextsInspect",
+  "clickTwoTextsPressKeysInspect",
+  "clickTextThenScreenshot",
+  "clickSelectorThenInspect",
+  "clickSelectorThenScreenshot",
+  "clickTextPressKeysInspect",
+  "clickTextPressKeysTypeInspect",
+  "clickTextOffsetTypeInspect",
+  "clickTextPressKeysOffsetTypeInspect",
+  "clickTextPressKeysOffsetTypePressKeysInspect",
+  "clickTextPressKeysClickAtTypePressKeysInspect",
+  "openSettingsSaveInspect",
+  "providerModelKeysInspect",
   "focusTerminal",
   "typeText",
   "press",
@@ -31,7 +46,22 @@ function printUsage() {
 
 Usage:
   node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs --help
-  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs screenshot <name>
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs screenshot <name> [waitMs]
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs inspectDom [waitMs]
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickTextThenInspect <text> [waitMs]
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickTwoTextsInspect <firstText> <secondText> [waitMs]
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickTwoTextsPressKeysInspect <firstText> <secondText> <waitMs> <key...>
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickTextThenScreenshot <text> <name> [waitMs]
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickSelectorThenInspect <selector> [waitMs]
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickSelectorThenScreenshot <selector> <name> [waitMs]
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickTextPressKeysInspect <text> <waitMs> <key...>
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickTextPressKeysTypeInspect <text> <waitMs> <typeText> <key...>
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickTextOffsetTypeInspect <text> <charOffset> <waitMs> <typeText>
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickTextPressKeysOffsetTypeInspect <text> <offsetText> <charOffset> <waitMs> <typeText> <key...>
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickTextPressKeysOffsetTypePressKeysInspect <text> <offsetText> <charOffset> <waitMs> <typeText> -- <preKey...> -- <postKey...>
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs clickTextPressKeysClickAtTypePressKeysInspect <text> <x> <y> <waitMs> <typeText> -- <preKey...> -- <postKey...>
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs openSettingsSaveInspect <mode> [waitMs]
+  node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs providerModelKeysInspect <waitMs> -- <providerKey...> -- <modelKey...>
   node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs focusTerminal
   node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs typeText <text>
   node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs press <key>
@@ -68,6 +98,20 @@ function parseTimeout(rawTimeout) {
     throw new Error("Timeout must be a non-negative integer.");
   }
   return Number(rawTimeout);
+}
+
+function parseWaitMs(rawWaitMs) {
+  if (rawWaitMs === undefined) {
+    return 0;
+  }
+  if (!/^\d+$/.test(rawWaitMs)) {
+    throw new Error("waitMs must be a non-negative integer.");
+  }
+  const waitMs = Number(rawWaitMs);
+  if (waitMs > 60000) {
+    throw new Error("waitMs must be 60000 or less.");
+  }
+  return waitMs;
 }
 
 function assertArgCount(command, args, min, max = min) {
@@ -234,6 +278,108 @@ async function withPage(operation) {
   }
 }
 
+async function collectDomInspection(page) {
+  return await page.evaluate(() => {
+    const rectFor = (element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+      };
+    };
+    const bodyStyle = getComputedStyle(document.body);
+    const terminal = document.querySelector(".terminal,.xterm");
+    const terminalStyle = terminal ? getComputedStyle(terminal) : null;
+    const helper = document.querySelector(".xterm-helper-textarea");
+    const rows = [...document.querySelectorAll(".xterm-rows div")]
+      .slice(0, 90)
+      .map((row) => row.textContent || "");
+    const canvases = [...document.querySelectorAll("canvas")].map((canvas) => ({
+      width: canvas.width,
+      height: canvas.height,
+      rect: rectFor(canvas),
+    }));
+
+    return {
+      title: document.title,
+      url: location.href,
+      bodyTextLength: document.body.innerText.length,
+      bodyTextSample: document.body.innerText.slice(0, 1000),
+      bodyBackground: bodyStyle.backgroundColor,
+      terminalPresent: Boolean(terminal),
+      terminalTextLength: terminal?.textContent?.length || 0,
+      terminalTextSample: terminal?.textContent?.slice(0, 1000) || "",
+      terminalBackground: terminalStyle?.backgroundColor || null,
+      helperPresent: Boolean(helper),
+      helperFocused: Boolean(helper && document.activeElement === helper),
+      helperRect: helper ? rectFor(helper) : null,
+      canvasCount: canvases.length,
+      canvases,
+      rows,
+    };
+  });
+}
+
+async function clickTerminalText(page, text, charOffset = null) {
+  if (!text) {
+    throw new Error("click text is required.");
+  }
+  const target = await page.evaluate(({ needle, offset }) => {
+    const rowElements = [...document.querySelectorAll(".xterm-rows div")];
+    for (const row of rowElements) {
+      const rowText = row.textContent || "";
+      const index = rowText.indexOf(needle);
+      if (index < 0) {
+        continue;
+      }
+      const rect = row.getBoundingClientRect();
+      const columns = Math.max(rowText.length, 1);
+      const cellWidth = rect.width / columns;
+      const column = offset === null ? index + needle.length / 2 : index + Number(offset);
+      return {
+        x: rect.x + column * cellWidth,
+        y: rect.y + rect.height / 2,
+        rowText,
+      };
+    }
+    return null;
+  }, { needle: text, offset: charOffset });
+  if (!target) {
+    throw new Error(`Text not found in terminal rows: ${text}`);
+  }
+  await page.mouse.click(target.x, target.y);
+  await settle(page, 500);
+  return {
+    clickedText: text,
+    x: target.x,
+    y: target.y,
+    rowText: target.rowText,
+  };
+}
+
+async function clickSelector(page, selector) {
+  if (!selector || !/^[#.][A-Za-z0-9_.:-]+$/.test(selector)) {
+    throw new Error("Selector must be a simple id or class selector.");
+  }
+  const locator = page.locator(selector).first();
+  await locator.waitFor({ state: "attached", timeout: 10000 });
+  const box = await locator.boundingBox();
+  if (!box) {
+    throw new Error(`Selector is not visible: ${selector}`);
+  }
+  await locator.click({ timeout: 10000 });
+  await settle(page, 500);
+  return {
+    clickedSelector: selector,
+    x: box.x + box.width / 2,
+    y: box.y + box.height / 2,
+    width: box.width,
+    height: box.height,
+  };
+}
+
 function normalizeScreenshotName(name) {
   if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) {
     throw new Error("Screenshot name must use only letters, numbers, dots, underscores, or hyphens.");
@@ -242,14 +388,409 @@ function normalizeScreenshotName(name) {
   return resolve(SCREENSHOT_DIR, normalizedName);
 }
 
-async function screenshot(name) {
+async function screenshot(name, waitMs = 0) {
   const screenshotPath = normalizeScreenshotName(name);
   mkdirSync(SCREENSHOT_DIR, { recursive: true });
   await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
     await settle(page, 500);
     await page.screenshot({ path: screenshotPath, fullPage: true });
   });
   console.log(screenshotPath);
+}
+
+async function inspectDom(waitMs = 0) {
+  const inspection = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return await collectDomInspection(page);
+  });
+
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(inspection))), null, 2));
+}
+
+async function clickTextThenInspect(text, waitMs = 0) {
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const click = await clickTerminalText(page, text);
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return {
+      click,
+      inspection: await collectDomInspection(page),
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
+}
+
+async function clickTwoTextsInspect(firstText, secondText, waitMs = 0) {
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const firstClick = await clickTerminalText(page, firstText);
+    await page.waitForTimeout(500);
+    const secondClick = await clickTerminalText(page, secondText);
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return {
+      firstClick,
+      secondClick,
+      inspection: await collectDomInspection(page),
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
+}
+
+async function clickTwoTextsPressKeysInspect(firstText, secondText, waitMs, keys) {
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const firstClick = await clickTerminalText(page, firstText);
+    await page.waitForTimeout(500);
+    const secondClick = await clickTerminalText(page, secondText);
+    for (const key of keys) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(300);
+    }
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return {
+      firstClick,
+      secondClick,
+      keys,
+      inspection: await collectDomInspection(page),
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
+}
+
+async function clickTextThenScreenshot(text, name, waitMs = 0) {
+  const screenshotPath = normalizeScreenshotName(name);
+  mkdirSync(SCREENSHOT_DIR, { recursive: true });
+  const click = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const clickResult = await clickTerminalText(page, text);
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    return clickResult;
+  });
+  console.log(JSON.stringify({ screenshotPath, click }, null, 2));
+}
+
+async function clickSelectorThenInspect(selector, waitMs = 0) {
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const click = await clickSelector(page, selector);
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return {
+      click,
+      inspection: await collectDomInspection(page),
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
+}
+
+async function clickSelectorThenScreenshot(selector, name, waitMs = 0) {
+  const screenshotPath = normalizeScreenshotName(name);
+  mkdirSync(SCREENSHOT_DIR, { recursive: true });
+  const click = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const clickResult = await clickSelector(page, selector);
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    return clickResult;
+  });
+  console.log(JSON.stringify({ screenshotPath, click }, null, 2));
+}
+
+async function clickTextPressKeysInspect(text, waitMs, keys) {
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const click = await clickTerminalText(page, text);
+    for (const key of keys) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(200);
+    }
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return {
+      click,
+      keys,
+      inspection: await collectDomInspection(page),
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
+}
+
+async function clickTextPressKeysTypeInspect(text, waitMs, typeTextValue, keys) {
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const click = await clickTerminalText(page, text);
+    for (const key of keys) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(200);
+    }
+    await page.keyboard.type(typeTextValue, { delay: 5 });
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return {
+      click,
+      keys,
+      typedLength: typeTextValue.length,
+      inspection: await collectDomInspection(page),
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
+}
+
+async function clickTextOffsetTypeInspect(text, charOffset, waitMs, typeTextValue) {
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const click = await clickTerminalText(page, text, charOffset);
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.type(typeTextValue, { delay: 5 });
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return {
+      click,
+      charOffset,
+      typedLength: typeTextValue.length,
+      inspection: await collectDomInspection(page),
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
+}
+
+async function clickTextPressKeysOffsetTypeInspect(
+  text,
+  offsetText,
+  charOffset,
+  waitMs,
+  typeTextValue,
+  keys,
+) {
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const click = await clickTerminalText(page, text);
+    for (const key of keys) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(200);
+    }
+    const inputClick = await clickTerminalText(page, offsetText, charOffset);
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.type(typeTextValue, { delay: 5 });
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return {
+      click,
+      inputClick,
+      keys,
+      charOffset,
+      typedLength: typeTextValue.length,
+      inspection: await collectDomInspection(page),
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
+}
+
+async function clickTextPressKeysOffsetTypePressKeysInspect(
+  text,
+  offsetText,
+  charOffset,
+  waitMs,
+  typeTextValue,
+  preKeys,
+  postKeys,
+) {
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const click = await clickTerminalText(page, text);
+    for (const key of preKeys) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(200);
+    }
+    const inputClick = await clickTerminalText(page, offsetText, charOffset);
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.type(typeTextValue, { delay: 5 });
+    await page.waitForTimeout(300);
+    for (const key of postKeys) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(300);
+    }
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return {
+      click,
+      inputClick,
+      preKeys,
+      postKeys,
+      charOffset,
+      typedLength: typeTextValue.length,
+      inspection: await collectDomInspection(page),
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
+}
+
+async function clickTextPressKeysClickAtTypePressKeysInspect(
+  text,
+  x,
+  y,
+  waitMs,
+  typeTextValue,
+  preKeys,
+  postKeys,
+) {
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const click = await clickTerminalText(page, text);
+    for (const key of preKeys) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(200);
+    }
+    await page.mouse.click(x, y);
+    await page.waitForTimeout(300);
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.type(typeTextValue, { delay: 5 });
+    await page.waitForTimeout(300);
+    for (const key of postKeys) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(300);
+    }
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return {
+      click,
+      clickAt: { x, y },
+      preKeys,
+      postKeys,
+      typedLength: typeTextValue.length,
+      inspection: await collectDomInspection(page),
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
+}
+
+async function openSettingsSaveInspect(mode, waitMs = 0) {
+  if (!["click", "enter", "space", "click-enter", "click-space", "double-click"].includes(mode)) {
+    throw new Error("mode must be one of: click, enter, space, click-enter, click-space, double-click.");
+  }
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const openClick = await clickTerminalText(page, "Configure");
+    await page.waitForTimeout(500);
+
+    const saveClick = await clickTerminalText(page, "Save");
+    if (mode === "enter" || mode === "click-enter") {
+      await page.keyboard.press("Enter");
+    } else if (mode === "space" || mode === "click-space") {
+      await page.keyboard.press("Space");
+    } else if (mode === "double-click") {
+      await page.mouse.click(saveClick.x, saveClick.y);
+    }
+
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    const rows = (await collectDomInspection(page)).rows;
+    return {
+      mode,
+      openClick,
+      saveClick,
+      modalOpen: rows.join("\n").includes("Console Settings"),
+      rows,
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
+}
+
+async function providerModelKeysInspect(waitMs, providerKeys, modelKeys) {
+  const result = await withPage(async (page) => {
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    const openClick = await clickTerminalText(page, "Configure");
+    await page.waitForTimeout(500);
+    const providerClick = await clickTerminalText(page, "Provider        ▊");
+    for (const key of providerKeys) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(300);
+    }
+    const modelClick = await clickTerminalText(page, "Model           ▊");
+    for (const key of modelKeys) {
+      await page.keyboard.press(key);
+      await page.waitForTimeout(300);
+    }
+    if (waitMs > 0) {
+      await page.waitForTimeout(waitMs);
+    }
+    await settle(page, 500);
+    return {
+      openClick,
+      providerClick,
+      providerKeys,
+      modelClick,
+      modelKeys,
+      inspection: await collectDomInspection(page),
+    };
+  });
+  console.log(JSON.stringify(JSON.parse(sanitizeText(JSON.stringify(result))), null, 2));
 }
 
 async function focusTerminal() {
@@ -312,8 +853,95 @@ async function main() {
   }
 
   if (command === "screenshot") {
-    assertArgCount(command, args, 1);
-    await screenshot(args[0]);
+    assertArgCount(command, args, 1, 2);
+    await screenshot(args[0], parseWaitMs(args[1]));
+  } else if (command === "inspectDom") {
+    assertArgCount(command, args, 0, 1);
+    await inspectDom(parseWaitMs(args[0]));
+  } else if (command === "clickTextThenInspect") {
+    assertArgCount(command, args, 1, 2);
+    await clickTextThenInspect(args[0], parseWaitMs(args[1]));
+  } else if (command === "clickTwoTextsInspect") {
+    assertArgCount(command, args, 2, 3);
+    await clickTwoTextsInspect(args[0], args[1], parseWaitMs(args[2]));
+  } else if (command === "clickTwoTextsPressKeysInspect") {
+    assertArgCount(command, args, 4, Number.MAX_SAFE_INTEGER);
+    await clickTwoTextsPressKeysInspect(args[0], args[1], parseWaitMs(args[2]), args.slice(3));
+  } else if (command === "clickTextThenScreenshot") {
+    assertArgCount(command, args, 2, 3);
+    await clickTextThenScreenshot(args[0], args[1], parseWaitMs(args[2]));
+  } else if (command === "clickSelectorThenInspect") {
+    assertArgCount(command, args, 1, 2);
+    await clickSelectorThenInspect(args[0], parseWaitMs(args[1]));
+  } else if (command === "clickSelectorThenScreenshot") {
+    assertArgCount(command, args, 2, 3);
+    await clickSelectorThenScreenshot(args[0], args[1], parseWaitMs(args[2]));
+  } else if (command === "clickTextPressKeysInspect") {
+    assertArgCount(command, args, 3, Number.MAX_SAFE_INTEGER);
+    await clickTextPressKeysInspect(args[0], parseWaitMs(args[1]), args.slice(2));
+  } else if (command === "clickTextPressKeysTypeInspect") {
+    assertArgCount(command, args, 4, Number.MAX_SAFE_INTEGER);
+    await clickTextPressKeysTypeInspect(args[0], parseWaitMs(args[1]), args[2], args.slice(3));
+  } else if (command === "clickTextOffsetTypeInspect") {
+    assertArgCount(command, args, 4);
+    await clickTextOffsetTypeInspect(args[0], parseOffset(args[1]), parseWaitMs(args[2]), args[3]);
+  } else if (command === "clickTextPressKeysOffsetTypeInspect") {
+    assertArgCount(command, args, 6, Number.MAX_SAFE_INTEGER);
+    await clickTextPressKeysOffsetTypeInspect(
+      args[0],
+      args[1],
+      parseOffset(args[2]),
+      parseWaitMs(args[3]),
+      args[4],
+      args.slice(5),
+    );
+  } else if (command === "clickTextPressKeysOffsetTypePressKeysInspect") {
+    assertArgCount(command, args, 7, Number.MAX_SAFE_INTEGER);
+    const firstSeparator = args.indexOf("--", 5);
+    const secondSeparator = firstSeparator < 0 ? -1 : args.indexOf("--", firstSeparator + 1);
+    if (firstSeparator < 0 || secondSeparator < 0) {
+      throw new Error("Expected two -- separators for pre and post key lists.");
+    }
+    await clickTextPressKeysOffsetTypePressKeysInspect(
+      args[0],
+      args[1],
+      parseOffset(args[2]),
+      parseWaitMs(args[3]),
+      args[4],
+      args.slice(firstSeparator + 1, secondSeparator),
+      args.slice(secondSeparator + 1),
+    );
+  } else if (command === "clickTextPressKeysClickAtTypePressKeysInspect") {
+    assertArgCount(command, args, 8, Number.MAX_SAFE_INTEGER);
+    const firstSeparator = args.indexOf("--", 5);
+    const secondSeparator = firstSeparator < 0 ? -1 : args.indexOf("--", firstSeparator + 1);
+    if (firstSeparator < 0 || secondSeparator < 0) {
+      throw new Error("Expected two -- separators for pre and post key lists.");
+    }
+    await clickTextPressKeysClickAtTypePressKeysInspect(
+      args[0],
+      Number(args[1]),
+      Number(args[2]),
+      parseWaitMs(args[3]),
+      args[4],
+      args.slice(firstSeparator + 1, secondSeparator),
+      args.slice(secondSeparator + 1),
+    );
+  } else if (command === "openSettingsSaveInspect") {
+    assertArgCount(command, args, 1, 2);
+    await openSettingsSaveInspect(args[0], parseWaitMs(args[1]));
+  } else if (command === "providerModelKeysInspect") {
+    assertArgCount(command, args, 4, Number.MAX_SAFE_INTEGER);
+    const firstSeparator = args.indexOf("--", 1);
+    const secondSeparator = firstSeparator < 0 ? -1 : args.indexOf("--", firstSeparator + 1);
+    if (firstSeparator < 0 || secondSeparator < 0) {
+      throw new Error("Expected two -- separators for provider and model key lists.");
+    }
+    await providerModelKeysInspect(
+      parseWaitMs(args[0]),
+      args.slice(firstSeparator + 1, secondSeparator),
+      args.slice(secondSeparator + 1),
+    );
   } else if (command === "focusTerminal") {
     assertArgCount(command, args, 0);
     await focusTerminal();

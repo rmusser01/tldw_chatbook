@@ -52,6 +52,32 @@ def test_key_required_provider_uses_environment_key_without_displaying_it():
     assert "sk-ant-secret" not in readiness.user_message
 
 
+def test_key_required_provider_uses_standard_environment_key_when_config_only_has_model():
+    readiness = get_provider_readiness(
+        "Mistral",
+        {"api_settings": {"mistral": {"model": "open-mistral-nemo"}}},
+        environ={"MISTRAL_API_KEY": "mistral-secret"},
+    )
+
+    assert readiness.ready is True
+    assert readiness.requires_api_key is True
+    assert readiness.api_key == "mistral-secret"
+    assert readiness.api_key_source == "env:MISTRAL_API_KEY"
+    assert "mistral-secret" not in readiness.user_message
+
+
+def test_mistralai_defaults_to_mistral_environment_key():
+    readiness = get_provider_readiness(
+        "MistralAI",
+        {"api_settings": {"mistralai": {"model": "open-mistral-nemo"}}},
+        environ={"MISTRAL_API_KEY": "mistral-secret"},
+    )
+
+    assert readiness.ready is True
+    assert readiness.api_key == "mistral-secret"
+    assert readiness.env_var == "MISTRAL_API_KEY"
+
+
 def test_placeholder_config_key_is_not_ready():
     readiness = get_provider_readiness(
         "OpenRouter",

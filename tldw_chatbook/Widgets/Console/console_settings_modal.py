@@ -57,15 +57,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
-        has_model_options = bool(self._configured_model_select_options(self._settings.provider))
         selected_model = self._model_for_provider(self._settings.provider)
         base_url = self._base_url_for_provider(self._settings.provider)
         uses_base_url = self._provider_uses_base_url(self._settings.provider)
-        model_options = (
-            self._model_select_options(self._settings.provider, selected_model)
-            if has_model_options
-            else []
-        )
+        model_options = self._model_select_options(self._settings.provider, selected_model)
+        has_model_options = bool(model_options)
         readiness = build_console_settings_readiness(self._settings, app_config=self._app_config)
 
         with Vertical(id="console-settings-modal"):
@@ -101,22 +97,22 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                     with Horizontal(classes="console-settings-modal-row"):
                         yield Static("Model", classes="console-settings-modal-label")
                         model_select = Select(
-                            model_options or [(selected_model or "", selected_model or "")],
+                            model_options or [("No configured models", "")],
                             value=selected_model or "",
                             allow_blank=False,
                             id="console-settings-model-select",
                             disabled=not has_model_options,
                             classes="console-settings-control",
                         )
-                        model_select.display = has_model_options
+                        model_select.display = True
                         yield model_select
                         model_input = Input(
                             value=selected_model or "",
                             id="console-settings-model-input",
-                            disabled=has_model_options,
+                            disabled=True,
                             classes="console-settings-control",
                         )
-                        model_input.display = not has_model_options
+                        model_input.display = False
                         yield model_input
                     with Horizontal(classes="console-settings-modal-row"):
                         yield Static("Base URL", classes="console-settings-modal-label")
@@ -331,8 +327,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _sync_model_controls(self, provider: str, current_model: str | None) -> None:
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
-        if self._configured_model_select_options(provider):
-            model_options = self._model_select_options(provider, current_model)
+        model_options = self._model_select_options(provider, current_model)
+        if model_options:
             model_select.set_options(model_options)
             selected = current_model or str(model_options[0][1])
             model_select.value = selected
@@ -340,20 +336,21 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             model_select.display = True
             model_input.disabled = True
             model_input.display = False
+            model_input.value = selected
             return
 
         fallback = current_model or ""
-        model_select.set_options([("", "")])
+        model_select.set_options([("No configured models", "")])
         model_select.value = ""
         model_select.disabled = True
-        model_select.display = False
+        model_select.display = True
         model_input.value = fallback
-        model_input.disabled = False
-        model_input.display = True
+        model_input.disabled = True
+        model_input.display = False
 
     def _focus_model_control(self) -> None:
         model_select = self.query_one("#console-settings-model-select", Select)
-        if model_select.display and not model_select.disabled:
+        if model_select.display:
             model_select.focus()
             return
         model_input = self.query_one("#console-settings-model-input", Input)
@@ -464,7 +461,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _current_model_value(self) -> str | None:
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
-        if model_select.display and not model_select.disabled:
+        if model_select.display:
             return str(model_select.value or "").strip() or None
         return model_input.value.strip() or None
 

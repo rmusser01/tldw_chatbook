@@ -55,6 +55,9 @@ _PLACEHOLDER_KEYS = frozenset(
         "your-api-key",
     }
 )
+_DEFAULT_API_KEY_ENV_VAR_ALIASES = {
+    "mistralai": "MISTRAL_API_KEY",
+}
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,13 @@ def _valid_api_key(value: object) -> Optional[str]:
 def _requires_api_key(provider_key: str) -> bool:
     """Return True unless the provider is known to work without credentials."""
     return provider_key not in KEYLESS_PROVIDER_KEYS
+
+
+def _default_api_key_env_var(provider_key: str) -> Optional[str]:
+    """Return the conventional environment variable for known keyed providers."""
+    if provider_key not in PROVIDERS_REQUIRING_API_KEY_KEYS:
+        return None
+    return _DEFAULT_API_KEY_ENV_VAR_ALIASES.get(provider_key, f"{provider_key.upper()}_API_KEY")
 
 
 def _provider_settings_for_key(
@@ -175,7 +185,11 @@ def get_provider_readiness(
         )
 
     env_var_value = provider_settings.get("api_key_env_var")
-    env_var = env_var_value.strip() if isinstance(env_var_value, str) else None
+    env_var = (
+        env_var_value.strip()
+        if isinstance(env_var_value, str) and env_var_value.strip()
+        else _default_api_key_env_var(provider_key)
+    )
     env_key = _valid_api_key(env.get(env_var, "")) if env_var else None
     if env_key:
         return ProviderReadiness(

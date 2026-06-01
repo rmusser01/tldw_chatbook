@@ -127,7 +127,7 @@ def test_public_helpers_accept_planned_positional_call_forms() -> None:
     )
 
     assert settings.provider == "llama_cpp"
-    assert [option.value for option in provider_options] == ["llama_cpp"]
+    assert "llama_cpp" in [option.value for option in provider_options]
     assert [option.value for option in model_options] == ["current", "m"]
     assert estimate.used_tokens is not None
     assert estimate.staged_source_count == 1
@@ -162,8 +162,18 @@ def test_provider_options_include_all_configured_providers() -> None:
             "anthropic": ["claude-sonnet"],
         }
     )
+    option_values = [option.value for option in options]
 
-    assert [option.value for option in options] == ["anthropic", "llama_cpp", "openai"]
+    assert option_values == sorted(option_values)
+    assert {"anthropic", "llama_cpp", "openai"}.issubset(option_values)
+
+
+def test_provider_options_include_console_sendable_handlers_missing_from_model_registry() -> None:
+    options = build_console_provider_options({"openai": ["gpt-4.1"]})
+    option_values = [option.value for option in options]
+
+    assert "mistral" in option_values
+    assert "mistralai" in option_values
 
 
 def test_validation_rejects_out_of_range_temperature() -> None:

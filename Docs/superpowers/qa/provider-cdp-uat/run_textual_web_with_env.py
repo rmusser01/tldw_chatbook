@@ -65,6 +65,56 @@ enabled = false
 [console]
 collapse_large_pastes = true
 paste_collapse_threshold = 50
+
+[chat_defaults]
+provider = "openai"
+model = "gpt-4o-mini-2024-07-18"
+
+[providers]
+OpenAI = ["gpt-4o-mini-2024-07-18"]
+Anthropic = ["claude-3-5-haiku-20241022"]
+Cohere = ["command-r-08-2024"]
+DeepSeek = ["deepseek-chat"]
+Google = ["gemini-2.0-flash-lite"]
+Groq = ["llama-3.1-8b-instant"]
+HuggingFace = ["meta-llama/Meta-Llama-3.1-8B-Instruct"]
+Mistral = ["open-mistral-nemo"]
+MistralAI = ["open-mistral-nemo"]
+Moonshot = ["kimi-latest"]
+OpenRouter = ["openai/gpt-4o-mini"]
+
+[api_settings.openai]
+model = "gpt-4o-mini-2024-07-18"
+
+[api_settings.anthropic]
+model = "claude-3-5-haiku-20241022"
+
+[api_settings.cohere]
+model = "command-r-08-2024"
+
+[api_settings.deepseek]
+model = "deepseek-chat"
+
+[api_settings.google]
+model = "gemini-2.0-flash-lite"
+
+[api_settings.groq]
+model = "llama-3.1-8b-instant"
+
+[api_settings.huggingface]
+model = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+
+[api_settings.mistral]
+model = "open-mistral-nemo"
+
+[api_settings.mistralai]
+model = "open-mistral-nemo"
+
+[api_settings.moonshot]
+model = "kimi-latest"
+
+[api_settings.openrouter]
+model = "openai/gpt-4o-mini"
 """
 
 
