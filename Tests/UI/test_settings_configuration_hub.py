@@ -2959,6 +2959,55 @@ async def test_settings_advanced_config_saves_atomically_with_backup(monkeypatch
     assert app.app_config["chat_defaults"]["model"] == "llama3"
 
 
+@pytest.mark.asyncio
+async def test_settings_advanced_config_loads_backup_preview_without_saving(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    backup_path = tmp_path / "config.toml.bak"
+    current_text = "[chat_defaults]\nprovider = \"OpenAI\"\n"
+    backup_text = "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"
+    config_path.write_text(current_text, encoding="utf-8")
+    backup_path.write_text(backup_text, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+
+        assert editor.text == current_text
+
+        await pilot.click("#settings-advanced-load-backup")
+        await _wait_for_settings_text(screen, pilot, "Advanced config recovery: loaded backup preview")
+        text = _visible_text(screen)
+
+        assert editor.text == backup_text
+        assert config_path.read_text(encoding="utf-8") == current_text
+        assert screen.query_one("#settings-advanced-save-config").disabled
+        assert "validate before save" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-advanced-open-providers-models", Button)
+        assert screen.query_one("#settings-advanced-open-console-behavior", Button)
+        assert screen.query_one("#settings-advanced-open-diagnostics", Button)
+
+        await pilot.click("#settings-advanced-open-providers-models")
+        await _wait_for_settings_text(screen, pilot, "Provider Model Endpoint")
+
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        assert "Selected category: Providers & Models" in _visible_text(screen)
+
+
 def test_settings_advanced_config_new_file_save_reports_no_backup(monkeypatch, tmp_path):
     config_path = tmp_path / "config.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
