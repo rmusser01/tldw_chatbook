@@ -380,11 +380,11 @@ def build_provider_inventory(
         if requires_api_key and not key_status.has_usable_key:
             initial_reason = "missing_key"
             initial_status = classify_external_outcome(initial_reason)
-        elif is_local_or_custom and endpoint_probe.reachable is not True:
-            initial_reason = "endpoint_unreachable"
-            initial_status = classify_external_outcome(initial_reason)
         elif model_selection.source == "explicit_model_missing":
             initial_reason = "explicit_model_missing"
+            initial_status = classify_external_outcome(initial_reason)
+        elif is_local_or_custom and endpoint_probe.reachable is not True:
+            initial_reason = "endpoint_unreachable"
             initial_status = classify_external_outcome(initial_reason)
         classification = classify_inventory_row(initial_reason, initial_status)
 
@@ -634,10 +634,7 @@ def provider_can_use_server_default(provider_key: str) -> bool:
 def classify_inventory_row(initial_reason: str, initial_status: str) -> str:
     """Return the explicit QA classification for an inventory row."""
 
-    reason_classification = classify_external_outcome(initial_reason)
-    if reason_classification != "unknown":
-        return reason_classification
-    return initial_status
+    return initial_reason or initial_status
 
 
 def redact_inventory_row(row: Mapping[str, object]) -> dict[str, object]:
@@ -650,6 +647,8 @@ def redact_inventory_row(row: Mapping[str, object]) -> dict[str, object]:
     probe_url = redacted.get("endpoint_probe_url")
     if isinstance(probe_url, str):
         redacted["endpoint_probe_url"] = redact_url_for_output(probe_url)
+    if redacted.get("masked_key"):
+        redacted["masked_key"] = "***REDACTED***"
     return redacted
 
 

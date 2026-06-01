@@ -311,7 +311,33 @@ def test_inventory_keeps_server_default_model_source_when_endpoint_is_not_reacha
     assert row["model_source"] == "server_default"
     assert row["requires_explicit_selection"] is False
     assert row["initial_reason"] == "endpoint_unreachable"
-    assert row["classification"] == "skip"
+    assert row["classification"] == "endpoint_unreachable"
+
+
+def test_inventory_surfaces_explicit_model_missing_before_endpoint_reachability() -> None:
+    inventory = load_inventory_module()
+
+    rows = inventory.build_provider_inventory(
+        app_config={
+            "api_settings": {
+                "ooba_api": {
+                    "api_url": "http://127.0.0.1:65530/v1/chat/completions",
+                    "model": "",
+                }
+            }
+        },
+        configured_models_by_provider={"oobabooga": []},
+        environ={},
+        probe_endpoints=False,
+    )
+
+    row = next(row for row in rows if row["handler_key"] == "oobabooga")
+
+    assert row["model"] == ""
+    assert row["model_source"] == "explicit_model_missing"
+    assert row["initial_status"] == "skip"
+    assert row["initial_reason"] == "explicit_model_missing"
+    assert row["classification"] == "explicit_model_missing"
 
 
 def test_markdown_inventory_includes_classification_and_endpoint_probe_fields(tmp_path: Path) -> None:
@@ -338,7 +364,7 @@ def test_markdown_inventory_includes_classification_and_endpoint_probe_fields(tm
                 "endpoint_probe_status": "unreachable:URLError",
                 "initial_status": "skip",
                 "initial_reason": "endpoint_unreachable",
-                "classification": "skip",
+                "classification": "endpoint_unreachable",
             }
         ],
     )
@@ -352,6 +378,46 @@ def test_markdown_inventory_includes_classification_and_endpoint_probe_fields(tm
     assert "http://127.0.0.1:8000/v1/chat/completions" in markdown
     assert "http://127.0.0.1:8000/v1/models" in markdown
     assert "unreachable:URLError" in markdown
+
+
+def test_persisted_inventory_redacts_masked_key_prefixes(tmp_path: Path) -> None:
+    inventory = load_inventory_module()
+    json_path = tmp_path / "inventory.json"
+    markdown_path = tmp_path / "inventory.md"
+    dangerous_prefixes = ("sk-proj-", "sk-ant-", "AIza", "gsk_", "hf_", "sk-or-")
+    rows = [
+        {
+            "provider_name": "Google",
+            "display_key": "google",
+            "readiness_key": "google",
+            "execution_key": "google",
+            "model": "gemini-2.0-flash-lite",
+            "model_source": "override:google",
+            "requires_api_key": True,
+            "key_source": "env_file:GOOGLE_API_KEY",
+            "has_usable_key": True,
+            "masked_key": "AIza...FJ44",
+            "endpoint": "",
+            "endpoint_source": "",
+            "endpoint_reachable": None,
+            "endpoint_probe_url": "",
+            "endpoint_probe_status": "not_applicable",
+            "initial_status": "pending_cdp",
+            "initial_reason": "ready_for_cdp",
+            "classification": "ready_for_cdp",
+        }
+    ]
+
+    inventory.write_json_inventory(json_path, rows)
+    inventory.write_markdown_inventory(markdown_path, rows)
+
+    persisted = json_path.read_text(encoding="utf-8") + markdown_path.read_text(encoding="utf-8")
+    json_payload = json.loads(json_path.read_text(encoding="utf-8"))
+
+    assert json_payload["providers"][0]["masked_key"] == "***REDACTED***"
+    assert "env_file:GOOGLE_API_KEY ***REDACTED***" in persisted
+    for forbidden in dangerous_prefixes:
+        assert forbidden not in persisted
 
 
 def test_inventory_redacts_endpoint_credentials_and_query_tokens(tmp_path: Path) -> None:

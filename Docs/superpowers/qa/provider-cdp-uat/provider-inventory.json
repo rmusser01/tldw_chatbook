@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-06-01T02:23:18.123680+00:00",
+  "generated_at": "2026-06-01T02:36:12.584953+00:00",
   "provider_count": 28,
   "providers": [
     {
-      "classification": "pending_cdp",
+      "classification": "ready_for_cdp",
       "display_key": "anthropic",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
@@ -25,7 +25,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "aphrodite",
       "endpoint": "http://localhost:2242/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -47,7 +47,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "pending_cdp",
+      "classification": "ready_for_cdp",
       "display_key": "cohere",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
@@ -69,7 +69,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "custom_openai_api",
       "endpoint": "http://localhost:1234/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -91,7 +91,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "custom_openai_api_2",
       "endpoint": "http://localhost:5678/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -113,7 +113,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "pending_cdp",
+      "classification": "ready_for_cdp",
       "display_key": "deepseek",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
@@ -135,7 +135,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "pending_cdp",
+      "classification": "ready_for_cdp",
       "display_key": "google",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
@@ -157,7 +157,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "pending_cdp",
+      "classification": "ready_for_cdp",
       "display_key": "groq",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
@@ -179,7 +179,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "pending_cdp",
+      "classification": "ready_for_cdp",
       "display_key": "huggingface",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
@@ -201,7 +201,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "koboldcpp",
       "endpoint": "http://localhost:5001/api/v1/generate",
       "endpoint_probe_status": "unreachable:URLError",
@@ -223,7 +223,7 @@
       "requires_explicit_selection": false
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "llama_cpp",
       "endpoint": "http://localhost:8080/completion",
       "endpoint_probe_status": "unreachable:URLError",
@@ -245,7 +245,7 @@
       "requires_explicit_selection": false
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "local_llm",
       "endpoint": "http://localhost:8000/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -267,7 +267,7 @@
       "requires_explicit_selection": false
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "local_llamacpp",
       "endpoint": "http://localhost:8001/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -289,7 +289,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "local_llamafile",
       "endpoint": "http://localhost:8001/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -311,7 +311,7 @@
       "requires_explicit_selection": false
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "local_mlx_lm",
       "endpoint": "http://localhost:5678/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -333,7 +333,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "local_ollama",
       "endpoint": "http://localhost:5678/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -355,7 +355,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "local_vllm",
       "endpoint": "http://localhost:8008/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -377,7 +377,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "pending_cdp",
+      "classification": "ready_for_cdp",
       "display_key": "mistral",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
@@ -399,7 +399,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "pending_cdp",
+      "classification": "ready_for_cdp",
       "display_key": "mistralai",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
@@ -421,7 +421,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "mlx_lm",
       "endpoint": "http://localhost:5678/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -443,7 +443,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "pending_cdp",
+      "classification": "ready_for_cdp",
       "display_key": "moonshot",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
@@ -465,7 +465,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "ollama",
       "endpoint": "http://localhost:11434/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -487,7 +487,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "explicit_model_missing",
       "display_key": "oobabooga",
       "endpoint": "http://localhost:5000/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -497,7 +497,7 @@
       "execution_key": "oobabooga",
       "handler_key": "oobabooga",
       "has_usable_key": true,
-      "initial_reason": "endpoint_unreachable",
+      "initial_reason": "explicit_model_missing",
       "initial_status": "skip",
       "key_source": "not_required",
       "masked_key": "",
@@ -509,7 +509,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "pending_cdp",
+      "classification": "ready_for_cdp",
       "display_key": "openai",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
@@ -531,7 +531,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "pending_cdp",
+      "classification": "ready_for_cdp",
       "display_key": "openrouter",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
@@ -553,7 +553,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "tabbyapi",
       "endpoint": "http://localhost:8080/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -575,7 +575,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "endpoint_unreachable",
       "display_key": "vllm",
       "endpoint": "http://localhost:8000/v1/chat/completions",
       "endpoint_probe_status": "unreachable:URLError",
@@ -597,7 +597,7 @@
       "requires_explicit_selection": true
     },
     {
-      "classification": "skip",
+      "classification": "missing_key",
       "display_key": "zai",
       "endpoint": "",
       "endpoint_probe_status": "not_applicable",
