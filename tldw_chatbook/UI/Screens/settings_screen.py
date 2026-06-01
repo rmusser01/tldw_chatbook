@@ -2046,25 +2046,34 @@ class SettingsScreen(BaseAppScreen):
         except OSError as exc:
             return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
 
-    def _load_advanced_backup_preview(self) -> str:
+    def _read_advanced_backup_preview(self) -> tuple[str, str | None]:
         try:
             config_path = self._config_path()
-        except ValueError as exc:
-            return f"Advanced config recovery: failed - {redact_secret_text(str(exc))}"
+        except (OSError, RuntimeError, ValueError) as exc:
+            return f"Advanced config recovery: failed - {redact_secret_text(str(exc))}", None
         backup_path = config_path.with_suffix(config_path.suffix + ".bak")
         if not backup_path.exists():
-            return f"Advanced config recovery: unavailable - no backup found at {backup_path}"
+            return (
+                f"Advanced config recovery: unavailable - no backup found at {backup_path}",
+                None,
+            )
         try:
             backup_text = backup_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            return f"Advanced config recovery: failed - {redact_secret_text(str(exc))}"
+        except (OSError, UnicodeDecodeError) as exc:
+            return f"Advanced config recovery: failed - {redact_secret_text(str(exc))}", None
+        return "Advanced config recovery: loaded backup preview; validate before save", backup_text
+
+    def _load_advanced_backup_preview(self) -> str:
+        result, backup_text = self._read_advanced_backup_preview()
+        if backup_text is None:
+            return result
         try:
             self.query_one("#settings-advanced-config-editor", TextArea).text = backup_text
         except QueryError:
             return "Advanced config recovery: failed - editor unavailable"
         self._advanced_config_validated_text = None
         self._update_advanced_validation_status()
-        return "Advanced config recovery: loaded backup preview; validate before save"
+        return result
 
     @work(exclusive=True, thread=True)
     def _advanced_validate_config_worker(self, text: str) -> None:
@@ -2105,6 +2114,32 @@ class SettingsScreen(BaseAppScreen):
         self._advanced_config_result = result
         self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
         self._update_advanced_validation_status()
+
+    @work(exclusive=True, thread=True)
+    def _advanced_load_backup_worker(self) -> None:
+        result, backup_text = self._read_advanced_backup_preview()
+        self.app.call_from_thread(
+            self._apply_advanced_backup_preview_result,
+            result,
+            backup_text,
+        )
+
+    def _apply_advanced_backup_preview_result(
+        self,
+        result: str,
+        backup_text: str | None,
+    ) -> None:
+        final_result = result
+        if backup_text is not None:
+            try:
+                self.query_one("#settings-advanced-config-editor", TextArea).text = backup_text
+            except QueryError:
+                final_result = "Advanced config recovery: failed - editor unavailable"
+            else:
+                self._advanced_config_validated_text = None
+                self._update_advanced_validation_status()
+        self._advanced_config_result = final_result
+        self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
 
     def _provider_readiness_label(self) -> str:
         resolved = self._resolve_provider_model_for_settings()
@@ -3589,8 +3624,9 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-advanced-load-backup")
     def handle_advanced_load_backup(self, event: Button.Pressed) -> None:
         event.stop()
-        self._advanced_config_result = self._load_advanced_backup_preview()
+        self._advanced_config_result = "Advanced config recovery: loading backup preview"
         self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
+        self._advanced_load_backup_worker()
 
     @on(Button.Pressed, ".settings-advanced-guided-path-button")
     def handle_advanced_guided_path(self, event: Button.Pressed) -> None:
