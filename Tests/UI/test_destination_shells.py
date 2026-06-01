@@ -464,6 +464,15 @@ async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> Non
     raise AssertionError("Timed out waiting for mock call")
 
 
+async def _wait_for_route(seen_routes: list[str], target_route: str, pilot, *, timeout: float = 1.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if seen_routes and seen_routes[-1] == target_route:
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for route {target_route!r}; seen routes: {seen_routes!r}")
+
+
 def _assert_policy_recovery_copy(
     *,
     visible_text: str,
@@ -1451,9 +1460,10 @@ async def test_destination_action_buttons_emit_compatibility_routes(route, selec
     host = DestinationHarness(app, route, seen_routes)
 
     async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
-        await pilot.click(selector)
-        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, selector)
+        screen.query_one(selector, Button).press()
+        await _wait_for_route(seen_routes, target_route, pilot)
 
     assert seen_routes[-1] == target_route
 

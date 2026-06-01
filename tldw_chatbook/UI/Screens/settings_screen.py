@@ -240,6 +240,14 @@ class SettingsScreen(BaseAppScreen):
 
     def on_mount(self) -> None:
         super().on_mount()
+        self._queue_server_sync_workspace_handoff_refresh()
+
+    def on_screen_resume(self) -> None:
+        self._queue_server_sync_workspace_handoff_refresh()
+
+    def _queue_server_sync_workspace_handoff_refresh(self) -> None:
+        if not getattr(self, "is_mounted", False):
+            return
         self._refresh_server_sync_workspace_handoff_rows()
 
     @staticmethod
@@ -3010,6 +3018,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _select_category(self, category_value: str, *, restore_focus: bool = False) -> None:
         self.active_category = category_value
+        if category_value == SettingsCategoryId.OVERVIEW.value:
+            self._queue_server_sync_workspace_handoff_refresh()
         if restore_focus:
             self.call_after_refresh(self._focus_category, category_value)
 

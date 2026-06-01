@@ -56,7 +56,7 @@ Implemented the Settings Overview server/sync/workspace/handoff status block fro
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Settings now exposes server profile/authority, sync safety/recovery, workspace default/Library visibility, handoff policy, and ACP handoff readiness as read-only status/default rows. Verification: `python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_home_screen.py Tests/UI/test_console_persistent_rails.py Tests/UI/test_destination_shells.py Tests/UI/test_destination_visual_parity_correction.py::test_workflows_screen_matches_approved_procedure_columns --tb=short` reported 290 passed with one existing dependency warning; `git diff --check` passed; approved screenshot is `Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-server-sync-defaults-2026-05-31-large.png`.
+Settings now exposes server profile/authority, sync safety/recovery, workspace default/Library visibility, handoff policy, and ACP handoff readiness as read-only status/default rows. Verification: `python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_home_screen.py Tests/UI/test_console_persistent_rails.py Tests/UI/test_destination_shells.py Tests/UI/test_destination_visual_parity_correction.py::test_workflows_screen_matches_approved_procedure_columns --tb=short` reported 292 passed with one existing dependency warning; `git diff --check` passed; approved screenshot is `Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-server-sync-defaults-2026-05-31-large.png`.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done

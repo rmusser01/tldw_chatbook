@@ -518,6 +518,46 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
         assert "Active server profile: Loading Settings source contracts" in text
 
 
+@pytest.mark.asyncio
+async def test_settings_overview_reselect_refreshes_cached_source_rows(monkeypatch):
+    refresh_calls = 0
+
+    def fake_refresh(self):
+        nonlocal refresh_calls
+        refresh_calls += 1
+
+    monkeypatch.setattr(SettingsScreen, "_refresh_server_sync_workspace_handoff_rows", fake_refresh)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        await pilot.click("#settings-category-overview")
+
+        assert refresh_calls >= 2
+
+
+@pytest.mark.asyncio
+async def test_settings_screen_resume_refreshes_cached_source_rows(monkeypatch):
+    refresh_calls = 0
+
+    def fake_refresh(self):
+        nonlocal refresh_calls
+        refresh_calls += 1
+
+    monkeypatch.setattr(SettingsScreen, "_refresh_server_sync_workspace_handoff_rows", fake_refresh)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        screen.on_screen_resume()
+
+        assert refresh_calls >= 2
+
+
 def test_settings_server_sync_workspace_rows_fallback_to_read_only_wip_copy():
     screen = SettingsScreen(SimpleNamespace(app_config={}))
 
