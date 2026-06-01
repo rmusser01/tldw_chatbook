@@ -317,6 +317,13 @@ ConsoleSettingsModal Select:focus {
 
 #settings-category-pane {
     width: 3fr;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
 }
 
 #settings-detail-pane,

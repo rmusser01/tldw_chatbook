@@ -52,6 +52,7 @@ from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
 from .settings_config_models import (
     SettingsCategoryId,
     SettingsCategorySummary,
+    SettingsDomainCategoryContract,
     SettingsDraft,
     SettingsOwnershipRecord,
 )
@@ -194,6 +195,134 @@ SETTINGS_SERVER_SYNC_WORKSPACE_SOURCE_CONTRACTS = (
         "ACP_Interop.runtime_session.ACPRuntimeSessionState via app_instance.get_acp_runtime_session_state",
     ),
 )
+SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.LIBRARY_RAG,
+        title="Library & RAG",
+        owner_destination="Library",
+        source_of_truth=(
+            "Library source services",
+            "RAG_Search retrieval adapters",
+            "Library Collections local service",
+        ),
+        rows=(
+            ("Browse/search visibility", "global Library browse/search remains visible across workspaces"),
+            ("Console eligibility", "staging source evidence is limited to the active workspace"),
+            (
+                "Citation/snippet defaults",
+                "follow-up: add persisted citations and snippets display defaults after Library exposes a source contract",
+            ),
+        ),
+        follow_up="Follow-up: add Library/RAG mutation controls only after citations/snippets and retrieval defaults have a persisted config source.",
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.ARTIFACTS,
+        title="Artifacts",
+        owner_destination="Artifacts",
+        source_of_truth=("Chatbook artifact store", "Artifacts destination display state"),
+        rows=(
+            ("Chatbooks", "Artifacts owns Chatbook browse, details, and Console resume actions"),
+            ("Settings role", "show defaults/status only; do not move artifact operations here"),
+        ),
+        follow_up="Follow-up: add artifact export/default controls only after Artifacts exposes a persisted preference contract.",
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.PERSONAS,
+        title="Personas",
+        owner_destination="Personas",
+        source_of_truth=("Character/persona scope service", "Personas destination runtime handoff"),
+        rows=(
+            ("Runtime selection", "Personas owns character/profile selection and Console attach payloads"),
+            ("Settings role", "future defaults may choose discovery/display preferences, not active persona runtime"),
+        ),
+        follow_up="Follow-up: add persona display/default controls after Personas exposes a persisted category source.",
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.SKILLS,
+        title="Skills",
+        owner_destination="Skills",
+        source_of_truth=("Skills repository", "Skills destination validation and attach paths"),
+        rows=(
+            ("Skill format", "Skills owns SKILL.md import, validation, and attach behavior"),
+            ("Settings role", "future defaults can cover trust/display preferences only"),
+        ),
+        follow_up="Follow-up: add Skills defaults after import/attach policy has a persisted source contract.",
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.SCHEDULES,
+        title="Schedules",
+        owner_destination="Schedules",
+        source_of_truth=("Schedules destination state", "schedule run handoff context"),
+        rows=(
+            ("Run control", "Schedules owns run, pause, retry, and Console handoff actions"),
+            ("Settings role", "future defaults may cover timezone/notification preferences only"),
+        ),
+        follow_up="Follow-up: add schedule defaults after Schedules exposes a dedicated settings adapter.",
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.WATCHLISTS,
+        title="Watchlists",
+        owner_destination="Watchlists",
+        source_of_truth=("Watchlists local service", "watchlist run snapshot adapter"),
+        rows=(
+            ("Monitoring", "Watchlists owns feeds, runs, status, and recovery actions"),
+            ("Settings role", "future defaults may cover polling and notification preferences only"),
+        ),
+        follow_up="Follow-up: add watchlist defaults after Watchlists exposes persisted polling/notification settings.",
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.WORKFLOWS,
+        title="Workflows",
+        owner_destination="Workflows",
+        source_of_truth=("Workflows destination procedure state", "workflow Console handoff payloads"),
+        rows=(
+            ("Execution", "Workflows owns procedure inputs, dry runs, approvals, and outputs"),
+            ("Settings role", "future defaults may cover execution safety preferences only"),
+        ),
+        follow_up="Follow-up: add workflow defaults after Workflows exposes a persisted execution-safety contract.",
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.MCP_DEFAULTS,
+        title="MCP Defaults",
+        owner_destination="MCP",
+        source_of_truth=("Unified MCP panel", "MCP configured server target store"),
+        rows=(
+            ("Runtime owner", "MCP owns server/tool runtime, target management, and tool readiness"),
+            ("Settings role", "show global defaults/status only; server operations stay in MCP"),
+        ),
+        follow_up="Follow-up: add MCP defaults only after server-first settings are exposed without flattening tools into Settings.",
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.ACP_DEFAULTS,
+        title="ACP Defaults",
+        owner_destination="ACP",
+        source_of_truth=("ACP runtime session state", "ACP destination launch/session setup"),
+        rows=(
+            ("Runtime owner", "ACP owns runtime launch, session setup, and task/run packages"),
+            ("Settings role", "show defaults/status only; ACP setup stays in ACP"),
+        ),
+        follow_up="Follow-up: add ACP defaults after ACP exposes a persisted runtime/session preference contract.",
+    ),
+)
+
+
+def _build_domain_contract_by_category(
+    contracts: tuple[SettingsDomainCategoryContract, ...],
+) -> Mapping[SettingsCategoryId, SettingsDomainCategoryContract]:
+    contracts_by_category: dict[SettingsCategoryId, SettingsDomainCategoryContract] = {}
+    for contract in contracts:
+        if contract.category in contracts_by_category:
+            raise ValueError(
+                f"Duplicate Settings domain category contract: {contract.category.value}"
+            )
+        contracts_by_category[contract.category] = contract
+    return contracts_by_category
+
+
+DOMAIN_CONTRACT_BY_CATEGORY = _build_domain_contract_by_category(
+    SETTINGS_DOMAIN_CATEGORY_CONTRACTS
+)
+DOMAIN_SETTINGS_CATEGORY_IDS = frozenset(DOMAIN_CONTRACT_BY_CATEGORY)
 _WORKSPACE_RECORD_UNSET = object()
 
 
@@ -306,6 +435,60 @@ class SettingsScreen(BaseAppScreen):
                 "Console",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.LIBRARY_RAG,
+                "Library & RAG",
+                "Source search, retrieval, citations, snippets, and Console evidence defaults.",
+                "Read-only",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.ARTIFACTS,
+                "Artifacts",
+                "Chatbooks, saved outputs, and artifact resume defaults.",
+                "Read-only",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.PERSONAS,
+                "Personas",
+                "Character/persona discovery and Console attach defaults.",
+                "Read-only",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.SKILLS,
+                "Skills",
+                "Skill import, validation, trust, and attach defaults.",
+                "Read-only",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.SCHEDULES,
+                "Schedules",
+                "Schedule run, notification, and Console follow defaults.",
+                "Read-only",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.WATCHLISTS,
+                "Watchlists",
+                "Feed monitoring, polling, notification, and run defaults.",
+                "Read-only",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.WORKFLOWS,
+                "Workflows",
+                "Procedure, dry-run, approval, and execution safety defaults.",
+                "Read-only",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.MCP_DEFAULTS,
+                "MCP Defaults",
+                "Server/tool management defaults without owning MCP runtime operations.",
+                "Read-only",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.ACP_DEFAULTS,
+                "ACP Defaults",
+                "ACP runtime/session defaults without owning ACP launch operations.",
+                "Read-only",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.DIAGNOSTICS,
                 "Diagnostics",
                 "Config validation, logs, and troubleshooting signals.",
@@ -344,6 +527,54 @@ class SettingsScreen(BaseAppScreen):
             ),
             ("Troubleshooting", (SettingsCategoryId.DIAGNOSTICS,)),
             ("Expert", (SettingsCategoryId.ADVANCED_CONFIG,)),
+            (
+                "Domain Defaults",
+                (
+                    SettingsCategoryId.LIBRARY_RAG,
+                    SettingsCategoryId.ARTIFACTS,
+                    SettingsCategoryId.PERSONAS,
+                    SettingsCategoryId.SKILLS,
+                    SettingsCategoryId.SCHEDULES,
+                    SettingsCategoryId.WATCHLISTS,
+                    SettingsCategoryId.WORKFLOWS,
+                    SettingsCategoryId.MCP_DEFAULTS,
+                    SettingsCategoryId.ACP_DEFAULTS,
+                ),
+            ),
+        )
+
+    def _domain_category_contracts(self) -> tuple[SettingsDomainCategoryContract, ...]:
+        return SETTINGS_DOMAIN_CATEGORY_CONTRACTS
+
+    def _domain_contract_by_category(self) -> Mapping[
+        SettingsCategoryId, SettingsDomainCategoryContract
+    ]:
+        return DOMAIN_CONTRACT_BY_CATEGORY
+
+    def _domain_category_contract(self, category: SettingsCategoryId) -> SettingsDomainCategoryContract:
+        try:
+            return self._domain_contract_by_category()[category]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unknown Settings domain category contract: {category.value}"
+            ) from exc
+
+    def _domain_category_ownership_records(self) -> tuple[SettingsOwnershipRecord, ...]:
+        return tuple(
+            SettingsOwnershipRecord(
+                category=contract.category,
+                owns_config_sections=(),
+                reads_runtime_state_from=contract.source_of_truth,
+                writes_allowed=contract.settings_can_mutate,
+                runtime_owner=contract.owner_destination,
+                boundary_copy=(
+                    f"{contract.owner_destination} owns the live workflow; Settings shows "
+                    "read-only defaults/status until a persisted source contract exists."
+                ),
+                recovery_copy=f"Open {contract.owner_destination} for workflow actions and setup.",
+                read_only_reason=contract.follow_up,
+            )
+            for contract in self._domain_category_contracts()
         )
 
     def _category_ownership_records(self) -> tuple[SettingsOwnershipRecord, ...]:
@@ -455,6 +686,7 @@ class SettingsScreen(BaseAppScreen):
                 boundary_copy="Advanced Config bypasses guided category controls.",
                 recovery_copy="Validate exact current TOML before save; restore from backup if needed.",
             ),
+            *self._domain_category_ownership_records(),
         )
 
     def _build_ownership_by_category(self) -> dict[SettingsCategoryId, SettingsOwnershipRecord]:
@@ -659,6 +891,9 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.DIAGNOSTICS: "Guided edits: use Validate/Reload.",
             SettingsCategoryId.ADVANCED_CONFIG: "Guided edits: use Raw TOML controls.",
         }
+        if category in DOMAIN_SETTINGS_CATEGORY_IDS:
+            contract = self._domain_category_contract(category)
+            return f"Guided edits: read-only/WIP; open {contract.owner_destination}."
         return messages.get(category, "Guided edits: read-only.")
 
     def _guided_actions_enabled(self, category: SettingsCategoryId) -> bool:
@@ -861,6 +1096,12 @@ class SettingsScreen(BaseAppScreen):
             return "State: Local paths | Verify write access before changing storage locations."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
             return "State: Local privacy | Secrets stay redacted in validation and diagnostics."
+        if category in DOMAIN_SETTINGS_CATEGORY_IDS:
+            contract = self._domain_category_contract(category)
+            return (
+                "State: Read-only contract | "
+                f"{contract.owner_destination} owns workflow actions and setup."
+            )
         return "State: Active | Review readiness across Settings categories."
 
     def _render_category_state_banner(self, category: SettingsCategoryId) -> Static:
@@ -2330,6 +2571,22 @@ class SettingsScreen(BaseAppScreen):
                 ("Boundary", "save is blocked until the exact current text validates"),
             ),
         }
+        if category in DOMAIN_SETTINGS_CATEGORY_IDS:
+            contract = self._domain_category_contract(category)
+            return (
+                (
+                    "Affected config",
+                    "none yet - this category is an ownership/status contract",
+                ),
+                (
+                    "Recovery",
+                    f"open {contract.owner_destination} for workflow actions and setup",
+                ),
+                (
+                    "Boundary",
+                    f"{contract.owner_destination} remains the runtime owner; Settings cannot mutate it yet",
+                ),
+            )
         return guidance[category]
 
     def _render_category_buttons(self) -> ComposeResult:
@@ -2625,6 +2882,26 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
 
+    def _render_domain_category_detail(self, category: SettingsCategoryId) -> ComposeResult:
+        contract = self._domain_category_contract(category)
+        yield Static(contract.title, classes="destination-section settings-column-title")
+        with Vertical(id=f"settings-{category.value}-card", classes="settings-focus-card"):
+            yield self._render_category_state_banner(category)
+            yield Static("Domain ownership contract", classes="destination-section")
+            yield self._detail_row("Owner destination", contract.owner_destination)
+            yield self._detail_row("Settings mode", "read-only defaults/status contract")
+            yield self._detail_row(
+                "Writes allowed",
+                "No - destination ownership must be implemented before mutation",
+            )
+            yield Static("Source of truth", classes="destination-section")
+            for index, source in enumerate(contract.source_of_truth, start=1):
+                yield self._detail_row(f"Source {index}", source)
+            yield Static("Status and default boundaries", classes="destination-section")
+            for label, value in contract.rows:
+                yield self._detail_row(label, value)
+            yield self._detail_row("Follow-up", contract.follow_up)
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
@@ -2772,6 +3049,8 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-diagnostics-reload-result",
                     classes="settings-status-row",
                 )
+        elif category in DOMAIN_SETTINGS_CATEGORY_IDS:
+            yield from self._render_domain_category_detail(category)
         else:
             yield Static("Advanced Config", classes="destination-section settings-column-title")
             with Vertical(id="settings-advanced-config-card", classes="settings-focus-card"):

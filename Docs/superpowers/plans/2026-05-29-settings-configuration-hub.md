@@ -398,7 +398,7 @@ Docs/superpowers/qa/settings-configuration-hub/stage-5-server-sync-workspace.png
 
 Backlog: `TASK-73.6`
 
-- [ ] **Step 1: Add category contract tests**
+- [x] **Step 1: Add category contract tests**
 
 Each major module must either have a concrete source-of-truth contract for later guided settings or be labeled read-only/WIP with owner and recovery copy. This stage is not allowed to implement every domain setting in one PR.
 
@@ -414,15 +414,15 @@ Candidate categories:
 - MCP defaults
 - ACP defaults
 
-- [ ] **Step 2: Add contract/status categories**
+- [x] **Step 2: Add contract/status categories**
 
 Add categories as ownership/status surfaces first. Only add save/revert controls for a domain if the source-of-truth config is already identified and the change remains PR-sized. Otherwise, record the follow-up task needed for that specific domain.
 
-- [ ] **Step 3: Keep destination ownership intact**
+- [x] **Step 3: Keep destination ownership intact**
 
 Settings should not become a replacement for domain screens. It should configure defaults, not hide the actual workflow surfaces.
 
-- [ ] **Step 4: Verify and capture**
+- [x] **Step 4: Verify and capture**
 
 Run:
 
@@ -436,6 +436,22 @@ Capture the categories that changed under:
 ```text
 Docs/superpowers/qa/settings-configuration-hub/stage-6-domain-categories-*.png
 ```
+
+Evidence captured:
+
+- `Docs/superpowers/qa/settings-configuration-hub/stage-6-domain-categories-overview.png`
+- `Docs/superpowers/qa/settings-configuration-hub/stage-6-domain-categories-library-rag.png`
+- `Docs/superpowers/qa/settings-configuration-hub/stage-6-domain-categories-mcp-defaults.png`
+
+Verification:
+
+```bash
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_destination_shells.py --tb=short
+```
+
+Result: `235 passed, 1 warning` (`requests` dependency warning).
+
+User screenshot approval: approved.
 
 ## Stage 7: Advanced Config And Closeout QA
 
