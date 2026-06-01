@@ -5,10 +5,11 @@ Branch: codex/provider-cdp-uat-execution
 Spec: Docs/superpowers/specs/2026-05-31-provider-cdp-uat-design.md
 Backlog task: TASK-75 - Provider CDP UAT sweep
 Textual-web URL: http://127.0.0.1:8897
-Isolated HOME: /private/tmp/tldw-chatbook-provider-cdp-uat/home
-Isolated XDG config: /private/tmp/tldw-chatbook-provider-cdp-uat/config
-Isolated data: /private/tmp/tldw-chatbook-provider-cdp-uat/data
-App log: /private/tmp/tldw-chatbook-provider-cdp-uat/home/.local/share/tldw_cli/default_user/tldw_cli_app.log
+Isolated QA root: `${TMPDIR:-system temp}/tldw-chatbook-provider-cdp-uat` via `run_textual_web_with_env.py`
+Isolated HOME: `<qa-root>/home`
+Isolated XDG config: `<qa-root>/config`
+Isolated data: `<qa-root>/data`
+App log: `<qa-root>/home/.local/share/tldw_cli/default_user/tldw_cli_app.log`
 
 ## Provider Inventory
 

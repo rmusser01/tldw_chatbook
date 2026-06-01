@@ -384,11 +384,12 @@ def classify_external_outcome(reason: str) -> str:
 The helper CLI should support:
 
 ```bash
-HOME=/private/tmp/tldw-chatbook-provider-cdp-uat/home \
-XDG_CONFIG_HOME=/private/tmp/tldw-chatbook-provider-cdp-uat/config \
-XDG_DATA_HOME=/private/tmp/tldw-chatbook-provider-cdp-uat/data \
+QA_ROOT="${TMPDIR:-/tmp}/tldw-chatbook-provider-cdp-uat"
+HOME="$QA_ROOT/home" \
+XDG_CONFIG_HOME="$QA_ROOT/config" \
+XDG_DATA_HOME="$QA_ROOT/data" \
 .venv/bin/python Docs/superpowers/qa/provider-cdp-uat/provider_inventory.py \
-  --env-file /Users/macbook-dev/Documents/GitHub/tldw_server2/tldw_Server_API/Config_Files/.env \
+  --env-file ../tldw_server2/tldw_Server_API/Config_Files/.env \
   --json Docs/superpowers/qa/provider-cdp-uat/provider-inventory.json \
   --markdown Docs/superpowers/qa/provider-cdp-uat/provider-inventory.md
 ```
@@ -466,10 +467,10 @@ The helper should:
 - Load `.env` with `load_env_values()`.
 - Filter placeholder/empty values with `should_use_key_value()`.
 - Set:
-  - `PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook`
-  - `HOME=/private/tmp/tldw-chatbook-provider-cdp-uat/home`
-  - `XDG_CONFIG_HOME=/private/tmp/tldw-chatbook-provider-cdp-uat/config`
-  - `XDG_DATA_HOME=/private/tmp/tldw-chatbook-provider-cdp-uat/data`
+  - `PYTHONPATH=<repo-root>`
+  - `HOME=<qa-root>/home`
+  - `XDG_CONFIG_HOME=<qa-root>/config`
+  - `XDG_DATA_HOME=<qa-root>/data`
   - `TLDW_TEXTUAL_WEB_PORT=<port>`
 - Create both `$HOME/.config/tldw_cli/config.toml` and `$XDG_CONFIG_HOME/tldw_cli/config.toml` before launch. This covers the current `config.py` HOME-based default while still honoring the plan requirement to isolate XDG config.
 - Write a minimal isolated config:
@@ -601,11 +602,12 @@ Expected: Commit contains only QA evidence harness files.
 Run:
 
 ```bash
-HOME=/private/tmp/tldw-chatbook-provider-cdp-uat/home \
-XDG_CONFIG_HOME=/private/tmp/tldw-chatbook-provider-cdp-uat/config \
-XDG_DATA_HOME=/private/tmp/tldw-chatbook-provider-cdp-uat/data \
+QA_ROOT="${TMPDIR:-/tmp}/tldw-chatbook-provider-cdp-uat"
+HOME="$QA_ROOT/home" \
+XDG_CONFIG_HOME="$QA_ROOT/config" \
+XDG_DATA_HOME="$QA_ROOT/data" \
 .venv/bin/python Docs/superpowers/qa/provider-cdp-uat/provider_inventory.py \
-  --env-file /Users/macbook-dev/Documents/GitHub/tldw_server2/tldw_Server_API/Config_Files/.env \
+  --env-file ../tldw_server2/tldw_Server_API/Config_Files/.env \
   --json Docs/superpowers/qa/provider-cdp-uat/provider-inventory.json \
   --markdown Docs/superpowers/qa/provider-cdp-uat/provider-inventory.md
 ```
@@ -649,7 +651,7 @@ Expected: Commit contains redacted inventory and report update only.
 ## Task 7: Launch Isolated Textual-Web App
 
 **Files:**
-- Generated outside repo: `/private/tmp/tldw-chatbook-provider-cdp-uat/...`
+- Generated outside repo: `${TMPDIR:-/tmp}/tldw-chatbook-provider-cdp-uat/...`
 - Modify: `Docs/superpowers/qa/provider-cdp-uat/2026-05-31-provider-cdp-uat.md`
 
 - [ ] **Step 1: Start server inside sandbox first**
@@ -658,8 +660,8 @@ Run:
 
 ```bash
 .venv/bin/python Docs/superpowers/qa/provider-cdp-uat/run_textual_web_with_env.py \
-  --env-file /Users/macbook-dev/Documents/GitHub/tldw_server2/tldw_Server_API/Config_Files/.env \
-  --qa-root /private/tmp/tldw-chatbook-provider-cdp-uat \
+  --env-file ../tldw_server2/tldw_Server_API/Config_Files/.env \
+  --qa-root "${TMPDIR:-/tmp}/tldw-chatbook-provider-cdp-uat" \
   --port 8896
 ```
 
@@ -688,8 +690,9 @@ Update the QA report with:
 Run:
 
 ```bash
+QA_ROOT="${TMPDIR:-/tmp}/tldw-chatbook-provider-cdp-uat"
 TLDW_TEXTUAL_WEB_PORT=8896 \
-TLDW_QA_APP_LOG=/private/tmp/tldw-chatbook-provider-cdp-uat/home/.local/share/tldw_cli/default_user/tldw_cli_app.log \
+TLDW_QA_APP_LOG="$QA_ROOT/home/.local/share/tldw_cli/default_user/tldw_cli_app.log" \
 node Docs/superpowers/qa/provider-cdp-uat/cdp_provider_probe.mjs screenshot baseline-console
 ```
 

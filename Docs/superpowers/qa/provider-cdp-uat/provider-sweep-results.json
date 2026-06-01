@@ -14,7 +14,7 @@
       "status": "fail_external",
       "reason": "provider_timeout_turn_1",
       "assistant_replies": 1,
-      "screenshot": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/provider-cdp-uat-execution/Docs/superpowers/qa/provider-cdp-uat/screenshots/anthropic-turn-1-fail_external.png"
+      "screenshot": "screenshots/anthropic-turn-1-fail_external.png"
     },
     {
       "provider": "cohere",
@@ -23,7 +23,7 @@
       "status": "success",
       "reason": "Second assistant reply completed.",
       "assistant_replies": 2,
-      "screenshot": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/provider-cdp-uat-execution/Docs/superpowers/qa/provider-cdp-uat/screenshots/cohere-success.png"
+      "screenshot": "screenshots/cohere-success.png"
     },
     {
       "provider": "deepseek",
@@ -32,7 +32,7 @@
       "status": "success",
       "reason": "Second assistant reply completed.",
       "assistant_replies": 2,
-      "screenshot": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/provider-cdp-uat-execution/Docs/superpowers/qa/provider-cdp-uat/screenshots/deepseek-success.png"
+      "screenshot": "screenshots/deepseek-success.png"
     },
     {
       "provider": "google",
@@ -41,7 +41,7 @@
       "status": "fail_external",
       "reason": "Chat/RAG/Follow | General | Sources 0 | Tools 0 | Approvals 0 | Run: Provider stream failed: Provider error from google: bad request. Status: 400. | │ │  Provider: google                              ││ │  Provider stream failed: Provider error from google: bad request. Status: 400.                                                                                                                                      │ │            │",
       "assistant_replies": 1,
-      "screenshot": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/provider-cdp-uat-execution/Docs/superpowers/qa/provider-cdp-uat/screenshots/google-turn-1-fail_external.png"
+      "screenshot": "screenshots/google-turn-1-fail_external.png"
     },
     {
       "provider": "groq",
@@ -50,7 +50,7 @@
       "status": "fail_external",
       "reason": "Chat/RAG/Follow | General | Sources 0 | Tools 0 | Approvals 0 | Run: Provider stream failed: Provider error from groq: bad request. Status: 400. | │ │  Provider: groq                                ││ │  Provider stream failed: Provider error from groq: bad request. Status: 400.                                                                                                                                        │ │            │",
       "assistant_replies": 1,
-      "screenshot": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/provider-cdp-uat-execution/Docs/superpowers/qa/provider-cdp-uat/screenshots/groq-turn-1-fail_external.png"
+      "screenshot": "screenshots/groq-turn-1-fail_external.png"
     },
     {
       "provider": "huggingface",
@@ -59,7 +59,7 @@
       "status": "fail_external",
       "reason": "Chat/RAG/Follow | General | Sources 0 | Tools 0 | Approvals 0 | Run: Provider stream failed: Provider error from huggingface: bad request. Status: 400. | │ │  Provider: huggingface                         ││ │  Provider stream failed: Provider error from huggingface: bad request. Status: 400.                                                                                                                                 │ │            │",
       "assistant_replies": 1,
-      "screenshot": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/provider-cdp-uat-execution/Docs/superpowers/qa/provider-cdp-uat/screenshots/huggingface-turn-1-fail_external.png"
+      "screenshot": "screenshots/huggingface-turn-1-fail_external.png"
     },
     {
       "provider": "mistral",
@@ -68,7 +68,7 @@
       "status": "success",
       "reason": "Second assistant reply completed.",
       "assistant_replies": 2,
-      "screenshot": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/provider-cdp-uat-execution/Docs/superpowers/qa/provider-cdp-uat/screenshots/mistral-success.png"
+      "screenshot": "screenshots/mistral-success.png"
     },
     {
       "provider": "mistralai",
@@ -77,7 +77,7 @@
       "status": "success",
       "reason": "Second assistant reply completed.",
       "assistant_replies": 2,
-      "screenshot": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/provider-cdp-uat-execution/Docs/superpowers/qa/provider-cdp-uat/screenshots/mistralai-success.png"
+      "screenshot": "screenshots/mistralai-success.png"
     },
     {
       "provider": "moonshot",
@@ -86,7 +86,7 @@
       "status": "success",
       "reason": "Second assistant reply completed.",
       "assistant_replies": 2,
-      "screenshot": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/provider-cdp-uat-execution/Docs/superpowers/qa/provider-cdp-uat/screenshots/moonshot-success.png"
+      "screenshot": "screenshots/moonshot-success.png"
     },
     {
       "provider": "openai",
@@ -95,7 +95,7 @@
       "status": "success",
       "reason": "Second assistant reply completed.",
       "assistant_replies": 2,
-      "screenshot": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/provider-cdp-uat-execution/Docs/superpowers/qa/provider-cdp-uat/screenshots/openai-success.png"
+      "screenshot": "screenshots/openai-success.png"
     },
     {
       "provider": "openrouter",
@@ -104,7 +104,7 @@
       "status": "success",
       "reason": "Second assistant reply completed.",
       "assistant_replies": 2,
-      "screenshot": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/provider-cdp-uat-execution/Docs/superpowers/qa/provider-cdp-uat/screenshots/openrouter-success.png"
+      "screenshot": "screenshots/openrouter-success.png"
     }
   ]
 }

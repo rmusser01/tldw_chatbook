@@ -89,7 +89,7 @@ def test_build_launch_environment_scrubs_inherited_provider_keys_and_config(tmp_
             "PATH": "/usr/bin",
             "OPENAI_API_KEY": "sk-inherited-openai",
             "ANTHROPIC_API_KEY": "sk-inherited-anthropic",
-            "TLDW_CONFIG_PATH": "/Users/example/.config/tldw_cli/config.toml",
+            "TLDW_CONFIG_PATH": "/tmp/example/.config/tldw_cli/config.toml",
         },
     )
 

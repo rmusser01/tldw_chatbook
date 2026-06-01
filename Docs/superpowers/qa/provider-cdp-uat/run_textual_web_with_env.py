@@ -12,6 +12,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -26,7 +27,7 @@ from provider_inventory import KNOWN_PROVIDER_ENV_KEYS, load_env_values, should_
 
 DEFAULT_PORT = 8000
 DEFAULT_ENV_FILE = HELPER_DIR / ".env"
-DEFAULT_QA_ROOT = Path("/private/tmp/tldw-chatbook-provider-cdp-uat")
+DEFAULT_QA_ROOT = Path(tempfile.gettempdir()) / "tldw-chatbook-provider-cdp-uat"
 INHERITED_ENV_ALLOWLIST = frozenset(
     {
         "PATH",

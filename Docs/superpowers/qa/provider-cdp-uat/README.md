@@ -52,6 +52,8 @@ Only `request_shape`, `response_shape`, `streaming`, and `console_ui` are defaul
 
 Use the helper without printing raw keys or raw environment values:
 
+The Node helpers load `playwright` from normal Node resolution by default. If Playwright is supplied by a bundled runtime instead of local `node_modules`, set `TLDW_QA_PLAYWRIGHT_BUNDLE_PATH` to that runtime's importable Playwright package path before running the helper.
+
 1. Capture the pre-send log offset:
 
    ```bash

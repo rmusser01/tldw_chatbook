@@ -4,8 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const PLAYWRIGHT_BUNDLE_PATH =
-  "/Users/macbook-dev/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright";
+const PLAYWRIGHT_BUNDLE_PATH = process.env.TLDW_QA_PLAYWRIGHT_BUNDLE_PATH || "playwright";
 const CHROME_EXECUTABLE = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCREENSHOT_DIR = resolve(__dirname, "screenshots");
@@ -365,7 +364,7 @@ async function screenshot(page, name) {
   const path = resolve(SCREENSHOT_DIR, `${name}.png`);
   await settle(page, 500);
   await page.screenshot({ path, fullPage: true });
-  return path;
+  return `screenshots/${name}.png`;
 }
 
 async function runProvider(browser, row, replyTimeoutMs) {
