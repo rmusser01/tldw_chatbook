@@ -62,3 +62,25 @@ Fallback reason: none
 - Confirmed API key values are represented by env var name only; no token value appears in the screenshots.
 - Confirmed Console session summary uses the same selected model profile defaults from config: OpenAI `gpt-4.1`, streaming off, and profile sampling values.
 - User approval: approved in Codex thread after actual screenshot review.
+
+## Server, Sync, Workspace, And Handoff Defaults QA
+
+Date: 2026-05-31
+Branch: `codex/settings-server-sync-defaults`
+Backlog task: TASK-73.5
+Screen: Settings Overview
+Viewport: 2050x1240 textual-web browser capture
+Launch method: `tldw-serve --host 127.0.0.1 --port 8901` with isolated HOME/XDG config and `default_tab = "settings"`
+Screenshot method: Playwright Chromium screenshot of textual-web through CDP
+Fallback reason: none
+
+### Screenshot
+
+- Settings server/sync/workspace/handoff defaults: `Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-server-sync-defaults-2026-05-31-large.png`
+
+### Verification Scope
+
+- Confirmed Settings Overview renders the new server/sync/workspace/handoff section as status/default rows, not executable runtime controls.
+- Confirmed the screen names the local/server authority as read-only in Settings.
+- Confirmed sync dry-run/recovery copy, Library workspace visibility copy, and ACP handoff readiness appear in the same destination-native Settings shell.
+- User approval: approved in Codex thread after actual textual-web screenshot review.
