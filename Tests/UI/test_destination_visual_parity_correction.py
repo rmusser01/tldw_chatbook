@@ -862,7 +862,7 @@ async def test_workflows_screen_matches_approved_procedure_columns():
         visible_text = _visible_static_text(screen)
         for expected in (
             "Workflows | Procedures, runs, dry-runs, approvals | Local | Console handoff",
-            "Modes: Recipes Inputs Steps Dry run Approvals Outputs",
+            "Modes: Recipes Inputs Steps Dry Run Approvals Outputs",
             "Procedure Library",
             "Run Detail",
             "Run Inspector",

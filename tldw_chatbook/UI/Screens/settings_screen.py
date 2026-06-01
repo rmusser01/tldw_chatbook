@@ -23,6 +23,7 @@ from ...Chat.console_provider_support import (
 )
 from ...Chat.console_session_settings import CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
+from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...Sync_Interop.sync_promotion_state import SyncPromotionState, build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
@@ -193,6 +194,7 @@ SETTINGS_SERVER_SYNC_WORKSPACE_SOURCE_CONTRACTS = (
         "ACP_Interop.runtime_session.ACPRuntimeSessionState via app_instance.get_acp_runtime_session_state",
     ),
 )
+_WORKSPACE_RECORD_UNSET = object()
 
 
 class SettingsScreen(BaseAppScreen):
@@ -206,6 +208,7 @@ class SettingsScreen(BaseAppScreen):
 
     active_category = reactive(SettingsCategoryId.OVERVIEW.value, recompose=True)
     category_search_query = reactive("")
+    server_sync_workspace_handoff_rows = reactive((), recompose=True)
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
@@ -231,6 +234,30 @@ class SettingsScreen(BaseAppScreen):
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
+        self.server_sync_workspace_handoff_rows = (
+            self._server_sync_workspace_handoff_loading_rows()
+        )
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self._refresh_server_sync_workspace_handoff_rows()
+
+    @staticmethod
+    def _server_sync_workspace_handoff_loading_rows() -> tuple[tuple[str, str], ...]:
+        return (
+            ("Active server profile", "Loading Settings source contracts"),
+            ("Local/server authority", "Loading Settings source contracts"),
+            ("Sync safety", "Loading Settings source contracts"),
+            ("Sync recovery", "Loading Settings source contracts"),
+            ("Workspace default", "Loading Settings source contracts"),
+            ("Library visibility", LIBRARY_WORKSPACE_VISIBILITY_COPY),
+            (
+                "Handoff policy",
+                "copy/reference/metadata-only by source policy; "
+                "Console staging is limited to the active workspace",
+            ),
+            ("ACP handoff readiness", "Loading Settings source contracts"),
+        )
 
     def _category_summaries(self) -> tuple[SettingsCategorySummary, ...]:
         return (
@@ -939,11 +966,54 @@ class SettingsScreen(BaseAppScreen):
             raise ValueError("Max tokens must be a whole number of at least 1.")
         return int(text_value)
 
-    def _sync_safety_states(self) -> tuple[SyncPromotionState, ...]:
+    def _active_sync_scope(
+        self,
+        active_workspace: object = _WORKSPACE_RECORD_UNSET,
+    ) -> dict[str, str | None]:
+        runtime_state = self._runtime_source_state()
+        active_source = str(getattr(runtime_state, "active_source", "local") or "local").lower()
+        server_profile_value = getattr(runtime_state, "active_server_id", None)
+        server_profile_id = str(server_profile_value or "").strip() or None
+        source_authority = "server" if active_source == "server" and server_profile_id else "local"
+        authenticated_principal_id = None
+        if source_authority == "server":
+            server_context_provider = getattr(self.app_instance, "server_context_provider", None)
+            get_active_context = getattr(server_context_provider, "get_active_context", None)
+            if callable(get_active_context):
+                try:
+                    authenticated_principal_id = event_principal_id_from_active_context(
+                        get_active_context()
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to resolve Settings sync authenticated principal scope.",
+                        exc_info=True,
+                    )
+                    authenticated_principal_id = None
+
+        workspace = (
+            self._active_workspace_record()
+            if active_workspace is _WORKSPACE_RECORD_UNSET
+            else active_workspace
+        )
+        workspace_scope = None
+        if workspace is not None:
+            workspace_scope = str(getattr(workspace, "workspace_id", "") or "").strip() or None
+        return {
+            "server_profile_id": server_profile_id if source_authority == "server" else None,
+            "authenticated_principal_id": authenticated_principal_id,
+            "workspace_scope": workspace_scope,
+        }
+
+    def _sync_safety_states(
+        self,
+        scope: Mapping[str, str | None] | None = None,
+    ) -> tuple[SyncPromotionState, ...]:
         labels = {
             "library_collections": "Collections",
             "workspaces": "Workspaces",
         }
+        active_scope = dict(scope or self._active_sync_scope())
         sync_scope_service = getattr(self.app_instance, "sync_scope_service", None)
         list_states = getattr(sync_scope_service, "list_write_sync_promotion_states", None)
         if callable(list_states):
@@ -952,6 +1022,9 @@ class SettingsScreen(BaseAppScreen):
                     list_states(
                         domains=list(labels),
                         surface_labels=labels,
+                        server_profile_id=active_scope["server_profile_id"],
+                        authenticated_principal_id=active_scope["authenticated_principal_id"],
+                        workspace_scope=active_scope["workspace_scope"],
                     )
                 )
             except Exception as exc:
@@ -965,8 +1038,8 @@ class SettingsScreen(BaseAppScreen):
                 surface_label=label,
                 readiness=build_sync_readiness_report(
                     domain=domain,
-                    server_profile_id=None,
-                    workspace_id=None,
+                    server_profile_id=active_scope["server_profile_id"],
+                    workspace_id=active_scope["workspace_scope"],
                     registry=DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
                 ),
             )
@@ -1054,8 +1127,15 @@ class SettingsScreen(BaseAppScreen):
             )
             return None
 
-    def _workspace_default_label(self) -> str:
-        workspace = self._active_workspace_record()
+    def _workspace_default_label(
+        self,
+        active_workspace: object = _WORKSPACE_RECORD_UNSET,
+    ) -> str:
+        workspace = (
+            self._active_workspace_record()
+            if active_workspace is _WORKSPACE_RECORD_UNSET
+            else active_workspace
+        )
         if workspace is not None:
             workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
             workspace_name = str(getattr(workspace, "name", "") or "").strip() or workspace_id
@@ -1106,13 +1186,15 @@ class SettingsScreen(BaseAppScreen):
         return "ACP runtime not configured; configure runtime and sessions in ACP"
 
     def _server_sync_workspace_handoff_rows(self) -> tuple[tuple[str, str], ...]:
-        sync_states = self._sync_safety_states()
+        active_workspace = self._active_workspace_record()
+        sync_scope = self._active_sync_scope(active_workspace)
+        sync_states = self._sync_safety_states(sync_scope)
         return (
             ("Active server profile", self._active_server_profile_label()),
             ("Local/server authority", self._local_server_authority_label()),
             ("Sync safety", self._sync_safety_label(sync_states)),
             ("Sync recovery", self._sync_recovery_label(sync_states)),
-            ("Workspace default", self._workspace_default_label()),
+            ("Workspace default", self._workspace_default_label(active_workspace)),
             ("Library visibility", LIBRARY_WORKSPACE_VISIBILITY_COPY),
             (
                 "Handoff policy",
@@ -1121,6 +1203,24 @@ class SettingsScreen(BaseAppScreen):
             ),
             ("ACP handoff readiness", self._acp_handoff_readiness_label()),
         )
+
+    def _apply_server_sync_workspace_handoff_rows(
+        self,
+        rows: tuple[tuple[str, str], ...],
+    ) -> None:
+        self.server_sync_workspace_handoff_rows = rows
+
+    @work(exclusive=True, thread=True)
+    def _refresh_server_sync_workspace_handoff_rows(self) -> None:
+        try:
+            rows = self._server_sync_workspace_handoff_rows()
+        except Exception:
+            logger.warning(
+                "Failed to refresh Settings server/sync/workspace/handoff rows.",
+                exc_info=True,
+            )
+            rows = self._server_sync_workspace_handoff_loading_rows()
+        self.app.call_from_thread(self._apply_server_sync_workspace_handoff_rows, rows)
 
     @staticmethod
     def _column_divider(identifier: str) -> Rule:
@@ -2287,7 +2387,7 @@ class SettingsScreen(BaseAppScreen):
             for label, value in self._overview_ownership_rows():
                 yield self._detail_row(label, value)
             yield Static("Server, sync, workspace, and handoff", classes="destination-section")
-            for label, value in self._server_sync_workspace_handoff_rows():
+            for label, value in self.server_sync_workspace_handoff_rows:
                 yield self._detail_row(label, value)
             yield Static("Provider readiness", classes="destination-section")
             yield self._detail_row(

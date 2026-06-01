@@ -410,8 +410,11 @@ def test_settings_server_sync_workspace_source_contracts_are_explicit():
 
 
 def test_settings_server_sync_workspace_rows_use_source_contracts():
+    captured_sync_kwargs = {}
+
     class FakeSyncScopeService:
-        def list_write_sync_promotion_states(self, **_kwargs):
+        def list_write_sync_promotion_states(self, **kwargs):
+            captured_sync_kwargs.update(kwargs)
             return (
                 SyncPromotionState(
                     domain="library_collections",
@@ -447,6 +450,12 @@ def test_settings_server_sync_workspace_rows_use_source_contracts():
                 last_known_server_label="Main Server",
             )
         ),
+        server_context_provider=SimpleNamespace(
+            get_active_context=lambda: SimpleNamespace(
+                auth_token="settings-scope-token",
+                credential_source="test",
+            )
+        ),
         sync_scope_service=FakeSyncScopeService(),
         workspace_registry_service=FakeWorkspaceRegistry(),
         console_chat_store=SimpleNamespace(
@@ -461,6 +470,11 @@ def test_settings_server_sync_workspace_rows_use_source_contracts():
 
     rows = dict(screen._server_sync_workspace_handoff_rows())
 
+    assert captured_sync_kwargs["server_profile_id"] == "server-main"
+    assert captured_sync_kwargs["authenticated_principal_id"].startswith(
+        "credential-fingerprint:test:"
+    )
+    assert captured_sync_kwargs["workspace_scope"] == "research"
     assert rows["Active server profile"] == "Main Server (server-main)"
     assert rows["Local/server authority"] == "server; Settings is read-only"
     assert rows["Sync safety"] == "Collections: Sync: dry-run only"
@@ -475,6 +489,33 @@ def test_settings_server_sync_workspace_rows_use_source_contracts():
     assert rows["ACP handoff readiness"] == (
         "ACP runtime configured: Local ACP; no session payload"
     )
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch):
+    def fail_if_render_blocks_on_source_contracts(*_args, **_kwargs):
+        raise AssertionError("Overview render must use cached source-contract rows")
+
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_refresh_server_sync_workspace_handoff_rows",
+        lambda _self: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_server_sync_workspace_handoff_rows",
+        fail_if_render_blocks_on_source_contracts,
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Active server profile: Loading Settings source contracts" in text
 
 
 def test_settings_server_sync_workspace_rows_fallback_to_read_only_wip_copy():
@@ -565,8 +606,9 @@ async def test_settings_overview_renders_server_sync_workspace_handoff_contracts
 
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
+        await _wait_for_settings_text(screen, pilot, "Active server profile: Main Server")
         text = _visible_text(screen)
 
         assert "Server, sync, workspace, and handoff" in text
