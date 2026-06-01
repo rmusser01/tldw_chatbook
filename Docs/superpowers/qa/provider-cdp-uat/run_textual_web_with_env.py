@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(HELPER_DIR) not in sys.path:
     sys.path.insert(0, str(HELPER_DIR))
 
-from provider_inventory import KNOWN_PROVIDER_ENV_KEYS, load_env_values, mask_secret, should_use_key_value
+from provider_inventory import KNOWN_PROVIDER_ENV_KEYS, load_env_values, should_use_key_value
 
 
 DEFAULT_PORT = 8000
@@ -144,7 +144,7 @@ def masked_key_source_summary(env_values: Mapping[str, str]) -> list[str]:
     for key, value in sorted(env_values.items()):
         if not should_use_key_value(value):
             continue
-        summary.append(f"env_file:{key}={mask_secret(value.strip())}")
+        summary.append(f"env_file:{key}=***REDACTED***")
     return summary
 
 

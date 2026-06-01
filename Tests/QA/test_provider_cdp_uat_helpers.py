@@ -131,7 +131,8 @@ def test_print_launch_summary_masks_key_values_and_shell_quotes_command(tmp_path
     captured = capsys.readouterr()
 
     assert raw_key not in captured.out
-    assert "OPENAI_API_KEY=sk-s...3456" in captured.out
+    assert "OPENAI_API_KEY=***REDACTED***" in captured.out
+    assert "sk-" not in captured.out
     assert "PLACEHOLDER" not in captured.out
     assert shlex.join(command) in captured.out
 
