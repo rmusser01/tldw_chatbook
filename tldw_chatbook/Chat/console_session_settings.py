@@ -9,6 +9,7 @@ from urllib.parse import urlparse, urlunparse
 from tldw_chatbook.Chat.console_provider_support import (
     DIRECT_CONSOLE_PROVIDER_KEYS,
     resolve_console_provider_identity,
+    supported_console_provider_catalog,
     supported_console_provider_readiness_keys,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
@@ -196,8 +197,19 @@ class ConsoleSettingsSummaryState:
 def build_console_provider_options(
     providers_models: Mapping[str, Sequence[str]],
 ) -> list[ConsoleSettingsOption]:
-    """Return sorted provider options from the configured model registry."""
+    """Return sorted Console-sendable provider options plus configured providers."""
     provider_keys = sorted({key for key in (provider_config_key(provider) for provider in providers_models) if key})
+    provider_keys = sorted(
+        {
+            *provider_keys,
+            *(
+                entry.readiness_key
+                for entry in supported_console_provider_catalog(
+                    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+                )
+            ),
+        }
+    )
     return [ConsoleSettingsOption(label=provider_key, value=provider_key) for provider_key in provider_keys]
 
 

@@ -1,0 +1,110 @@
+{
+  "generated_at": "2026-06-01T07:31:58.333Z",
+  "textual_web_port": 8897,
+  "attempted": 11,
+  "status_counts": {
+    "fail_external": 4,
+    "success": 7
+  },
+  "results": [
+    {
+      "provider": "anthropic",
+      "execution_key": "anthropic",
+      "model": "claude-3-5-haiku-20241022",
+      "status": "fail_external",
+      "reason": "provider_timeout_turn_1",
+      "assistant_replies": 1,
+      "screenshot": "screenshots/anthropic-turn-1-fail_external.png"
+    },
+    {
+      "provider": "cohere",
+      "execution_key": "cohere",
+      "model": "command-r-08-2024",
+      "status": "success",
+      "reason": "Second assistant reply completed.",
+      "assistant_replies": 2,
+      "screenshot": "screenshots/cohere-success.png"
+    },
+    {
+      "provider": "deepseek",
+      "execution_key": "deepseek",
+      "model": "deepseek-chat",
+      "status": "success",
+      "reason": "Second assistant reply completed.",
+      "assistant_replies": 2,
+      "screenshot": "screenshots/deepseek-success.png"
+    },
+    {
+      "provider": "google",
+      "execution_key": "google",
+      "model": "gemini-2.0-flash-lite",
+      "status": "fail_external",
+      "reason": "Chat/RAG/Follow | General | Sources 0 | Tools 0 | Approvals 0 | Run: Provider stream failed: Provider error from google: bad request. Status: 400. | │ │  Provider: google                              ││ │  Provider stream failed: Provider error from google: bad request. Status: 400.                                                                                                                                      │ │            │",
+      "assistant_replies": 1,
+      "screenshot": "screenshots/google-turn-1-fail_external.png"
+    },
+    {
+      "provider": "groq",
+      "execution_key": "groq",
+      "model": "llama-3.1-8b-instant",
+      "status": "fail_external",
+      "reason": "Chat/RAG/Follow | General | Sources 0 | Tools 0 | Approvals 0 | Run: Provider stream failed: Provider error from groq: bad request. Status: 400. | │ │  Provider: groq                                ││ │  Provider stream failed: Provider error from groq: bad request. Status: 400.                                                                                                                                        │ │            │",
+      "assistant_replies": 1,
+      "screenshot": "screenshots/groq-turn-1-fail_external.png"
+    },
+    {
+      "provider": "huggingface",
+      "execution_key": "huggingface",
+      "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+      "status": "fail_external",
+      "reason": "Chat/RAG/Follow | General | Sources 0 | Tools 0 | Approvals 0 | Run: Provider stream failed: Provider error from huggingface: bad request. Status: 400. | │ │  Provider: huggingface                         ││ │  Provider stream failed: Provider error from huggingface: bad request. Status: 400.                                                                                                                                 │ │            │",
+      "assistant_replies": 1,
+      "screenshot": "screenshots/huggingface-turn-1-fail_external.png"
+    },
+    {
+      "provider": "mistral",
+      "execution_key": "mistral",
+      "model": "open-mistral-nemo",
+      "status": "success",
+      "reason": "Second assistant reply completed.",
+      "assistant_replies": 2,
+      "screenshot": "screenshots/mistral-success.png"
+    },
+    {
+      "provider": "mistralai",
+      "execution_key": "mistralai",
+      "model": "open-mistral-nemo",
+      "status": "success",
+      "reason": "Second assistant reply completed.",
+      "assistant_replies": 2,
+      "screenshot": "screenshots/mistralai-success.png"
+    },
+    {
+      "provider": "moonshot",
+      "execution_key": "moonshot",
+      "model": "kimi-latest",
+      "status": "success",
+      "reason": "Second assistant reply completed.",
+      "assistant_replies": 2,
+      "screenshot": "screenshots/moonshot-success.png"
+    },
+    {
+      "provider": "openai",
+      "execution_key": "openai",
+      "model": "gpt-4o-mini-2024-07-18",
+      "status": "success",
+      "reason": "Second assistant reply completed.",
+      "assistant_replies": 2,
+      "screenshot": "screenshots/openai-success.png"
+    },
+    {
+      "provider": "openrouter",
+      "execution_key": "openrouter",
+      "model": "openai/gpt-4o-mini",
+      "status": "success",
+      "reason": "Second assistant reply completed.",
+      "assistant_replies": 2,
+      "screenshot": "screenshots/openrouter-success.png"
+    }
+  ]
+}

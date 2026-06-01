@@ -634,7 +634,7 @@ async def test_console_settings_modal_focus_mode_uses_ready_copy_when_model_sele
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_clears_setup_copy_when_freeform_model_is_entered() -> None:
+async def test_console_settings_modal_clears_setup_copy_when_dropdown_model_is_available() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="custom", model=None)
 
@@ -643,7 +643,7 @@ async def test_console_settings_modal_clears_setup_copy_when_freeform_model_is_e
             ConsoleSettingsModal(
                 settings=settings,
                 app_config=app.app_config,
-                providers_models={"custom": []},
+                providers_models={"custom": ["freeform-model"]},
                 context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
                 can_save=True,
                 focus_model=True,
@@ -654,16 +654,13 @@ async def test_console_settings_modal_clears_setup_copy_when_freeform_model_is_e
 
         readiness = app.screen.query_one("#console-settings-readiness", Static)
         provider_model_section = app.screen.query_one("#console-settings-provider-model-section")
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
         readiness_copy = str(readiness.renderable)
-        assert "Choose a model to enable sending." in readiness_copy
+        assert "Choose a model to enable sending." not in readiness_copy
         assert "not wired yet" not in readiness_copy
-        assert provider_model_section.has_class("console-settings-primary-section") is True
-
-        app.screen.query_one("#console-settings-model-input", Input).value = "freeform-model"
-        await pilot.pause()
-
-        assert str(readiness.renderable) != "Choose a model to enable sending."
         assert "custom is ready" in str(readiness.renderable)
+        assert model_select.disabled is False
+        assert model_select.value == "freeform-model"
         assert provider_model_section.has_class("console-settings-primary-section") is False
 
 
@@ -898,7 +895,7 @@ async def test_console_settings_modal_provider_select_lists_all_configured_provi
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_uses_model_input_without_configured_models() -> None:
+async def test_console_settings_modal_uses_model_dropdown_without_configured_models() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="custom", model="freeform-model")
 
@@ -916,9 +913,12 @@ async def test_console_settings_modal_uses_model_input_without_configured_models
 
         model_select = app.screen.query_one("#console-settings-model-select", Select)
         model_input = app.screen.query_one("#console-settings-model-input", Input)
-        assert model_select.disabled is True
-        assert model_input.display is True
-        assert model_input.disabled is False
+        assert model_select.display is True
+        assert model_select.disabled is False
+        assert model_select.value == "freeform-model"
+        assert "freeform-model" in _select_values(model_select)
+        assert model_input.display is False
+        assert model_input.disabled is True
         assert model_input.value == "freeform-model"
 
 
@@ -980,7 +980,7 @@ async def test_console_settings_modal_preserves_missing_registry_model_for_curre
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_provider_change_to_no_models_switches_to_input() -> None:
+async def test_console_settings_modal_provider_change_to_no_models_allows_freeform_model_entry() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -992,7 +992,8 @@ async def test_console_settings_modal_provider_change_to_no_models_switches_to_i
                 providers_models={"llama_cpp": ["model-a"], "custom": []},
                 context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
                 can_save=True,
-            )
+            ),
+            callback=app.capture_saved_settings,
         )
         await pilot.pause()
         app.screen.query_one("#console-settings-provider", Select).value = "custom"
@@ -1000,11 +1001,19 @@ async def test_console_settings_modal_provider_change_to_no_models_switches_to_i
 
         model_select = app.screen.query_one("#console-settings-model-select", Select)
         model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_select.display is False
         assert model_select.disabled is True
         assert "model-a" not in _select_values(model_select)
         assert model_input.display is True
         assert model_input.disabled is False
         assert model_input.value == ""
+        model_input.value = "freeform-model"
+        await pilot.pause()
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "custom"
+    assert app.saved_settings.model == "freeform-model"
 
 
 @pytest.mark.asyncio
@@ -1095,9 +1104,13 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
         app.screen.query_one("#console-settings-provider", Select).value = "custom"
         await pilot.pause()
 
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
         model_input = app.screen.query_one("#console-settings-model-input", Input)
-        assert model_input.display is True
-        assert model_input.disabled is False
+        assert model_select.display is True
+        assert model_select.disabled is False
+        assert model_select.value == "freeform-model"
+        assert model_input.display is False
+        assert model_input.disabled is True
         assert model_input.value == "freeform-model"
         await pilot.click("#console-settings-save")
 
