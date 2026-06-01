@@ -1824,12 +1824,9 @@ async def test_automation_destination_wrappers_explain_ownership(route, expected
     host = DestinationHarness(app, route)
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
-
-        visible_text = _visible_text(screen)
         for section in expected_sections:
-            assert section in visible_text
+            await _wait_for_visible_text(screen, pilot, section)
 
 
 @pytest.mark.asyncio
@@ -2610,21 +2607,17 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
 ):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": initial_value}
-    saved_settings = []
+    saved_sections = []
 
-    def fake_save_setting(section, key, value):
-        saved_settings.append((section, key, value))
-        return True
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved_sections.append(section_values)
+            return True
 
-    monkeypatch.setattr(
-        settings_screen_module,
-        "save_setting_to_cli_config",
-        fake_save_setting,
-        raising=False,
-    )
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 40)) as pilot:
+    async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         await pilot.click("#settings-category-console-behavior")
         await pilot.pause(0.1)
@@ -2640,13 +2633,13 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
         await pilot.pause(0.1)
 
         assert app.app_config["console"]["collapse_large_pastes"] == initial_value
-        assert saved_settings == []
+        assert saved_sections == []
 
         await pilot.click("#settings-save-category")
-        await pilot.pause(0.1)
+        await _wait_for_visible_text(screen, pilot, "Console behavior settings saved.")
 
     assert app.app_config["console"]["collapse_large_pastes"] is expected_saved_value
-    assert saved_settings == [("console", "collapse_large_pastes", expected_saved_value)]
+    assert saved_sections == [{"console": {"collapse_large_pastes": expected_saved_value}}]
 
 
 @pytest.mark.asyncio

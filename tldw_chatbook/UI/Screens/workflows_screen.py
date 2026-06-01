@@ -183,7 +183,7 @@ class WorkflowsScreen(BaseAppScreen):
             )
             with DestinationModeStrip(id="workflows-mode-strip", classes="destination-filter-strip"):
                 yield Static(
-                    "Modes: Recipes Inputs Steps Dry run Approvals Outputs",
+                    "Modes: Recipes Inputs Steps Dry Run Approvals Outputs",
                     id="workflows-mode-label",
                     classes="destination-section",
                 )

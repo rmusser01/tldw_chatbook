@@ -22,8 +22,10 @@ from ...Chat.console_provider_support import (
     supported_console_provider_catalog,
 )
 from ...Chat.console_session_settings import CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...Sync_Interop.sync_promotion_state import SyncPromotionState, build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
+from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...config import (
     BASE_DATA_DIR_CLI,
@@ -162,6 +164,33 @@ SETTINGS_OVERVIEW_BOUNDARY_ROWS = (
     (
         "Sync/workspace boundary",
         "Sync and workspace handoff defaults are read-only until source contracts exist",
+    ),
+)
+SETTINGS_SERVER_SYNC_WORKSPACE_SOURCE_CONTRACTS = (
+    (
+        "Server profile",
+        "runtime_policy.types.RuntimeSourceState via app_instance.runtime_policy.state; "
+        "runtime_policy.server_context.RuntimeServerContextProvider owns active server resolution",
+    ),
+    (
+        "Sync safety",
+        "Sync_Interop.sync_scope_service.SyncScopeService.list_write_sync_promotion_states; "
+        "Sync_Interop.sync_promotion_state.SyncPromotionState for display copy",
+    ),
+    (
+        "Workspace context",
+        "Workspaces.LocalWorkspaceRegistryService.get_active_workspace; "
+        "Chat.console_chat_store.ConsoleChatStore.workspace_context for Console context; "
+        "Workspaces.display_state.LIBRARY_WORKSPACE_VISIBILITY_COPY for Library visibility policy",
+    ),
+    (
+        "Handoff policy",
+        "Workspaces.models.WorkspaceTransferPolicy defines copy/reference/metadata-only/local-only policy; "
+        "Chat.chat_handoff_models.ChatHandoffPayload carries the staged Console context",
+    ),
+    (
+        "ACP handoff readiness",
+        "ACP_Interop.runtime_session.ACPRuntimeSessionState via app_instance.get_acp_runtime_session_state",
     ),
 )
 
@@ -942,6 +971,155 @@ class SettingsScreen(BaseAppScreen):
                 ),
             )
             for domain, label in labels.items()
+        )
+
+    @staticmethod
+    def _enum_display_value(value: object, fallback: str = "") -> str:
+        enum_value = getattr(value, "value", value)
+        text = str(enum_value or "").strip()
+        return text or fallback
+
+    def _runtime_source_state(self) -> object | None:
+        return getattr(getattr(self.app_instance, "runtime_policy", None), "state", None)
+
+    def _active_server_profile_label(self) -> str:
+        state = self._runtime_source_state()
+        source = str(
+            getattr(
+                state,
+                "active_source",
+                getattr(self.app_instance, "current_runtime_backend", "local"),
+            )
+            or "local"
+        ).strip().lower()
+        active_server_id = str(
+            getattr(state, "active_server_id", getattr(self.app_instance, "active_server_id", None))
+            or ""
+        ).strip()
+        server_label = str(getattr(state, "last_known_server_label", "") or "").strip()
+        if source == "server" and active_server_id:
+            if server_label and server_label != active_server_id:
+                return f"{server_label} ({active_server_id})"
+            return active_server_id
+        if active_server_id:
+            label = server_label or active_server_id
+            return f"{label} ({active_server_id}) configured; current source is {source}"
+        return "local-only; no active server profile"
+
+    def _local_server_authority_label(self) -> str:
+        get_source = getattr(self.app_instance, "get_authoritative_runtime_source", None)
+        if callable(get_source):
+            try:
+                source = str(get_source() or "local").strip().lower()
+            except Exception:
+                source = "local"
+        else:
+            state = self._runtime_source_state()
+            source = str(getattr(state, "active_source", "local") or "local").strip().lower()
+        if source not in {"local", "server"}:
+            source = "local"
+        return f"{source}; Settings is read-only"
+
+    def _sync_safety_label(self, states: tuple[SyncPromotionState, ...] | None = None) -> str:
+        sync_states = states if states is not None else self._sync_safety_states()
+        if not sync_states:
+            return "Sync: unavailable; owning sync surfaces control dry-run and recovery"
+        return "; ".join(
+            f"{state.surface_label}: {state.sync_label}"
+            for state in sync_states
+        )
+
+    def _sync_recovery_label(self, states: tuple[SyncPromotionState, ...] | None = None) -> str:
+        sync_states = states if states is not None else self._sync_safety_states()
+        blocking_statuses = {"rollback-required", "conflict", "attention-required", "review-gated"}
+        selected = next(
+            (state for state in sync_states if state.status in blocking_statuses),
+            sync_states[0] if sync_states else None,
+        )
+        if selected is None:
+            return "Open the owning sync surface for dry-run setup and recovery."
+        return selected.primary_recovery
+
+    def _active_workspace_record(self) -> object | None:
+        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        get_active_workspace = getattr(registry_service, "get_active_workspace", None)
+        if not callable(get_active_workspace):
+            return None
+        try:
+            return get_active_workspace()
+        except Exception:
+            logger.warning(
+                "Failed to read Settings active workspace state; using local fallback.",
+                exc_info=True,
+            )
+            return None
+
+    def _workspace_default_label(self) -> str:
+        workspace = self._active_workspace_record()
+        if workspace is not None:
+            workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
+            workspace_name = str(getattr(workspace, "name", "") or "").strip() or workspace_id
+            authority = self._enum_display_value(
+                getattr(workspace, "authority", None),
+                "local-only",
+            )
+            sync_status = self._enum_display_value(
+                getattr(workspace, "sync_status", None),
+                "not-configured",
+            )
+            if workspace_id:
+                return (
+                    f"Workspace: {workspace_name} ({workspace_id}); "
+                    f"Authority: {authority}; Sync: {sync_status}"
+                )
+        store = getattr(self.app_instance, "console_chat_store", None)
+        context = getattr(store, "workspace_context", None)
+        active_workspace_id = str(getattr(context, "active_workspace_id", "") or "").strip()
+        if active_workspace_id and active_workspace_id != "global":
+            return (
+                f"Workspace: {active_workspace_id}; Console context active; "
+                "Library browse/search remains global"
+            )
+        return "Workspace: Local Default; Console/Home/Library own workspace switching"
+
+    def _acp_runtime_session_state(self) -> ACPRuntimeSessionState:
+        get_state = getattr(self.app_instance, "get_acp_runtime_session_state", None)
+        if callable(get_state):
+            try:
+                return ACPRuntimeSessionState.from_any(get_state())
+            except Exception:
+                logger.warning(
+                    "Failed to read Settings ACP runtime/session state; using unavailable fallback.",
+                    exc_info=True,
+                )
+        return ACPRuntimeSessionState.from_any(
+            getattr(self.app_instance, "acp_runtime_session_state", None)
+        )
+
+    def _acp_handoff_readiness_label(self) -> str:
+        state = self._acp_runtime_session_state()
+        if state.has_console_session_payload:
+            status = state.session_status or "ready"
+            return f"ACP session ready: {state.session_display_name} ({status})"
+        if state.runtime_configured:
+            return f"ACP runtime configured: {state.runtime_display_name}; no session payload"
+        return "ACP runtime not configured; configure runtime and sessions in ACP"
+
+    def _server_sync_workspace_handoff_rows(self) -> tuple[tuple[str, str], ...]:
+        sync_states = self._sync_safety_states()
+        return (
+            ("Active server profile", self._active_server_profile_label()),
+            ("Local/server authority", self._local_server_authority_label()),
+            ("Sync safety", self._sync_safety_label(sync_states)),
+            ("Sync recovery", self._sync_recovery_label(sync_states)),
+            ("Workspace default", self._workspace_default_label()),
+            ("Library visibility", LIBRARY_WORKSPACE_VISIBILITY_COPY),
+            (
+                "Handoff policy",
+                "copy/reference/metadata-only by source policy; "
+                "Console staging is limited to the active workspace",
+            ),
+            ("ACP handoff readiness", self._acp_handoff_readiness_label()),
         )
 
     @staticmethod
@@ -2107,6 +2285,9 @@ class SettingsScreen(BaseAppScreen):
             yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
             yield Static("Configuration ownership", classes="destination-section")
             for label, value in self._overview_ownership_rows():
+                yield self._detail_row(label, value)
+            yield Static("Server, sync, workspace, and handoff", classes="destination-section")
+            for label, value in self._server_sync_workspace_handoff_rows():
                 yield self._detail_row(label, value)
             yield Static("Provider readiness", classes="destination-section")
             yield self._detail_row(

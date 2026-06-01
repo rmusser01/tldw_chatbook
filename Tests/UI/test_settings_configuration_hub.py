@@ -27,6 +27,18 @@ from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsDraft,
     SettingsValidationResult,
 )
+from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
+from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
+from tldw_chatbook.Home.dashboard_state import HomeDashboardInput, summarize_home_dashboard
+from tldw_chatbook.Sync_Interop.sync_promotion_state import SyncPromotionState
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
+from tldw_chatbook.Workspaces.models import (
+    WorkspaceAuthority,
+    WorkspaceRecord,
+    WorkspaceSyncStatus,
+)
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 DUMMY_REDACTION_ENV_VALUE = "redaction-fixture-env-value"
 DUMMY_REDACTION_CONFIG_VALUE = "redaction-fixture-config-value"
@@ -383,6 +395,188 @@ def test_settings_overview_ownership_rows_are_sourced_from_record():
     for boundary in ownership.boundary_copy.split("; "):
         assert boundary in rendered_copy
     assert rows["Recovery"] == ownership.recovery_copy
+
+
+def test_settings_server_sync_workspace_source_contracts_are_explicit():
+    contracts = dict(settings_screen_module.SETTINGS_SERVER_SYNC_WORKSPACE_SOURCE_CONTRACTS)
+
+    assert "runtime_policy.types.RuntimeSourceState" in contracts["Server profile"]
+    assert "runtime_policy.server_context.RuntimeServerContextProvider" in contracts["Server profile"]
+    assert "Sync_Interop.sync_scope_service.SyncScopeService" in contracts["Sync safety"]
+    assert "Chat.console_chat_store.ConsoleChatStore.workspace_context" in contracts["Workspace context"]
+    assert "Workspaces.display_state.LIBRARY_WORKSPACE_VISIBILITY_COPY" in contracts["Workspace context"]
+    assert "Workspaces.models.WorkspaceTransferPolicy" in contracts["Handoff policy"]
+    assert "ACP_Interop.runtime_session.ACPRuntimeSessionState" in contracts["ACP handoff readiness"]
+
+
+def test_settings_server_sync_workspace_rows_use_source_contracts():
+    class FakeSyncScopeService:
+        def list_write_sync_promotion_states(self, **_kwargs):
+            return (
+                SyncPromotionState(
+                    domain="library_collections",
+                    surface_label="Collections",
+                    status="dry-run",
+                    authority_label="Authority: local-first",
+                    sync_label="Sync: dry-run only",
+                    review_label="Review: required before writes",
+                    conflict_label="Conflicts: none reported",
+                    rollback_label="Rollback: not required",
+                    mirror_label="Mirror: no dry-run report yet",
+                    primary_recovery="Review dry-run results before enabling writes.",
+                ),
+            )
+
+    class FakeWorkspaceRegistry:
+        def get_active_workspace(self):
+            return WorkspaceRecord(
+                workspace_id="research",
+                name="Research",
+                authority=WorkspaceAuthority.SERVER_BACKED,
+                sync_status=WorkspaceSyncStatus.READY,
+                active=True,
+            )
+
+    app = SimpleNamespace(
+        app_config={},
+        runtime_policy=SimpleNamespace(
+            state=RuntimeSourceState(
+                active_source="server",
+                active_server_id="server-main",
+                server_configured=True,
+                last_known_server_label="Main Server",
+            )
+        ),
+        sync_scope_service=FakeSyncScopeService(),
+        workspace_registry_service=FakeWorkspaceRegistry(),
+        console_chat_store=SimpleNamespace(
+            workspace_context=SimpleNamespace(active_workspace_id="research")
+        ),
+        get_acp_runtime_session_state=lambda: ACPRuntimeSessionState(
+            runtime_id="local-acp",
+            runtime_label="Local ACP",
+        ),
+    )
+    screen = SettingsScreen(app)
+
+    rows = dict(screen._server_sync_workspace_handoff_rows())
+
+    assert rows["Active server profile"] == "Main Server (server-main)"
+    assert rows["Local/server authority"] == "server; Settings is read-only"
+    assert rows["Sync safety"] == "Collections: Sync: dry-run only"
+    assert rows["Sync recovery"] == "Review dry-run results before enabling writes."
+    assert rows["Workspace default"] == (
+        "Workspace: Research (research); Authority: server-backed; Sync: ready"
+    )
+    assert rows["Library visibility"] == LIBRARY_WORKSPACE_VISIBILITY_COPY
+    assert rows["Handoff policy"] == (
+        "copy/reference/metadata-only by source policy; Console staging is limited to the active workspace"
+    )
+    assert rows["ACP handoff readiness"] == (
+        "ACP runtime configured: Local ACP; no session payload"
+    )
+
+
+def test_settings_server_sync_workspace_rows_fallback_to_read_only_wip_copy():
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    rows = dict(screen._server_sync_workspace_handoff_rows())
+
+    assert rows["Active server profile"] == "local-only; no active server profile"
+    assert rows["Local/server authority"] == "local; Settings is read-only"
+    assert "Collections: Sync: dry-run only" in rows["Sync safety"]
+    assert "Workspaces: Sync: dry-run only" in rows["Sync safety"]
+    assert rows["Workspace default"] == (
+        "Workspace: Local Default; Console/Home/Library own workspace switching"
+    )
+    assert rows["Library visibility"] == LIBRARY_WORKSPACE_VISIBILITY_COPY
+    assert rows["ACP handoff readiness"] == (
+        "ACP runtime not configured; configure runtime and sessions in ACP"
+    )
+
+
+def test_settings_status_language_agrees_with_home_console_and_library_contracts():
+    app = SimpleNamespace(
+        app_config={},
+        runtime_policy=SimpleNamespace(
+            state=RuntimeSourceState(
+                active_source="server",
+                active_server_id="server-main",
+                server_configured=True,
+                last_known_server_label="Main Server",
+            )
+        ),
+        console_chat_store=SimpleNamespace(
+            workspace_context=ConsoleWorkspaceContext(active_workspace_id="workspace-a")
+        ),
+    )
+    screen = SettingsScreen(app)
+
+    rows = dict(screen._server_sync_workspace_handoff_rows())
+    library_scope = library_screen_module._active_library_sync_scope(app)
+    home = summarize_home_dashboard(
+        HomeDashboardInput(
+            runtime_source="server",
+            active_server_id="server-main",
+            server_configured=True,
+            server_reachability="reachable",
+            server_auth_state="authenticated",
+        )
+    )
+
+    assert rows["Local/server authority"].startswith("server")
+    assert library_scope["source_authority"] == "server"
+    assert "Mode: Server" in home.sections[0].lines[0]
+    assert "Server: Ready" in home.sections[0].lines[0]
+    assert rows["Workspace default"] == (
+        "Workspace: workspace-a; Console context active; Library browse/search remains global"
+    )
+    assert rows["Library visibility"] == LIBRARY_WORKSPACE_VISIBILITY_COPY
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_renders_server_sync_workspace_handoff_contracts():
+    class FakeWorkspaceRegistry:
+        def get_active_workspace(self):
+            return WorkspaceRecord(
+                workspace_id="research",
+                name="Research",
+                authority=WorkspaceAuthority.LOCAL_ONLY,
+                sync_status=WorkspaceSyncStatus.NOT_CONFIGURED,
+                active=True,
+            )
+
+    app = _build_test_app()
+    app.runtime_policy.state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="server-main",
+        server_configured=True,
+        last_known_server_label="Main Server",
+    )
+    app.workspace_registry_service = FakeWorkspaceRegistry()
+    app.acp_runtime_session_state = ACPRuntimeSessionState(
+        runtime_id="local-acp",
+        runtime_label="Local ACP",
+        session_id="session-1",
+        session_title="Ticket triage",
+        session_status="running",
+        session_payload={"id": "session-1"},
+    )
+
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Server, sync, workspace, and handoff" in text
+        assert "Active server profile: Main Server (server-main)" in text
+        assert "Local/server authority: server; Settings is read-only" in text
+        assert "Collections: Sync: dry-run only" in text
+        assert "Workspaces: Sync: dry-run only" in text
+        assert "Workspace: Research (research); Authority: local-only; Sync: not-configured" in text
+        assert LIBRARY_WORKSPACE_VISIBILITY_COPY in text
+        assert "ACP handoff readiness: ACP session ready: Ticket triage (running)" in text
 
 
 def test_settings_ownership_record_falls_back_without_crashing():

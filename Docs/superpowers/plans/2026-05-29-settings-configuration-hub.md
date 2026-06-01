@@ -345,6 +345,16 @@ Before adding UI, document the concrete state providers Settings is allowed to r
 
 If any source is missing, Settings must render read-only/WIP copy naming the owning destination and must not invent synthetic status.
 
+Concrete source contracts for this stage:
+
+| Status/default | Source contract Settings may read | Owner boundary |
+| --- | --- | --- |
+| Server profile and authority | `runtime_policy.types.RuntimeSourceState` via `app_instance.runtime_policy.state`; `runtime_policy.server_context.RuntimeServerContextProvider` owns active context resolution | Settings renders active/default status only; server switching/auth remains runtime-policy/server surfaces. |
+| Sync safety and dry-run/blocking copy | `Sync_Interop.sync_scope_service.SyncScopeService.list_write_sync_promotion_states`; `Sync_Interop.sync_promotion_state.SyncPromotionState`; `Sync_Interop.sync_readiness` fallback | Settings renders dry-run/recovery copy only; sync execution, conflict review, replay, and rollback stay sync-owned. |
+| Workspace context/default | `Workspaces.LocalWorkspaceRegistryService.get_active_workspace`; `Chat.console_chat_store.ConsoleChatStore.workspace_context`; `Workspaces.display_state.LIBRARY_WORKSPACE_VISIBILITY_COPY` | Settings renders the current/default context only; Console/Home/Library own switching and staging. Library browse/search remains global. |
+| Handoff policy | `Workspaces.models.WorkspaceTransferPolicy`; `Chat.chat_handoff_models.ChatHandoffPayload` | Settings exposes copy/reference/metadata-only policy language only; actual source staging and transfer stay destination-owned. |
+| ACP handoff readiness | `ACP_Interop.runtime_session.ACPRuntimeSessionState` via `app_instance.get_acp_runtime_session_state()` | Settings renders runtime/session readiness only; ACP owns runtime launch, session setup, and Console follow payload creation. |
+
 - [ ] **Step 2: Add failing cross-surface status tests**
 
 Assert Settings, Home, Console, and Library use consistent labels for server profile, sync safety, workspace context, and handoff policy.
