@@ -16,6 +16,15 @@ class SettingsCategoryId(StrEnum):
     STORAGE = "storage"
     PRIVACY_SECURITY = "privacy-security"
     CONSOLE_BEHAVIOR = "console-behavior"
+    LIBRARY_RAG = "library-rag"
+    ARTIFACTS = "artifacts"
+    PERSONAS = "personas"
+    SKILLS = "skills"
+    SCHEDULES = "schedules"
+    WATCHLISTS = "watchlists"
+    WORKFLOWS = "workflows"
+    MCP_DEFAULTS = "mcp-defaults"
+    ACP_DEFAULTS = "acp-defaults"
     DIAGNOSTICS = "diagnostics"
     ADVANCED_CONFIG = "advanced-config"
 
@@ -95,6 +104,19 @@ class SettingsOwnershipRecord:
     boundary_copy: str = ""
     recovery_copy: str = ""
     read_only_reason: str = ""
+
+
+@dataclass(frozen=True)
+class SettingsDomainCategoryContract:
+    """Read-only ownership contract for a destination domain category."""
+
+    category: SettingsCategoryId
+    title: str
+    owner_destination: str
+    source_of_truth: tuple[str, ...]
+    settings_can_mutate: bool = False
+    rows: tuple[tuple[str, str], ...] = ()
+    follow_up: str = ""
 
 
 @dataclass(frozen=True)

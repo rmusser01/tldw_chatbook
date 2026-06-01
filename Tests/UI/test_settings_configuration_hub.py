@@ -409,6 +409,103 @@ def test_settings_server_sync_workspace_source_contracts_are_explicit():
     assert "ACP_Interop.runtime_session.ACPRuntimeSessionState" in contracts["ACP handoff readiness"]
 
 
+def test_settings_domain_category_contracts_are_explicit_and_read_only():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    contracts = {contract.category: contract for contract in screen._domain_category_contracts()}
+    expected_categories = {
+        SettingsCategoryId.LIBRARY_RAG,
+        SettingsCategoryId.ARTIFACTS,
+        SettingsCategoryId.PERSONAS,
+        SettingsCategoryId.SKILLS,
+        SettingsCategoryId.SCHEDULES,
+        SettingsCategoryId.WATCHLISTS,
+        SettingsCategoryId.WORKFLOWS,
+        SettingsCategoryId.MCP_DEFAULTS,
+        SettingsCategoryId.ACP_DEFAULTS,
+    }
+
+    assert set(contracts) == expected_categories
+    for category in expected_categories:
+        contract = contracts[category]
+        assert contract.owner_destination
+        assert contract.source_of_truth
+        assert contract.settings_can_mutate is False
+        assert contract.follow_up
+
+    library_contract = contracts[SettingsCategoryId.LIBRARY_RAG]
+    library_copy = " ".join(
+        (
+            *(value for _label, value in library_contract.rows),
+            library_contract.follow_up,
+        )
+    )
+    assert "citations" in library_copy
+    assert "snippets" in library_copy
+
+
+def test_settings_domain_categories_are_grouped_and_have_ownership_records():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    domain_categories = {
+        SettingsCategoryId.LIBRARY_RAG,
+        SettingsCategoryId.ARTIFACTS,
+        SettingsCategoryId.PERSONAS,
+        SettingsCategoryId.SKILLS,
+        SettingsCategoryId.SCHEDULES,
+        SettingsCategoryId.WATCHLISTS,
+        SettingsCategoryId.WORKFLOWS,
+        SettingsCategoryId.MCP_DEFAULTS,
+        SettingsCategoryId.ACP_DEFAULTS,
+    }
+
+    grouped_categories = {
+        category
+        for _group_name, category_ids in screen._category_groups()
+        for category in category_ids
+    }
+    records = {record.category: record for record in screen._category_ownership_records()}
+
+    assert domain_categories <= grouped_categories
+    assert domain_categories <= set(records)
+    for category in domain_categories:
+        record = records[category]
+        assert not record.writes_allowed
+        assert record.read_only_reason
+        assert "Open" in record.recovery_copy
+        assert record.runtime_owner
+
+
+@pytest.mark.asyncio
+async def test_settings_domain_category_renders_read_only_owner_contract():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await pilot.click("#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Library & RAG" in text
+        assert "Owner destination: Library" in text
+        assert "Settings mode: read-only defaults/status contract" in text
+        assert "Citation/snippet defaults" in text
+        assert "follow-up" in text
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+
+        search = screen.query_one("#settings-category-search", Input)
+        search.value = "mcp"
+        search.focus()
+        await pilot.press("enter")
+        await pilot.click("#settings-category-mcp-defaults")
+        text = _visible_text(screen)
+
+        assert "MCP Defaults" in text
+        assert "Owner destination: MCP" in text
+        assert "MCP owns server/tool runtime" in text
+
+
 def test_settings_server_sync_workspace_rows_use_source_contracts():
     captured_sync_kwargs = {}
 
