@@ -194,6 +194,162 @@ SETTINGS_SERVER_SYNC_WORKSPACE_SOURCE_CONTRACTS = (
         "ACP_Interop.runtime_session.ACPRuntimeSessionState via app_instance.get_acp_runtime_session_state",
     ),
 )
+SETTINGS_DOMAIN_CATEGORY_CONTRACTS = {
+    SettingsCategoryId.LIBRARY_RAG: {
+        "title": "Library & RAG",
+        "description": "Library search, RAG defaults, citations, and snippet display contracts.",
+        "status": "Read-only",
+        "runtime_owner": "Library/Search/RAG",
+        "owns": (
+            "library.rag.defaults (future)",
+            "library.rag.citation_snippet_display (TASK-73.8)",
+        ),
+        "reads": (
+            "Library destination source visibility",
+            "Search/RAG retrieval status",
+            "Console source staging boundary",
+        ),
+        "source_label": "Library/RAG source",
+        "source_copy": "Library owns source browsing; Search/RAG owns retrieval execution",
+        "owner_copy": "Library/Search/RAG destinations own search, retrieval, and source staging",
+        "boundary_copy": "Settings does not replace Library search or RAG execution workflows.",
+        "settings_role": "Settings does not run retrieval; it records defaults/status contracts only.",
+        "future_copy": (
+            "Citations/snippets: follow-up TASK-73.8 before controls; "
+            "citation and snippet display defaults need a persisted source contract."
+        ),
+        "read_only_reason": "read-only contract pass; no PR-sized mutation source is wired yet.",
+        "recovery_copy": "Open Library or Console RAG to run retrieval and stage evidence.",
+    },
+    SettingsCategoryId.ARTIFACTS: {
+        "title": "Artifacts",
+        "description": "Artifact and Chatbook retention, resume, and export defaults.",
+        "status": "Read-only",
+        "runtime_owner": "Artifacts",
+        "owns": ("artifacts.defaults (future)", "chatbooks.resume_policy (future)"),
+        "reads": ("Artifacts destination", "local Chatbook artifact index"),
+        "source_label": "Artifacts source",
+        "source_copy": "Artifacts owns saved outputs, Chatbooks, resume, and export workflows",
+        "owner_copy": "Chatbooks remain in Artifacts until explicit Console resume.",
+        "boundary_copy": "Settings does not replace artifact browsing or resume flows.",
+        "settings_role": "Settings does not resume artifacts; it documents future defaults only.",
+        "future_copy": "Follow-up needed before artifact retention/export defaults become editable.",
+        "read_only_reason": "read-only contract pass; artifact mutation remains destination-owned.",
+        "recovery_copy": "Open Artifacts to inspect, export, or resume Chatbooks.",
+    },
+    SettingsCategoryId.PERSONAS: {
+        "title": "Personas",
+        "description": "Persona and character authoring defaults and Console attachment policy.",
+        "status": "Read-only",
+        "runtime_owner": "Personas",
+        "owns": ("personas.defaults (future)", "characters.defaults (future)"),
+        "reads": ("Personas destination", "Character card local storage"),
+        "source_label": "Personas source",
+        "source_copy": "Personas owns character cards, persona metadata, and edits",
+        "owner_copy": "Character/persona authoring stays in Personas.",
+        "boundary_copy": "Settings does not replace persona selection or editing workflows.",
+        "settings_role": "Settings does not select active personas; Console attachment remains explicit.",
+        "future_copy": "Follow-up needed before default persona/character controls become editable.",
+        "read_only_reason": "read-only contract pass; persona mutation remains destination-owned.",
+        "recovery_copy": "Open Personas to import, edit, select, or attach a persona.",
+    },
+    SettingsCategoryId.SKILLS: {
+        "title": "Skills",
+        "description": "Agent Skills import, validation, and availability defaults.",
+        "status": "Read-only",
+        "runtime_owner": "Skills",
+        "owns": ("skills.defaults (future)", "skills.allowed_tools_policy (future)"),
+        "reads": ("Skills destination", "Agent Skills directory metadata"),
+        "source_label": "Skills source",
+        "source_copy": "Skills owns Agent Skills discovery, validation, import, and attach flows",
+        "owner_copy": "Agent Skills import and validation stay in Skills.",
+        "boundary_copy": "Settings does not replace skill import or validation workflows.",
+        "settings_role": "Settings does not install skills; it records future policy defaults only.",
+        "future_copy": "Follow-up needed before skill availability and allowed-tools defaults are editable.",
+        "read_only_reason": "read-only contract pass; skill install/attach remains destination-owned.",
+        "recovery_copy": "Open Skills to import, validate, or attach Agent Skills.",
+    },
+    SettingsCategoryId.SCHEDULES: {
+        "title": "Schedules",
+        "description": "Job scheduling defaults, approval policy, and run status boundaries.",
+        "status": "Read-only",
+        "runtime_owner": "Schedules",
+        "owns": ("schedules.defaults (future)", "schedules.approval_policy (future)"),
+        "reads": ("Schedules destination", "schedule run status"),
+        "source_label": "Schedules source",
+        "source_copy": "Schedules owns jobs, schedule execution, and run history",
+        "owner_copy": "Schedule execution stays in Schedules.",
+        "boundary_copy": "Settings does not replace schedule run management workflows.",
+        "settings_role": "Settings does not pause or retry jobs; it records future defaults only.",
+        "future_copy": "Follow-up needed before schedule default cadence/approval controls are editable.",
+        "read_only_reason": "read-only contract pass; schedule execution remains destination-owned.",
+        "recovery_copy": "Open Schedules to inspect, pause, retry, or edit jobs.",
+    },
+    SettingsCategoryId.WATCHLISTS: {
+        "title": "Watchlists",
+        "description": "Watchlist defaults, collection visibility, and run policy contracts.",
+        "status": "Read-only",
+        "runtime_owner": "Watchlists",
+        "owns": ("watchlists.defaults (future)", "watchlists.run_policy (future)"),
+        "reads": ("Watchlists destination", "watchlist run status"),
+        "source_label": "Watchlists source",
+        "source_copy": "Watchlists owns monitored sources, runs, and result routing",
+        "owner_copy": "Watchlist run management stays in Watchlists.",
+        "boundary_copy": "Settings does not replace watchlist run workflows.",
+        "settings_role": "Settings does not run watchlists; it records future defaults only.",
+        "future_copy": "Follow-up needed before watchlist cadence and routing defaults are editable.",
+        "read_only_reason": "read-only contract pass; watchlist execution remains destination-owned.",
+        "recovery_copy": "Open Watchlists to run, pause, inspect, or route watchlist results.",
+    },
+    SettingsCategoryId.WORKFLOWS: {
+        "title": "Workflows",
+        "description": "Workflow authoring defaults, run policies, and execution boundaries.",
+        "status": "Read-only",
+        "runtime_owner": "Workflows",
+        "owns": ("workflows.defaults (future)", "workflows.execution_policy (future)"),
+        "reads": ("Workflows destination", "workflow run status"),
+        "source_label": "Workflows source",
+        "source_copy": "Workflows owns workflow definitions, runs, and procedure handoff",
+        "owner_copy": "Workflow authoring stays in Workflows.",
+        "boundary_copy": "Settings does not replace workflow authoring or execution workflows.",
+        "settings_role": "Settings does not execute workflows; it records future defaults only.",
+        "future_copy": "Follow-up needed before workflow run defaults become editable.",
+        "read_only_reason": "read-only contract pass; workflow execution remains destination-owned.",
+        "recovery_copy": "Open Workflows to author, review, or execute workflows.",
+    },
+    SettingsCategoryId.MCP_DEFAULTS: {
+        "title": "MCP Defaults",
+        "description": "MCP server and tool default policy contracts.",
+        "status": "Read-only",
+        "runtime_owner": "MCP",
+        "owns": ("mcp.defaults (future)", "mcp.tool_policy (future)"),
+        "reads": ("MCP destination", "MCP server/tool status"),
+        "source_label": "MCP source",
+        "source_copy": "MCP owns server-first management, tool discovery, and approvals",
+        "owner_copy": "MCP server and tool management stays in MCP.",
+        "boundary_copy": "Settings does not replace MCP server or tool management workflows.",
+        "settings_role": "Settings does not manage MCP servers; it records future defaults only.",
+        "future_copy": "Follow-up needed before MCP default server/tool policy controls are editable.",
+        "read_only_reason": "read-only contract pass; MCP runtime management remains MCP-owned.",
+        "recovery_copy": "Open MCP to configure servers, tools, and runtime availability.",
+    },
+    SettingsCategoryId.ACP_DEFAULTS: {
+        "title": "ACP Defaults",
+        "description": "ACP runtime, session, and task/run package default contracts.",
+        "status": "Read-only",
+        "runtime_owner": "ACP",
+        "owns": ("acp.defaults (future)", "acp.task_run_policy (future)"),
+        "reads": ("ACP destination", "ACP runtime/session status"),
+        "source_label": "ACP source",
+        "source_copy": "ACP owns runtime setup, sessions, and task/run package execution",
+        "owner_copy": "ACP runtime and session setup stays in ACP.",
+        "boundary_copy": "Settings does not replace ACP runtime or session workflows.",
+        "settings_role": "Settings does not launch ACP sessions; it records future defaults only.",
+        "future_copy": "Follow-up needed before ACP task/run defaults are editable.",
+        "read_only_reason": "read-only contract pass; ACP runtime/session setup remains ACP-owned.",
+        "recovery_copy": "Open ACP to configure runtimes, sessions, and task/run packages.",
+    },
+}
 _WORKSPACE_RECORD_UNSET = object()
 
 
@@ -305,6 +461,15 @@ class SettingsScreen(BaseAppScreen):
                 "Composer, large paste handling, and chat-flow defaults.",
                 "Console",
             ),
+            *(
+                SettingsCategorySummary(
+                    category,
+                    str(contract["title"]),
+                    str(contract["description"]),
+                    str(contract["status"]),
+                )
+                for category, contract in SETTINGS_DOMAIN_CATEGORY_CONTRACTS.items()
+            ),
             SettingsCategorySummary(
                 SettingsCategoryId.DIAGNOSTICS,
                 "Diagnostics",
@@ -344,6 +509,10 @@ class SettingsScreen(BaseAppScreen):
             ),
             ("Troubleshooting", (SettingsCategoryId.DIAGNOSTICS,)),
             ("Expert", (SettingsCategoryId.ADVANCED_CONFIG,)),
+            (
+                "Domain Defaults",
+                tuple(SETTINGS_DOMAIN_CATEGORY_CONTRACTS),
+            ),
         )
 
     def _category_ownership_records(self) -> tuple[SettingsOwnershipRecord, ...]:
@@ -435,6 +604,19 @@ class SettingsScreen(BaseAppScreen):
                     "active Console sessions can override them."
                 ),
                 recovery_copy="Save or revert category drafts before testing live Console behavior.",
+            ),
+            *(
+                SettingsOwnershipRecord(
+                    category=category,
+                    owns_config_sections=tuple(contract["owns"]),
+                    reads_runtime_state_from=tuple(contract["reads"]),
+                    writes_allowed=False,
+                    runtime_owner=str(contract["runtime_owner"]),
+                    boundary_copy=str(contract["boundary_copy"]),
+                    recovery_copy=str(contract["recovery_copy"]),
+                    read_only_reason=str(contract["read_only_reason"]),
+                )
+                for category, contract in SETTINGS_DOMAIN_CATEGORY_CONTRACTS.items()
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.DIAGNOSTICS,
@@ -659,6 +841,8 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.DIAGNOSTICS: "Guided edits: use Validate/Reload.",
             SettingsCategoryId.ADVANCED_CONFIG: "Guided edits: use Raw TOML controls.",
         }
+        if category in SETTINGS_DOMAIN_CATEGORY_CONTRACTS:
+            return "Guided edits: read-only domain contract."
         return messages.get(category, "Guided edits: read-only.")
 
     def _guided_actions_enabled(self, category: SettingsCategoryId) -> bool:
@@ -861,6 +1045,8 @@ class SettingsScreen(BaseAppScreen):
             return "State: Local paths | Verify write access before changing storage locations."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
             return "State: Local privacy | Secrets stay redacted in validation and diagnostics."
+        if category in SETTINGS_DOMAIN_CATEGORY_CONTRACTS:
+            return "State: Read-only | Domain defaults/status contract; workflow stays in owning destination."
         return "State: Active | Review readiness across Settings categories."
 
     def _render_category_state_banner(self, category: SettingsCategoryId) -> Static:
@@ -2330,6 +2516,13 @@ class SettingsScreen(BaseAppScreen):
                 ("Boundary", "save is blocked until the exact current text validates"),
             ),
         }
+        if category in SETTINGS_DOMAIN_CATEGORY_CONTRACTS:
+            contract = SETTINGS_DOMAIN_CATEGORY_CONTRACTS[category]
+            return (
+                ("Affected config", ", ".join(tuple(contract["owns"]))),
+                ("Recovery", str(contract["recovery_copy"])),
+                ("Boundary", str(contract["boundary_copy"])),
+            )
         return guidance[category]
 
     def _render_category_buttons(self) -> ComposeResult:
@@ -2625,6 +2818,23 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
 
+    def _render_domain_contract_detail(self, category: SettingsCategoryId) -> ComposeResult:
+        contract = SETTINGS_DOMAIN_CATEGORY_CONTRACTS[category]
+        yield Static(str(contract["title"]), classes="destination-section settings-column-title")
+        with Vertical(id=f"settings-{category.value}-card", classes="settings-focus-card"):
+            yield self._render_category_state_banner(category)
+            yield Static("Domain contract", classes="destination-section")
+            yield self._detail_row(str(contract["source_label"]), str(contract["source_copy"]))
+            yield self._detail_row("Owner destination", str(contract["runtime_owner"]))
+            yield self._detail_row("Owner boundary", str(contract["owner_copy"]))
+            yield self._detail_row("Settings role", str(contract["settings_role"]))
+            yield self._detail_row("Workflow boundary", str(contract["boundary_copy"]))
+            yield self._detail_row("Defaults status", str(contract["future_copy"]))
+            yield self._detail_row("Mutation", str(contract["read_only_reason"]))
+            yield Static("Source contracts", classes="destination-section")
+            for source in tuple(contract["reads"]):
+                yield self._detail_row("Reads", source)
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
@@ -2668,6 +2878,8 @@ class SettingsScreen(BaseAppScreen):
                     "Console impact",
                     "new/default sessions use these only when no narrower override applies",
                 )
+        elif category in SETTINGS_DOMAIN_CATEGORY_CONTRACTS:
+            yield from self._render_domain_contract_detail(category)
         elif category is SettingsCategoryId.APPEARANCE:
             yield Static("Appearance", classes="destination-section settings-column-title")
             with Vertical(id="settings-appearance-card", classes="settings-focus-card"):

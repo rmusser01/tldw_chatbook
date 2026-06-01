@@ -384,6 +384,106 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         assert owner in boundary_text
 
 
+def test_settings_domain_category_contracts_cover_major_modules():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    expected_contracts = {
+        "library-rag": ("Library & RAG", "Library/Search/RAG", "read-only"),
+        "artifacts": ("Artifacts", "Artifacts", "read-only"),
+        "personas": ("Personas", "Personas", "read-only"),
+        "skills": ("Skills", "Skills", "read-only"),
+        "schedules": ("Schedules", "Schedules", "read-only"),
+        "watchlists": ("Watchlists", "Watchlists", "read-only"),
+        "workflows": ("Workflows", "Workflows", "read-only"),
+        "mcp-defaults": ("MCP Defaults", "MCP", "read-only"),
+        "acp-defaults": ("ACP Defaults", "ACP", "read-only"),
+    }
+    summaries_by_value = {
+        summary.category.value: summary for summary in screen._category_summaries()
+    }
+    records_by_value = {
+        record.category.value: record for record in screen._category_ownership_records()
+    }
+
+    assert set(expected_contracts) <= set(summaries_by_value)
+    assert set(expected_contracts) <= set(records_by_value)
+    for category_id, (title, runtime_owner, expected_state) in expected_contracts.items():
+        assert summaries_by_value[category_id].title == title
+        record = records_by_value[category_id]
+        assert runtime_owner in record.runtime_owner
+        assert record.writes_allowed is False
+        assert expected_state in record.read_only_reason
+        assert "Settings does not replace" in record.boundary_copy
+
+
+@pytest.mark.asyncio
+async def test_settings_domain_categories_render_read_only_contract_copy():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    expected_copy = {
+        "library-rag": (
+            "Library/RAG source",
+            "Citations/snippets: follow-up TASK-73.8",
+            "Settings does not run retrieval",
+        ),
+        "artifacts": (
+            "Artifacts source",
+            "Chatbooks remain in Artifacts",
+            "Settings does not resume artifacts",
+        ),
+        "personas": (
+            "Personas source",
+            "Character/persona authoring stays in Personas",
+            "Settings does not select active personas",
+        ),
+        "skills": (
+            "Skills source",
+            "Agent Skills import and validation stay in Skills",
+            "Settings does not install skills",
+        ),
+        "schedules": (
+            "Schedules source",
+            "Schedule execution stays in Schedules",
+            "Settings does not pause or retry jobs",
+        ),
+        "watchlists": (
+            "Watchlists source",
+            "Watchlist run management stays in Watchlists",
+            "Settings does not run watchlists",
+        ),
+        "workflows": (
+            "Workflows source",
+            "Workflow authoring stays in Workflows",
+            "Settings does not execute workflows",
+        ),
+        "mcp-defaults": (
+            "MCP source",
+            "MCP server and tool management stays in MCP",
+            "Settings does not manage MCP servers",
+        ),
+        "acp-defaults": (
+            "ACP source",
+            "ACP runtime and session setup stays in ACP",
+            "Settings does not launch ACP sessions",
+        ),
+    }
+
+    async with host.run_test(size=(190, 52)) as pilot:
+        screen = _active_destination_screen(host)
+        for category_id, snippets in expected_copy.items():
+            screen._select_category(category_id)
+            await _wait_for_settings_text(screen, pilot, snippets[0])
+            text = _visible_text(screen)
+
+            for snippet in snippets:
+                assert snippet in text
+            assert "State: Read-only" in text
+            assert screen.query_one("#settings-save-category", Button).disabled is True
+            assert screen.query_one("#settings-revert-category", Button).disabled is True
+
+
 def test_settings_overview_ownership_rows_are_sourced_from_record():
     app = _build_test_app()
     screen = SettingsScreen(app)

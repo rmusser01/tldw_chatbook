@@ -230,3 +230,28 @@ git diff --check
 ```
 
 Result: `90 passed` for the focused config, Settings, and Console composer regression suite, with existing dependency/deprecation warnings only, and `git diff --check` clean.
+
+## 2026-05-31 Domain Configuration Category Contracts
+
+Branch: `codex/settings-config-hub-next`
+
+Approved screenshot:
+
+- Library/RAG domain contract: `Docs/superpowers/qa/product-maturity/phase-3/actual-visual-captures/settings-domain-library-rag-2026-05-31.png`
+
+Coverage added:
+
+- Settings now includes domain contract categories for Library/RAG, Artifacts, Personas, Skills, Schedules, Watchlists, Workflows, MCP defaults, and ACP defaults.
+- Each domain category identifies source of truth, owning destination, read-only mutation status, recovery path, and workflow boundary.
+- Categories without a PR-sized persisted mutation source remain explicitly read-only instead of exposing fake save/revert controls.
+- Library/RAG records citation/snippet display defaults as follow-up `TASK-73.8` rather than inventing controls before a source contract exists.
+- Actual textual-web/CDP verification confirmed the Library/RAG domain contract renders in the full Settings workbench and the approved screenshot was reviewed by the user.
+
+Focused verification:
+
+```bash
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_destination_shells.py --tb=short
+git diff --check
+```
+
+Result: `234 passed` for the focused Settings and destination shell regression suites, one existing requests dependency warning, `git diff --check` clean, and approved screenshot verified as a `2048 x 1240` PNG.
