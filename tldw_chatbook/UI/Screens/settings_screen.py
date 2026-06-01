@@ -158,19 +158,6 @@ GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
         SettingsCategoryId.CONSOLE_BEHAVIOR,
     }
 )
-DOMAIN_SETTINGS_CATEGORY_IDS = frozenset(
-    {
-        SettingsCategoryId.LIBRARY_RAG,
-        SettingsCategoryId.ARTIFACTS,
-        SettingsCategoryId.PERSONAS,
-        SettingsCategoryId.SKILLS,
-        SettingsCategoryId.SCHEDULES,
-        SettingsCategoryId.WATCHLISTS,
-        SettingsCategoryId.WORKFLOWS,
-        SettingsCategoryId.MCP_DEFAULTS,
-        SettingsCategoryId.ACP_DEFAULTS,
-    }
-)
 SETTINGS_OVERVIEW_BOUNDARY_ROWS = (
     ("Settings role", "Settings owns persisted defaults and validation"),
     ("Console boundary", "Console owns live chat/run state"),
@@ -317,6 +304,25 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
         follow_up="Follow-up: add ACP defaults after ACP exposes a persisted runtime/session preference contract.",
     ),
 )
+
+
+def _build_domain_contract_by_category(
+    contracts: tuple[SettingsDomainCategoryContract, ...],
+) -> Mapping[SettingsCategoryId, SettingsDomainCategoryContract]:
+    contracts_by_category: dict[SettingsCategoryId, SettingsDomainCategoryContract] = {}
+    for contract in contracts:
+        if contract.category in contracts_by_category:
+            raise ValueError(
+                f"Duplicate Settings domain category contract: {contract.category.value}"
+            )
+        contracts_by_category[contract.category] = contract
+    return contracts_by_category
+
+
+DOMAIN_CONTRACT_BY_CATEGORY = _build_domain_contract_by_category(
+    SETTINGS_DOMAIN_CATEGORY_CONTRACTS
+)
+DOMAIN_SETTINGS_CATEGORY_IDS = frozenset(DOMAIN_CONTRACT_BY_CATEGORY)
 _WORKSPACE_RECORD_UNSET = object()
 
 
@@ -540,11 +546,18 @@ class SettingsScreen(BaseAppScreen):
     def _domain_category_contracts(self) -> tuple[SettingsDomainCategoryContract, ...]:
         return SETTINGS_DOMAIN_CATEGORY_CONTRACTS
 
-    def _domain_contract_by_category(self) -> dict[SettingsCategoryId, SettingsDomainCategoryContract]:
-        return {contract.category: contract for contract in self._domain_category_contracts()}
+    def _domain_contract_by_category(self) -> Mapping[
+        SettingsCategoryId, SettingsDomainCategoryContract
+    ]:
+        return DOMAIN_CONTRACT_BY_CATEGORY
 
     def _domain_category_contract(self, category: SettingsCategoryId) -> SettingsDomainCategoryContract:
-        return self._domain_contract_by_category()[category]
+        try:
+            return self._domain_contract_by_category()[category]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unknown Settings domain category contract: {category.value}"
+            ) from exc
 
     def _domain_category_ownership_records(self) -> tuple[SettingsOwnershipRecord, ...]:
         return tuple(

@@ -444,6 +444,19 @@ def test_settings_domain_category_contracts_are_explicit_and_read_only():
     assert "snippets" in library_copy
 
 
+def test_settings_domain_category_ids_are_derived_from_contract_mapping():
+    assert settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS == frozenset(
+        settings_screen_module.DOMAIN_CONTRACT_BY_CATEGORY
+    )
+
+
+def test_settings_domain_contract_mapping_rejects_duplicate_categories():
+    contract = settings_screen_module.SETTINGS_DOMAIN_CATEGORY_CONTRACTS[0]
+
+    with pytest.raises(ValueError, match="Duplicate Settings domain category"):
+        settings_screen_module._build_domain_contract_by_category((contract, contract))
+
+
 def test_settings_domain_categories_are_grouped_and_have_ownership_records():
     app = _build_test_app()
     screen = SettingsScreen(app)
