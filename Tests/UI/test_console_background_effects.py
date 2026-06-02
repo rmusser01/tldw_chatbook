@@ -1,0 +1,84 @@
+"""Console background effect widget tests."""
+
+import pytest
+
+from textual.app import App, ComposeResult
+
+from tldw_chatbook.Utils.console_background_effects import (
+    ConsoleBackgroundEffectSettings,
+)
+from tldw_chatbook.Widgets.Console.console_background_effect import (
+    ConsoleBackgroundEffect,
+    ConsoleTranscriptSurface,
+)
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+
+class EffectHarness(App[None]):
+    def __init__(self, settings: ConsoleBackgroundEffectSettings) -> None:
+        super().__init__()
+        self.settings = settings
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleBackgroundEffect(self.settings, id="console-background-effect")
+
+
+def test_console_background_effect_disabled_is_inactive():
+    effect = ConsoleBackgroundEffect(
+        ConsoleBackgroundEffectSettings(enabled=False, effect="matrix")
+    )
+
+    assert effect.can_focus is False
+    assert effect.is_effect_active is False
+
+
+@pytest.mark.asyncio
+async def test_console_background_effect_enabled_renders_frame():
+    app = EffectHarness(
+        ConsoleBackgroundEffectSettings(
+            enabled=True,
+            effect="matrix",
+            scope="transcript",
+            intensity="low",
+            fps=6,
+        )
+    )
+
+    async with app.run_test(size=(60, 18)) as pilot:
+        effect = app.query_one("#console-background-effect", ConsoleBackgroundEffect)
+        await pilot.pause(0.2)
+
+        assert effect.is_effect_active is True
+        assert effect.frame_text(width=40, height=8).strip()
+
+
+@pytest.mark.asyncio
+async def test_console_background_effect_update_settings_stops_timer():
+    app = EffectHarness(
+        ConsoleBackgroundEffectSettings(enabled=True, effect="rain", fps=6)
+    )
+
+    async with app.run_test(size=(60, 18)) as pilot:
+        effect = app.query_one("#console-background-effect", ConsoleBackgroundEffect)
+        await pilot.pause(0.2)
+
+        assert effect.is_effect_active is True
+
+        effect.update_settings(
+            ConsoleBackgroundEffectSettings(enabled=False, effect="rain", fps=6)
+        )
+        await pilot.pause(0.1)
+
+        assert effect.is_effect_active is False
+        assert effect._timer is None
+
+
+def test_console_transcript_surface_preserves_transcript_identity_and_id():
+    transcript = ConsoleTranscript(id="console-native-transcript")
+    surface = ConsoleTranscriptSurface(
+        ConsoleBackgroundEffectSettings(enabled=True, effect="snow"),
+        transcript=transcript,
+    )
+
+    assert surface.transcript is transcript
+    assert surface.transcript.id == "console-native-transcript"

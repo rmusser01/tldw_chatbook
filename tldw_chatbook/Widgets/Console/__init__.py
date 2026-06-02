@@ -2,6 +2,7 @@
 
 from .console_control_bar import ConsoleControlBar
 from .console_composer_bar import ConsoleComposerBar
+from .console_background_effect import ConsoleBackgroundEffect, ConsoleTranscriptSurface
 from .console_rail_handle import ConsoleRailHandle
 from .console_rename_session_modal import ConsoleRenameSessionModal
 from .console_run_inspector import ConsoleRunInspector
@@ -16,6 +17,7 @@ from .console_workspace_switcher_modal import ConsoleWorkspaceSwitcherModal
 
 __all__ = [
     "ConsoleComposerBar",
+    "ConsoleBackgroundEffect",
     "ConsoleControlBar",
     "ConsoleRailHandle",
     "ConsoleRenameSessionModal",
@@ -26,6 +28,7 @@ __all__ = [
     "ConsoleSettingsSummary",
     "ConsoleStagedContextTray",
     "ConsoleTranscript",
+    "ConsoleTranscriptSurface",
     "ConsoleWorkspaceContextTray",
     "ConsoleWorkspaceSwitcherModal",
 ]
