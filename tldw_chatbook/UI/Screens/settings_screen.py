@@ -4223,19 +4223,29 @@ class SettingsScreen(BaseAppScreen):
                 for key, value in dirty_values.items()
                 if key in CONSOLE_BEHAVIOR_CONSOLE_KEYS
             }
+            workbench_scope_fallback = False
             if any(
                 key.startswith("background_effects.") and key in CONSOLE_BACKGROUND_EFFECT_KEYS
                 for key in dirty_values
             ):
                 merged_background_effects = self._loaded_console_background_effects()
+                raw_background_effects = self._console_settings().get("background_effects")
+                raw_scope = (
+                    raw_background_effects.get("scope")
+                    if isinstance(raw_background_effects, Mapping)
+                    else None
+                )
                 for key in CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER:
                     if key in dirty_values:
                         merged_background_effects[key.removeprefix("background_effects.")] = (
                             dirty_values[key]
                         )
-                merged_background_effects["scope"] = self._available_console_background_scope(
-                    merged_background_effects.get("scope")
+                previous_scope = merged_background_effects.get("scope")
+                available_scope = self._available_console_background_scope(previous_scope)
+                workbench_scope_fallback = (
+                    str(previous_scope) == "workbench" or str(raw_scope) == "workbench"
                 )
+                merged_background_effects["scope"] = available_scope
                 console_values["background_effects"] = (
                     normalize_console_background_effects(
                         merged_background_effects
@@ -4254,6 +4264,7 @@ class SettingsScreen(BaseAppScreen):
             self._settings_save_console_behavior_worker(
                 dict(console_values),
                 dict(chat_default_values),
+                workbench_scope_fallback,
             )
             return
 
@@ -4353,6 +4364,7 @@ class SettingsScreen(BaseAppScreen):
         saved: bool,
         console_values: Mapping[str, object],
         chat_default_values: Mapping[str, object],
+        workbench_scope_fallback: bool = False,
     ) -> None:
         if saved:
             normalized_console_values = dict(console_values)
@@ -4368,7 +4380,13 @@ class SettingsScreen(BaseAppScreen):
             self._console_settings().update(normalized_console_values)
             self._chat_defaults().update(chat_default_values)
             self._settings_drafts.pop(SettingsCategoryId.CONSOLE_BEHAVIOR, None)
-            self._console_behavior_result = "Console behavior settings saved."
+            if workbench_scope_fallback:
+                self._console_behavior_result = (
+                    "Console behavior settings saved. "
+                    f"{CONSOLE_BACKGROUND_WORKBENCH_UNAVAILABLE_COPY}"
+                )
+            else:
+                self._console_behavior_result = "Console behavior settings saved."
             self._sync_console_behavior_widgets()
             self.app.notify("Console behavior settings saved.", severity="information")
             return
@@ -4384,6 +4402,7 @@ class SettingsScreen(BaseAppScreen):
         self,
         console_values: Mapping[str, object],
         chat_default_values: Mapping[str, object],
+        workbench_scope_fallback: bool = False,
     ) -> None:
         saved = self._save_console_behavior_values(console_values, chat_default_values)
         self.app.call_from_thread(
@@ -4391,6 +4410,7 @@ class SettingsScreen(BaseAppScreen):
             saved,
             dict(console_values),
             dict(chat_default_values),
+            workbench_scope_fallback,
         )
 
     def _sync_console_behavior_widgets(self) -> None:

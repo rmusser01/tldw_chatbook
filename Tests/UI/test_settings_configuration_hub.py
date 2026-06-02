@@ -1499,6 +1499,49 @@ async def test_settings_console_background_workbench_scope_falls_back_to_transcr
 
 
 @pytest.mark.asyncio
+async def test_settings_console_background_workbench_loaded_scope_save_shows_fallback(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "background_effects": {
+            "enabled": True,
+            "effect": "rain",
+            "scope": "workbench",
+            "intensity": "low",
+            "fps": 6,
+        }
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        fps = screen.query_one("#settings-console-background-effect-fps", Input)
+
+        fps.value = "10"
+        screen.handle_console_background_effect_fps_changed(Input.Changed(fps, fps.value))
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Workbench scope is not available in this build; using Transcript scope.",
+        )
+
+    assert saved[0]["console"]["background_effects"]["scope"] == "transcript"
+    assert app.app_config["console"]["background_effects"]["scope"] == "transcript"
+
+
+@pytest.mark.asyncio
 async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
