@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import Any
 
 from textual.app import ComposeResult
@@ -64,7 +65,9 @@ class ConsoleSessionSurface(Vertical):
             yield self._build_new_tab_button()
         yield ChatTaskCards(id="console-task-surface")
         yield ConsoleTranscriptSurface(
-            self.background_effect_settings,
+            self._transcript_background_effect_settings(
+                self.background_effect_settings
+            ),
             id="console-transcript-surface",
             classes="console-transcript-surface",
         )
@@ -236,4 +239,13 @@ class ConsoleSessionSurface(Vertical):
             )
         except NoMatches:
             return
-        surface.update_settings(settings)
+        surface.update_settings(self._transcript_background_effect_settings(settings))
+
+    @staticmethod
+    def _transcript_background_effect_settings(
+        settings: ConsoleBackgroundEffectSettings,
+    ) -> ConsoleBackgroundEffectSettings:
+        """Return settings safe for the transcript-scoped effect surface."""
+        if settings.scope == "transcript":
+            return settings
+        return replace(settings, enabled=False)

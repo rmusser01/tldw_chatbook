@@ -180,3 +180,29 @@ async def test_console_background_disabled_does_not_start_active_effect():
             ConsoleBackgroundEffect,
         )
         assert effect.is_effect_active is False
+
+
+@pytest.mark.asyncio
+async def test_console_workbench_scope_does_not_start_transcript_effect():
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "background_effects": {
+            "enabled": True,
+            "effect": "matrix",
+            "scope": "workbench",
+            "intensity": "low",
+            "fps": 6,
+        }
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _wait_for_selector(console, pilot, "#console-transcript-background-effect")
+
+        effect = console.query_one(
+            "#console-transcript-background-effect",
+            ConsoleBackgroundEffect,
+        )
+        assert effect.is_effect_active is False
