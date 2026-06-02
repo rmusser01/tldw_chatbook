@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, MutableMapping, Sequence
 
+from tldw_chatbook.Sync_Interop.conflict_review import (
+    SyncV2ConflictReviewItem,
+    SyncV2ConflictReviewService,
+)
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 
 ManualSyncStatus = Literal[
@@ -40,6 +44,7 @@ class ManualSyncRunResult:
     user_message: str
     summary: dict[str, Any]
     preview: ManualSyncPreview
+    conflict_reviews: tuple[SyncV2ConflictReviewItem, ...] = ()
 
 
 class ManualSyncControlService:
@@ -214,6 +219,10 @@ class ManualSyncControlService:
                 user_message=f"Manual Sync failed: {exc}",
                 summary={"error": str(exc), "error_type": type(exc).__name__},
                 preview=preview,
+                conflict_reviews=self._conflict_review_items(
+                    profile=preview.profile,
+                    domains=selected_domains,
+                ),
             )
         status, message = self._result_copy(summary)
         post_preview = self.preview(
@@ -227,6 +236,10 @@ class ManualSyncControlService:
             user_message=message,
             summary=dict(summary),
             preview=post_preview,
+            conflict_reviews=self._conflict_review_items(
+                profile=post_preview.profile or preview.profile,
+                domains=selected_domains,
+            ),
         )
 
     def _blocked(
@@ -246,6 +259,26 @@ class ManualSyncControlService:
     def _domains(self, domains: Sequence[str] | None) -> tuple[str, ...]:
         selected = tuple(str(domain).strip() for domain in (domains or self.default_domains))
         return tuple(domain for domain in selected if domain)
+
+    def _conflict_review_items(
+        self,
+        *,
+        profile: Mapping[str, Any] | None,
+        domains: Sequence[str],
+    ) -> tuple[SyncV2ConflictReviewItem, ...]:
+        if profile is None:
+            return ()
+        dataset_id = str(profile.get("dataset_id") or "").strip()
+        if not dataset_id:
+            return ()
+        service = SyncV2ConflictReviewService(state_repository=self.state_repository)
+        return service.build_review_items(
+            server_profile_id=str(profile["server_profile_id"]),
+            authenticated_principal_id=profile.get("authenticated_principal_id"),
+            workspace_scope=profile.get("workspace_scope"),
+            dataset_id=dataset_id,
+            domains=domains,
+        )
 
     @staticmethod
     def _result_copy(summary: Mapping[str, Any]) -> tuple[ManualSyncStatus, str]:

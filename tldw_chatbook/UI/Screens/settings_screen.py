@@ -1631,11 +1631,32 @@ class SettingsScreen(BaseAppScreen):
         self.manual_sync_rows = rows
 
     def _apply_manual_sync_result(self, result: ManualSyncRunResult) -> None:
-        self.manual_sync_rows = (
+        rows = [
             ("Manual sync status", result.status),
             ("Manual sync result", result.user_message),
             ("Pending outgoing", self._pending_copy(result.preview.pending_by_domain)),
-        )
+        ]
+        if result.conflict_reviews:
+            first_review = result.conflict_reviews[0]
+            rows.append(
+                (
+                    "Conflict review",
+                    (
+                        f"{first_review.domain} | {first_review.item_label} | {first_review.cause} | "
+                        f"local: {first_review.local_summary} | remote: {first_review.remote_summary}"
+                    ),
+                )
+            )
+            rows.append(
+                (
+                    "Recovery options",
+                    "; ".join(
+                        f"{action}: {state}"
+                        for action, state in first_review.recovery_options.items()
+                    ),
+                )
+            )
+        self.manual_sync_rows = tuple(rows)
 
     @staticmethod
     def _pending_copy(pending_by_domain: Mapping[str, int]) -> str:

@@ -36,6 +36,7 @@ from tldw_chatbook.Sync_Interop.manual_sync_control import (
     ManualSyncPreview,
     ManualSyncRunResult,
 )
+from tldw_chatbook.Sync_Interop.conflict_review import SyncV2ConflictReviewItem
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
 from tldw_chatbook.Workspaces.models import (
@@ -766,6 +767,51 @@ def test_settings_apply_manual_sync_result_updates_rows():
     rows = dict(screen.manual_sync_rows)
     assert rows["Manual sync status"] == "partial-failure"
     assert rows["Manual sync result"] == "Manual Sync partially completed."
+
+
+def test_settings_apply_manual_sync_result_includes_conflict_review_summary():
+    preview = ManualSyncPreview(
+        status="ready",
+        can_run=True,
+        pending_total=1,
+        pending_by_domain={"notes": 1},
+        user_message="Manual Sync preview: 1 pending outgoing change.",
+    )
+    result = ManualSyncRunResult(
+        status="conflict",
+        user_message="Manual Sync found 1 conflict.",
+        summary={"outbox_retained": 1},
+        preview=preview,
+        conflict_reviews=(
+            SyncV2ConflictReviewItem(
+                domain="notes",
+                item_label="Research note",
+                cause="Remote edit conflicts with local edit.",
+                local_summary="Local title changed.",
+                remote_summary="Remote body changed.",
+                recovery_options={
+                    "retry": "available",
+                    "keep-local": "available",
+                    "accept-remote": "available",
+                    "duplicate-fork": "available",
+                    "defer-later": "available",
+                },
+            ),
+        ),
+    )
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    screen._apply_manual_sync_result(result)
+
+    rows = dict(screen.manual_sync_rows)
+    assert rows["Conflict review"] == (
+        "notes | Research note | Remote edit conflicts with local edit. | "
+        "local: Local title changed. | remote: Remote body changed."
+    )
+    assert rows["Recovery options"] == (
+        "retry: available; keep-local: available; accept-remote: available; "
+        "duplicate-fork: available; defer-later: available"
+    )
 
 
 def test_settings_manual_sync_run_worker_uses_main_event_loop_async_worker():

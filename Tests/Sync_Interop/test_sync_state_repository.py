@@ -429,6 +429,9 @@ def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
         outbox = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_v2_local_outbox'"
         ).fetchone()
+        conflict_reviews = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_v2_conflict_reviews'"
+        ).fetchone()
         schema_version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
         schema_versions = [
             row[0]
@@ -444,8 +447,9 @@ def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
         "dry_run_metadata",
     }.issubset(columns)
     assert outbox is not None
-    assert schema_version == 2
-    assert schema_versions == [2]
+    assert conflict_reviews is not None
+    assert schema_version == 3
+    assert schema_versions == [3]
 
 
 def test_sync_v2_profile_column_migration_validates_column_identifiers(tmp_path, monkeypatch):
