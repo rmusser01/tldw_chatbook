@@ -1,3 +1,4 @@
+import inspect
 import re
 import time
 import builtins
@@ -764,6 +765,13 @@ def test_settings_apply_manual_sync_result_updates_rows():
     rows = dict(screen.manual_sync_rows)
     assert rows["Manual sync status"] == "partial-failure"
     assert rows["Manual sync result"] == "Manual Sync partially completed."
+
+
+def test_settings_manual_sync_run_worker_uses_main_event_loop_async_worker():
+    worker = SettingsScreen.__dict__["_manual_sync_run_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+
+    assert inspect.iscoroutinefunction(wrapped)
 
 
 def test_settings_status_language_agrees_with_home_console_and_library_contracts():

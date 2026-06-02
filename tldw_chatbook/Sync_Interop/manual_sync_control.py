@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, MutableMapping, Sequence
 
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 
@@ -50,12 +50,28 @@ class ManualSyncControlService:
         *,
         state_repository: Any,
         local_first_sync_service: Any,
-        dataset_keys: Mapping[str, bytes] | None = None,
+        dataset_keys: MutableMapping[str, bytes] | None = None,
         default_domains: Sequence[str] = DEFAULT_MANUAL_SYNC_DOMAINS,
     ) -> None:
+        """Initialize the manual sync control service.
+
+        Args:
+            state_repository: Repository used to read Sync v2 profile and outbox state.
+            local_first_sync_service: Service that executes the explicit Sync v2 run.
+            dataset_keys: Shared mutable dataset-key cache. This reference is retained so
+                dynamically loaded keys are visible to manual sync previews and runs.
+            default_domains: Sync domains included when the caller does not override them.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+
         self.state_repository = state_repository
         self.local_first_sync_service = local_first_sync_service
-        self.dataset_keys = dict(dataset_keys or {})
+        self.dataset_keys = dataset_keys if dataset_keys is not None else {}
         self.default_domains = tuple(default_domains)
 
     def preview(
@@ -69,6 +85,18 @@ class ManualSyncControlService:
         """Return local-only manual sync readiness and pending outbox counts.
 
         This method must not call server transport or drain the durable outbox.
+
+        Args:
+            server_profile_id: Stable identifier for the configured server profile.
+            authenticated_principal_id: Optional authenticated user or account scope.
+            workspace_scope: Optional workspace scope for workspace-specific datasets.
+            domains: Optional sync domains to preview. Defaults to Notes and Chat.
+
+        Returns:
+            Manual sync readiness, pending counts, and user-facing copy.
+
+        Raises:
+            None.
         """
 
         selected_domains = self._domains(domains)
@@ -88,7 +116,10 @@ class ManualSyncControlService:
             return self._blocked("Manual Sync v2 requires dataset and device identity.", profile)
         if dataset_id not in self.dataset_keys:
             return self._blocked("Manual Sync v2 is blocked because the dataset key is unavailable.", profile)
-        if getattr(self.local_first_sync_service, "local_store", object()) is None:
+        if (
+            self.local_first_sync_service is None
+            or getattr(self.local_first_sync_service, "local_store", None) is None
+        ):
             return self._blocked("Manual Sync v2 is blocked because the local apply store is unavailable.", profile)
 
         entries = self.state_repository.list_pending_sync_v2_outbox_envelopes(
@@ -139,7 +170,22 @@ class ManualSyncControlService:
         workspace_scope: str | None = None,
         domains: Sequence[str] | None = None,
     ) -> ManualSyncRunResult:
-        """Execute one manual Sync v2 cycle after preflight allows it."""
+        """Execute one manual Sync v2 cycle after preflight allows it.
+
+        Args:
+            server_profile_id: Stable identifier for the configured server profile.
+            authenticated_principal_id: Optional authenticated user or account scope.
+            workspace_scope: Optional workspace scope for workspace-specific datasets.
+            domains: Optional sync domains to run. Defaults to Notes and Chat.
+
+        Returns:
+            Manual sync outcome, summary, and a post-run preview reflecting current
+            pending outbox state when execution succeeds.
+
+        Raises:
+            None. Sync transport and local apply exceptions are returned as failed
+            ManualSyncRunResult values.
+        """
 
         selected_domains = self._domains(domains)
         preview = self.preview(
@@ -170,11 +216,17 @@ class ManualSyncControlService:
                 preview=preview,
             )
         status, message = self._result_copy(summary)
+        post_preview = self.preview(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            domains=selected_domains,
+        )
         return ManualSyncRunResult(
             status=status,
             user_message=message,
             summary=dict(summary),
-            preview=preview,
+            preview=post_preview,
         )
 
     def _blocked(

@@ -1,6 +1,5 @@
 """Settings destination shell for global app preferences."""
 
-import asyncio
 import copy
 from collections.abc import Mapping
 import logging
@@ -1576,12 +1575,11 @@ class SettingsScreen(BaseAppScreen):
             rows = self._manual_sync_loading_rows()
         self.app.call_from_thread(self._apply_manual_sync_rows, rows)
 
-    @work(exclusive=True, thread=True, group="settings-manual-sync-run")
-    def _manual_sync_run_worker(self) -> None:
+    @work(exclusive=True, group="settings-manual-sync-run")
+    async def _manual_sync_run_worker(self) -> None:
         control = getattr(self.app_instance, "manual_sync_control_service", None)
         if control is None:
-            self.app.call_from_thread(
-                self._apply_manual_sync_rows,
+            self._apply_manual_sync_rows(
                 (
                     ("Manual sync status", "blocked"),
                     ("Manual sync result", "Manual Sync control is not available."),
@@ -1593,8 +1591,7 @@ class SettingsScreen(BaseAppScreen):
         sync_scope = self._active_sync_scope(active_workspace)
         server_profile_id = sync_scope["server_profile_id"]
         if not server_profile_id:
-            self.app.call_from_thread(
-                self._apply_manual_sync_rows,
+            self._apply_manual_sync_rows(
                 (
                     ("Manual sync status", "blocked"),
                     ("Manual sync result", "Manual Sync requires an active server profile."),
@@ -1603,17 +1600,14 @@ class SettingsScreen(BaseAppScreen):
             )
             return
         try:
-            result = asyncio.run(
-                control.run_once(
-                    server_profile_id=server_profile_id,
-                    authenticated_principal_id=sync_scope["authenticated_principal_id"],
-                    workspace_scope=sync_scope["workspace_scope"],
-                )
+            result = await control.run_once(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=sync_scope["authenticated_principal_id"],
+                workspace_scope=sync_scope["workspace_scope"],
             )
         except Exception as exc:
             logger.warning("Settings manual sync run failed.", exc_info=True)
-            self.app.call_from_thread(
-                self._apply_manual_sync_rows,
+            self._apply_manual_sync_rows(
                 (
                     ("Manual sync status", "failed"),
                     ("Manual sync result", f"Manual Sync failed: {type(exc).__name__}"),
@@ -1621,7 +1615,7 @@ class SettingsScreen(BaseAppScreen):
                 ),
             )
             return
-        self.app.call_from_thread(self._apply_manual_sync_result, result)
+        self._apply_manual_sync_result(result)
 
     @staticmethod
     def _column_divider(identifier: str) -> Rule:

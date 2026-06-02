@@ -13,6 +13,7 @@ pytestmark = pytest.mark.asyncio
 class RecordingLocalFirstSync:
     def __init__(self, result: dict | None = None, exc: Exception | None = None) -> None:
         self.calls: list[dict] = []
+        self.local_store = object()
         self.result = result or {
             "pushed_envelopes": 0,
             "pulled_envelopes": 0,
@@ -33,7 +34,48 @@ class RecordingLocalFirstSync:
 
 
 class LocalFirstSyncWithoutStore(RecordingLocalFirstSync):
-    local_store = None
+    def __init__(self) -> None:
+        super().__init__()
+        self.local_store = None
+
+
+class MutatingLocalFirstSync(RecordingLocalFirstSync):
+    def __init__(
+        self,
+        repo: SyncStateRepository,
+        *,
+        accepted_client_envelope_ids: list[str],
+    ) -> None:
+        super().__init__(
+            {
+                "pushed_envelopes": len(accepted_client_envelope_ids),
+                "pulled_envelopes": 0,
+                "applied_envelopes": 0,
+                "outbox_dispatched": len(accepted_client_envelope_ids),
+                "outbox_retained": 0,
+                "rejected_envelopes": [],
+                "push_conflicts": [],
+                "conflicts": [],
+            }
+        )
+        self.repo = repo
+        self.accepted_client_envelope_ids = accepted_client_envelope_ids
+
+    async def sync_once(self, **kwargs):
+        self.calls.append(kwargs)
+        self.repo.mark_sync_v2_outbox_push_results(
+            server_profile_id=kwargs["server_profile_id"],
+            authenticated_principal_id=kwargs["authenticated_principal_id"],
+            workspace_scope=kwargs["workspace_scope"],
+            dataset_id="dataset-1",
+            accepted=[
+                {"client_envelope_id": client_envelope_id}
+                for client_envelope_id in self.accepted_client_envelope_ids
+            ],
+            rejected=[],
+            conflicts=[],
+        )
+        return dict(self.result)
 
 
 def _repo_with_profile(tmp_path, *, dataset_id: str | None = "dataset-1") -> SyncStateRepository:
@@ -196,3 +238,82 @@ async def test_manual_sync_run_blocks_without_local_apply_store(tmp_path):
     assert result.status == "blocked"
     assert "local apply store" in result.user_message.lower()
     assert sync_runner.calls == []
+
+
+async def test_manual_sync_preview_uses_shared_dataset_key_updates(tmp_path):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    _enqueue_note_and_chat(repo, dataset_key)
+    shared_dataset_keys: dict[str, bytes] = {}
+    sync_runner = RecordingLocalFirstSync()
+    service = ManualSyncControlService(
+        state_repository=repo,
+        local_first_sync_service=sync_runner,
+        dataset_keys=shared_dataset_keys,
+    )
+
+    blocked_preview = service.preview(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+    )
+    shared_dataset_keys["dataset-1"] = dataset_key
+    ready_preview = service.preview(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+    )
+
+    assert blocked_preview.status == "blocked"
+    assert ready_preview.status == "ready"
+    assert ready_preview.pending_by_domain == {"notes": 1, "chat": 1}
+
+
+async def test_manual_sync_run_blocks_without_local_first_sync_service(tmp_path):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    service = ManualSyncControlService(
+        state_repository=repo,
+        local_first_sync_service=None,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.run_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+    )
+
+    assert result.status == "blocked"
+    assert "local apply store" in result.user_message.lower()
+
+
+async def test_manual_sync_run_returns_post_run_pending_counts(tmp_path):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    _enqueue_note_and_chat(repo, dataset_key)
+    pending_before = repo.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+        dataset_id="dataset-1",
+    )
+    accepted_id = str(pending_before[0]["client_envelope_id"])
+    sync_runner = MutatingLocalFirstSync(
+        repo,
+        accepted_client_envelope_ids=[accepted_id],
+    )
+    service = ManualSyncControlService(
+        state_repository=repo,
+        local_first_sync_service=sync_runner,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.run_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+    )
+
+    assert result.status == "success"
+    assert result.preview.pending_total == 1
