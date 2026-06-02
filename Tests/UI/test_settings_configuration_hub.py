@@ -369,6 +369,7 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     assert records_by_category[SettingsCategoryId.CONSOLE_BEHAVIOR].owns_config_sections == (
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
+        "console.background_effects.*",
         "chat_defaults.streaming",
         "chat_defaults.temperature",
         "chat_defaults.top_p",
