@@ -25,6 +25,14 @@ class EffectHarness(App[None]):
         yield ConsoleBackgroundEffect(self.settings, id="console-background-effect")
 
 
+class SurfaceHarness(App[None]):
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscriptSurface(
+            ConsoleBackgroundEffectSettings(enabled=True, effect="rain", fps=6),
+            id="console-transcript-surface",
+        )
+
+
 def test_console_background_effect_disabled_is_inactive():
     effect = ConsoleBackgroundEffect(
         ConsoleBackgroundEffectSettings(enabled=False, effect="matrix")
@@ -96,3 +104,22 @@ def test_console_transcript_surface_preserves_transcript_identity_and_id():
 
     assert surface.transcript is transcript
     assert surface.transcript.id == "console-native-transcript"
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_surface_keeps_effect_behind_transcript():
+    app = SurfaceHarness()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.1)
+        surface = app.query_one("#console-transcript-surface", ConsoleTranscriptSurface)
+        effect = app.query_one(
+            "#console-transcript-background-effect",
+            ConsoleBackgroundEffect,
+        )
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+
+        assert effect.is_mounted
+        assert transcript.is_mounted
+        assert effect.region == surface.region
+        assert transcript.region.y == surface.region.y

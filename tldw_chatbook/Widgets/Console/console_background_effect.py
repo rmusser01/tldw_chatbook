@@ -182,6 +182,25 @@ class ConsoleTranscriptSurface(Container):
     """Container for a background effect plus the native Console transcript."""
 
     can_focus = False
+    DEFAULT_CSS = """
+    ConsoleTranscriptSurface {
+        layers: background content;
+    }
+
+    ConsoleTranscriptSurface > ConsoleBackgroundEffect {
+        layer: background;
+        dock: top;
+        width: 100%;
+        height: 100%;
+    }
+
+    ConsoleTranscriptSurface > ConsoleTranscript {
+        layer: content;
+        dock: top;
+        width: 100%;
+        height: 100%;
+    }
+    """
 
     def __init__(
         self,
