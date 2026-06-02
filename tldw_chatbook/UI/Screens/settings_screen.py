@@ -1,5 +1,6 @@
 """Settings destination shell for global app preferences."""
 
+import asyncio
 import copy
 from collections.abc import Mapping
 import logging
@@ -26,6 +27,7 @@ from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...Sync_Interop.sync_promotion_state import SyncPromotionState, build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
+from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...config import (
@@ -349,6 +351,7 @@ class SettingsScreen(BaseAppScreen):
     active_category = reactive(SettingsCategoryId.OVERVIEW.value, recompose=True)
     category_search_query = reactive("")
     server_sync_workspace_handoff_rows = reactive((), recompose=True)
+    manual_sync_rows = reactive((), recompose=True)
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
@@ -377,18 +380,26 @@ class SettingsScreen(BaseAppScreen):
         self.server_sync_workspace_handoff_rows = (
             self._server_sync_workspace_handoff_loading_rows()
         )
+        self.manual_sync_rows = self._manual_sync_loading_rows()
 
     def on_mount(self) -> None:
         super().on_mount()
         self._queue_server_sync_workspace_handoff_refresh()
+        self._queue_manual_sync_refresh()
 
     def on_screen_resume(self) -> None:
         self._queue_server_sync_workspace_handoff_refresh()
+        self._queue_manual_sync_refresh()
 
     def _queue_server_sync_workspace_handoff_refresh(self) -> None:
         if not getattr(self, "is_mounted", False):
             return
         self._refresh_server_sync_workspace_handoff_rows()
+
+    def _queue_manual_sync_refresh(self) -> None:
+        if not getattr(self, "is_mounted", False):
+            return
+        self._refresh_manual_sync_rows()
 
     @staticmethod
     def _server_sync_workspace_handoff_loading_rows() -> tuple[tuple[str, str], ...]:
@@ -405,6 +416,14 @@ class SettingsScreen(BaseAppScreen):
                 "Console staging is limited to the active workspace",
             ),
             ("ACP handoff readiness", "Loading Settings source contracts"),
+        )
+
+    @staticmethod
+    def _manual_sync_loading_rows() -> tuple[tuple[str, str], ...]:
+        return (
+            ("Manual sync status", "loading"),
+            ("Manual sync preview", "Loading manual Sync v2 preview."),
+            ("Pending outgoing", "Loading"),
         )
 
     def _category_summaries(self) -> tuple[SettingsCategorySummary, ...]:
@@ -1464,11 +1483,77 @@ class SettingsScreen(BaseAppScreen):
             ("ACP handoff readiness", self._acp_handoff_readiness_label()),
         )
 
+    @staticmethod
+    def _manual_sync_rows_from_preview(
+        preview: ManualSyncPreview,
+    ) -> tuple[tuple[str, str], ...]:
+        pending_copy = "; ".join(
+            f"{domain}: {count}"
+            for domain, count in preview.pending_by_domain.items()
+        ) or "none"
+        return (
+            ("Manual sync status", preview.status),
+            ("Manual sync preview", preview.user_message),
+            ("Pending outgoing", pending_copy),
+        )
+
+    def _manual_sync_rows(self) -> tuple[tuple[str, str], ...]:
+        control = getattr(self.app_instance, "manual_sync_control_service", None)
+        if control is None:
+            return (
+                ("Manual sync status", "blocked"),
+                ("Manual sync preview", "Manual Sync control is not available."),
+                ("Pending outgoing", "unknown"),
+            )
+        active_workspace = self._active_workspace_record()
+        sync_scope = self._active_sync_scope(active_workspace)
+        server_profile_id = sync_scope["server_profile_id"]
+        if not server_profile_id:
+            return (
+                ("Manual sync status", "blocked"),
+                ("Manual sync preview", "Manual Sync requires an active server profile."),
+                ("Pending outgoing", "none"),
+            )
+        try:
+            preview = control.preview(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=sync_scope["authenticated_principal_id"],
+                workspace_scope=sync_scope["workspace_scope"],
+            )
+        except Exception as exc:
+            logger.warning("Failed to build Settings manual sync preview.", exc_info=True)
+            return (
+                ("Manual sync status", "blocked"),
+                ("Manual sync preview", f"Manual Sync preview unavailable: {type(exc).__name__}"),
+                ("Pending outgoing", "unknown"),
+            )
+        return self._manual_sync_rows_from_preview(preview)
+
     def _apply_server_sync_workspace_handoff_rows(
         self,
         rows: tuple[tuple[str, str], ...],
     ) -> None:
         self.server_sync_workspace_handoff_rows = rows
+
+    def _apply_manual_sync_rows(
+        self,
+        rows: tuple[tuple[str, str], ...],
+    ) -> None:
+        self.manual_sync_rows = rows
+
+    def _apply_manual_sync_result(self, result: ManualSyncRunResult) -> None:
+        self.manual_sync_rows = (
+            ("Manual sync status", result.status),
+            ("Manual sync result", result.user_message),
+            ("Pending outgoing", self._pending_copy(result.preview.pending_by_domain)),
+        )
+
+    @staticmethod
+    def _pending_copy(pending_by_domain: Mapping[str, int]) -> str:
+        return "; ".join(
+            f"{domain}: {count}"
+            for domain, count in pending_by_domain.items()
+        ) or "none"
 
     @work(exclusive=True, thread=True)
     def _refresh_server_sync_workspace_handoff_rows(self) -> None:
@@ -1481,6 +1566,62 @@ class SettingsScreen(BaseAppScreen):
             )
             rows = self._server_sync_workspace_handoff_loading_rows()
         self.app.call_from_thread(self._apply_server_sync_workspace_handoff_rows, rows)
+
+    @work(exclusive=True, thread=True, group="settings-manual-sync-preview")
+    def _refresh_manual_sync_rows(self) -> None:
+        try:
+            rows = self._manual_sync_rows()
+        except Exception:
+            logger.warning("Failed to refresh Settings manual sync rows.", exc_info=True)
+            rows = self._manual_sync_loading_rows()
+        self.app.call_from_thread(self._apply_manual_sync_rows, rows)
+
+    @work(exclusive=True, thread=True, group="settings-manual-sync-run")
+    def _manual_sync_run_worker(self) -> None:
+        control = getattr(self.app_instance, "manual_sync_control_service", None)
+        if control is None:
+            self.app.call_from_thread(
+                self._apply_manual_sync_rows,
+                (
+                    ("Manual sync status", "blocked"),
+                    ("Manual sync result", "Manual Sync control is not available."),
+                    ("Pending outgoing", "unknown"),
+                ),
+            )
+            return
+        active_workspace = self._active_workspace_record()
+        sync_scope = self._active_sync_scope(active_workspace)
+        server_profile_id = sync_scope["server_profile_id"]
+        if not server_profile_id:
+            self.app.call_from_thread(
+                self._apply_manual_sync_rows,
+                (
+                    ("Manual sync status", "blocked"),
+                    ("Manual sync result", "Manual Sync requires an active server profile."),
+                    ("Pending outgoing", "none"),
+                ),
+            )
+            return
+        try:
+            result = asyncio.run(
+                control.run_once(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=sync_scope["authenticated_principal_id"],
+                    workspace_scope=sync_scope["workspace_scope"],
+                )
+            )
+        except Exception as exc:
+            logger.warning("Settings manual sync run failed.", exc_info=True)
+            self.app.call_from_thread(
+                self._apply_manual_sync_rows,
+                (
+                    ("Manual sync status", "failed"),
+                    ("Manual sync result", f"Manual Sync failed: {type(exc).__name__}"),
+                    ("Pending outgoing", "unknown"),
+                ),
+            )
+            return
+        self.app.call_from_thread(self._apply_manual_sync_result, result)
 
     @staticmethod
     def _column_divider(identifier: str) -> Rule:
@@ -2714,6 +2855,16 @@ class SettingsScreen(BaseAppScreen):
         yield Static("Overview", classes="destination-section settings-column-title")
         with Vertical(id="settings-overview-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.OVERVIEW)
+            yield Static("Manual Sync v2", classes="destination-section")
+            yield Static(
+                "Preview pending Notes/Chat changes before any server mutation.",
+                classes="settings-help-copy",
+            )
+            for label, value in self.manual_sync_rows:
+                yield self._detail_row(label, value)
+            with Horizontal(classes="settings-action-row"):
+                yield Button("Preview manual sync", id="settings-manual-sync-preview")
+                yield Button("Run manual sync", id="settings-manual-sync-run")
             yield Static("Configuration ownership", classes="destination-section")
             for label, value in self._overview_ownership_rows():
                 yield self._detail_row(label, value)
@@ -3379,12 +3530,33 @@ class SettingsScreen(BaseAppScreen):
         self.active_category = category_value
         if category_value == SettingsCategoryId.OVERVIEW.value:
             self._queue_server_sync_workspace_handoff_refresh()
+            self._queue_manual_sync_refresh()
         if restore_focus:
             self.call_after_refresh(self._focus_category, category_value)
 
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
         self.post_message(NavigateToScreen("customize"))
+
+    @on(Button.Pressed, "#settings-manual-sync-preview")
+    def handle_manual_sync_preview(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.manual_sync_rows = (
+            ("Manual sync status", "loading"),
+            ("Manual sync preview", "Refreshing manual Sync v2 preview."),
+            ("Pending outgoing", "Loading"),
+        )
+        self._refresh_manual_sync_rows()
+
+    @on(Button.Pressed, "#settings-manual-sync-run")
+    def handle_manual_sync_run(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.manual_sync_rows = (
+            ("Manual sync status", "running"),
+            ("Manual sync result", "Manual Sync is running after explicit user request."),
+            ("Pending outgoing", "Refreshing"),
+        )
+        self._manual_sync_run_worker()
 
     @on(Button.Pressed, ".settings-category-button")
     def handle_category_button_pressed(self, event: Button.Pressed) -> None:

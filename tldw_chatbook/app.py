@@ -273,7 +273,13 @@ from tldw_chatbook.Research_Interop import (
 from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Skills_Interop import LocalSkillsService, ServerSkillsService, SkillsScopeService
-from tldw_chatbook.Sync_Interop import ServerSyncService, SyncScopeService, SyncStateRepository
+from tldw_chatbook.Sync_Interop import (
+    LocalFirstSyncService,
+    ManualSyncControlService,
+    ServerSyncService,
+    SyncScopeService,
+    SyncStateRepository,
+)
 from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
 from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
 from tldw_chatbook.MCP_Governance_Interop import MCPGovernanceScopeService, ServerMCPGovernanceService
@@ -2501,6 +2507,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_sync_service,
             policy_enforcer=self.service_policy_enforcer,
             state_repository=self.sync_state_repository,
+        )
+        self.sync_v2_dataset_keys: dict[str, bytes] = {}
+        self.local_first_sync_service = LocalFirstSyncService(
+            server_service=self.server_sync_service,
+            state_repository=self.sync_state_repository,
+            local_store=getattr(self, "sync_v2_local_store", None),
+            dataset_keys=self.sync_v2_dataset_keys,
+        )
+        self.manual_sync_control_service = ManualSyncControlService(
+            state_repository=self.sync_state_repository,
+            local_first_sync_service=self.local_first_sync_service,
+            dataset_keys=self.sync_v2_dataset_keys,
         )
         for domain_scope_service in (
             getattr(self, "chat_conversation_scope_service", None),

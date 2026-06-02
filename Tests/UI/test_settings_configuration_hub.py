@@ -31,6 +31,10 @@ from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
 from tldw_chatbook.Home.dashboard_state import HomeDashboardInput, summarize_home_dashboard
 from tldw_chatbook.Sync_Interop.sync_promotion_state import SyncPromotionState
+from tldw_chatbook.Sync_Interop.manual_sync_control import (
+    ManualSyncPreview,
+    ManualSyncRunResult,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
 from tldw_chatbook.Workspaces.models import (
@@ -684,6 +688,82 @@ def test_settings_server_sync_workspace_rows_fallback_to_read_only_wip_copy():
     assert rows["ACP handoff readiness"] == (
         "ACP runtime not configured; configure runtime and sessions in ACP"
     )
+
+
+def test_settings_manual_sync_rows_use_preview_service():
+    captured_kwargs = {}
+
+    class FakeManualSyncControl:
+        def preview(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return ManualSyncPreview(
+                status="ready",
+                can_run=True,
+                pending_total=3,
+                pending_by_domain={"notes": 2, "chat": 1},
+                user_message="Manual Sync preview: 3 pending outgoing changes.",
+            )
+
+    app = SimpleNamespace(
+        app_config={},
+        runtime_policy=SimpleNamespace(
+            state=RuntimeSourceState(
+                active_source="server",
+                active_server_id="server-main",
+                server_configured=True,
+            )
+        ),
+        server_context_provider=SimpleNamespace(
+            get_active_context=lambda: SimpleNamespace(
+                auth_token="settings-sync-token",
+                credential_source="test",
+            )
+        ),
+        manual_sync_control_service=FakeManualSyncControl(),
+    )
+    screen = SettingsScreen(app)
+
+    rows = dict(screen._manual_sync_rows())
+
+    assert captured_kwargs["server_profile_id"] == "server-main"
+    assert captured_kwargs["authenticated_principal_id"].startswith(
+        "credential-fingerprint:test:"
+    )
+    assert rows["Manual sync status"] == "ready"
+    assert rows["Manual sync preview"] == "Manual Sync preview: 3 pending outgoing changes."
+    assert rows["Pending outgoing"] == "notes: 2; chat: 1"
+
+
+def test_settings_manual_sync_rows_block_without_control_service():
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    rows = dict(screen._manual_sync_rows())
+
+    assert rows["Manual sync status"] == "blocked"
+    assert rows["Manual sync preview"] == "Manual Sync control is not available."
+
+
+def test_settings_apply_manual_sync_result_updates_rows():
+    preview = ManualSyncPreview(
+        status="ready",
+        can_run=True,
+        pending_total=1,
+        pending_by_domain={"chat": 1},
+        user_message="Manual Sync preview: 1 pending outgoing change.",
+    )
+    result = ManualSyncRunResult(
+        status="partial-failure",
+        user_message="Manual Sync partially completed.",
+        summary={"outbox_retained": 1},
+        preview=preview,
+    )
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    screen._apply_manual_sync_result(result)
+
+    rows = dict(screen.manual_sync_rows)
+    assert rows["Manual sync status"] == "partial-failure"
+    assert rows["Manual sync result"] == "Manual Sync partially completed."
 
 
 def test_settings_status_language_agrees_with_home_console_and_library_contracts():
