@@ -457,7 +457,7 @@ User screenshot approval: approved.
 
 Backlog: `TASK-73.7`
 
-- [ ] **Step 1: Add failing Advanced Config polish tests**
+- [x] **Step 1: Add failing Advanced Config polish tests**
 
 Assert Advanced Config provides:
 
@@ -468,11 +468,11 @@ Assert Advanced Config provides:
 - restore/recovery copy
 - section search or jump, if implemented
 
-- [ ] **Step 2: Add recovery affordances**
+- [x] **Step 2: Add recovery affordances**
 
 Keep Raw TOML available, but make it the expert escape hatch. Prefer guided category links when possible.
 
-- [ ] **Step 3: Run full Settings walkthrough**
+- [x] **Step 3: Run full Settings walkthrough**
 
 Actual use must verify:
 
@@ -484,7 +484,7 @@ Actual use must verify:
 - use Advanced Config validation safely
 - keyboard-only category navigation and action activation
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 Run:
 
@@ -493,7 +493,7 @@ python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_co
 git diff --check
 ```
 
-- [ ] **Step 5: Capture closeout screenshots**
+- [x] **Step 5: Capture closeout screenshots**
 
 Capture approved final screenshots for:
 
@@ -511,6 +511,21 @@ Save under:
 ```text
 Docs/superpowers/qa/settings-configuration-hub/closeout-*.png
 ```
+
+Evidence captured:
+
+- `Docs/superpowers/qa/settings-configuration-hub/closeout-advanced-config-recovery-cdp.png`
+
+Verification:
+
+```bash
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_session_settings.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_provider_readiness.py Tests/Chat/test_console_provider_support.py --tb=short
+git diff --check
+```
+
+Result: `249 passed, 8 warnings` (`requests` dependency warning plus existing SWIG deprecation warnings).
+
+User screenshot approval: approved.
 
 ## PR Strategy
 

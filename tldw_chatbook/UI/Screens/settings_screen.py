@@ -90,6 +90,17 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "top_p",
     "max_tokens",
 )
+ADVANCED_CONFIG_GUIDED_PATHS = (
+    (SettingsCategoryId.PROVIDERS_MODELS, "Providers"),
+    (SettingsCategoryId.CONSOLE_BEHAVIOR, "Console"),
+    (SettingsCategoryId.STORAGE, "Storage"),
+    (SettingsCategoryId.PRIVACY_SECURITY, "Privacy"),
+    (SettingsCategoryId.DIAGNOSTICS, "Diagnostics"),
+)
+ADVANCED_CONFIG_GUIDED_PATH_BUTTONS = {
+    f"settings-advanced-open-{category.value}": category
+    for category, _label in ADVANCED_CONFIG_GUIDED_PATHS
+}
 API_URL_PROVIDER_KEYS = {
     "aphrodite",
     "custom",
@@ -2035,6 +2046,35 @@ class SettingsScreen(BaseAppScreen):
         except OSError as exc:
             return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
 
+    def _read_advanced_backup_preview(self) -> tuple[str, str | None]:
+        try:
+            config_path = self._config_path()
+        except (OSError, RuntimeError, ValueError) as exc:
+            return f"Advanced config recovery: failed - {redact_secret_text(str(exc))}", None
+        backup_path = config_path.with_suffix(config_path.suffix + ".bak")
+        if not backup_path.exists():
+            return (
+                f"Advanced config recovery: unavailable - no backup found at {backup_path}",
+                None,
+            )
+        try:
+            backup_text = backup_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return f"Advanced config recovery: failed - {redact_secret_text(str(exc))}", None
+        return "Advanced config recovery: loaded backup preview; validate before save", backup_text
+
+    def _load_advanced_backup_preview(self) -> str:
+        result, backup_text = self._read_advanced_backup_preview()
+        if backup_text is None:
+            return result
+        try:
+            self.query_one("#settings-advanced-config-editor", TextArea).text = backup_text
+        except QueryError:
+            return "Advanced config recovery: failed - editor unavailable"
+        self._advanced_config_validated_text = None
+        self._update_advanced_validation_status()
+        return result
+
     @work(exclusive=True, thread=True)
     def _advanced_validate_config_worker(self, text: str) -> None:
         validation = SettingsConfigAdapter().validate_raw_toml(text)
@@ -2074,6 +2114,32 @@ class SettingsScreen(BaseAppScreen):
         self._advanced_config_result = result
         self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
         self._update_advanced_validation_status()
+
+    @work(exclusive=True, thread=True)
+    def _advanced_load_backup_worker(self) -> None:
+        result, backup_text = self._read_advanced_backup_preview()
+        self.app.call_from_thread(
+            self._apply_advanced_backup_preview_result,
+            result,
+            backup_text,
+        )
+
+    def _apply_advanced_backup_preview_result(
+        self,
+        result: str,
+        backup_text: str | None,
+    ) -> None:
+        final_result = result
+        if backup_text is not None:
+            try:
+                self.query_one("#settings-advanced-config-editor", TextArea).text = backup_text
+            except QueryError:
+                final_result = "Advanced config recovery: failed - editor unavailable"
+            else:
+                self._advanced_config_validated_text = None
+                self._update_advanced_validation_status()
+        self._advanced_config_result = final_result
+        self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
 
     def _provider_readiness_label(self) -> str:
         resolved = self._resolve_provider_model_for_settings()
@@ -3068,6 +3134,15 @@ class SettingsScreen(BaseAppScreen):
                     "Guided path",
                     "prefer category controls unless raw TOML is required",
                 )
+                yield Static("Guided category paths", classes="destination-section")
+                with Horizontal(id="settings-advanced-guided-paths", classes="settings-action-row"):
+                    for target_category, label in ADVANCED_CONFIG_GUIDED_PATHS:
+                        yield Button(
+                            label,
+                            id=f"settings-advanced-open-{target_category.value}",
+                            classes="settings-advanced-guided-path-button",
+                            tooltip=f"Open {label} guided settings instead of editing raw TOML.",
+                        )
                 yield Static("Raw TOML bypasses guided validation and should be used only for expert edits.")
                 yield Static(
                     self._advanced_validation_status(),
@@ -3083,6 +3158,11 @@ class SettingsScreen(BaseAppScreen):
                         "Validate Raw TOML",
                         id="settings-advanced-validate-config",
                         tooltip="Validate raw TOML before writing it to disk.",
+                    )
+                    yield Button(
+                        "Load Backup",
+                        id="settings-advanced-load-backup",
+                        tooltip="Load the .bak file into the editor without saving.",
                     )
                     save_button = Button(
                         "Save Raw TOML",
@@ -3540,6 +3620,21 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         self._advanced_save_config_worker(self._advanced_editor_text())
+
+    @on(Button.Pressed, "#settings-advanced-load-backup")
+    def handle_advanced_load_backup(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._advanced_config_result = "Advanced config recovery: loading backup preview"
+        self._set_static_text("#settings-advanced-config-result", self._advanced_config_result)
+        self._advanced_load_backup_worker()
+
+    @on(Button.Pressed, ".settings-advanced-guided-path-button")
+    def handle_advanced_guided_path(self, event: Button.Pressed) -> None:
+        event.stop()
+        button_id = event.button.id or ""
+        target_category = ADVANCED_CONFIG_GUIDED_PATH_BUTTONS.get(button_id)
+        if target_category is not None:
+            self._select_category(target_category.value, restore_focus=True)
 
     @on(TextArea.Changed, "#settings-advanced-config-editor")
     def handle_advanced_config_changed(self, event: TextArea.Changed) -> None:

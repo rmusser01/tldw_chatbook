@@ -230,3 +230,33 @@ git diff --check
 ```
 
 Result: `90 passed` for the focused config, Settings, and Console composer regression suite, with existing dependency/deprecation warnings only, and `git diff --check` clean.
+
+## 2026-05-31 Advanced Config Recovery Closeout
+
+Branch: `codex/settings-advanced-closeout`
+
+Approved screenshot:
+
+- Advanced Config recovery and guided paths: `Docs/superpowers/qa/settings-configuration-hub/closeout-advanced-config-recovery-cdp.png`
+
+Coverage added:
+
+- Advanced Config now exposes guided category paths for Providers, Console, Storage, Privacy, and Diagnostics so Raw TOML remains the expert fallback instead of the preferred path.
+- `Load Backup` loads the `.bak` file into the editor as a preview only; it does not write the active config file and keeps Save disabled until the preview text is validated.
+- Existing safeguards remain in place: validation-before-save, stale-validation status, atomic save with `.bak` backup, and redacted validation/save errors.
+- Actual textual-web/CDP verification confirmed the Advanced Config screen renders the guided paths and recovery action in the full Settings workbench, and the approved screenshot was reviewed by the user.
+- Existing approved screenshots in this note cover Overview, Providers & Models, Appearance, Storage, Privacy & Security, Console Behavior, Diagnostics, and the previous Advanced Config state; this closeout adds the final Advanced Config recovery state.
+
+Focused verification:
+
+```bash
+python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_session_settings.py Tests/UI/test_console_native_chat_flow.py Tests/Chat/test_provider_readiness.py Tests/Chat/test_console_provider_support.py --tb=short
+git diff --check
+```
+
+Result: `249 passed` for the focused Settings, Console, and provider regression suites, with existing dependency/deprecation warnings only, and `git diff --check` clean.
+
+Residual risks:
+
+- Settings now has a verified configuration-hub foundation, but domain-specific defaults remain intentionally category-by-category follow-up work unless a source-of-truth config contract already exists.
+- Runtime MCP, ACP, Skills, Personas, Schedules, Workflows, and domain execution still belong to their owning destinations; Settings exposes ownership/status and recovery guidance, not those runtime controls.
