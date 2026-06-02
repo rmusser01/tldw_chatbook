@@ -1365,6 +1365,95 @@ async def test_settings_console_behavior_renders_global_default_controls():
 
 
 @pytest.mark.asyncio
+async def test_settings_console_behavior_renders_background_effect_controls():
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "background_effects": {
+            "enabled": False,
+            "effect": "none",
+            "scope": "transcript",
+            "intensity": "low",
+            "fps": 6,
+        }
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-console-background-effect-enabled", Button)
+        assert screen.query_one("#settings-console-background-effect-type", Select)
+        assert screen.query_one("#settings-console-background-effect-scope", Select)
+        assert screen.query_one("#settings-console-background-effect-intensity", Select)
+        assert screen.query_one("#settings-console-background-effect-fps", Input)
+        assert "Transcript (recommended)" in _visible_text(screen)
+
+
+def test_settings_console_behavior_owns_background_effect_settings():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    ownership = screen._ownership_record(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    assert "console.background_effects.*" in ownership.owns_config_sections
+
+
+@pytest.mark.asyncio
+async def test_settings_console_background_effects_save_nested_config(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "collapse_large_pastes": True,
+        "background_effects": {
+            "enabled": False,
+            "effect": "none",
+            "scope": "transcript",
+            "intensity": "low",
+            "fps": 6,
+        },
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        enabled = screen.query_one("#settings-console-background-effect-enabled", Button)
+        effect = screen.query_one("#settings-console-background-effect-type", Select)
+        fps = screen.query_one("#settings-console-background-effect-fps", Input)
+
+        enabled.press()
+        effect.value = "matrix"
+        fps.value = "10"
+        screen.handle_console_background_effect_fps_changed(Input.Changed(fps, fps.value))
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
+
+    assert saved == [
+        {
+            "console": {
+                "background_effects": {
+                    "enabled": True,
+                    "effect": "matrix",
+                    "scope": "transcript",
+                    "intensity": "low",
+                    "fps": 10,
+                }
+            }
+        }
+    ]
+    assert app.app_config["console"]["background_effects"]["enabled"] is True
+    assert app.app_config["console"]["background_effects"]["effect"] == "matrix"
+
+
+@pytest.mark.asyncio
 async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
