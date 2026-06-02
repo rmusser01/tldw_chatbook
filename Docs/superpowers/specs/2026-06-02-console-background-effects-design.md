@@ -1,7 +1,7 @@
 # Console Background Effects Design
 
 Date: 2026-06-02
-Status: Approved by user and local spec review
+Status: Approved by user; amended after post-review clarifications
 Primary Repo: `tldw_chatbook`
 Scope: Console background effects, transcript/event stream presentation, config defaults, and in-app Console settings
 
@@ -17,6 +17,8 @@ Ambient effects are presentation only. They do not become transcript content, do
 
 Local spec review passed on 2026-06-02 using the required completeness, consistency, clarity, scope, and YAGNI checklist. No implementation-planning blockers were found. External subagent review was not run because the available subagent tool is restricted to cases where the user explicitly asks for delegation.
 
+Post-review amendments clarified Settings ownership, workbench-scope fallback behavior, focus/query stability, and safe in-app frame-rate controls.
+
 ## Current Context
 
 Console is a Textual-native Chat screen with a dedicated workbench layout:
@@ -25,6 +27,7 @@ Console is a Textual-native Chat screen with a dedicated workbench layout:
 - `ConsoleSessionSurface` owns the session title, tab strip, task cards, and current `ConsoleTranscript`.
 - `ConsoleTranscript` is a focusable `VerticalScroll` widget with message reconciliation, keyboard selection, selected-message actions, empty-state copy, and plain-text export behavior.
 - Console settings already exist through `ConsoleSettingsModal`, while app-wide Console behavior is also exposed through the Settings screen and `[console]` config.
+- The Settings ownership matrix already lists Console behavior keys and must be extended for `console.background_effects.*` before guided writes are exposed.
 - Existing splash screen effects include matrix and environmental animations, but those are startup-oriented and should not be reused directly if doing so couples long-running Console behavior to splash internals.
 
 The design should preserve the existing Console transcript ownership boundary. The effect layer can wrap or sit beside transcript rendering, but it must not be mixed into transcript rows.
@@ -83,11 +86,11 @@ In-app controls should expose the same behavior:
 - Effect: none, snow, rain, matrix.
 - Scope: transcript recommended, workbench advanced.
 - Intensity: low, medium, high.
-- Frame rate: bounded numeric value or a small set of safe preset values.
+- Frame rate: safe preset control preferred, or an integer field clamped to the configured safe range.
 
 These controls are app-level Console behavior settings, not current chat session settings. If they are surfaced in `ConsoleSettingsModal`, the implementation must make the persistence boundary clear: changes write to `[console.background_effects]`, not to `ConsoleSessionSettings`.
 
-If the Settings screen already has a Console behavior category, it should show these options there as the durable configuration home. The Console settings modal may include a compact appearance section for convenience, but it must persist through the same app-level settings path.
+The Settings screen `Console Behavior` category is the durable configuration home. It should show these options, update the category ownership record, and save through the same guided Settings draft path as other Console behavior settings. The Console settings modal may include a compact appearance section for convenience, but it must persist through the same app-level settings path and refresh Settings-owned state consistently.
 
 ## UX Rules
 
@@ -103,7 +106,7 @@ Workbench scope:
 - The effect may sit behind the broader Console workbench region.
 - This scope is opt-in and should be labelled as visually busy or advanced.
 - Controls must remain readable and focus-visible at supported terminal sizes.
-- If workbench scope cannot preserve contrast reliably in implementation, it should fall back to transcript scope rather than shipping an unsafe visual mode.
+- If workbench scope cannot preserve contrast reliably in implementation, the UI should disable or normalize that option back to transcript scope and communicate the fallback. Do not silently pretend workbench mode is active.
 
 Copy:
 
@@ -139,7 +142,7 @@ Suggested widget structure:
 - `ConsoleTranscriptSurface`: host widget for transcript-only scope, containing the effect renderer and the existing `ConsoleTranscript`.
 - Optional `ConsoleWorkbenchBackgroundSurface`: host or framing path for workbench scope if implementation can preserve controls and contrast.
 
-`ConsoleSessionSurface` should continue to own the transcript area, but it may yield `ConsoleTranscriptSurface` instead of yielding `ConsoleTranscript` directly. Query contracts should remain stable where practical. Existing code that queries `#console-native-transcript` should still find the `ConsoleTranscript`.
+`ConsoleSessionSurface` should continue to own the transcript area, but it may yield `ConsoleTranscriptSurface` instead of yielding `ConsoleTranscript` directly. Existing code that queries `#console-native-transcript` must still find the `ConsoleTranscript`. The wrapper should be non-focusable or delegate focus so transcript keyboard behavior and initial focus targets do not change.
 
 ## Rendering Model
 
@@ -158,6 +161,7 @@ Rendering rules:
 - Particle counts derive from widget size and intensity presets.
 - Resize handling regenerates or clamps effect state without raising errors.
 - Rendering failure should disable the effect and leave the transcript usable.
+- Effect frame updates must not change layout dimensions, scroll position, or transcript row identity.
 
 The implementation may use `Static` text frames, `RichLog`-style renderables, or a custom widget render method. It should choose the simplest Textual-native approach that preserves layout stability and does not remount transcript rows.
 
@@ -175,6 +179,8 @@ Normalization rules:
 - Invalid `fps`: clamp to a safe range, such as 1 through 12, with default 6.
 
 The default generated config should document the available values. Existing config files without this section should continue to load without warnings or behavior changes.
+
+Settings persistence should update both durable config and the in-memory `app_config["console"]["background_effects"]` value used by the active Console screen. If the current settings save helper cannot write nested settings directly, the implementation plan should introduce a small adapter for this section rather than flattening background-effect keys into unrelated top-level Console settings.
 
 ## Accessibility And Safety
 
@@ -201,8 +207,10 @@ Focused automated coverage should include:
 
 - Config defaults include `console.background_effects` with effects disabled.
 - Config normalization handles missing and invalid values.
+- Settings ownership records include `console.background_effects.*` under Console behavior.
 - Settings UI shows effect, scope, intensity, and frame-rate controls.
 - Saving settings persists through the same app-level Console config path used by other Console behavior settings.
+- Saving settings updates active in-memory app config so Console can react without restart.
 - Disabled mode does not start an animation timer.
 - Enabling transcript scope mounts the effect host while preserving `#console-native-transcript` query behavior.
 - Transcript keyboard navigation and selected-message actions still work with the effect enabled.
