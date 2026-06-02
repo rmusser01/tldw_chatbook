@@ -15,6 +15,11 @@ dependencies: []
 Establish backlog/decisions as the canonical ADR source of truth and update agent workflow guidance so significant architectural decisions are written, linked, and tracked consistently.
 <!-- SECTION:DESCRIPTION:END -->
 
+## Setup Notes
+
+- Base commit: `fe4f92e6`
+- Duplicate check: `backlog task list --plain` found no existing ADR workflow adoption task before `TASK-76` was created.
+
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Canonical ADR template exists
