@@ -16,6 +16,8 @@ from textual.widget import Widget
 
 from tldw_chatbook.Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
+    MAX_CONSOLE_BACKGROUND_FPS,
+    MIN_CONSOLE_BACKGROUND_FPS,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
@@ -64,6 +66,14 @@ class ConsoleBackgroundEffect(Widget):
         """Return whether the current settings should render an effect."""
         return self.settings.active
 
+    @property
+    def frame_rate(self) -> int:
+        """Return renderer-clamped frames per second."""
+        return max(
+            MIN_CONSOLE_BACKGROUND_FPS,
+            min(MAX_CONSOLE_BACKGROUND_FPS, int(self.settings.fps)),
+        )
+
     def on_mount(self) -> None:
         """Start frame updates once the widget is mounted and active."""
         self._sync_timer()
@@ -109,7 +119,7 @@ class ConsoleBackgroundEffect(Widget):
         self._stop_timer()
         if not self.is_effect_active or not self.is_mounted:
             return
-        interval = 1 / max(1, self.settings.fps)
+        interval = 1 / self.frame_rate
         self._timer = self.set_interval(interval, self._advance_frame)
 
     def _stop_timer(self) -> None:

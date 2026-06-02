@@ -6,6 +6,8 @@ from textual.app import App, ComposeResult
 
 from tldw_chatbook.Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
+    MAX_CONSOLE_BACKGROUND_FPS,
+    MIN_CONSOLE_BACKGROUND_FPS,
 )
 from tldw_chatbook.Widgets.Console.console_background_effect import (
     ConsoleBackgroundEffect,
@@ -30,6 +32,18 @@ def test_console_background_effect_disabled_is_inactive():
 
     assert effect.can_focus is False
     assert effect.is_effect_active is False
+
+
+def test_console_background_effect_clamps_frame_rate():
+    high_fps_effect = ConsoleBackgroundEffect(
+        ConsoleBackgroundEffectSettings(enabled=True, effect="rain", fps=100_000)
+    )
+    low_fps_effect = ConsoleBackgroundEffect(
+        ConsoleBackgroundEffectSettings(enabled=True, effect="rain", fps=-50)
+    )
+
+    assert high_fps_effect.frame_rate == MAX_CONSOLE_BACKGROUND_FPS
+    assert low_fps_effect.frame_rate == MIN_CONSOLE_BACKGROUND_FPS
 
 
 @pytest.mark.asyncio
