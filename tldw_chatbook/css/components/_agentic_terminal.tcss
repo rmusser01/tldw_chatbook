@@ -880,6 +880,20 @@ ConsoleSettingsModal Select:focus {
     min-height: 0;
 }
 
+#console-transcript-surface {
+    height: 1fr;
+    min-height: 0;
+    layers: console-background console-content;
+}
+
+#console-transcript-background-effect {
+    layer: console-background;
+    width: 100%;
+    height: 100%;
+    color: $ds-text-muted;
+    background: transparent;
+}
+
 #console-native-transcript {
     height: 1fr;
     min-height: 0;
@@ -893,6 +907,13 @@ ConsoleSettingsModal Select:focus {
     scrollbar-color-hover: $ds-grid-line;
     scrollbar-color-active: $ds-action-focus;
     scrollbar-size: 1 1;
+}
+
+#console-transcript-surface #console-native-transcript {
+    layer: console-content;
+    height: 1fr;
+    min-height: 0;
+    background: transparent;
 }
 
 #console-transcript-title,

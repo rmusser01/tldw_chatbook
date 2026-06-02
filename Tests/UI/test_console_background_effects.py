@@ -14,6 +14,8 @@ from tldw_chatbook.Widgets.Console.console_background_effect import (
     ConsoleTranscriptSurface,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 
 
 class EffectHarness(App[None]):
@@ -123,3 +125,58 @@ async def test_console_transcript_surface_keeps_effect_behind_transcript():
         assert transcript.is_mounted
         assert effect.region == surface.region
         assert transcript.region.y == surface.region.y
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_scope_mounts_effect_without_hiding_transcript():
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "background_effects": {
+            "enabled": True,
+            "effect": "matrix",
+            "scope": "transcript",
+            "intensity": "low",
+            "fps": 6,
+        }
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _wait_for_selector(console, pilot, "#console-transcript-background-effect")
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        effect = console.query_one(
+            "#console-transcript-background-effect",
+            ConsoleBackgroundEffect,
+        )
+        assert effect.is_effect_active is True
+        assert not console.query("#console-left-rail #console-transcript-background-effect")
+        assert transcript.region.y == effect.region.y
+
+
+@pytest.mark.asyncio
+async def test_console_background_disabled_does_not_start_active_effect():
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "background_effects": {
+            "enabled": False,
+            "effect": "matrix",
+            "scope": "transcript",
+            "intensity": "low",
+            "fps": 6,
+        }
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _wait_for_selector(console, pilot, "#console-transcript-background-effect")
+
+        effect = console.query_one(
+            "#console-transcript-background-effect",
+            ConsoleBackgroundEffect,
+        )
+        assert effect.is_effect_active is False
