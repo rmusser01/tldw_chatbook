@@ -89,7 +89,13 @@ from tldw_chatbook.LLM_Provider_Catalog import (
 from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Skills_Interop import LocalSkillsService, ServerSkillsService, SkillsScopeService
-from tldw_chatbook.Sync_Interop import ServerSyncService, SyncScopeService, SyncStateRepository
+from tldw_chatbook.Sync_Interop import (
+    LocalFirstSyncService,
+    ManualSyncControlService,
+    ServerSyncService,
+    SyncScopeService,
+    SyncStateRepository,
+)
 from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
 from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
 from tldw_chatbook.MCP_Governance_Interop import MCPGovernanceScopeService, ServerMCPGovernanceService
@@ -631,6 +637,9 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.text2sql_scope_service, Text2SQLScopeService)
     assert isinstance(app.server_sync_service, ServerSyncService)
     assert isinstance(app.sync_scope_service, SyncScopeService)
+    assert isinstance(app.local_first_sync_service, LocalFirstSyncService)
+    assert isinstance(app.manual_sync_control_service, ManualSyncControlService)
+    assert app.manual_sync_control_service.local_first_sync_service is app.local_first_sync_service
     assert app.media_reading_scope_service.sync_scope_service is app.sync_scope_service
     assert app.notes_scope_service.sync_scope_service is app.sync_scope_service
     assert app.research_scope_service.sync_scope_service is app.sync_scope_service
