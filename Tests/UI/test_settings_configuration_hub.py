@@ -1542,6 +1542,112 @@ async def test_settings_console_background_workbench_loaded_scope_save_shows_fal
 
 
 @pytest.mark.asyncio
+async def test_settings_console_background_workbench_loaded_scope_unrelated_save_falls_back(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "paste_collapse_threshold": 50,
+        "background_effects": {
+            "enabled": True,
+            "effect": "rain",
+            "scope": "workbench",
+            "intensity": "low",
+            "fps": 6,
+        },
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        threshold = screen.query_one("#settings-console-paste-collapse-threshold", Input)
+
+        threshold.value = "120"
+        screen.handle_console_paste_threshold_changed(Input.Changed(threshold, threshold.value))
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Workbench scope is not available in this build; using Transcript scope.",
+        )
+
+    assert saved[0]["console"]["paste_collapse_threshold"] == 120
+    assert saved[0]["console"]["background_effects"]["scope"] == "transcript"
+    assert app.app_config["console"]["paste_collapse_threshold"] == 120
+    assert app.app_config["console"]["background_effects"]["scope"] == "transcript"
+
+
+def test_settings_console_background_workbench_raw_scope_unrelated_save_includes_fallback():
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "paste_collapse_threshold": 50,
+        "background_effects": {
+            "enabled": True,
+            "effect": "rain",
+            "scope": "workbench",
+            "intensity": "low",
+            "fps": 6,
+        },
+    }
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.CONSOLE_BEHAVIOR.value
+    draft = SettingsDraft(category=SettingsCategoryId.CONSOLE_BEHAVIOR)
+    draft.set_value("paste_collapse_threshold", 50, 120)
+    screen._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR] = draft
+    saved_args = []
+
+    def fake_worker(console_values, chat_default_values, workbench_scope_fallback=False):
+        saved_args.append((console_values, chat_default_values, workbench_scope_fallback))
+
+    screen._settings_save_console_behavior_worker = fake_worker
+
+    screen.action_settings_save_category()
+
+    console_values, chat_default_values, workbench_scope_fallback = saved_args[0]
+    assert chat_default_values == {}
+    assert console_values["paste_collapse_threshold"] == 120
+    assert console_values["background_effects"]["scope"] == "transcript"
+    assert workbench_scope_fallback is True
+
+
+@pytest.mark.asyncio
+async def test_settings_console_background_workbench_loaded_scope_mounts_as_transcript():
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "background_effects": {
+            "enabled": True,
+            "effect": "rain",
+            "scope": "workbench",
+            "intensity": "low",
+            "fps": 6,
+        },
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        scope = screen.query_one("#settings-console-background-effect-scope", Select)
+
+        assert scope.value == "transcript"
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Workbench scope is not available in this build; using Transcript scope.",
+        )
+
+
+@pytest.mark.asyncio
 async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {

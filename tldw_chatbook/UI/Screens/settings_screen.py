@@ -884,12 +884,24 @@ class SettingsScreen(BaseAppScreen):
             self._console_settings().get("background_effects")
         ).to_config()
 
+    def _raw_console_background_scope(self) -> object:
+        raw_background_effects = self._console_settings().get("background_effects")
+        if isinstance(raw_background_effects, Mapping):
+            return raw_background_effects.get("scope")
+        return None
+
+    def _loaded_console_background_scope_is_unavailable(self) -> bool:
+        return str(self._raw_console_background_scope()) == "workbench"
+
     def _console_background_effect_value(self, key: str) -> object:
         draft_key = f"background_effects.{key}"
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
         if draft is not None and draft_key in draft.values:
             return draft.values[draft_key]
-        return self._loaded_console_background_effects().get(key, "")
+        value = self._loaded_console_background_effects().get(key, "")
+        if key == "scope":
+            return self._available_console_background_scope(value)
+        return value
 
     def _stage_console_background_effect_value(self, key: str, value: object) -> None:
         category = SettingsCategoryId.CONSOLE_BEHAVIOR
@@ -912,6 +924,19 @@ class SettingsScreen(BaseAppScreen):
             if bool(self._console_background_effect_value("enabled"))
             else "Disabled"
         )
+
+    def _console_behavior_result_text(self) -> str:
+        if (
+            self._loaded_console_background_scope_is_unavailable()
+            and not self._category_has_unsaved_changes(SettingsCategoryId.CONSOLE_BEHAVIOR)
+            and self._console_behavior_result
+            in {
+                "Console behavior settings have not been saved this session.",
+                "Console behavior settings staged.",
+            }
+        ):
+            return CONSOLE_BACKGROUND_WORKBENCH_UNAVAILABLE_COPY
+        return self._console_behavior_result
 
     def _console_behavior_value(self, key: str) -> object:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -3226,7 +3251,7 @@ class SettingsScreen(BaseAppScreen):
                     ),
                 )
             yield Static(
-                self._console_behavior_result,
+                self._console_behavior_result_text(),
                 id="settings-console-behavior-result",
                 classes="settings-status-row",
             )
@@ -3726,7 +3751,7 @@ class SettingsScreen(BaseAppScreen):
             return
         self._stage_console_paste_threshold_value(event.value)
         self._console_behavior_result = "Console behavior settings staged."
-        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
+        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result_text())
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
@@ -3784,7 +3809,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _mark_console_behavior_settings_staged(self) -> None:
         self._console_behavior_result = "Console behavior settings staged."
-        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
+        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result_text())
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     @on(Button.Pressed, "#settings-console-background-effect-enabled")
@@ -3811,6 +3836,18 @@ class SettingsScreen(BaseAppScreen):
         next_scope = self._available_console_background_scope(event.value)
         category = SettingsCategoryId.CONSOLE_BEHAVIOR
         draft = self._settings_drafts.get(category)
+        if (
+            next_scope == "transcript"
+            and self._loaded_console_background_scope_is_unavailable()
+            and (
+                draft is None
+                or "background_effects.scope" not in draft.values
+            )
+        ):
+            self._console_behavior_result = CONSOLE_BACKGROUND_WORKBENCH_UNAVAILABLE_COPY
+            self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
+            self._update_draft_status_widgets(category)
+            return
         if (
             next_scope == "transcript"
             and draft is not None
@@ -4224,17 +4261,13 @@ class SettingsScreen(BaseAppScreen):
                 if key in CONSOLE_BEHAVIOR_CONSOLE_KEYS
             }
             workbench_scope_fallback = False
-            if any(
+            background_effects_dirty = any(
                 key.startswith("background_effects.") and key in CONSOLE_BACKGROUND_EFFECT_KEYS
                 for key in dirty_values
-            ):
+            )
+            raw_scope = self._raw_console_background_scope()
+            if background_effects_dirty or str(raw_scope) == "workbench":
                 merged_background_effects = self._loaded_console_background_effects()
-                raw_background_effects = self._console_settings().get("background_effects")
-                raw_scope = (
-                    raw_background_effects.get("scope")
-                    if isinstance(raw_background_effects, Mapping)
-                    else None
-                )
                 for key in CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER:
                     if key in dirty_values:
                         merged_background_effects[key.removeprefix("background_effects.")] = (
