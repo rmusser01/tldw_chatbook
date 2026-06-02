@@ -13,7 +13,7 @@ The first rollout adds lightweight documentation artifacts and project-specific 
 
 ## Spec Review
 
-Local spec review passed on 2026-06-02 using the required completeness, consistency, clarity, scope, and YAGNI checklist. No implementation-planning blockers were found. External subagent review was not run because the available subagent tool is restricted to cases where the user explicitly asks for delegation.
+Initial local spec review passed on 2026-06-02 using the required completeness, consistency, clarity, scope, and YAGNI checklist. A follow-up user-requested review identified path casing and first-canonical-ADR artifact clarity issues; this spec was amended to resolve them. External subagent review was not run because the available subagent tool is restricted to cases where the user explicitly asks for delegation.
 
 ## Current Context
 
@@ -21,7 +21,8 @@ The repository already has several decision-documentation patterns:
 
 - `AGENTS.md` says project decisions live in `backlog/decisions/`, but that directory currently has no canonical ADR process or files.
 - Several older design and development docs contain embedded ADR sections.
-- Higgs TTS has separate ADR-like files in `docs/Development/TTS/`.
+- Higgs TTS has separate ADR-like files in `Docs/Development/TTS/`.
+- The tracked documentation tree uses uppercase `Docs/`; new links and generated docs should preserve that casing.
 - Backlog tasks already require implementation plans, implementation notes, DoD checklists, and relevant documentation updates.
 - Superpowers specs and plans already provide a design-to-plan-to-implementation workflow, but they do not consistently force an architectural decision check.
 
@@ -53,8 +54,9 @@ Use numeric filenames:
 ```text
 backlog/decisions/
   000-template.md
-  001-console-native-chat-contract.md
-  002-sync-v2-conflict-policy.md
+  001-adopt-backlog-decisions-as-canonical-adrs.md
+  002-console-native-chat-contract.md
+  003-sync-v2-conflict-policy.md
 ```
 
 `backlog/decisions/README.md` is the index and workflow guide. It lists accepted ADRs, superseded ADRs, and historical ADR-like documents outside the canonical ADR directory.
@@ -147,6 +149,19 @@ What this decision means going forward, including accepted tradeoffs.
 
 The template is intentionally short. Long implementation plans belong in Backlog tasks or Superpowers plans, not ADRs.
 
+## First Canonical ADR
+
+The first implementation should create `backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md`.
+
+That ADR records the meta-decision established by this design:
+
+- `backlog/decisions/` is the canonical ADR location.
+- ADRs are required for significant architectural choices, not every task.
+- Existing ADR-like material remains historical unless later superseded by a canonical ADR.
+- ADR checks are enforced through Backlog and Superpowers workflow guidance in the first pass, without automation.
+
+This first ADR should link this design spec and any Backlog task created for the rollout.
+
 ## Backlog.md Integration
 
 `AGENTS.md` should update the Backlog workflow with ADR-specific guidance:
@@ -175,7 +190,7 @@ The global Superpowers skills under `~/.codex/superpowers/skills/` should not be
 
 Existing ADR-like material should remain in place. The first rollout should add `backlog/decisions/historical-index.md` that links notable historical decision material, including:
 
-- Separate Higgs TTS ADR files under `docs/Development/TTS/`.
+- Separate Higgs TTS ADR files under `Docs/Development/TTS/`.
 - Embedded RAG ADR sections.
 - Embedded subscriptions ADR sections.
 - Embedded Chatbook, Chat, Worldbooks, diarization, and TTS decision sections.
@@ -188,8 +203,10 @@ The first implementation should verify:
 
 - `AGENTS.md` clearly names `backlog/decisions/` as canonical.
 - `000-template.md` can represent proposed, accepted, and superseded decisions.
+- `001-adopt-backlog-decisions-as-canonical-adrs.md` records the canonical ADR workflow meta-decision.
 - `README.md` explains when an ADR is required and when it is not.
 - `historical-index.md` links existing ADR-like docs without rewriting them.
+- Historical links and Superpowers links use tracked `Docs/` path casing.
 - Backlog task guidance includes an ADR check in planning and closeout.
 - The design spec and implementation plan explain that no automation is included in the first pass.
 
@@ -197,7 +214,7 @@ No automated tests are required for the documentation-only first pass unless too
 
 ## Rollout
 
-1. Add the ADR workflow docs/templates and update `AGENTS.md`.
+1. Add the ADR workflow documentation, template, first canonical ADR, historical index, and `AGENTS.md` updates.
 2. Use the workflow on real future tasks.
 3. After several tasks, decide whether to generalize the wording into global Superpowers skills.
 4. Add automation only if checklist enforcement fails in practice.
