@@ -94,6 +94,10 @@ from ...Library.library_rag_service import (
 )
 from ...Constants import TAB_SETTINGS
 from ...Utils.chat_diagnostics import ChatDiagnostics
+from ...Utils.console_background_effects import (
+    ConsoleBackgroundEffectSettings,
+    normalize_console_background_effects,
+)
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
@@ -467,12 +471,16 @@ class ChatScreen(BaseAppScreen):
         return self.chat_window
 
     def _ensure_console_session_surface(self) -> ConsoleSessionSurface:
+        settings = self._console_background_effect_settings()
         if self.console_session_surface is None:
             self.console_session_surface = ConsoleSessionSurface(
                 self.app_instance,
+                background_effect_settings=settings,
                 id="console-session-surface",
                 classes="console-region",
             )
+        else:
+            self.console_session_surface.sync_background_effect_settings(settings)
         return self.console_session_surface
 
     def _consume_pending_console_launch(self) -> Optional[ConsoleLiveWorkLaunch]:
@@ -492,6 +500,17 @@ class ChatScreen(BaseAppScreen):
         config = getattr(self.app_instance, "app_config", {}) or {}
         defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
         return defaults.get(key) if isinstance(defaults, dict) else None
+
+    def _console_background_effect_settings(self) -> ConsoleBackgroundEffectSettings:
+        """Return normalized Console transcript background effect settings."""
+        config = getattr(self.app_instance, "app_config", {}) or {}
+        console = config.get("console", {}) if isinstance(config, dict) else {}
+        background = (
+            console.get("background_effects", {})
+            if isinstance(console, dict)
+            else {}
+        )
+        return normalize_console_background_effects(background)
 
     @staticmethod
     def _is_console_choose_model_action(label: object) -> bool:

@@ -10,6 +10,18 @@ def test_console_large_paste_collapse_defaults_enabled():
     assert config_module.DEFAULT_CONFIG_FROM_TOML["console"]["paste_collapse_threshold"] == 50
 
 
+def test_console_background_effect_defaults_disabled():
+    background = config_module.DEFAULT_CONFIG_FROM_TOML["console"]["background_effects"]
+
+    assert background == {
+        "enabled": False,
+        "effect": "none",
+        "scope": "transcript",
+        "intensity": "low",
+        "fps": 6,
+    }
+
+
 def test_load_settings_exposes_console_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
 
@@ -48,6 +60,34 @@ def test_load_settings_rejects_boolean_console_paste_threshold(tmp_path, monkeyp
             settings["console"]["paste_collapse_threshold"]
             == config_module.DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD
         )
+
+
+def test_load_settings_normalizes_console_background_effects(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[console.background_effects]",
+                'enabled = "true"',
+                'effect = "fire"',
+                'scope = "everywhere"',
+                'intensity = "extreme"',
+                "fps = 99",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+
+    assert settings["console"]["background_effects"] == {
+        "enabled": True,
+        "effect": "none",
+        "scope": "transcript",
+        "intensity": "low",
+        "fps": 12,
+    }
 
 
 def test_load_settings_coerces_console_string_false(tmp_path, monkeypatch):

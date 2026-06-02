@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Utils.console_background_effects import ConsoleBackgroundEffectSettings
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+from tldw_chatbook.Widgets.Console.console_background_effect import ConsoleTranscriptSurface
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
@@ -26,9 +30,18 @@ CONSOLE_TRANSCRIPT_TITLE = "Transcript / Event Stream"
 class ConsoleSessionSurface(Vertical):
     """Host Console transcript/event stream sessions without legacy chat chrome."""
 
-    def __init__(self, app_instance: Any, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        app_instance: Any,
+        *,
+        background_effect_settings: ConsoleBackgroundEffectSettings | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.background_effect_settings = (
+            background_effect_settings or ConsoleBackgroundEffectSettings()
+        )
         self._session_sync_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
@@ -51,7 +64,13 @@ class ConsoleSessionSurface(Vertical):
         with tab_strip:
             yield self._build_new_tab_button()
         yield ChatTaskCards(id="console-task-surface")
-        yield ConsoleTranscript(id="console-native-transcript")
+        yield ConsoleTranscriptSurface(
+            self._transcript_background_effect_settings(
+                self.background_effect_settings
+            ),
+            id="console-transcript-surface",
+            classes="console-transcript-surface",
+        )
 
     def _build_new_tab_button(self) -> Button:
         """Return the compact symbolic Console new-session control."""
@@ -206,3 +225,27 @@ class ConsoleSessionSurface(Vertical):
         except Exception:
             return
         transcript.sync_empty_state(copy if visible else "")
+
+    def sync_background_effect_settings(
+        self,
+        settings: ConsoleBackgroundEffectSettings,
+    ) -> None:
+        """Apply updated Console background settings to the mounted transcript surface."""
+        self.background_effect_settings = settings
+        try:
+            surface = self.query_one(
+                "#console-transcript-surface",
+                ConsoleTranscriptSurface,
+            )
+        except NoMatches:
+            return
+        surface.update_settings(self._transcript_background_effect_settings(settings))
+
+    @staticmethod
+    def _transcript_background_effect_settings(
+        settings: ConsoleBackgroundEffectSettings,
+    ) -> ConsoleBackgroundEffectSettings:
+        """Return settings safe for the transcript-scoped effect surface."""
+        if settings.scope == "transcript":
+            return settings
+        return replace(settings, enabled=False)

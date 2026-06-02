@@ -22,6 +22,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBErro
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError as MediaDBError, SchemaError as MediaSchemaError, ConflictError as MediaConflictError
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase, DatabaseError as PromptsDBError, SchemaError as PromptsSchemaError, ConflictError as PromptsConflictError
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
+from tldw_chatbook.Utils.console_background_effects import normalize_console_background_effects
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 #
 #######################################################################################################################
@@ -712,6 +713,12 @@ def load_settings(force_reload: bool = False) -> Dict:
         DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
         minimum=MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
         maximum=MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    )
+    background_effects = final_console_settings_cli.get("background_effects")
+    if not isinstance(background_effects, dict):
+        background_effects = {}
+    final_console_settings_cli["background_effects"] = (
+        normalize_console_background_effects(background_effects).to_config()
     )
 
     # --- Application Mode ---
@@ -1425,6 +1432,13 @@ users_name = "default_user" # Default user name for the TUI
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
+
+[console.background_effects]
+enabled = false  # Optional Console ambience. Off by default for readability.
+effect = "none"  # none, snow, rain, matrix
+scope = "transcript"  # transcript, workbench
+intensity = "low"  # low, medium, high
+fps = 6  # 1-12
 
 [acp.runtime]
 # ACP owns runtime launch/setup. Leave command empty to keep ACP honestly blocked.
