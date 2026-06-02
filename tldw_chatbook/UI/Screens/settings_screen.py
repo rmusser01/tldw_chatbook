@@ -47,7 +47,12 @@ from ...Utils.input_validation import (
     validate_url,
 )
 from ...Utils.console_background_effects import (
+    CONSOLE_BACKGROUND_EFFECTS,
+    CONSOLE_BACKGROUND_INTENSITIES,
+    CONSOLE_BACKGROUND_SCOPES,
     DEFAULT_CONSOLE_BACKGROUND_FPS,
+    MAX_CONSOLE_BACKGROUND_FPS,
+    MIN_CONSOLE_BACKGROUND_FPS,
     normalize_console_background_effects,
 )
 from ...Utils.path_validation import validate_path_simple
@@ -79,7 +84,7 @@ CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
         "paste_collapse_threshold",
     }
 )
-CONSOLE_BACKGROUND_EFFECT_DRAFT_KEYS = frozenset(
+CONSOLE_BACKGROUND_EFFECT_KEYS = frozenset(
     {
         "background_effects.enabled",
         "background_effects.effect",
@@ -87,6 +92,13 @@ CONSOLE_BACKGROUND_EFFECT_DRAFT_KEYS = frozenset(
         "background_effects.intensity",
         "background_effects.fps",
     }
+)
+CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER = (
+    "background_effects.enabled",
+    "background_effects.effect",
+    "background_effects.scope",
+    "background_effects.intensity",
+    "background_effects.fps",
 )
 CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
     {
@@ -103,11 +115,7 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "temperature",
     "top_p",
     "max_tokens",
-    "background_effects.enabled",
-    "background_effects.effect",
-    "background_effects.scope",
-    "background_effects.intensity",
-    "background_effects.fps",
+    *CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER,
 )
 ADVANCED_CONFIG_GUIDED_PATHS = (
     (SettingsCategoryId.PROVIDERS_MODELS, "Providers"),
@@ -3147,10 +3155,14 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Background effect", classes="settings-input-label")
                 yield Select(
                     [
-                        ("None", "none"),
-                        ("Snow", "snow"),
-                        ("Rain", "rain"),
-                        ("Matrix", "matrix"),
+                        (label, value)
+                        for label, value in (
+                            ("None", "none"),
+                            ("Snow", "snow"),
+                            ("Rain", "rain"),
+                            ("Matrix", "matrix"),
+                        )
+                        if value in CONSOLE_BACKGROUND_EFFECTS
                     ],
                     value=str(self._console_background_effect_value("effect") or "none"),
                     id="settings-console-background-effect-type",
@@ -3161,8 +3173,12 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Scope", classes="settings-input-label")
                 yield Select(
                     [
-                        ("Transcript (recommended)", "transcript"),
-                        ("Workbench (advanced)", "workbench"),
+                        (label, value)
+                        for label, value in (
+                            ("Transcript (recommended)", "transcript"),
+                            ("Workbench (advanced)", "workbench"),
+                        )
+                        if value in CONSOLE_BACKGROUND_SCOPES
                     ],
                     value=str(self._console_background_effect_value("scope") or "transcript"),
                     id="settings-console-background-effect-scope",
@@ -3173,9 +3189,13 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Intensity", classes="settings-input-label")
                 yield Select(
                     [
-                        ("Low", "low"),
-                        ("Medium", "medium"),
-                        ("High", "high"),
+                        (label, value)
+                        for label, value in (
+                            ("Low", "low"),
+                            ("Medium", "medium"),
+                            ("High", "high"),
+                        )
+                        if value in CONSOLE_BACKGROUND_INTENSITIES
                     ],
                     value=str(self._console_background_effect_value("intensity") or "low"),
                     id="settings-console-background-effect-intensity",
@@ -3191,8 +3211,12 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-background-effect-fps",
                     classes="settings-compact-input",
-                    placeholder=str(DEFAULT_CONSOLE_BACKGROUND_FPS),
+                    placeholder=f"{DEFAULT_CONSOLE_BACKGROUND_FPS}",
                     restrict=r"^[0-9]*$",
+                    tooltip=(
+                        f"Frame rate from {MIN_CONSOLE_BACKGROUND_FPS} to "
+                        f"{MAX_CONSOLE_BACKGROUND_FPS} FPS."
+                    ),
                 )
             yield Static(
                 self._console_behavior_result,
@@ -3766,6 +3790,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Select.Changed, "#settings-console-background-effect-type")
     def handle_console_background_effect_type_changed(self, event: Select.Changed) -> None:
+        event.stop()
         if self._syncing_console_background_effects:
             return
         self._stage_console_background_effect_value("effect", str(event.value or "none"))
@@ -3773,6 +3798,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Select.Changed, "#settings-console-background-effect-scope")
     def handle_console_background_effect_scope_changed(self, event: Select.Changed) -> None:
+        event.stop()
         if self._syncing_console_background_effects:
             return
         self._stage_console_background_effect_value("scope", str(event.value or "transcript"))
@@ -3780,6 +3806,7 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Select.Changed, "#settings-console-background-effect-intensity")
     def handle_console_background_effect_intensity_changed(self, event: Select.Changed) -> None:
+        event.stop()
         if self._syncing_console_background_effects:
             return
         self._stage_console_background_effect_value("intensity", str(event.value or "low"))
@@ -4164,16 +4191,16 @@ class SettingsScreen(BaseAppScreen):
                 for key, value in dirty_values.items()
                 if key in CONSOLE_BEHAVIOR_CONSOLE_KEYS
             }
-            background_effect_values = {
-                key.removeprefix("background_effects."): value
-                for key, value in dirty_values.items()
-                if key in CONSOLE_BACKGROUND_EFFECT_DRAFT_KEYS
-            }
-            if background_effect_values:
-                merged_background_effects = {
-                    **self._loaded_console_background_effects(),
-                    **background_effect_values,
-                }
+            if any(
+                key.startswith("background_effects.") and key in CONSOLE_BACKGROUND_EFFECT_KEYS
+                for key in dirty_values
+            ):
+                merged_background_effects = self._loaded_console_background_effects()
+                for key in CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER:
+                    if key in dirty_values:
+                        merged_background_effects[key.removeprefix("background_effects.")] = (
+                            dirty_values[key]
+                        )
                 console_values["background_effects"] = (
                     normalize_console_background_effects(
                         merged_background_effects
@@ -4295,11 +4322,14 @@ class SettingsScreen(BaseAppScreen):
         if saved:
             normalized_console_values = dict(console_values)
             if "background_effects" in normalized_console_values:
-                normalized_console_values["background_effects"] = (
-                    normalize_console_background_effects(
-                        normalized_console_values["background_effects"]
-                    ).to_config()
+                self._console_settings()["background_effects"] = dict(
+                    normalized_console_values["background_effects"]
                 )
+                normalized_console_values = {
+                    key: value
+                    for key, value in normalized_console_values.items()
+                    if key != "background_effects"
+                }
             self._console_settings().update(normalized_console_values)
             self._chat_defaults().update(chat_default_values)
             self._settings_drafts.pop(SettingsCategoryId.CONSOLE_BEHAVIOR, None)
