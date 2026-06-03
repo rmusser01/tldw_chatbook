@@ -338,6 +338,12 @@ async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_fa
         dataset_id="dataset-1",
         status="dispatched",
     )
+    reviews = repo.list_sync_v2_conflict_reviews(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
 
     assert [envelope["client_envelope_id"] for envelope in server.calls[0][3]] == [
         accepted.client_envelope_id,
@@ -356,6 +362,9 @@ async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_fa
     ]
     assert pending_after[0]["last_error"]["error_code"] == "stale_base"
     assert pending_after[1]["last_error"]["error_code"] == "conflict"
+    assert reviews[0]["source_conflict_key"] == conflicted.client_envelope_id
+    assert reviews[0]["item_label"] == "notes note-3"
+    assert reviews[0]["recovery_options"]["accept-remote"] == "available"
     assert repo.get_sync_v2_profile_state(
         server_profile_id="server-a",
         authenticated_principal_id="user-a",
@@ -822,12 +831,63 @@ async def test_local_first_sync_once_preserves_push_and_apply_attention_statuses
         authenticated_principal_id="user-a",
         workspace_scope="workspace-1",
     )
+    reviews = repo.list_sync_v2_conflict_reviews(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
 
     assert result["outbox_retained"] == 1
     assert result["conflicts"][0]["conflict_type"] == "encrypted_content_edit"
+    assert reviews[0]["conflict_kind"] == "encrypted_content_edit"
+    assert reviews[0]["item_label"] == "notes note-2"
+    assert reviews[0]["recovery_options"]["keep-local"] == "available"
     assert profile["last_error"] == (
         "push_partial_failure: stale_base; apply_conflict: encrypted_content_edit"
     )
+
+
+async def test_local_first_sync_apply_conflict_review_uses_safe_fallback_key(tmp_path):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+    service = LocalFirstSyncService(
+        server_service=FakeLocalFirstServer(),
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    service._record_conflict_reviews(
+        profile=profile,
+        dataset_id="dataset-1",
+        outbox_entries=[],
+        push_conflicts=[],
+        apply_conflicts=[
+            {
+                "domain": "notes",
+                "conflict_type": "encrypted_content_edit",
+                "message": "Malformed apply conflict.",
+            }
+        ],
+    )
+    reviews = repo.list_sync_v2_conflict_reviews(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
+
+    assert reviews[0]["source_conflict_key"] != "None"
+    assert reviews[0]["source_conflict_key"].startswith(
+        "apply-conflict:notes:encrypted_content_edit:"
+    )
+    assert reviews[0]["item_label"] != "notes None"
 
 
 async def test_local_first_sync_once_uses_stable_push_idempotency_key_for_retry(tmp_path):

@@ -307,6 +307,13 @@ class LocalFirstSyncService:
             for result in results
             if result.get("status") == "conflict" and "conflict" in result
         ]
+        self._record_conflict_reviews(
+            profile=profile,
+            dataset_id=str(dataset_id),
+            outbox_entries=outbox_entries,
+            push_conflicts=push_record.get("conflicts", []),
+            apply_conflicts=conflicts,
+        )
         self._persist_profile_state(
             profile=profile,
             dataset_cursors=dataset_cursors,
@@ -438,6 +445,99 @@ class LocalFirstSyncService:
             ],
             conflicts=[],
         )
+
+    def _record_conflict_reviews(
+        self,
+        *,
+        profile: Mapping[str, Any],
+        dataset_id: str,
+        outbox_entries: list[Mapping[str, Any]],
+        push_conflicts: list[Mapping[str, Any]],
+        apply_conflicts: list[Mapping[str, Any]],
+    ) -> None:
+        if not hasattr(self.state_repository, "record_sync_v2_conflict_review"):
+            return
+        outbox_by_client_id = {
+            str(entry.get("client_envelope_id")): entry
+            for entry in outbox_entries
+            if entry.get("client_envelope_id")
+        }
+        for conflict in push_conflicts:
+            client_envelope_id = str(conflict.get("client_envelope_id") or "").strip()
+            if not client_envelope_id:
+                continue
+            outbox_entry = outbox_by_client_id.get(client_envelope_id, {})
+            envelope = outbox_entry.get("envelope") if isinstance(outbox_entry.get("envelope"), Mapping) else {}
+            domain = str(envelope.get("domain") or conflict.get("domain") or "sync_v2")
+            entity_id = str(envelope.get("entity_id") or client_envelope_id)
+            self.state_repository.record_sync_v2_conflict_review(
+                server_profile_id=str(profile["server_profile_id"]),
+                authenticated_principal_id=profile.get("authenticated_principal_id"),
+                workspace_scope=profile.get("workspace_scope"),
+                dataset_id=dataset_id,
+                domain=domain,
+                item_label=f"{domain} {entity_id}",
+                cause=self._conflict_cause(conflict),
+                local_summary=f"Local pending {domain} change retained after server conflict.",
+                remote_summary=str(
+                    conflict.get("remote_summary")
+                    or "Remote version requires review before overwrite."
+                ),
+                source_conflict_key=client_envelope_id,
+                conflict_kind=str(conflict.get("conflict_type") or conflict.get("error_code") or "push_conflict"),
+                recovery_options=self._available_conflict_recovery_options(),
+                details=dict(conflict),
+            )
+        for index, conflict in enumerate(apply_conflicts, start=1):
+            client_envelope_id = str(conflict.get("client_envelope_id") or "").strip()
+            domain = str(conflict.get("domain") or "sync_v2")
+            conflict_kind = str(conflict.get("conflict_type") or "apply_conflict")
+            fallback_key = conflict.get("stable_key") or conflict.get("entity_id")
+            source_conflict_key = client_envelope_id or str(fallback_key or "").strip()
+            if not source_conflict_key:
+                source_conflict_key = f"apply-conflict:{domain}:{conflict_kind}:{index}"
+            entity_id = str(conflict.get("entity_id") or source_conflict_key)
+            self.state_repository.record_sync_v2_conflict_review(
+                server_profile_id=str(profile["server_profile_id"]),
+                authenticated_principal_id=profile.get("authenticated_principal_id"),
+                workspace_scope=profile.get("workspace_scope"),
+                dataset_id=dataset_id,
+                domain=domain,
+                item_label=f"{domain} {entity_id}",
+                cause=self._conflict_cause(conflict),
+                local_summary=str(
+                    conflict.get("local_summary")
+                    or f"Local {domain} state blocked remote apply."
+                ),
+                remote_summary=str(
+                    conflict.get("remote_summary")
+                    or "Remote envelope could not be applied safely."
+                ),
+                source_conflict_key=source_conflict_key,
+                conflict_kind=conflict_kind,
+                recovery_options=self._available_conflict_recovery_options(),
+                details=dict(conflict),
+            )
+
+    @staticmethod
+    def _available_conflict_recovery_options() -> dict[str, str]:
+        return {
+            "retry": "available",
+            "keep-local": "available",
+            "accept-remote": "available",
+            "duplicate-fork": "available",
+            "defer-later": "available",
+        }
+
+    @staticmethod
+    def _conflict_cause(conflict: Mapping[str, Any]) -> str:
+        cause = conflict.get("message") or conflict.get("cause")
+        if cause:
+            return str(cause)
+        conflict_type = conflict.get("conflict_type") or conflict.get("error_code")
+        if conflict_type:
+            return str(conflict_type)
+        return "Sync v2 conflict requires review."
 
     def _persist_profile_state(
         self,

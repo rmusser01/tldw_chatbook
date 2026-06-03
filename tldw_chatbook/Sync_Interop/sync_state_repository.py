@@ -29,7 +29,16 @@ _LOCAL_NULL_ALLOWED = {"candidate", "orphaned_remote", "unsupported"}
 _REMOTE_NULL_ALLOWED = {"candidate", "orphaned_local", "unsupported"}
 _SYNC_V2_PROFILE_MODES = {"local_only", "local_first", "local_first_sync", "server_frontend"}
 _SYNC_V2_OUTBOX_STATUSES = {"pending", "dispatched"}
-SYNC_STATE_SCHEMA_VERSION = 2
+_SYNC_V2_CONFLICT_RESOLUTION_STATUSES = {
+    "open",
+    "retry",
+    "keep-local",
+    "accept-remote",
+    "duplicate-fork",
+    "defer-later",
+}
+SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT = 100
+SYNC_STATE_SCHEMA_VERSION = 3
 _FILTER_UNSET = object()
 
 
@@ -92,7 +101,7 @@ class SyncStateRepository(BaseDB):
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY NOT NULL
                 );
-                INSERT OR IGNORE INTO schema_version (version) VALUES (2);
+                INSERT OR IGNORE INTO schema_version (version) VALUES (3);
 
                 CREATE TABLE IF NOT EXISTS sync_identity_mappings (
                     mapping_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -218,6 +227,32 @@ class SyncStateRepository(BaseDB):
 
                 CREATE INDEX IF NOT EXISTS idx_sync_v2_outbox_scope_status
                     ON sync_v2_local_outbox(source_scope_key, dataset_id, status, outbox_id);
+
+                CREATE TABLE IF NOT EXISTS sync_v2_conflict_reviews (
+                    conflict_review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_scope_key TEXT NOT NULL,
+                    server_profile_id TEXT NOT NULL,
+                    authenticated_principal_id TEXT NOT NULL,
+                    workspace_scope TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL,
+                    domain TEXT NOT NULL,
+                    source_conflict_key TEXT NOT NULL,
+                    conflict_kind TEXT NOT NULL,
+                    item_label TEXT NOT NULL,
+                    cause TEXT NOT NULL,
+                    local_summary TEXT NOT NULL,
+                    remote_summary TEXT NOT NULL,
+                    recovery_options TEXT NOT NULL,
+                    resolution_status TEXT NOT NULL,
+                    details TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    resolved_at TEXT,
+                    UNIQUE(source_scope_key, dataset_id, source_conflict_key)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_sync_v2_conflict_reviews_scope
+                    ON sync_v2_conflict_reviews(source_scope_key, dataset_id, resolution_status, conflict_review_id);
                 """
             )
             self._ensure_sync_v2_profile_columns(conn)
@@ -756,6 +791,18 @@ class SyncStateRepository(BaseDB):
                     _scope_value(authenticated_principal_id),
                 ),
             )
+            conn.execute(
+                """
+                DELETE FROM sync_v2_conflict_reviews
+                WHERE server_profile_id = ?
+                  AND (? IS NULL OR authenticated_principal_id = ?)
+                """,
+                (
+                    _scope_value(server_profile_id),
+                    authenticated_principal_id,
+                    _scope_value(authenticated_principal_id),
+                ),
+            )
             conn.commit()
 
     def enqueue_sync_v2_outbox_envelope(
@@ -977,6 +1024,176 @@ class SyncStateRepository(BaseDB):
                 retained += cursor.rowcount
             conn.commit()
         return {"dispatched": dispatched, "retained": retained}
+
+    def record_sync_v2_conflict_review(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        domain: str,
+        item_label: str,
+        cause: str,
+        local_summary: str,
+        remote_summary: str,
+        source_conflict_key: str,
+        conflict_kind: str,
+        recovery_options: Mapping[str, str],
+        details: Mapping[str, Any] | None = None,
+        resolution_status: str = "open",
+    ) -> dict[str, Any]:
+        """Persist or update a user-facing Sync v2 conflict review row."""
+
+        if resolution_status not in _SYNC_V2_CONFLICT_RESOLUTION_STATUSES:
+            allowed = ", ".join(sorted(_SYNC_V2_CONFLICT_RESOLUTION_STATUSES))
+            raise ValueError(f"resolution_status must be one of: {allowed}")
+        if not dataset_id:
+            raise ValueError("dataset_id is required")
+        for field_name, value in (
+            ("domain", domain),
+            ("item_label", item_label),
+            ("cause", cause),
+            ("local_summary", local_summary),
+            ("remote_summary", remote_summary),
+            ("source_conflict_key", source_conflict_key),
+            ("conflict_kind", conflict_kind),
+        ):
+            if not str(value or "").strip():
+                raise ValueError(f"{field_name} is required")
+        source_scope_key = _sync_v2_outbox_scope_key(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        now = _utc_now()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO sync_v2_conflict_reviews (
+                    source_scope_key,
+                    server_profile_id,
+                    authenticated_principal_id,
+                    workspace_scope,
+                    dataset_id,
+                    domain,
+                    source_conflict_key,
+                    conflict_kind,
+                    item_label,
+                    cause,
+                    local_summary,
+                    remote_summary,
+                    recovery_options,
+                    resolution_status,
+                    details,
+                    created_at,
+                    updated_at,
+                    resolved_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                ON CONFLICT(source_scope_key, dataset_id, source_conflict_key)
+                DO UPDATE SET
+                    domain = excluded.domain,
+                    conflict_kind = excluded.conflict_kind,
+                    item_label = excluded.item_label,
+                    cause = excluded.cause,
+                    local_summary = excluded.local_summary,
+                    remote_summary = excluded.remote_summary,
+                    recovery_options = excluded.recovery_options,
+                    resolution_status = excluded.resolution_status,
+                    details = excluded.details,
+                    updated_at = excluded.updated_at,
+                    resolved_at = CASE
+                        WHEN excluded.resolution_status = 'open' THEN NULL
+                        ELSE excluded.updated_at
+                    END
+                """,
+                (
+                    source_scope_key,
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                    dataset_id,
+                    domain,
+                    source_conflict_key,
+                    conflict_kind,
+                    item_label,
+                    cause,
+                    local_summary,
+                    remote_summary,
+                    _json_dumps(dict(recovery_options)),
+                    resolution_status,
+                    _json_dumps(dict(details or {})),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        rows = self.list_sync_v2_conflict_reviews(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            dataset_id=dataset_id,
+            source_conflict_key=source_conflict_key,
+        )
+        if not rows:
+            raise RuntimeError("failed to persist Sync v2 conflict review")
+        return rows[0]
+
+    def list_sync_v2_conflict_reviews(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        domains: list[str] | None = None,
+        source_conflict_key: str | None = None,
+        resolution_status: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return durable Sync v2 conflict review rows for one profile dataset."""
+
+        if resolution_status is not None and resolution_status not in _SYNC_V2_CONFLICT_RESOLUTION_STATUSES:
+            allowed = ", ".join(sorted(_SYNC_V2_CONFLICT_RESOLUTION_STATUSES))
+            raise ValueError(f"resolution_status must be one of: {allowed}")
+        limit = _normalize_optional_limit(limit) or SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT
+        source_scope_key = _sync_v2_outbox_scope_key(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        domain_values = tuple(dict.fromkeys(str(domain) for domain in domains or () if str(domain)))
+        domain_clause = ""
+        params: list[Any] = [
+            source_scope_key,
+            dataset_id,
+            source_conflict_key,
+            source_conflict_key,
+            resolution_status,
+            resolution_status,
+        ]
+        if domain_values:
+            placeholders = ", ".join("?" for _ in domain_values)
+            domain_clause = f" AND domain IN ({placeholders})"
+            params.extend(domain_values)
+        params.append(limit)
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM sync_v2_conflict_reviews
+                WHERE source_scope_key = ?
+                  AND dataset_id = ?
+                  AND (? IS NULL OR source_conflict_key = ?)
+                  AND (? IS NULL OR resolution_status = ?)
+                  {domain_clause}
+                ORDER BY conflict_review_id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._sync_v2_conflict_review_from_row(row) for row in rows]
 
     def set_sync_profile_state(
         self,
@@ -1408,10 +1625,53 @@ class SyncStateRepository(BaseDB):
                 """,
                 (f"{scope_prefix}%",),
             ).fetchone()
-        latest = [dict(row) for row in rows]
-        for report in latest:
+            review_rows = conn.execute(
+                """
+                SELECT *
+                FROM sync_v2_conflict_reviews
+                WHERE source_scope_key = ?
+                  AND resolution_status = 'open'
+                ORDER BY conflict_review_id DESC
+                LIMIT 5
+                """,
+                (
+                    _sync_v2_outbox_scope_key(
+                        server_profile_id=server_profile_id,
+                        authenticated_principal_id=authenticated_principal_id,
+                        workspace_scope=workspace_scope,
+                    ),
+                ),
+            ).fetchall()
+            review_count_row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM sync_v2_conflict_reviews
+                WHERE source_scope_key = ?
+                  AND resolution_status = 'open'
+                """,
+                (
+                    _sync_v2_outbox_scope_key(
+                        server_profile_id=server_profile_id,
+                        authenticated_principal_id=authenticated_principal_id,
+                        workspace_scope=workspace_scope,
+                    ),
+                ),
+            ).fetchone()
+        legacy_latest = [dict(row) for row in rows]
+        for report in legacy_latest:
             report["details"] = json.loads(report["details"])
-        return {"count": int(count_row["count"] if count_row else 0), "latest": latest}
+        v2_latest = [
+            self._sync_v2_conflict_review_from_row(row)
+            for row in review_rows
+        ]
+        latest = sorted(
+            legacy_latest + v2_latest,
+            key=_sync_v2_conflict_summary_sort_key,
+            reverse=True,
+        )
+        count = int(count_row["count"] if count_row else 0)
+        count += int(review_count_row["count"] if review_count_row else 0)
+        return {"count": count, "latest": latest[:5]}
 
     def _get_mirror_report_by_id(self, report_id: int | None) -> dict[str, Any] | None:
         if report_id is None:
@@ -1543,6 +1803,30 @@ class SyncStateRepository(BaseDB):
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "dispatched_at": row["dispatched_at"],
+        }
+
+    @staticmethod
+    def _sync_v2_conflict_review_from_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "conflict_review_id": int(row["conflict_review_id"]),
+            "source_scope_key": row["source_scope_key"],
+            "server_profile_id": _restore_scope_value(row["server_profile_id"]),
+            "authenticated_principal_id": _restore_scope_value(row["authenticated_principal_id"]),
+            "workspace_scope": _restore_scope_value(row["workspace_scope"]),
+            "dataset_id": row["dataset_id"],
+            "domain": row["domain"],
+            "source_conflict_key": row["source_conflict_key"],
+            "conflict_kind": row["conflict_kind"],
+            "item_label": row["item_label"],
+            "cause": row["cause"],
+            "local_summary": row["local_summary"],
+            "remote_summary": row["remote_summary"],
+            "recovery_options": json.loads(row["recovery_options"]),
+            "resolution_status": row["resolution_status"],
+            "details": json.loads(row["details"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "resolved_at": row["resolved_at"],
         }
 
     @staticmethod
@@ -1894,6 +2178,16 @@ def _normalize_optional_limit(limit: int | None) -> int | None:
     if normalized < 1:
         raise ValueError("limit must be a positive integer")
     return normalized
+
+
+def _sync_v2_conflict_summary_sort_key(item: Mapping[str, Any]) -> tuple[str, int]:
+    timestamp = str(item.get("updated_at") or item.get("created_at") or "")
+    identifier = item.get("conflict_review_id") or item.get("conflict_id") or 0
+    try:
+        numeric_identifier = int(identifier)
+    except (TypeError, ValueError):
+        numeric_identifier = 0
+    return timestamp, numeric_identifier
 
 
 def _json_dumps(value: Mapping[str, Any] | list[Any]) -> str:

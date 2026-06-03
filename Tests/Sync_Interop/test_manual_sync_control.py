@@ -78,6 +78,33 @@ class MutatingLocalFirstSync(RecordingLocalFirstSync):
         return dict(self.result)
 
 
+class FailingMutatingLocalFirstSync(RecordingLocalFirstSync):
+    def __init__(self, repo: SyncStateRepository, *, failed_client_envelope_id: str) -> None:
+        super().__init__(exc=RuntimeError("temporary network split"))
+        self.repo = repo
+        self.failed_client_envelope_id = failed_client_envelope_id
+
+    async def sync_once(self, **kwargs):
+        self.calls.append(kwargs)
+        self.repo.mark_sync_v2_outbox_push_results(
+            server_profile_id=kwargs["server_profile_id"],
+            authenticated_principal_id=kwargs["authenticated_principal_id"],
+            workspace_scope=kwargs["workspace_scope"],
+            dataset_id="dataset-1",
+            accepted=[],
+            rejected=[
+                {
+                    "client_envelope_id": self.failed_client_envelope_id,
+                    "error_code": "push_failed",
+                    "message": "temporary network split",
+                    "retryable": True,
+                }
+            ],
+            conflicts=[],
+        )
+        raise self.exc
+
+
 def _repo_with_profile(tmp_path, *, dataset_id: str | None = "dataset-1") -> SyncStateRepository:
     repo = SyncStateRepository(tmp_path / "manual_sync_state.db")
     repo.set_sync_v2_profile_state(
@@ -317,3 +344,88 @@ async def test_manual_sync_run_returns_post_run_pending_counts(tmp_path):
 
     assert result.status == "success"
     assert result.preview.pending_total == 1
+
+
+async def test_manual_sync_run_surfaces_conflict_review_items(tmp_path):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    repo.record_sync_v2_conflict_review(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+        dataset_id="dataset-1",
+        domain="chat",
+        item_label="Chat message msg-1",
+        cause="Remote assistant variant conflicts with local variant.",
+        local_summary="Local chat message retained.",
+        remote_summary="Remote chat message changed.",
+        source_conflict_key="msg-1:remote",
+        conflict_kind="chat_variant_conflict",
+        recovery_options={
+            "retry": "available",
+            "keep-local": "available",
+            "accept-remote": "available",
+            "duplicate-fork": "available",
+            "defer-later": "available",
+        },
+    )
+    sync_runner = RecordingLocalFirstSync(
+        {
+            "pushed_envelopes": 0,
+            "pulled_envelopes": 0,
+            "applied_envelopes": 0,
+            "outbox_dispatched": 0,
+            "outbox_retained": 1,
+            "rejected_envelopes": [],
+            "push_conflicts": [{"client_envelope_id": "msg-1"}],
+            "conflicts": [],
+        }
+    )
+    service = ManualSyncControlService(
+        state_repository=repo,
+        local_first_sync_service=sync_runner,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.run_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+    )
+
+    assert result.status == "conflict"
+    assert result.conflict_reviews[0].item_label == "Chat message msg-1"
+    assert result.conflict_reviews[0].recovery_options["duplicate-fork"] == "available"
+
+
+async def test_manual_sync_failed_run_surfaces_retained_outbox_failure(tmp_path):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    _enqueue_note_and_chat(repo, dataset_key)
+    pending_before = repo.list_pending_sync_v2_outbox_envelopes(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+        dataset_id="dataset-1",
+    )
+    failed_id = str(pending_before[0]["client_envelope_id"])
+    sync_runner = FailingMutatingLocalFirstSync(
+        repo,
+        failed_client_envelope_id=failed_id,
+    )
+    service = ManualSyncControlService(
+        state_repository=repo,
+        local_first_sync_service=sync_runner,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.run_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+    )
+
+    assert result.status == "failed"
+    assert result.conflict_reviews
+    assert result.conflict_reviews[0].cause == "push_failed: temporary network split"
+    assert result.conflict_reviews[0].recovery_options["retry"] == "available"
