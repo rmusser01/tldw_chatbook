@@ -33,9 +33,9 @@ Establish backlog/decisions as the canonical ADR source of truth and update agen
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Follow Docs/superpowers/plans/2026-06-02-adr-workflow-implementation.md task-by-task.
+1. Follow [Docs/superpowers/plans/2026-06-02-adr-workflow-implementation.md](../../Docs/superpowers/plans/2026-06-02-adr-workflow-implementation.md) task-by-task.
 2. ADR required: yes.
-3. ADR path: backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md.
+3. ADR path: [backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md](../decisions/001-adopt-backlog-decisions-as-canonical-adrs.md).
 4. Implement canonical ADR template, first ADR, index, historical index, and AGENTS.md workflow updates.
 5. Run focused documentation verification and update task closeout notes.
 <!-- SECTION:PLAN:END -->

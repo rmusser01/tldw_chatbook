@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-06-02
-Related Task: backlog/tasks/task-76 - Adopt-canonical-ADR-workflow.md
+Related Task: [backlog/tasks/task-76 - Adopt-canonical-ADR-workflow.md](../tasks/task-76%20-%20Adopt-canonical-ADR-workflow.md)
 Supersedes: N/A
 
 ## Decision
@@ -34,7 +34,7 @@ Global Superpowers skills are not changed by this first rollout. The project can
 
 ## Links
 
-- Spec: `Docs/superpowers/specs/2026-06-02-adr-workflow-design.md`
-- Plan: `Docs/superpowers/plans/2026-06-02-adr-workflow-implementation.md`
-- ADR index: `backlog/decisions/README.md`
-- Historical index: `backlog/decisions/historical-index.md`
+- Spec: [Docs/superpowers/specs/2026-06-02-adr-workflow-design.md](../../Docs/superpowers/specs/2026-06-02-adr-workflow-design.md)
+- Plan: [Docs/superpowers/plans/2026-06-02-adr-workflow-implementation.md](../../Docs/superpowers/plans/2026-06-02-adr-workflow-implementation.md)
+- ADR index: [backlog/decisions/README.md](README.md)
+- Historical index: [backlog/decisions/historical-index.md](historical-index.md)

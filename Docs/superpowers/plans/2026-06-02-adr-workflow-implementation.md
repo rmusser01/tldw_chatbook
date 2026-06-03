@@ -12,9 +12,9 @@
 
 ## Source Documents
 
-- Spec: `Docs/superpowers/specs/2026-06-02-adr-workflow-design.md`
-- Existing agent instructions: `AGENTS.md`
-- Existing Backlog project config: `backlog/config.yml`
+- Spec: [Docs/superpowers/specs/2026-06-02-adr-workflow-design.md](../specs/2026-06-02-adr-workflow-design.md)
+- Existing agent instructions: [AGENTS.md](../../../AGENTS.md)
+- Existing Backlog project config: [backlog/config.yml](../../../backlog/config.yml)
 - Existing historical ADR-like docs:
   - `Docs/Development/TTS/Higgs-ADR-001-Backend-Architecture.md`
   - `Docs/Development/TTS/Higgs-ADR-002-Backend-Registration.md`
@@ -34,12 +34,12 @@
 ## ADR Gate
 
 ADR required: yes
-ADR path: `backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md`
+ADR path: [backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md](../../../backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md)
 Reason: This rollout establishes the canonical project rule for where ADRs live and when they are required.
 
 ## Preflight
 
-- Work in the existing repository root: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook`.
+- Work from the repository root, the directory containing `backlog/` and `AGENTS.md`.
 - Do not modify global Superpowers files under `~/.codex/superpowers/skills/`.
 - Preserve tracked `Docs/` casing in all links and new docs.
 - The workspace may contain unrelated untracked files. Do not stage or modify them.
@@ -48,13 +48,13 @@ Reason: This rollout establishes the canonical project rule for where ADRs live 
 
 ## File Structure
 
-- Create: `backlog/decisions/000-template.md`
+- Create: [backlog/decisions/000-template.md](../../../backlog/decisions/000-template.md)
   - Canonical ADR template for future decisions.
-- Create: `backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md`
+- Create: [backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md](../../../backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md)
   - First canonical ADR, recording this workflow decision.
-- Create: `backlog/decisions/README.md`
+- Create: [backlog/decisions/README.md](../../../backlog/decisions/README.md)
   - ADR index and workflow guide.
-- Create: `backlog/decisions/historical-index.md`
+- Create: [backlog/decisions/historical-index.md](../../../backlog/decisions/historical-index.md)
   - Historical index of pre-canonical ADR-like docs.
 - Modify: `AGENTS.md`
   - Add ADR workflow rules and update Backlog.md DoD/checklist language.

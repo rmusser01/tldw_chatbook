@@ -2,7 +2,7 @@
 
 Status: Proposed | Accepted | Superseded by ADR-NNN
 Date: YYYY-MM-DD
-Related Task: backlog/tasks/task-N - Title.md
+Related Task: [backlog/tasks/task-N - Title.md](../tasks/task-N%20-%20Title.md)
 Supersedes: ADR-NNN or N/A
 
 ## Decision
