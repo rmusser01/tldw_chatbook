@@ -59,4 +59,11 @@ Verification commands run:
 - `git diff --check fe4f92e6`
 - `git diff --stat fe4f92e6 -- AGENTS.md backlog/decisions "backlog/tasks/task-76 - Adopt-canonical-ADR-workflow.md"`
 - `git diff fe4f92e6 -- AGENTS.md backlog/decisions "backlog/tasks/task-76 - Adopt-canonical-ADR-workflow.md"`
+
+Corrective verification after reverting an unrelated Backlog duplicate-id normalization:
+
+- `git diff --name-status fe4f92e6..HEAD`
+- `git diff --check fe4f92e6`
+
+The final unscoped name-status diff is limited to `AGENTS.md`, canonical ADR files in `backlog/decisions/`, and this rollout task.
 <!-- SECTION:NOTES:END -->
