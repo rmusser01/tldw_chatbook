@@ -727,6 +727,127 @@ def test_sync_v2_profile_summary_aggregates_state_counts_and_status(tmp_path):
     assert summary["last_mirror_report"]["domain"] == "notes"
 
 
+def test_sync_v2_profile_summary_combines_legacy_and_v2_conflicts_before_limit(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+    )
+    for index in range(6):
+        repo.record_identity_mapping(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="notes",
+            entity_type="note",
+            local_entity_id=f"legacy-note-{index}",
+            remote_entity_id=f"legacy-remote-{index}-a",
+            mapping_status="confirmed",
+        )
+        repo.record_identity_mapping(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="notes",
+            entity_type="note",
+            local_entity_id=f"legacy-note-{index}",
+            remote_entity_id=f"legacy-remote-{index}-b",
+            mapping_status="confirmed",
+        )
+    repo.record_sync_v2_conflict_review(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        domain="notes",
+        item_label="Newest v2 conflict",
+        cause="Remote edit conflicts with local edit.",
+        local_summary="Local note changed.",
+        remote_summary="Remote note changed.",
+        source_conflict_key="v2-conflict-1",
+        conflict_kind="encrypted_content_edit",
+        recovery_options={"retry": "available"},
+    )
+
+    summary = repo.get_sync_v2_profile_summary(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+
+    assert summary["conflicts"]["count"] == 7
+    assert len(summary["conflicts"]["latest"]) == 5
+    assert summary["conflicts"]["latest"][0]["item_label"] == "Newest v2 conflict"
+
+
+def test_sync_v2_conflict_review_listing_is_bounded_by_default_and_newest_first(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    for index in range(101):
+        repo.record_sync_v2_conflict_review(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            dataset_id="dataset-1",
+            domain="notes",
+            item_label=f"Conflict {index}",
+            cause="Remote edit conflicts with local edit.",
+            local_summary="Local note changed.",
+            remote_summary="Remote note changed.",
+            source_conflict_key=f"review-{index}",
+            conflict_kind="encrypted_content_edit",
+            recovery_options={"retry": "available"},
+        )
+
+    reviews = repo.list_sync_v2_conflict_reviews(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
+
+    assert len(reviews) == 100
+    assert reviews[0]["source_conflict_key"] == "review-100"
+    assert reviews[-1]["source_conflict_key"] == "review-1"
+
+
+def test_sync_v2_conflict_review_listing_filters_domain_before_limit(tmp_path):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    for domain in ("chat", "notes"):
+        for index in range(3):
+            repo.record_sync_v2_conflict_review(
+                server_profile_id="server-a",
+                authenticated_principal_id="user-a",
+                workspace_scope="workspace-1",
+                dataset_id="dataset-1",
+                domain=domain,
+                item_label=f"{domain} conflict {index}",
+                cause="Remote edit conflicts with local edit.",
+                local_summary="Local item changed.",
+                remote_summary="Remote item changed.",
+                source_conflict_key=f"{domain}-{index}",
+                conflict_kind="encrypted_content_edit",
+                recovery_options={"retry": "available"},
+            )
+
+    reviews = repo.list_sync_v2_conflict_reviews(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        domains=["notes"],
+        limit=2,
+    )
+
+    assert [review["source_conflict_key"] for review in reviews] == ["notes-2", "notes-1"]
+    assert {review["domain"] for review in reviews} == {"notes"}
+
+
 def test_sync_v2_profile_summary_reports_missing_profile(tmp_path):
     repo = SyncStateRepository(tmp_path / "sync_state.db")
 

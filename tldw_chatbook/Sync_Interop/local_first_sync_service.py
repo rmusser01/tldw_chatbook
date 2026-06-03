@@ -488,10 +488,14 @@ class LocalFirstSyncService:
                 recovery_options=self._available_conflict_recovery_options(),
                 details=dict(conflict),
             )
-        for conflict in apply_conflicts:
+        for index, conflict in enumerate(apply_conflicts, start=1):
             client_envelope_id = str(conflict.get("client_envelope_id") or "").strip()
-            source_conflict_key = client_envelope_id or str(conflict.get("stable_key") or conflict.get("entity_id"))
             domain = str(conflict.get("domain") or "sync_v2")
+            conflict_kind = str(conflict.get("conflict_type") or "apply_conflict")
+            fallback_key = conflict.get("stable_key") or conflict.get("entity_id")
+            source_conflict_key = client_envelope_id or str(fallback_key or "").strip()
+            if not source_conflict_key:
+                source_conflict_key = f"apply-conflict:{domain}:{conflict_kind}:{index}"
             entity_id = str(conflict.get("entity_id") or source_conflict_key)
             self.state_repository.record_sync_v2_conflict_review(
                 server_profile_id=str(profile["server_profile_id"]),
@@ -510,7 +514,7 @@ class LocalFirstSyncService:
                     or "Remote envelope could not be applied safely."
                 ),
                 source_conflict_key=source_conflict_key,
-                conflict_kind=str(conflict.get("conflict_type") or "apply_conflict"),
+                conflict_kind=conflict_kind,
                 recovery_options=self._available_conflict_recovery_options(),
                 details=dict(conflict),
             )

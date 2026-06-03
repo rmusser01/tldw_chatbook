@@ -115,3 +115,78 @@ def test_conflict_review_service_maps_retained_outbox_failures_without_plaintext
     assert reviews[0].recovery_options["defer-later"] == "available"
     assert "Private" not in str(reviews[0])
 
+
+def test_conflict_review_service_prefers_newest_durable_rows_and_dedupes_retained_failures(tmp_path):
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-a",
+        dataset_key=dataset_key,
+    )
+    note = builder.build_note_upsert(
+        note_id="note-1",
+        title="Private title",
+        body="Private body",
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    repo.record_sync_v2_conflict_review(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+        dataset_id="dataset-1",
+        domain="notes",
+        item_label="Old durable note",
+        cause="Earlier conflict.",
+        local_summary="Earlier local summary.",
+        remote_summary="Earlier remote summary.",
+        source_conflict_key="old-conflict",
+        conflict_kind="encrypted_content_edit",
+        recovery_options={"retry": "available"},
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+        dataset_id="dataset-1",
+        envelope=note,
+    )
+    repo.mark_sync_v2_outbox_push_results(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+        dataset_id="dataset-1",
+        accepted=[],
+        rejected=[],
+        conflicts=[
+            {
+                "client_envelope_id": note.client_envelope_id,
+                "conflict_id": "conflict-1",
+                "message": "Needs manual review.",
+            }
+        ],
+    )
+    repo.record_sync_v2_conflict_review(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+        dataset_id="dataset-1",
+        domain="notes",
+        item_label="New durable note",
+        cause="Needs manual review.",
+        local_summary="Local pending change retained after server conflict.",
+        remote_summary="Remote version requires review before overwrite.",
+        source_conflict_key=note.client_envelope_id,
+        conflict_kind="push_conflict",
+        recovery_options={"retry": "available"},
+    )
+    service = SyncV2ConflictReviewService(state_repository=repo)
+
+    reviews = service.build_review_items(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+        dataset_id="dataset-1",
+        domains=["notes"],
+    )
+
+    assert [review.item_label for review in reviews] == ["New durable note", "Old durable note"]

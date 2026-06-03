@@ -37,6 +37,7 @@ _SYNC_V2_CONFLICT_RESOLUTION_STATUSES = {
     "duplicate-fork",
     "defer-later",
 }
+SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT = 100
 SYNC_STATE_SCHEMA_VERSION = 3
 _FILTER_UNSET = object()
 
@@ -1156,39 +1157,43 @@ class SyncStateRepository(BaseDB):
         if resolution_status is not None and resolution_status not in _SYNC_V2_CONFLICT_RESOLUTION_STATUSES:
             allowed = ", ".join(sorted(_SYNC_V2_CONFLICT_RESOLUTION_STATUSES))
             raise ValueError(f"resolution_status must be one of: {allowed}")
-        limit = _normalize_optional_limit(limit)
+        limit = _normalize_optional_limit(limit) or SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT
         source_scope_key = _sync_v2_outbox_scope_key(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
         )
+        domain_values = tuple(dict.fromkeys(str(domain) for domain in domains or () if str(domain)))
+        domain_clause = ""
+        params: list[Any] = [
+            source_scope_key,
+            dataset_id,
+            source_conflict_key,
+            source_conflict_key,
+            resolution_status,
+            resolution_status,
+        ]
+        if domain_values:
+            placeholders = ", ".join("?" for _ in domain_values)
+            domain_clause = f" AND domain IN ({placeholders})"
+            params.extend(domain_values)
+        params.append(limit)
         with self._get_connection() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT *
                 FROM sync_v2_conflict_reviews
                 WHERE source_scope_key = ?
                   AND dataset_id = ?
                   AND (? IS NULL OR source_conflict_key = ?)
                   AND (? IS NULL OR resolution_status = ?)
-                ORDER BY conflict_review_id ASC
-                LIMIT COALESCE(?, -1)
+                  {domain_clause}
+                ORDER BY conflict_review_id DESC
+                LIMIT ?
                 """,
-                (
-                    source_scope_key,
-                    dataset_id,
-                    source_conflict_key,
-                    source_conflict_key,
-                    resolution_status,
-                    resolution_status,
-                    limit,
-                ),
+                params,
             ).fetchall()
-        reviews = [self._sync_v2_conflict_review_from_row(row) for row in rows]
-        if domains:
-            domain_set = set(domains)
-            reviews = [review for review in reviews if review["domain"] in domain_set]
-        return reviews
+        return [self._sync_v2_conflict_review_from_row(row) for row in rows]
 
     def set_sync_profile_state(
         self,
@@ -1652,12 +1657,17 @@ class SyncStateRepository(BaseDB):
                     ),
                 ),
             ).fetchone()
-        latest = [dict(row) for row in rows]
-        for report in latest:
+        legacy_latest = [dict(row) for row in rows]
+        for report in legacy_latest:
             report["details"] = json.loads(report["details"])
-        latest.extend(
+        v2_latest = [
             self._sync_v2_conflict_review_from_row(row)
             for row in review_rows
+        ]
+        latest = sorted(
+            legacy_latest + v2_latest,
+            key=_sync_v2_conflict_summary_sort_key,
+            reverse=True,
         )
         count = int(count_row["count"] if count_row else 0)
         count += int(review_count_row["count"] if review_count_row else 0)
@@ -2168,6 +2178,16 @@ def _normalize_optional_limit(limit: int | None) -> int | None:
     if normalized < 1:
         raise ValueError("limit must be a positive integer")
     return normalized
+
+
+def _sync_v2_conflict_summary_sort_key(item: Mapping[str, Any]) -> tuple[str, int]:
+    timestamp = str(item.get("updated_at") or item.get("created_at") or "")
+    identifier = item.get("conflict_review_id") or item.get("conflict_id") or 0
+    try:
+        numeric_identifier = int(identifier)
+    except (TypeError, ValueError):
+        numeric_identifier = 0
+    return timestamp, numeric_identifier
 
 
 def _json_dumps(value: Mapping[str, Any] | list[Any]) -> str:

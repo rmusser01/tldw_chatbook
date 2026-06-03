@@ -848,6 +848,48 @@ async def test_local_first_sync_once_preserves_push_and_apply_attention_statuses
     )
 
 
+async def test_local_first_sync_apply_conflict_review_uses_safe_fallback_key(tmp_path):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    profile = repo.get_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+    )
+    service = LocalFirstSyncService(
+        server_service=FakeLocalFirstServer(),
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    service._record_conflict_reviews(
+        profile=profile,
+        dataset_id="dataset-1",
+        outbox_entries=[],
+        push_conflicts=[],
+        apply_conflicts=[
+            {
+                "domain": "notes",
+                "conflict_type": "encrypted_content_edit",
+                "message": "Malformed apply conflict.",
+            }
+        ],
+    )
+    reviews = repo.list_sync_v2_conflict_reviews(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+    )
+
+    assert reviews[0]["source_conflict_key"] != "None"
+    assert reviews[0]["source_conflict_key"].startswith(
+        "apply-conflict:notes:encrypted_content_edit:"
+    )
+    assert reviews[0]["item_label"] != "notes None"
+
+
 async def test_local_first_sync_once_uses_stable_push_idempotency_key_for_retry(tmp_path):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(

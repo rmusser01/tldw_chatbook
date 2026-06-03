@@ -55,6 +55,11 @@ class SyncV2ConflictReviewService:
             domains=list(domain_filter) or None,
             resolution_status="open",
         )
+        durable_source_keys = {
+            str(row.get("source_conflict_key"))
+            for row in rows
+            if row.get("source_conflict_key")
+        }
         review_items = [self._from_review_row(row) for row in rows]
         retained = self.state_repository.list_pending_sync_v2_outbox_envelopes(
             server_profile_id=server_profile_id,
@@ -65,8 +70,9 @@ class SyncV2ConflictReviewService:
         )
         review_items.extend(
             self._from_retained_outbox_entry(entry)
-            for entry in retained
+            for entry in sorted(retained, key=_retained_outbox_sort_key, reverse=True)
             if entry.get("last_error")
+            and str(entry.get("client_envelope_id") or "") not in durable_source_keys
         )
         return tuple(review_items)
 
@@ -114,3 +120,7 @@ def _normalize_recovery_options(value: Any) -> dict[str, str]:
         action: str(value.get(action) or "unavailable")
         for action in RECOVERY_ACTIONS
     }
+
+
+def _retained_outbox_sort_key(entry: Mapping[str, Any]) -> str:
+    return str(entry.get("updated_at") or entry.get("created_at") or "")
