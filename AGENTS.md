@@ -230,6 +230,26 @@ Critical files for common tasks:
 - Every implementation decision starts with reading the corresponding Markdown task file.
 - Project documentation is in **`backlog/docs/`**.
 - Project decisions are in **`backlog/decisions/`**.
+- Canonical Architecture Decision Records (ADRs) live in **`backlog/decisions/`**. Historical ADR-like material elsewhere is reference-only unless a canonical ADR imports or supersedes it.
+- Before implementation planning, read relevant ADRs and decide whether the task requires a new ADR.
+
+## Architecture Decision Records (ADRs)
+
+Use ADRs to record significant architectural decisions: what was decided, why, and what alternatives were considered.
+
+An ADR is required for decisions involving storage/schema/migrations, sync/conflict policy, data ownership, provider or runtime boundaries, service contracts, cross-module interfaces, security/privacy/encryption/authentication, dependency/tooling/runtime choices, long-lived UX/application structure, or rejection of a plausible alternative future contributors may ask about again.
+
+An ADR is not required for routine bug fixes, small UI polish, copy-only changes, mechanical refactors that preserve existing boundaries, test-only changes, or direct implementation of an existing ADR.
+
+Every implementation plan must include:
+
+```text
+ADR required: yes/no
+ADR path: backlog/decisions/NNN-short-title.md or N/A
+Reason: brief explanation
+```
+
+If an ADR is required, create it before implementation begins and link it from the Backlog task, Superpowers plan, and final implementation notes. If an existing ADR applies, link it instead of creating a duplicate.
 
 ## 2. Defining Tasks
 
@@ -351,8 +371,8 @@ backlog task list -s "To Do" --plain
 
 # 2 Read details & documentation
 backlog task 42 --plain
-# Read also all documentation files in `backlog/docs/` directory.
-# Read also all decision files in `backlog/decisions/` directory.
+# Read relevant documentation files in `backlog/docs/`.
+# Read relevant ADRs in `backlog/decisions/`; create/link one if the task makes a significant architectural decision.
 
 # 3 Start work: assign yourself & move column
 backlog task edit 42 -a @{yourself} -s "In Progress"
@@ -374,7 +394,8 @@ Always ensure you have:
 1. ✅ Marked all acceptance criteria as completed (change `- [ ]` to `- [x]`)
 2. ✅ Added an `## Implementation Notes` section documenting your approach
 3. ✅ Run all tests and linting checks
-4. ✅ Updated relevant documentation
+4. ✅ Completed the ADR check: linked an existing ADR, created a new ADR, or documented why no ADR was required
+5. ✅ Updated relevant documentation
 
 ## 8. Definition of Done (DoD)
 
@@ -394,6 +415,7 @@ A task is **Done** only when **ALL** of the following are complete:
 6. **Review**: self review code.
 7. **Task hygiene**: status set to **Done** via CLI (`backlog task edit <id> -s Done`).
 8. **No regressions**: performance, security and licence checks green.
+9. **ADR hygiene**: ADR check completed; any new or superseded ADRs are linked from the task Implementation Plan and Implementation Notes.
 
 ⚠️ **IMPORTANT**: Never mark a task as Done without completing ALL items above.
 
