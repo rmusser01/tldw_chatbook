@@ -2071,6 +2071,33 @@ async def test_settings_provider_openai_endpoint_placeholder_uses_provider_conte
         assert "127.0.0.1:9099" not in endpoint.placeholder
 
 
+def test_settings_endpoint_display_breaks_browser_autolinks_without_mutating_value():
+    endpoint = "http://localhost:8000/v1/chat/completions"
+
+    display_value = settings_screen_module._textual_web_safe_url_display(endpoint)
+
+    assert "http://" not in display_value
+    assert display_value.replace("\u200b", "") == endpoint
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_endpoint_uses_url_safe_input_for_url_values():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "local_llm", "model": "local-model"}
+    app.app_config["api_settings"] = {
+        "local_llm": {"api_url": "http://localhost:8000/v1/chat/completions"}
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+
+        assert isinstance(endpoint, settings_screen_module.SettingsURLInput)
+        assert endpoint.value == "http://localhost:8000/v1/chat/completions"
+
+
 @pytest.mark.asyncio
 async def test_settings_provider_guided_save_revert_enable_only_when_dirty():
     app = _build_test_app()
