@@ -153,6 +153,17 @@ def test_fallback_false_capability_mapping_does_not_mark_model_known():
     assert status == "unknown"
 
 
+def test_known_text_only_capability_mapping_marks_model_known():
+    status = resolve_discovered_model_capability_status(
+        "OpenAI",
+        "known-text-model",
+        {},
+        capability_resolver=lambda provider, model_id: {"known": True, "vision": False},
+    )
+
+    assert status == "known"
+
+
 def test_append_models_to_provider_list_preserves_exact_key_and_dedupes():
     providers = {"OpenRouter": ["existing"]}
 
