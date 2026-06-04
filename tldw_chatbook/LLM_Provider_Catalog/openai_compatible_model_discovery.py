@@ -95,6 +95,7 @@ _COMPACT_SENSITIVE_METADATA_KEY_SUBSTRINGS = frozenset(
     sensitive_key.replace("_", "").replace("-", "")
     for sensitive_key in _SENSITIVE_METADATA_KEY_SUBSTRINGS
 )
+_COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES = frozenset({"token"})
 
 
 def _normalized_provider_identity(provider_identity: str | None) -> str:
@@ -263,6 +264,9 @@ def _is_sensitive_metadata_key(key: object) -> bool:
     ) or compact_key in _COMPACT_SENSITIVE_METADATA_KEYS or any(
         sensitive_key in compact_key
         for sensitive_key in _COMPACT_SENSITIVE_METADATA_KEY_SUBSTRINGS
+    ) or any(
+        compact_key.endswith(sensitive_suffix)
+        for sensitive_suffix in _COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES
     )
 
 

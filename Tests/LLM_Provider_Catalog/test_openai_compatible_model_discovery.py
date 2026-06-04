@@ -131,10 +131,12 @@ def test_response_metadata_does_not_include_sensitive_headers():
                 "id": "model-a",
                 "owned_by": "org",
                 "api_key": "secret",
+                "sessionToken": "secret",
                 "metadata": {
                     "access_token": "secret",
                     "accessToken": "secret",
                     "auth_token": "secret",
+                    "bearerToken": "secret",
                     "client_secret": "secret",
                     "credential": "secret",
                     "id_token": "secret",
@@ -142,9 +144,14 @@ def test_response_metadata_does_not_include_sensitive_headers():
                     "private_key": "secret",
                     "refreshToken": "secret",
                     "refresh_token": "secret",
+                    "session_token": "secret",
                     "safe": "visible",
                 },
-                "variants": [{"token": "secret"}, {"safe": "visible"}],
+                "variants": [
+                    {"token": "secret"},
+                    {"bearer_token": "secret"},
+                    {"safe": "visible"},
+                ],
             }
         ]
     }
@@ -161,9 +168,11 @@ def test_response_metadata_does_not_include_sensitive_headers():
         key.lower() for key in models[0].metadata_raw_safe
     }
     assert "api_key" not in models[0].metadata_raw_safe
+    assert "sessionToken" not in models[0].metadata_raw_safe
     assert "access_token" not in models[0].metadata_raw_safe["metadata"]
     assert "accessToken" not in models[0].metadata_raw_safe["metadata"]
     assert "auth_token" not in models[0].metadata_raw_safe["metadata"]
+    assert "bearerToken" not in models[0].metadata_raw_safe["metadata"]
     assert "client_secret" not in models[0].metadata_raw_safe["metadata"]
     assert "credential" not in models[0].metadata_raw_safe["metadata"]
     assert "id_token" not in models[0].metadata_raw_safe["metadata"]
@@ -171,9 +180,11 @@ def test_response_metadata_does_not_include_sensitive_headers():
     assert "private_key" not in models[0].metadata_raw_safe["metadata"]
     assert "refreshToken" not in models[0].metadata_raw_safe["metadata"]
     assert "refresh_token" not in models[0].metadata_raw_safe["metadata"]
+    assert "session_token" not in models[0].metadata_raw_safe["metadata"]
     assert models[0].metadata_raw_safe["metadata"]["safe"] == "visible"
     assert "token" not in models[0].metadata_raw_safe["variants"][0]
-    assert models[0].metadata_raw_safe["variants"][1]["safe"] == "visible"
+    assert "bearer_token" not in models[0].metadata_raw_safe["variants"][1]
+    assert models[0].metadata_raw_safe["variants"][2]["safe"] == "visible"
 
 
 def test_duplicate_model_ids_preserve_first_occurrence():
