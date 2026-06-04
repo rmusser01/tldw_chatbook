@@ -87,6 +87,14 @@ _SENSITIVE_METADATA_KEY_SUBSTRINGS = frozenset(
         "x_api_key",
     }
 )
+_COMPACT_SENSITIVE_METADATA_KEYS = frozenset(
+    sensitive_key.replace("_", "").replace("-", "")
+    for sensitive_key in _EXACT_SENSITIVE_METADATA_KEYS
+)
+_COMPACT_SENSITIVE_METADATA_KEY_SUBSTRINGS = frozenset(
+    sensitive_key.replace("_", "").replace("-", "")
+    for sensitive_key in _SENSITIVE_METADATA_KEY_SUBSTRINGS
+)
 
 
 def _normalized_provider_identity(provider_identity: str | None) -> str:
@@ -235,7 +243,11 @@ def fingerprint_endpoint(endpoint: str) -> str:
             return urlunparse(
                 (display_parsed.scheme, _safe_netloc(display_parsed), path, "", "", "")
             )
-        return str(endpoint or "").split("?", 1)[0].split("#", 1)[0].strip()
+        raw_fingerprint = str(endpoint or "").split("?", 1)[0].split("#", 1)[0].strip()
+        if "@" in raw_fingerprint:
+            scheme, separator, _rest = raw_fingerprint.partition("://")
+            return f"{scheme}{separator}[invalid-endpoint]" if separator else "[invalid-endpoint]"
+        return raw_fingerprint
 
     path = (parsed.path or "").rstrip("/") or "/"
     return urlunparse((parsed.scheme, _safe_netloc(parsed), path, "", "", ""))
@@ -244,9 +256,13 @@ def fingerprint_endpoint(endpoint: str) -> str:
 def _is_sensitive_metadata_key(key: object) -> bool:
     """Return whether a metadata key looks credential-bearing."""
     normalized_key = str(key).strip().lower().replace("-", "_")
+    compact_key = normalized_key.replace("_", "")
     return normalized_key in _EXACT_SENSITIVE_METADATA_KEYS or any(
         sensitive_key in normalized_key
         for sensitive_key in _SENSITIVE_METADATA_KEY_SUBSTRINGS
+    ) or compact_key in _COMPACT_SENSITIVE_METADATA_KEYS or any(
+        sensitive_key in compact_key
+        for sensitive_key in _COMPACT_SENSITIVE_METADATA_KEY_SUBSTRINGS
     )
 
 

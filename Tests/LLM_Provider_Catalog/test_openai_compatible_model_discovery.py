@@ -133,11 +133,14 @@ def test_response_metadata_does_not_include_sensitive_headers():
                 "api_key": "secret",
                 "metadata": {
                     "access_token": "secret",
+                    "accessToken": "secret",
                     "auth_token": "secret",
                     "client_secret": "secret",
                     "credential": "secret",
                     "id_token": "secret",
+                    "privateKey": "secret",
                     "private_key": "secret",
+                    "refreshToken": "secret",
                     "refresh_token": "secret",
                     "safe": "visible",
                 },
@@ -159,11 +162,14 @@ def test_response_metadata_does_not_include_sensitive_headers():
     }
     assert "api_key" not in models[0].metadata_raw_safe
     assert "access_token" not in models[0].metadata_raw_safe["metadata"]
+    assert "accessToken" not in models[0].metadata_raw_safe["metadata"]
     assert "auth_token" not in models[0].metadata_raw_safe["metadata"]
     assert "client_secret" not in models[0].metadata_raw_safe["metadata"]
     assert "credential" not in models[0].metadata_raw_safe["metadata"]
     assert "id_token" not in models[0].metadata_raw_safe["metadata"]
+    assert "privateKey" not in models[0].metadata_raw_safe["metadata"]
     assert "private_key" not in models[0].metadata_raw_safe["metadata"]
+    assert "refreshToken" not in models[0].metadata_raw_safe["metadata"]
     assert "refresh_token" not in models[0].metadata_raw_safe["metadata"]
     assert models[0].metadata_raw_safe["metadata"]["safe"] == "visible"
     assert "token" not in models[0].metadata_raw_safe["variants"][0]
@@ -236,6 +242,17 @@ def test_endpoint_fingerprint_redacts_credentials_for_host_only_malformed_port()
     )
 
     assert fingerprint == "http://example.test/v1/models"
+    assert "secret" not in fingerprint
+    assert "api_key" not in fingerprint
+
+
+def test_endpoint_fingerprint_redacts_credentials_for_unparseable_authority():
+    fingerprint = fingerprint_endpoint(
+        "https://user:secret@[::1/v1/models?api_key=secret"
+    )
+
+    assert fingerprint == "https://[invalid-endpoint]"
+    assert "user" not in fingerprint
     assert "secret" not in fingerprint
     assert "api_key" not in fingerprint
 
