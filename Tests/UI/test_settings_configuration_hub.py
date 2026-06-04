@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Select, Static, TextArea
 
 from Tests.UI.test_destination_shells import (
@@ -963,7 +964,7 @@ async def test_settings_provider_category_lists_console_supported_catalog():
         assert "Provider catalog" in text
         for provider in ("openai", "anthropic", "custom", "custom_2", "llama_cpp", "local_vllm"):
             assert provider in text
-        assert "Manual provider entry remains available for custom/local aliases." in text
+        assert "Choose a catalog provider, or use Manual / custom provider for aliases." in text
 
 
 @pytest.mark.asyncio
@@ -1111,6 +1112,18 @@ async def test_settings_detail_shows_state_banner_and_structured_rows():
         assert "State:" in str(banner.renderable)
         assert banner.has_class("settings-state-banner")
         assert len(detail_rows) >= 5
+
+
+@pytest.mark.asyncio
+async def test_settings_long_detail_and_inspector_panes_are_scrollable_containers():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)):
+        screen = _active_destination_screen(host)
+
+        assert isinstance(screen.query_one("#settings-detail-pane"), VerticalScroll)
+        assert isinstance(screen.query_one("#settings-impact-pane"), VerticalScroll)
 
 
 @pytest.mark.asyncio
@@ -1995,8 +2008,26 @@ async def test_settings_provider_category_uses_effective_console_source():
         assert "llama_cpp" in text
         assert "qwen" in text
         assert "Source: chat_defaults" in text
-        assert screen.query_one("#settings-provider-value", Input).value == "llama_cpp"
+        assert screen.query_one("#settings-provider-value", Select).value == "llama_cpp"
         assert screen.query_one("#settings-model-value", Input).value == "qwen"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_renders_catalog_select_with_visible_value():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        provider = screen.query_one("#settings-provider-value", Select)
+
+        assert provider.value == "llama_cpp"
+        assert provider.has_class("-textual-compact")
+        assert "Provider catalog" in _visible_text(screen)
+        assert "llama.cpp" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -2108,7 +2139,9 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-provider-value", Input).value = "llama_cpp"
+        provider = screen.query_one("#settings-provider-value", Select)
+        provider.value = "llama_cpp"
+        screen.handle_provider_value_changed(Select.Changed(provider, "llama_cpp"))
         screen.query_one("#settings-model-value", Input).value = "qwen"
 
         await pilot.click("#settings-save-category")
@@ -2615,9 +2648,14 @@ async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        provider = screen.query_one("#settings-provider-value", Input)
-        provider.value = ""
-        screen.handle_provider_value_changed(Input.Changed(provider, ""))
+        provider = screen.query_one("#settings-provider-value", Select)
+        manual_provider = screen.query_one("#settings-provider-manual-value", Input)
+        provider.value = "__manual__"
+        manual_provider.value = ""
+        screen.handle_provider_value_changed(Select.Changed(provider, "__manual__"))
+        screen.handle_provider_manual_value_changed(
+            Input.Changed(manual_provider, ""),
+        )
         await pilot.pause()
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
         endpoint.value = "http://127.0.0.1:9099/v1"
@@ -2656,17 +2694,82 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        provider = screen.query_one("#settings-provider-value", Input)
+        provider = screen.query_one("#settings-provider-value", Select)
         provider.value = "llama_cpp"
-        screen.handle_provider_value_changed(Input.Changed(provider, "llama_cpp"))
+        screen.handle_provider_value_changed(Select.Changed(provider, "llama_cpp"))
 
         assert screen.query_one("#settings-provider-endpoint-value", Input).value == ""
+        credential = screen.query_one("#settings-provider-credential-env-var", Input)
+        assert credential.value == ""
+        assert credential.placeholder == "No credential required"
         await pilot.click("#settings-save-category")
         await pilot.click("#settings-save-category")
 
     assert ("api_settings.llama_cpp", "api_url", "https://api.openai.com/v1") not in saved
     assert saved == [("chat_defaults", "provider", "llama_cpp")]
     assert app.app_config["api_settings"]["llama_cpp"] == {}
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_switch_updates_inspector_readiness():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_base_url": "https://api.openai.com/v1"},
+        "ollama": {"api_url": "http://localhost:11434/v1/chat/completions"},
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider = screen.query_one("#settings-provider-value", Select)
+
+        provider.value = "ollama"
+        screen.handle_provider_value_changed(Select.Changed(provider, "ollama"))
+        await pilot.pause()
+
+        text = _visible_text(screen)
+        assert "Provider readiness: Ollama / gpt-4o" in text
+        assert "Provider readiness: OpenAI / gpt-4o" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_custom_value_uses_manual_field_for_unknown_provider():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAi Typo", "model": "fake-model"}
+    app.app_config["api_settings"] = {}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-provider-value", Select).value == "__manual__"
+        assert screen.query_one("#settings-provider-manual-value", Input).value == "OpenAi Typo"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_manual_entry_promotes_known_provider_to_catalog_select():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAi Typo", "model": "fake-model"}
+    app.app_config["api_settings"] = {}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider = screen.query_one("#settings-provider-value", Select)
+        manual_provider = screen.query_one("#settings-provider-manual-value", Input)
+
+        manual_provider.value = "openai"
+        screen.handle_provider_manual_value_changed(
+            Input.Changed(manual_provider, "openai"),
+        )
+
+        assert provider.value == "openai"
+        assert manual_provider.disabled is True
+        assert manual_provider.value == ""
 
 
 @pytest.mark.asyncio
@@ -3481,7 +3584,7 @@ async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
         assert screen.query_one("#settings-advanced-open-diagnostics", Button)
 
         await pilot.click("#settings-advanced-open-providers-models")
-        await _wait_for_settings_text(screen, pilot, "Provider Model Endpoint")
+        await _wait_for_settings_text(screen, pilot, "Provider catalog")
 
         assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
         assert "Selected category: Providers & Models" in _visible_text(screen)
