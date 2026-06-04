@@ -386,13 +386,23 @@ def _textual_web_safe_url_display_index(value: str, index: int) -> int:
     display_index = index
     for match in TEXTUAL_WEB_URL_SCHEME_RE.finditer(value):
         insertion_index = match.start(1) + len(match.group(1))
-        if index > insertion_index:
+        if index >= insertion_index:
             display_index += len(TEXTUAL_WEB_URL_AUTOLINK_BREAK)
     return display_index
 
 
 class SettingsURLInput(Input):
-    """Input that prevents textual-web from opening endpoint values as browser links."""
+    """Render endpoint URLs without browser autolinking.
+
+    SettingsURLInput preserves the raw ``value`` used for validation, saving,
+    selection, and event handling. Only the rendered display text is adjusted by
+    inserting a zero-width break after URL schemes so textual-web/browser
+    terminals do not treat provider endpoint values as clickable links.
+
+    Args:
+        *args: Positional arguments forwarded to ``textual.widgets.Input``.
+        **kwargs: Keyword arguments forwarded to ``textual.widgets.Input``.
+    """
 
     @property
     def _value(self) -> Text:

@@ -2080,6 +2080,15 @@ def test_settings_endpoint_display_breaks_browser_autolinks_without_mutating_val
     assert display_value.replace("\u200b", "") == endpoint
 
 
+def test_settings_endpoint_display_index_maps_url_break_boundaries_to_visible_colon():
+    assert settings_screen_module._textual_web_safe_url_display_index(
+        "http://localhost:8000", len("http")
+    ) == len("http") + 1
+    assert settings_screen_module._textual_web_safe_url_display_index(
+        "https://api.example.com", len("https")
+    ) == len("https") + 1
+
+
 @pytest.mark.asyncio
 async def test_settings_provider_endpoint_uses_url_safe_input_for_url_values():
     app = _build_test_app()
