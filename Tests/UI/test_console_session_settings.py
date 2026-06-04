@@ -1502,10 +1502,10 @@ def test_console_missing_key_recovery_action_is_provider_specific() -> None:
     label, target, tooltip = screen._console_provider_recovery_action()
 
     assert screen._console_provider_blocker_copy() == "Provider setup needed: OpenAI missing API key"
-    assert label == "Add API key"
+    assert label == "Add API Key"
     assert target == "settings"
     assert tooltip == "Add an API key for OpenAI"
-    assert screen._console_setup_blocked_reason() == "Add API key in Settings before sending."
+    assert screen._console_setup_blocked_reason() == "Add API Key in Settings before sending."
 
 
 def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details() -> None:
