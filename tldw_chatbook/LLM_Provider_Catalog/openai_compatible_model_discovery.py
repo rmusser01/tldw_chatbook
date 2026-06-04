@@ -21,17 +21,51 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
     "koboldcpp": frozenset({"/api/v1/generate"}),
     "ollama": frozenset({"/api/tags"}),
+    "local_ollama": frozenset({"/api/tags"}),
 }
+_BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
+    {
+        "aphrodite",
+        "custom",
+        "custom_2",
+        "custom_openai_api",
+        "custom_openai_api_2",
+        "llama_cpp",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_llm",
+        "local_vllm",
+        "openai",
+        "openrouter",
+        "tabbyapi",
+        "vllm",
+    }
+)
+_EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS = frozenset(
+    {
+        "/models",
+        "/v1",
+        "/v1/models",
+        "/completion",
+        "/completions",
+    }
+)
 _EXACT_SENSITIVE_METADATA_KEYS = frozenset(
     {
+        "access_token",
+        "auth_token",
         "authorization",
         "api_key",
         "apikey",
-        "access_token",
         "bearer",
         "client_secret",
+        "credential",
+        "credentials",
+        "id_token",
         "key",
         "password",
+        "private_key",
+        "refresh_token",
         "secret",
         "token",
         "x_api_key",
@@ -40,10 +74,15 @@ _EXACT_SENSITIVE_METADATA_KEYS = frozenset(
 )
 _SENSITIVE_METADATA_KEY_SUBSTRINGS = frozenset(
     {
-        "api_key",
         "access_token",
+        "auth_token",
+        "api_key",
         "client_secret",
+        "credential",
+        "id_token",
         "password",
+        "private_key",
+        "refresh_token",
         "secret",
         "x_api_key",
     }
@@ -67,6 +106,10 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
         return None
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
+    try:
+        parsed.port
+    except ValueError:
+        return None
     return parsed
 
 
@@ -81,7 +124,23 @@ def _safe_netloc(parsed: ParseResult) -> str:
     host = parsed.hostname or ""
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
-    return f"{host}:{parsed.port}" if parsed.port else host
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    return f"{host}:{port}" if port else host
+
+
+def _parse_endpoint_for_fingerprint(endpoint: str | None) -> ParseResult | None:
+    """Parse any URL-like endpoint so safe display can strip credentials."""
+    raw_endpoint = str(endpoint or "").strip()
+    if not raw_endpoint or "://" not in raw_endpoint:
+        return None
+    try:
+        parsed = urlparse(raw_endpoint)
+    except ValueError:
+        return None
+    return parsed if parsed.scheme and parsed.netloc else None
 
 
 def _models_path_for_endpoint_path(path: str) -> str | None:
@@ -100,6 +159,21 @@ def _models_path_for_endpoint_path(path: str) -> str | None:
     if normalized_path.endswith("/chat/completions"):
         return f"{normalized_path.removesuffix('/chat/completions')}/models"
     return None
+
+
+def _is_base_url_path(path: str) -> bool:
+    """Return whether a path requires provider identity to infer ``/v1/models``."""
+    normalized_path = (path or "/").rstrip("/").lower() or "/"
+    return normalized_path == "/"
+
+
+def _is_explicit_openai_compatible_path(path: str) -> bool:
+    """Return whether a path explicitly opts into OpenAI-compatible discovery."""
+    normalized_path = (path or "/").rstrip("/").lower() or "/"
+    return (
+        normalized_path in _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS
+        or normalized_path.endswith("/chat/completions")
+    )
 
 
 def supports_openai_compatible_model_discovery(
@@ -122,7 +196,12 @@ def supports_openai_compatible_model_discovery(
     if path in native_paths:
         return False
 
-    return _models_path_for_endpoint_path(path) is not None
+    if _is_base_url_path(path):
+        return provider_key in _BASE_URL_INFERABLE_PROVIDER_KEYS
+
+    return _is_explicit_openai_compatible_path(path) and (
+        _models_path_for_endpoint_path(path) is not None
+    )
 
 
 def build_models_url(endpoint: str, provider_identity: str) -> str:
@@ -149,6 +228,12 @@ def fingerprint_endpoint(endpoint: str) -> str:
     """Return a safe endpoint fingerprint without secrets or query details."""
     parsed = _parse_endpoint(endpoint)
     if parsed is None:
+        display_parsed = _parse_endpoint_for_fingerprint(endpoint)
+        if display_parsed is not None:
+            path = (display_parsed.path or "").rstrip("/") or "/"
+            return urlunparse(
+                (display_parsed.scheme, _safe_netloc(display_parsed), path, "", "", "")
+            )
         return str(endpoint or "").split("?", 1)[0].split("#", 1)[0].strip()
 
     path = (parsed.path or "").rstrip("/") or "/"

@@ -53,6 +53,32 @@ def test_common_base_and_prefixed_openai_paths_map_to_models(endpoint, expected)
     assert build_models_url(endpoint, "custom") == expected
 
 
+@pytest.mark.parametrize("provider", ["anthropic", "google", "cohere", "huggingface", "ollama"])
+def test_native_provider_base_urls_do_not_infer_openai_compatibility(provider):
+    assert (
+        supports_openai_compatible_model_discovery(provider, "https://api.example.test")
+        is False
+    )
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "google", "cohere", "huggingface", "ollama"])
+def test_native_provider_explicit_openai_compatible_paths_are_eligible(provider):
+    assert (
+        supports_openai_compatible_model_discovery(
+            provider,
+            "https://api.example.test/v1",
+        )
+        is True
+    )
+
+
+def test_malformed_endpoint_port_is_not_eligible_and_does_not_crash():
+    endpoint = "https://user:secret@example.test:bad/v1/models"
+
+    assert supports_openai_compatible_model_discovery("custom", endpoint) is False
+    assert fingerprint_endpoint(endpoint) == "https://example.test/v1/models"
+
+
 def test_native_kobold_generate_is_not_eligible():
     assert (
         supports_openai_compatible_model_discovery(
@@ -107,7 +133,12 @@ def test_response_metadata_does_not_include_sensitive_headers():
                 "api_key": "secret",
                 "metadata": {
                     "access_token": "secret",
+                    "auth_token": "secret",
                     "client_secret": "secret",
+                    "credential": "secret",
+                    "id_token": "secret",
+                    "private_key": "secret",
+                    "refresh_token": "secret",
                     "safe": "visible",
                 },
                 "variants": [{"token": "secret"}, {"safe": "visible"}],
@@ -128,7 +159,12 @@ def test_response_metadata_does_not_include_sensitive_headers():
     }
     assert "api_key" not in models[0].metadata_raw_safe
     assert "access_token" not in models[0].metadata_raw_safe["metadata"]
+    assert "auth_token" not in models[0].metadata_raw_safe["metadata"]
     assert "client_secret" not in models[0].metadata_raw_safe["metadata"]
+    assert "credential" not in models[0].metadata_raw_safe["metadata"]
+    assert "id_token" not in models[0].metadata_raw_safe["metadata"]
+    assert "private_key" not in models[0].metadata_raw_safe["metadata"]
+    assert "refresh_token" not in models[0].metadata_raw_safe["metadata"]
     assert models[0].metadata_raw_safe["metadata"]["safe"] == "visible"
     assert "token" not in models[0].metadata_raw_safe["variants"][0]
     assert models[0].metadata_raw_safe["variants"][1]["safe"] == "visible"
@@ -180,6 +216,16 @@ def test_endpoint_fingerprint_redacts_credentials_and_query_params():
     )
 
     assert fingerprint == "https://example.test:8443/v1/models"
+    assert "secret" not in fingerprint
+    assert "api_key" not in fingerprint
+
+
+def test_endpoint_fingerprint_redacts_credentials_for_unsupported_scheme():
+    fingerprint = fingerprint_endpoint(
+        "ftp://user:secret@example.test/v1/models?api_key=secret"
+    )
+
+    assert fingerprint == "ftp://example.test/v1/models"
     assert "secret" not in fingerprint
     assert "api_key" not in fingerprint
 
