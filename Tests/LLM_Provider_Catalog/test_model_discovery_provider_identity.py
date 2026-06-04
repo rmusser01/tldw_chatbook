@@ -3,6 +3,8 @@ from __future__ import annotations
 import builtins
 import sys
 
+import pytest
+
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import DiscoveredModel
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_provider_identity import (
     resolve_provider_list_key,
@@ -83,7 +85,10 @@ def test_resolving_non_direct_provider_does_not_import_chat_functions(monkeypatc
 
 
 def test_discovered_model_metadata_is_copied_from_caller_mapping():
-    metadata = {"owned": False}
+    metadata = {
+        "owned": False,
+        "nested": {"modalities": ["text"]},
+    }
 
     model = DiscoveredModel(
         provider="openrouter",
@@ -96,5 +101,26 @@ def test_discovered_model_metadata_is_copied_from_caller_mapping():
         metadata_raw_safe=metadata,
     )
     metadata["owned"] = True
+    metadata["nested"]["modalities"].append("vision")
 
     assert model.metadata_raw_safe["owned"] is False
+    assert model.metadata_raw_safe["nested"]["modalities"] == ("text",)
+
+
+def test_discovered_model_metadata_rejects_direct_mutation():
+    model = DiscoveredModel(
+        provider="openrouter",
+        provider_list_key="OpenRouter",
+        model_id="openrouter/auto",
+        display_name="openrouter/auto",
+        source="runtime_discovered",
+        endpoint_fingerprint="endpoint",
+        discovered_at="2026-06-04T00:00:00Z",
+        metadata_raw_safe={"nested": {"owned": False}},
+    )
+
+    with pytest.raises(TypeError):
+        model.metadata_raw_safe["new"] = "value"
+
+    with pytest.raises(TypeError):
+        model.metadata_raw_safe["nested"]["owned"] = True

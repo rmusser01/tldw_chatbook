@@ -21,6 +21,17 @@ DiscoveryErrorKind = Literal[
 ]
 
 
+def _freeze_metadata_value(value: Any) -> Any:
+    """Return an immutable copy of JSON-like discovery metadata."""
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _freeze_metadata_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_metadata_value(item) for item in value)
+    return value
+
+
 @dataclass(frozen=True)
 class ProviderModelListKeyResolution:
     """Resolution state for an exact top-level ``[providers]`` model-list key."""
@@ -48,11 +59,11 @@ class DiscoveredModel:
     persisted: bool = False
 
     def __post_init__(self) -> None:
-        """Freeze a caller-independent shallow copy of safe endpoint metadata."""
+        """Freeze a caller-independent copy of safe endpoint metadata."""
         object.__setattr__(
             self,
             "metadata_raw_safe",
-            MappingProxyType(dict(self.metadata_raw_safe)),
+            _freeze_metadata_value(self.metadata_raw_safe),
         )
 
 
