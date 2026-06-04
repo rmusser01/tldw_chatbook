@@ -18,32 +18,34 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 )
 
 
-_ELIGIBLE_ENDPOINT_PATHS = frozenset(
-    {
-        "/models",
-        "/v1/models",
-        "/v1",
-        "/v1/chat/completions",
-        "/chat/completions",
-        "/completion",
-        "/completions",
-    }
-)
 _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
     "koboldcpp": frozenset({"/api/v1/generate"}),
     "ollama": frozenset({"/api/tags"}),
 }
-_SENSITIVE_METADATA_KEYS = frozenset(
+_EXACT_SENSITIVE_METADATA_KEYS = frozenset(
     {
         "authorization",
         "api_key",
         "apikey",
+        "access_token",
         "bearer",
+        "client_secret",
         "key",
         "password",
         "secret",
         "token",
+        "x_api_key",
         "x-api-key",
+    }
+)
+_SENSITIVE_METADATA_KEY_SUBSTRINGS = frozenset(
+    {
+        "api_key",
+        "access_token",
+        "client_secret",
+        "password",
+        "secret",
+        "x_api_key",
     }
 )
 
@@ -82,6 +84,24 @@ def _safe_netloc(parsed: ParseResult) -> str:
     return f"{host}:{parsed.port}" if parsed.port else host
 
 
+def _models_path_for_endpoint_path(path: str) -> str | None:
+    """Return the OpenAI-compatible models path for a supported endpoint path."""
+    normalized_path = (path or "/").rstrip("/").lower() or "/"
+    if normalized_path == "/":
+        return "/v1/models"
+    if normalized_path in {"/models", "/v1/models"}:
+        return normalized_path
+    if normalized_path == "/v1":
+        return "/v1/models"
+    if normalized_path in {"/completion", "/completions"}:
+        return "/v1/models"
+    if normalized_path.endswith("/v1/chat/completions"):
+        return f"{normalized_path.removesuffix('/chat/completions')}/models"
+    if normalized_path.endswith("/chat/completions"):
+        return f"{normalized_path.removesuffix('/chat/completions')}/models"
+    return None
+
+
 def supports_openai_compatible_model_discovery(
     provider_identity: str,
     normalized_endpoint: str | None,
@@ -102,7 +122,7 @@ def supports_openai_compatible_model_discovery(
     if path in native_paths:
         return False
 
-    return path in _ELIGIBLE_ENDPOINT_PATHS
+    return _models_path_for_endpoint_path(path) is not None
 
 
 def build_models_url(endpoint: str, provider_identity: str) -> str:
@@ -114,20 +134,13 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
     path = _normalized_path(parsed)
     if path in {"/completion", "/completions"}:
         base_url = normalize_llamacpp_base_url(endpoint)
-        return f"{base_url}/v1/models"
+        base_parsed = _parse_endpoint(base_url)
+        if base_parsed is not None:
+            return urlunparse(
+                (base_parsed.scheme, _safe_netloc(base_parsed), "/v1/models", "", "", "")
+            )
 
-    if path == "/v1/models":
-        models_path = "/v1/models"
-    elif path == "/models":
-        models_path = "/models"
-    elif path == "/v1":
-        models_path = "/v1/models"
-    elif path == "/v1/chat/completions":
-        models_path = "/v1/models"
-    elif path == "/chat/completions":
-        models_path = "/models"
-    else:
-        models_path = path
+    models_path = _models_path_for_endpoint_path(path) or path
 
     return urlunparse((parsed.scheme, _safe_netloc(parsed), models_path, "", "", ""))
 
@@ -142,12 +155,36 @@ def fingerprint_endpoint(endpoint: str) -> str:
     return urlunparse((parsed.scheme, _safe_netloc(parsed), path, "", "", ""))
 
 
+def _is_sensitive_metadata_key(key: object) -> bool:
+    """Return whether a metadata key looks credential-bearing."""
+    normalized_key = str(key).strip().lower().replace("-", "_")
+    return normalized_key in _EXACT_SENSITIVE_METADATA_KEYS or any(
+        sensitive_key in normalized_key
+        for sensitive_key in _SENSITIVE_METADATA_KEY_SUBSTRINGS
+    )
+
+
+def _scrub_model_metadata_value(value: Any) -> Any:
+    """Recursively remove sensitive-looking fields from endpoint metadata."""
+    if isinstance(value, Mapping):
+        return {
+            str(key): _scrub_model_metadata_value(nested_value)
+            for key, nested_value in value.items()
+            if not _is_sensitive_metadata_key(key)
+        }
+    if isinstance(value, list):
+        return [_scrub_model_metadata_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_scrub_model_metadata_value(item) for item in value)
+    return value
+
+
 def _safe_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
     """Copy endpoint model metadata while dropping sensitive-looking fields."""
     return {
-        str(key): value
+        str(key): _scrub_model_metadata_value(value)
         for key, value in model_payload.items()
-        if str(key).lower() not in _SENSITIVE_METADATA_KEYS
+        if not _is_sensitive_metadata_key(key)
     }
 
 

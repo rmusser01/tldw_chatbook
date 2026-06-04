@@ -26,6 +26,33 @@ def test_llamacpp_completion_url_maps_to_v1_models():
     )
 
 
+def test_llamacpp_completion_url_drops_userinfo():
+    assert (
+        build_models_url("https://user:secret@example.test/completion", "llama_cpp")
+        == "https://example.test/v1/models"
+    )
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected"),
+    [
+        ("localhost:8000", "http://localhost:8000/v1/models"),
+        ("https://api.example.test", "https://api.example.test/v1/models"),
+        (
+            "https://api.example.test/api/v1/chat/completions",
+            "https://api.example.test/api/v1/models",
+        ),
+        (
+            "https://api.example.test/openai/v1/chat/completions",
+            "https://api.example.test/openai/v1/models",
+        ),
+    ],
+)
+def test_common_base_and_prefixed_openai_paths_map_to_models(endpoint, expected):
+    assert supports_openai_compatible_model_discovery("custom", endpoint) is True
+    assert build_models_url(endpoint, "custom") == expected
+
+
 def test_native_kobold_generate_is_not_eligible():
     assert (
         supports_openai_compatible_model_discovery(
@@ -72,7 +99,21 @@ def test_normalizes_openai_models_response_to_raw_model_ids():
 
 
 def test_response_metadata_does_not_include_sensitive_headers():
-    payload = {"data": [{"id": "model-a", "owned_by": "org"}]}
+    payload = {
+        "data": [
+            {
+                "id": "model-a",
+                "owned_by": "org",
+                "api_key": "secret",
+                "metadata": {
+                    "access_token": "secret",
+                    "client_secret": "secret",
+                    "safe": "visible",
+                },
+                "variants": [{"token": "secret"}, {"safe": "visible"}],
+            }
+        ]
+    }
 
     models = normalize_models_response(
         payload,
@@ -85,6 +126,12 @@ def test_response_metadata_does_not_include_sensitive_headers():
     assert "authorization" not in {
         key.lower() for key in models[0].metadata_raw_safe
     }
+    assert "api_key" not in models[0].metadata_raw_safe
+    assert "access_token" not in models[0].metadata_raw_safe["metadata"]
+    assert "client_secret" not in models[0].metadata_raw_safe["metadata"]
+    assert models[0].metadata_raw_safe["metadata"]["safe"] == "visible"
+    assert "token" not in models[0].metadata_raw_safe["variants"][0]
+    assert models[0].metadata_raw_safe["variants"][1]["safe"] == "visible"
 
 
 def test_duplicate_model_ids_preserve_first_occurrence():
@@ -182,6 +229,45 @@ async def test_discovery_returns_typed_error_for_invalid_response():
     assert result.status == "error"
     assert result.error is not None
     assert result.error.kind == "invalid_response"
+
+
+@pytest.mark.asyncio
+async def test_discovery_returns_typed_error_for_non_json_response():
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, text="not-json")
+        )
+    ) as client:
+        result = await discover_openai_compatible_models(
+            provider="Custom",
+            provider_list_key="Custom",
+            endpoint="https://api.example.test/v1",
+            api_key=None,
+            client=client,
+        )
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert result.error.kind == "invalid_response"
+
+
+@pytest.mark.asyncio
+async def test_discovery_returns_typed_error_for_request_failure():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection failed", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await discover_openai_compatible_models(
+            provider="Custom",
+            provider_list_key="Custom",
+            endpoint="https://api.example.test/v1",
+            api_key=None,
+            client=client,
+        )
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert result.error.kind == "request_failed"
 
 
 @pytest.mark.asyncio
