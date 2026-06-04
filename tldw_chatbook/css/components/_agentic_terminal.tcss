@@ -349,6 +349,13 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 #settings-detail-pane,
 #settings-impact-pane {
     width: 4fr;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
 }
 
 #home-dashboard-grid {
@@ -1560,6 +1567,13 @@ Button.settings-category-button.settings-secondary-search-match {
     margin: 0 0 1 0;
 }
 
+.settings-select-row {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+}
+
 .settings-input-label {
     width: 12;
     min-width: 12;
@@ -1569,6 +1583,12 @@ Button.settings-category-button.settings-secondary-search-match {
     background: $ds-surface-panel;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+.settings-select-row .settings-input-label {
+    height: 3;
+    min-height: 3;
+    content-align: left middle;
 }
 
 .settings-compact-input {
@@ -1583,9 +1603,80 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .settings-compact-input:focus {
+    border: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
-    outline: solid $ds-input-focus-accent;
+    text-style: bold underline;
+    outline: none;
+}
+
+.settings-compact-select {
+    width: 1fr;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+    margin: 0;
+    padding: 0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-compact-select > SelectCurrent {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+    content-align: left middle;
+}
+
+.settings-compact-select:focus {
+    border: solid $ds-action-focus;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+    outline: none;
+}
+
+.settings-compact-select:focus > SelectCurrent {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.settings-compact-select > SelectOverlay {
+    padding: 0 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    min-width: 30;
+}
+
+.settings-compact-select > SelectOverlay Option {
+    padding: 0 2;
+    min-height: 3;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-compact-select > SelectOverlay Option:hover {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+.settings-compact-select > SelectOverlay Option.-selected {
+    padding: 0 2;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.settings-provider-manual-hidden {
+    display: none;
 }
 
 .settings-status-row {

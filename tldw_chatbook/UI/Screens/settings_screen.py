@@ -10,7 +10,7 @@ import tomllib
 
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.events import Key
 from textual.reactive import reactive
@@ -78,6 +78,8 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_top_p": "top_p",
     "model_profile_streaming": "streaming",
 }
+PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
+PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
 CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
     {
         "collapse_large_pastes",
@@ -389,6 +391,8 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_endpoint = False
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
+        self._syncing_provider_manual = False
+        self._syncing_provider_selection = False
         self._syncing_console_threshold = False
         self._syncing_console_defaults = False
         self._syncing_console_background_effects = False
@@ -2392,7 +2396,7 @@ class SettingsScreen(BaseAppScreen):
         provider = str(resolved.provider or "not selected").strip()
         model = str(resolved.model or "not selected").strip()
         if provider and provider != "not selected":
-            return f"Provider readiness: {provider} / {model}"
+            return f"Provider readiness: {self._provider_display_name(provider)} / {model}"
         return "Provider readiness: needs provider and model"
 
     def _provider_draft(self) -> SettingsDraft | None:
@@ -2480,15 +2484,24 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_form_values_from_widgets(self) -> dict[str, object]:
         loaded_values = self._provider_loaded_setting_values()
-        provider_value = self.query_one("#settings-provider-value", Input).value.strip()
+        provider_value = self._provider_widget_value()
         provider_draft = self._provider_draft()
         provider_explicitly_staged = (
             provider_draft is not None and "provider" in provider_draft.values
         )
+        loaded_provider = str(loaded_values["provider"])
         provider = (
-            provider_value
-            if provider_value or provider_explicitly_staged
-            else str(loaded_values["provider"])
+            loaded_provider
+            if (
+                provider_value
+                and not provider_explicitly_staged
+                and provider_config_key(provider_value) == provider_config_key(loaded_provider)
+            )
+            else (
+                provider_value
+                if provider_value or provider_explicitly_staged
+                else loaded_provider
+            )
         )
         model = (
             self.query_one("#settings-model-value", Input).value.strip()
@@ -2549,10 +2562,92 @@ class SettingsScreen(BaseAppScreen):
         env_var = self._provider_config(provider).get("api_key_env_var", "")
         return str(env_var or "").strip()
 
+    def _provider_credential_placeholder(self, provider: str) -> str:
+        provider_key = provider_config_key(provider)
+        if not provider_key:
+            return "Select provider first"
+        readiness = get_provider_readiness(
+            provider,
+            getattr(self.app_instance, "app_config", {}) or {},
+        )
+        if not readiness.requires_api_key:
+            return "No credential required"
+        if readiness.env_var:
+            return readiness.env_var
+        return f"{provider_key.upper()}_API_KEY"
+
     def _provider_catalog_entries(self) -> tuple[ConsoleProviderCatalogEntry, ...]:
         return supported_console_provider_catalog(
             handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
         )
+
+    def _provider_catalog_keys(self) -> frozenset[str]:
+        return frozenset(entry.readiness_key for entry in self._provider_catalog_entries())
+
+    def _provider_display_name(self, provider: str) -> str:
+        provider_key = provider_config_key(provider)
+        for entry in self._provider_catalog_entries():
+            if entry.readiness_key == provider_key:
+                return entry.display_name
+        return provider
+
+    def _provider_select_options(self) -> list[tuple[str, str]]:
+        options = [
+            (f"{entry.display_name} ({entry.readiness_key})", entry.readiness_key)
+            for entry in self._provider_catalog_entries()
+        ]
+        options.append((PROVIDER_MANUAL_SELECT_LABEL, PROVIDER_MANUAL_SELECT_VALUE))
+        return options
+
+    def _provider_select_value_for_provider(self, provider: str) -> str:
+        provider_key = provider_config_key(provider)
+        if provider_key in self._provider_catalog_keys():
+            return provider_key
+        return PROVIDER_MANUAL_SELECT_VALUE
+
+    @staticmethod
+    def _select_value_text(value: object) -> str:
+        if value is None or value is Select.BLANK:
+            return ""
+        return str(value).strip()
+
+    def _provider_widget_value(self) -> str:
+        try:
+            provider_select = self.query_one("#settings-provider-value", Select)
+            selected_value = self._select_value_text(provider_select.value)
+            if selected_value == PROVIDER_MANUAL_SELECT_VALUE:
+                try:
+                    return self.query_one("#settings-provider-manual-value", Input).value.strip()
+                except QueryError:
+                    return ""
+            return selected_value
+        except QueryError:
+            try:
+                return self.query_one("#settings-provider-value", Input).value.strip()
+            except QueryError:
+                return str(self._provider_setting_values().get("provider") or "").strip()
+
+    def _sync_provider_manual_widget(self, provider: str) -> None:
+        try:
+            provider_select = self.query_one("#settings-provider-value", Select)
+            manual_row = self.query_one("#settings-provider-manual-row", Horizontal)
+            manual_input = self.query_one("#settings-provider-manual-value", Input)
+        except QueryError:
+            return
+        select_value = self._provider_select_value_for_provider(provider)
+        uses_manual_entry = select_value == PROVIDER_MANUAL_SELECT_VALUE
+        self._syncing_provider_selection = True
+        try:
+            provider_select.value = select_value
+        finally:
+            self._syncing_provider_selection = False
+        self._syncing_provider_manual = True
+        try:
+            manual_input.disabled = not uses_manual_entry
+            manual_input.value = provider if uses_manual_entry else ""
+            manual_row.set_class(not uses_manual_entry, "settings-provider-manual-hidden")
+        finally:
+            self._syncing_provider_manual = False
 
     def _provider_catalog_summary(self) -> str:
         catalog = ", ".join(entry.readiness_key for entry in self._provider_catalog_entries())
@@ -2644,6 +2739,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_credential_env_var = True
         try:
             credential_input.value = self._provider_credential_env_var(provider)
+            credential_input.placeholder = self._provider_credential_placeholder(provider)
         finally:
             self._syncing_provider_credential_env_var = False
 
@@ -2755,7 +2851,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _run_provider_readiness_test(self) -> str:
         try:
-            provider = self.query_one("#settings-provider-value", Input).value.strip()
+            provider = self._provider_widget_value()
             model = self.query_one("#settings-model-value", Input).value.strip()
         except QueryError:
             values = self._provider_setting_values()
@@ -2795,17 +2891,19 @@ class SettingsScreen(BaseAppScreen):
 
     def _update_provider_dynamic_widgets(self) -> None:
         try:
-            provider = self.query_one("#settings-provider-value", Input).value.strip()
+            provider = self._provider_widget_value()
         except QueryError:
             provider = str(self._provider_setting_values().get("provider") or "")
         try:
             endpoint = self.query_one("#settings-provider-endpoint-value", Input).value.strip()
         except QueryError:
             endpoint = self._provider_endpoint_value(provider)
+        readiness_label = self._provider_readiness_label()
         try:
             self.query_one("#settings-provider-readiness", Static).update(
-                self._provider_readiness_label()
+                f"Readiness: {readiness_label.removeprefix('Provider readiness: ')}"
             )
+            self.query_one("#settings-provider-inspector-readiness", Static).update(readiness_label)
             self.query_one("#settings-provider-endpoint-key", Static).update(
                 self._provider_endpoint_row(provider)
             )
@@ -3010,13 +3108,32 @@ class SettingsScreen(BaseAppScreen):
         yield Static("Providers & Models", classes="destination-section settings-column-title")
         with Vertical(id="settings-providers-models-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.PROVIDERS_MODELS)
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Provider", classes="settings-input-label")
-                yield Input(
-                    value=str(values["provider"]),
+                yield Select(
+                    self._provider_select_options(),
+                    value=self._provider_select_value_for_provider(str(values["provider"])),
                     id="settings-provider-value",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                )
+            manual_provider_classes = "settings-input-row"
+            if self._provider_select_value_for_provider(str(values["provider"])) != PROVIDER_MANUAL_SELECT_VALUE:
+                manual_provider_classes += " settings-provider-manual-hidden"
+            with Horizontal(id="settings-provider-manual-row", classes=manual_provider_classes):
+                yield Static("Manual", classes="settings-input-label")
+                yield Input(
+                    value=str(values["provider"])
+                    if self._provider_select_value_for_provider(str(values["provider"])) == PROVIDER_MANUAL_SELECT_VALUE
+                    else "",
+                    id="settings-provider-manual-value",
                     classes="settings-compact-input",
-                    placeholder="Provider, e.g. OpenAI or llama_cpp",
+                    placeholder="Custom provider key",
+                    disabled=(
+                        self._provider_select_value_for_provider(str(values["provider"]))
+                        != PROVIDER_MANUAL_SELECT_VALUE
+                    ),
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Model", classes="settings-input-label")
@@ -3040,7 +3157,7 @@ class SettingsScreen(BaseAppScreen):
                     value=str(values["credential_env_var"]),
                     id="settings-provider-credential-env-var",
                     classes="settings-compact-input",
-                    placeholder="OPENAI_API_KEY",
+                    placeholder=self._provider_credential_placeholder(str(values["provider"])),
                 )
             yield Static(
                 self._provider_catalog_summary(),
@@ -3053,7 +3170,7 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
             yield Static(
-                "Manual provider entry remains available for custom/local aliases.",
+                "Choose a catalog provider, or use Manual / custom provider for aliases.",
                 id="settings-provider-manual-entry-policy",
                 classes="settings-status-row",
             )
@@ -3204,7 +3321,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-background-effect-enabled",
                 tooltip="Toggle optional ambient effects behind the Console transcript.",
             )
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Background effect", classes="settings-input-label")
                 yield Select(
                     [
@@ -3219,10 +3336,11 @@ class SettingsScreen(BaseAppScreen):
                     ],
                     value=str(self._console_background_effect_value("effect") or "none"),
                     id="settings-console-background-effect-type",
-                    classes="settings-compact-input",
+                    classes="settings-compact-select",
                     allow_blank=False,
+                    compact=True,
                 )
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Scope", classes="settings-input-label")
                 yield Select(
                     [
@@ -3235,10 +3353,11 @@ class SettingsScreen(BaseAppScreen):
                     ],
                     value=str(self._console_background_effect_value("scope") or "transcript"),
                     id="settings-console-background-effect-scope",
-                    classes="settings-compact-input",
+                    classes="settings-compact-select",
                     allow_blank=False,
+                    compact=True,
                 )
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Intensity", classes="settings-input-label")
                 yield Select(
                     [
@@ -3252,8 +3371,9 @@ class SettingsScreen(BaseAppScreen):
                     ],
                     value=str(self._console_background_effect_value("intensity") or "low"),
                     id="settings-console-background-effect-intensity",
-                    classes="settings-compact-input",
+                    classes="settings-compact-select",
                     allow_blank=False,
+                    compact=True,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Frame rate", classes="settings-input-label")
@@ -3575,7 +3695,11 @@ class SettingsScreen(BaseAppScreen):
             return
         elif summary.category is SettingsCategoryId.PROVIDERS_MODELS:
             yield Static("Affects Console and provider-backed generation.", classes="destination-section")
-            yield Static(self._provider_readiness_label())
+            yield Static(
+                self._provider_readiness_label(),
+                id="settings-provider-inspector-readiness",
+                classes="settings-detail-row",
+            )
         elif summary.category is SettingsCategoryId.APPEARANCE:
             yield Static("Affects visual presentation only.", classes="destination-section")
             yield Button(
@@ -3652,11 +3776,14 @@ class SettingsScreen(BaseAppScreen):
                     )
                     yield from self._render_category_buttons()
                 yield self._column_divider("settings-category-detail-divider")
-                with Vertical(id="settings-detail-pane", classes="destination-workbench-pane"):
+                with VerticalScroll(id="settings-detail-pane", classes="destination-workbench-pane"):
                     yield Static("Preference Detail", classes="destination-section settings-column-title")
                     yield from self._render_detail_pane()
                 yield self._column_divider("settings-detail-impact-divider")
-                with Vertical(id="settings-impact-pane", classes="destination-workbench-pane ds-inspector"):
+                with VerticalScroll(
+                    id="settings-impact-pane",
+                    classes="destination-workbench-pane ds-inspector",
+                ):
                     yield from self._render_impact_pane()
 
     def _category_value_from_button(self, button: Button) -> str | None:
@@ -3910,10 +4037,18 @@ class SettingsScreen(BaseAppScreen):
         self._stage_console_background_effect_value("fps", value)
         self._mark_console_behavior_settings_staged()
 
-    @on(Input.Changed, "#settings-provider-value")
-    def handle_provider_value_changed(self, event: Input.Changed) -> None:
-        provider = event.value.strip()
-        self._stage_provider_value("provider", provider or None)
+    def _apply_provider_value_change(self, provider: str) -> None:
+        loaded_provider = str(self._provider_loaded_setting_values().get("provider") or "")
+        staged_provider = (
+            loaded_provider
+            if (
+                provider
+                and provider_config_key(provider) == provider_config_key(loaded_provider)
+            )
+            else provider
+        )
+        self._stage_provider_value("provider", staged_provider or None)
+        self._sync_provider_manual_widget(staged_provider)
         try:
             endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
         except QueryError:
@@ -3921,16 +4056,35 @@ class SettingsScreen(BaseAppScreen):
         if endpoint_input is not None:
             self._syncing_provider_endpoint = True
             try:
-                endpoint_input.value = self._provider_endpoint_value(provider)
-                endpoint_input.placeholder = self._provider_endpoint_placeholder(provider)
+                endpoint_input.value = self._provider_endpoint_value(staged_provider)
+                endpoint_input.placeholder = self._provider_endpoint_placeholder(staged_provider)
             finally:
                 self._syncing_provider_endpoint = False
-        self._sync_provider_credential_widget(provider)
+        self._sync_provider_credential_widget(staged_provider)
         model = str(self._provider_setting_values().get("model") or "")
-        self._sync_provider_model_profile_widgets(provider, model)
+        self._sync_provider_model_profile_widgets(staged_provider, model)
         self._clear_provider_auxiliary_draft_keys()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Select.Changed, "#settings-provider-value")
+    def handle_provider_value_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if self._syncing_provider_selection:
+            return
+        selected_value = self._select_value_text(event.value)
+        provider = (
+            self._provider_widget_value()
+            if selected_value == PROVIDER_MANUAL_SELECT_VALUE
+            else selected_value
+        )
+        self._apply_provider_value_change(provider)
+
+    @on(Input.Changed, "#settings-provider-manual-value")
+    def handle_provider_manual_value_changed(self, event: Input.Changed) -> None:
+        if self._syncing_provider_manual:
+            return
+        self._apply_provider_value_change(event.value.strip())
 
     @on(Input.Changed, "#settings-model-value")
     def handle_model_value_changed(self, event: Input.Changed) -> None:
@@ -4093,6 +4247,11 @@ class SettingsScreen(BaseAppScreen):
             endpoint = str(values.get("endpoint") or "").strip()
             credential_env_var = str(values.get("credential_env_var") or "").strip()
             draft = self._settings_drafts.get(category)
+            if not provider_config_key(provider):
+                self._provider_save_result = "Provider is required."
+                self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self.app.notify(self._provider_save_result, severity="error")
+                return
             endpoint_touched = draft is not None and "endpoint" in draft.dirty_keys
             loaded_endpoint = str(loaded_values.get("endpoint") or "").strip()
             if (
@@ -4336,12 +4495,25 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
             values = self._provider_setting_values()
             try:
-                self.query_one("#settings-provider-value", Input).value = str(values["provider"])
+                provider = str(values["provider"])
+                self._syncing_provider_selection = True
+                try:
+                    self.query_one("#settings-provider-value", Select).value = (
+                        self._provider_select_value_for_provider(provider)
+                    )
+                finally:
+                    self._syncing_provider_selection = False
+                self._sync_provider_manual_widget(provider)
                 self.query_one("#settings-model-value", Input).value = str(values["model"])
-                self.query_one("#settings-provider-endpoint-value", Input).value = str(values["endpoint"])
-                self.query_one("#settings-provider-credential-env-var", Input).value = str(
-                    values["credential_env_var"]
+                endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
+                endpoint_input.value = str(values["endpoint"])
+                endpoint_input.placeholder = self._provider_endpoint_placeholder(provider)
+                credential_input = self.query_one(
+                    "#settings-provider-credential-env-var",
+                    Input,
                 )
+                credential_input.value = str(values["credential_env_var"])
+                credential_input.placeholder = self._provider_credential_placeholder(provider)
                 self.query_one("#settings-model-profile-temperature", Input).value = str(
                     values["model_profile_temperature"]
                 )

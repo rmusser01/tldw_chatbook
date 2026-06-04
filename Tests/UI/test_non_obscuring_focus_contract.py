@@ -709,11 +709,55 @@ def test_console_transcript_selected_message_uses_selected_contract_without_geom
 def test_settings_compact_input_focus_preserves_single_row_content():
     text = AGENTIC.read_text(encoding="utf-8")
     block = css_block(text, ".settings-compact-input:focus")
-    assert "border:" not in block
+    assert "border: none;" in block
     assert "border-bottom:" not in block
-    assert "outline: none" not in block
-    assert "outline: solid $ds-input-focus-accent;" in block
+    assert "outline: none;" in block
+    assert "outline: solid" not in block
     assert "background: $ds-input-focus-bg;" in block
+    assert "color: $ds-text-primary;" in block
+    assert "text-style: bold underline;" in block
+
+
+def test_settings_compact_select_uses_non_clipping_row_contract():
+    text = AGENTIC.read_text(encoding="utf-8")
+    row = css_block(text, ".settings-select-row")
+    select = css_block(text, ".settings-compact-select")
+    current = css_block(text, ".settings-compact-select > SelectCurrent")
+    focus = css_block(text, ".settings-compact-select:focus")
+    current_focus = css_block(text, ".settings-compact-select:focus > SelectCurrent")
+    overlay = css_block(text, ".settings-compact-select > SelectOverlay")
+    option = css_block(text, ".settings-compact-select > SelectOverlay Option")
+    selected_option = css_block(text, ".settings-compact-select > SelectOverlay Option.-selected")
+
+    assert "height: 3;" in row
+    assert "min-height: 3;" in row
+    assert "height: 3;" in select
+    assert "min-height: 3;" in select
+    assert "max-height: 3;" in select
+    assert "border: none;" in current
+    assert "height: 1;" in current
+    assert "color: $ds-text-primary;" in current
+    assert "background: $ds-surface-inspector;" in current
+    assert "color: $ds-text-primary;" in current_focus
+    assert "background: $ds-input-focus-bg;" in current_focus
+    assert "text-style: bold;" in focus
+    assert "reverse" not in focus
+    assert "padding: 0 1;" in overlay
+    assert "padding: 0 2;" in option
+    assert "min-height: 3;" in option
+    assert "padding: 0 2;" in selected_option
+    assert "text-style: bold underline;" in selected_option
+
+
+def test_settings_detail_and_inspector_panes_scroll_long_content():
+    text = AGENTIC.read_text(encoding="utf-8")
+    detail = "\n".join(css_blocks(text, "#settings-detail-pane"))
+    inspector = "\n".join(css_blocks(text, "#settings-impact-pane"))
+
+    for block in (detail, inspector):
+        assert "overflow-y: auto;" in block
+        assert "overflow-x: hidden;" in block
+        assert "scrollbar-size: 1 1;" in block
 
 
 def test_settings_category_active_states_use_selected_contract():
