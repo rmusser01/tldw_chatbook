@@ -27,14 +27,20 @@ def _capabilities_from_resolver(
     model_id: str,
     capability_resolver: CapabilityResolver | None,
 ) -> Mapping[str, Any] | None:
-    """Return resolver capabilities while treating resolver errors as unknown."""
+    """Return resolver capabilities that prove a model is explicitly known."""
     if capability_resolver is None:
         return None
     try:
         capabilities = capability_resolver(provider, model_id)
     except Exception:
         return None
-    return capabilities if isinstance(capabilities, Mapping) and capabilities else None
+    if not isinstance(capabilities, Mapping) or not capabilities:
+        return None
+    if capabilities.get("vision") is True:
+        return capabilities
+    if capabilities.get("known") is True or capabilities.get("configured") is True:
+        return capabilities
+    return None
 
 
 def _metadata_has_positive_capability(metadata: Mapping[str, Any]) -> bool:

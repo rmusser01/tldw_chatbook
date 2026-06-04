@@ -134,12 +134,23 @@ def test_capability_resolver_can_mark_model_known():
         "OpenAI",
         "gpt-4.1",
         {"vision": False},
-        capability_resolver=lambda provider, model_id: {"vision": False}
+        capability_resolver=lambda provider, model_id: {"vision": True}
         if provider == "OpenAI" and model_id == "gpt-4.1"
         else None,
     )
 
     assert status == "known"
+
+
+def test_fallback_false_capability_mapping_does_not_mark_model_known():
+    status = resolve_discovered_model_capability_status(
+        "OpenAI",
+        "unknown-model",
+        {},
+        capability_resolver=lambda provider, model_id: {"vision": False},
+    )
+
+    assert status == "unknown"
 
 
 def test_append_models_to_provider_list_preserves_exact_key_and_dedupes():
@@ -181,7 +192,7 @@ def test_persistence_calls_save_callback_with_top_level_providers_update():
     calls: list[dict] = []
 
     result = persist_discovered_models_to_settings(
-        providers_config={"OpenRouter": ["existing"]},
+        providers_config={"OpenRouter": ["existing"], "OpenAI": ["gpt-4.1"]},
         requested_provider="openrouter",
         model_ids=["new-model", "existing"],
         save_callback=lambda section_values: calls.append(section_values) or True,
@@ -191,3 +202,18 @@ def test_persistence_calls_save_callback_with_top_level_providers_update():
     assert result.provider_list_key == "OpenRouter"
     assert result.saved_model_ids == ("new-model",)
     assert calls == [{"providers": {"OpenRouter": ["existing", "new-model"]}}]
+
+
+def test_persistence_does_not_call_save_callback_when_no_new_models():
+    calls: list[dict] = []
+
+    result = persist_discovered_models_to_settings(
+        providers_config={"OpenRouter": ["existing"]},
+        requested_provider="openrouter",
+        model_ids=["existing"],
+        save_callback=lambda section_values: calls.append(section_values) or True,
+    )
+
+    assert result.status == "saved"
+    assert result.saved_model_ids == ()
+    assert calls == []

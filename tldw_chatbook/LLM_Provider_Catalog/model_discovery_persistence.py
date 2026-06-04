@@ -100,6 +100,15 @@ def persist_discovered_models_to_settings(
     provider_list_key = resolution.provider_list_key or ""
     existing_models = providers_config.get(provider_list_key, [])
     saved_model_ids = _newly_saved_model_ids(existing_models, model_ids)
+    if not saved_model_ids:
+        return PersistenceResult(
+            provider=requested_provider,
+            provider_list_key=provider_list_key,
+            status="saved",
+            saved_model_ids=(),
+            message=f"No new discovered models to save for {provider_list_key}.",
+        )
+
     updated_providers = append_models_to_provider_list(
         providers_config,
         provider_list_key,
@@ -107,7 +116,7 @@ def persist_discovered_models_to_settings(
     )
     save = save_callback or _default_save_callback
     try:
-        saved = bool(save({"providers": updated_providers}))
+        saved = bool(save({"providers": {provider_list_key: updated_providers[provider_list_key]}}))
     except Exception:
         saved = False
     if not saved:
