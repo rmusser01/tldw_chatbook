@@ -26,7 +26,10 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_PROVIDER_ACTION_ARROW,
+    ChatScreen,
+)
 from tldw_chatbook.config import resolve_provider_name
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
@@ -1548,7 +1551,9 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
         assert "Provider setup is shown in the recovery strip above." not in text
         blocker = console.query_one("#console-provider-blocker", Static)
         blocker_text = getattr(blocker.render(), "plain", str(blocker.render()))
-        assert blocker_text == "Provider setup needed: OpenAI missing API key ---------------------->"
+        assert blocker_text.startswith("Provider setup needed: OpenAI missing API key")
+        assert CONSOLE_PROVIDER_ACTION_ARROW in blocker_text
+        assert blocker_text.endswith(">")
         assert console.query_one("#console-inspector-rail-handle").display is True
         assert console.query_one("#console-right-rail").display is False
         assert text.lower().count("missing api key") == 1
@@ -1591,7 +1596,9 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         assert blocker.region.x >= strip.region.x
         assert button.region.x + button.region.width <= strip.region.x + strip.region.width
         blocker_text = getattr(blocker.render(), "plain", str(blocker.render()))
-        assert blocker_text == "Provider setup needed: OpenAI missing API key ---------------------->"
+        assert blocker_text.startswith("Provider setup needed: OpenAI missing API key")
+        assert CONSOLE_PROVIDER_ACTION_ARROW in blocker_text
+        assert blocker_text.endswith(">")
         text = _visible_text(console)
         assert "Add API Key" in text
         assert console.query_one("#console-inspector-rail-handle").display is True
