@@ -1614,7 +1614,6 @@ Button.settings-category-button.settings-secondary-search-match {
     width: 1fr;
     height: 3;
     min-height: 3;
-    max-height: 3;
     margin: 0;
     padding: 0;
     border: solid $ds-grid-line;
