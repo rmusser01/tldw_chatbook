@@ -257,6 +257,13 @@ def test_endpoint_fingerprint_redacts_credentials_for_unparseable_authority():
     assert "api_key" not in fingerprint
 
 
+def test_endpoint_with_userinfo_but_no_host_is_not_eligible_or_leaky():
+    endpoint = "https://user:secret@/v1"
+
+    assert supports_openai_compatible_model_discovery("custom", endpoint) is False
+    assert fingerprint_endpoint(endpoint) == "https://[invalid-endpoint]"
+
+
 @pytest.mark.asyncio
 async def test_discovers_models_with_authorization_header_when_api_key_present():
     requests: list[httpx.Request] = []

@@ -112,7 +112,7 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
         parsed = urlparse(candidate)
     except ValueError:
         return None
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
         return None
     try:
         parsed.port
@@ -149,7 +149,7 @@ def _parse_endpoint_for_fingerprint(endpoint: str | None) -> ParseResult | None:
         parsed = urlparse(candidate)
     except ValueError:
         return None
-    return parsed if parsed.scheme and parsed.netloc else None
+    return parsed if parsed.scheme and parsed.netloc and parsed.hostname else None
 
 
 def _models_path_for_endpoint_path(path: str) -> str | None:
