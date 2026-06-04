@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Literal
 
 
@@ -41,9 +43,17 @@ class DiscoveredModel:
     source: DiscoverySource
     endpoint_fingerprint: str
     discovered_at: str
-    metadata_raw_safe: dict[str, Any] = field(default_factory=dict)
+    metadata_raw_safe: Mapping[str, Any] = field(default_factory=dict)
     capability_status: CapabilityStatus = "unknown"
     persisted: bool = False
+
+    def __post_init__(self) -> None:
+        """Freeze a caller-independent shallow copy of safe endpoint metadata."""
+        object.__setattr__(
+            self,
+            "metadata_raw_safe",
+            MappingProxyType(dict(self.metadata_raw_safe)),
+        )
 
 
 @dataclass(frozen=True)

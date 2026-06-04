@@ -11,6 +11,16 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 )
 
 
+_MODEL_DISCOVERY_PROVIDER_HANDLER_KEYS = frozenset(
+    {
+        "custom-openai-api",
+        "custom-openai-api-2",
+        "local-llm",
+        "mistralai",
+    }
+)
+
+
 def resolve_provider_list_key(
     provider: str | None,
     providers: Mapping[str, object],
@@ -27,7 +37,10 @@ def resolve_provider_list_key(
         identity; missing and ambiguous states never synthesize a new key.
     """
     requested_provider = (provider or "").strip()
-    normalized_provider = resolve_console_provider_identity(provider).readiness_key
+    normalized_provider = resolve_console_provider_identity(
+        provider,
+        handler_keys=_MODEL_DISCOVERY_PROVIDER_HANDLER_KEYS,
+    ).readiness_key
     matches = tuple(
         existing_key
         for existing_key in providers

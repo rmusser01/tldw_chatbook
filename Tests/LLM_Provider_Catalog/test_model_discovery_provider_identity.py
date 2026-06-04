@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import builtins
+import sys
+
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import DiscoveredModel
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_provider_identity import (
     resolve_provider_list_key,
 )
@@ -55,3 +59,42 @@ def test_resolves_direct_llama_key_without_synthesizing_alias():
 
     assert result.status == "resolved"
     assert result.provider_list_key == "local_llamacpp"
+
+
+def test_resolving_non_direct_provider_does_not_import_chat_functions(monkeypatch):
+    sys.modules.pop("tldw_chatbook.Chat.Chat_Functions", None)
+    original_import = builtins.__import__
+
+    def rejecting_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "tldw_chatbook.Chat.Chat_Functions":
+            raise AssertionError("Chat_Functions import is not allowed")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", rejecting_import)
+
+    result = resolve_provider_list_key(
+        "custom-openai-api",
+        {"Custom": ["existing-model"]},
+    )
+
+    assert result.status == "resolved"
+    assert result.provider_list_key == "Custom"
+    assert "tldw_chatbook.Chat.Chat_Functions" not in sys.modules
+
+
+def test_discovered_model_metadata_is_copied_from_caller_mapping():
+    metadata = {"owned": False}
+
+    model = DiscoveredModel(
+        provider="openrouter",
+        provider_list_key="OpenRouter",
+        model_id="openrouter/auto",
+        display_name="openrouter/auto",
+        source="runtime_discovered",
+        endpoint_fingerprint="endpoint",
+        discovered_at="2026-06-04T00:00:00Z",
+        metadata_raw_safe=metadata,
+    )
+    metadata["owned"] = True
+
+    assert model.metadata_raw_safe["owned"] is False
