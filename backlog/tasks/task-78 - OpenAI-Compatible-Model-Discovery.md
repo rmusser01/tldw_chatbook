@@ -1,12 +1,16 @@
 ---
 id: TASK-78
 title: OpenAI-Compatible Model Discovery
-status: To Do
+status: In Progress
+assignee: []
+created_date: ''
+updated_date: '2026-06-04 16:58'
 labels:
-- providers
-- settings
-- console
-- model-discovery
+  - providers
+  - settings
+  - console
+  - model-discovery
+dependencies: []
 priority: medium
 ---
 
@@ -25,16 +29,33 @@ Allow users to manually discover models from configured OpenAI-compatible provid
 - [ ] #5 Focused automated tests cover discovery parsing, cache, merge, persistence, and UI states.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/002-openai-compatible-model-discovery.md
+Reason: Defines provider/config/catalog boundaries and persistence policy.
+
+1. Add discovery contracts and provider key resolution tests.
+2. Add OpenAI-compatible endpoint discovery parsing and safe error handling.
+3. Add runtime cache merge and persistence helpers.
+4. Wire the local provider catalog and scope service.
+5. Add Settings discover and save workflow.
+6. Add Console merged model consumption and warnings.
+7. Run focused tests and manual UI QA.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+<!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
