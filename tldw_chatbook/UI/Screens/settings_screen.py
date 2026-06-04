@@ -8,12 +8,15 @@ from pathlib import Path
 import re
 import tomllib
 
+from rich.cells import cell_len
+from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.events import Key
 from textual.reactive import reactive
+from textual.strip import Strip
 from textual.widgets import Button, Input, Rule, Select, Static, TextArea
 
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
@@ -105,6 +108,8 @@ CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER = (
 CONSOLE_BACKGROUND_WORKBENCH_UNAVAILABLE_COPY = (
     "Workbench scope is not available in this build; using Transcript scope."
 )
+TEXTUAL_WEB_URL_AUTOLINK_BREAK = "\u200b"
+TEXTUAL_WEB_URL_SCHEME_RE = re.compile(r"\b(https?)://", re.IGNORECASE)
 CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
     {
         "streaming",
@@ -367,6 +372,129 @@ DOMAIN_CONTRACT_BY_CATEGORY = _build_domain_contract_by_category(
 )
 DOMAIN_SETTINGS_CATEGORY_IDS = frozenset(DOMAIN_CONTRACT_BY_CATEGORY)
 _WORKSPACE_RECORD_UNSET = object()
+
+
+def _textual_web_safe_url_display(value: str) -> str:
+    """Break URL schemes in rendered input text without changing the stored value."""
+    return TEXTUAL_WEB_URL_SCHEME_RE.sub(
+        lambda match: f"{match.group(1)}{TEXTUAL_WEB_URL_AUTOLINK_BREAK}://",
+        value,
+    )
+
+
+def _textual_web_safe_url_display_index(value: str, index: int) -> int:
+    display_index = index
+    for match in TEXTUAL_WEB_URL_SCHEME_RE.finditer(value):
+        insertion_index = match.start(1) + len(match.group(1))
+        if index >= insertion_index:
+            display_index += len(TEXTUAL_WEB_URL_AUTOLINK_BREAK)
+    return display_index
+
+
+class SettingsURLInput(Input):
+    """Render endpoint URLs without browser autolinking.
+
+    SettingsURLInput preserves the raw ``value`` used for validation, saving,
+    selection, and event handling. Only the rendered display text is adjusted by
+    inserting a zero-width break after URL schemes so textual-web/browser
+    terminals do not treat provider endpoint values as clickable links.
+
+    Args:
+        *args: Positional arguments forwarded to ``textual.widgets.Input``.
+        **kwargs: Keyword arguments forwarded to ``textual.widgets.Input``.
+    """
+
+    @property
+    def _value(self) -> Text:
+        if self.password:
+            return super()._value
+        text = Text(
+            _textual_web_safe_url_display(self.value),
+            no_wrap=True,
+            overflow="ignore",
+            end="",
+        )
+        if self.highlighter is not None:
+            text = self.highlighter(text)
+        return text
+
+    @property
+    def content_width(self) -> int:
+        if self.placeholder and not self.value:
+            return cell_len(self.placeholder)
+        return self._value.cell_len + 1
+
+    def _display_index(self, index: int) -> int:
+        if self.password:
+            return index
+        return _textual_web_safe_url_display_index(self.value, index)
+
+    def render_line(self, y: int) -> Strip:
+        if y != 0:
+            return Strip.blank(self.size.width, self.rich_style)
+
+        console = self.app.console
+        console_options = self.app.console_options
+        max_content_width = self.scrollable_content_region.width
+
+        if not self.value:
+            placeholder = Text(self.placeholder, justify="left", end="")
+            placeholder.stylize(self.get_component_rich_style("input--placeholder"))
+            if self.has_focus:
+                cursor_style = self.get_component_rich_style("input--cursor")
+                if self._cursor_visible:
+                    if len(placeholder) == 0:
+                        placeholder = Text(" ", end="")
+                    placeholder.stylize(cursor_style, 0, 1)
+
+            strip = Strip(
+                console.render(
+                    placeholder,
+                    console_options.update_width(max_content_width + 1),
+                )
+            )
+        else:
+            result = self._value
+
+            value = self.value
+            value_length = len(value)
+            suggestion = self._suggestion
+            show_suggestion = len(suggestion) > value_length and self.has_focus
+            if show_suggestion:
+                result += Text(
+                    suggestion[value_length:],
+                    self.get_component_rich_style("input--suggestion"),
+                    end="",
+                )
+
+            if self.has_focus:
+                if not self.selection.is_empty:
+                    start, end = self.selection
+                    start, end = sorted((start, end))
+                    selection_style = self.get_component_rich_style("input--selection")
+                    result.stylize_before(
+                        selection_style,
+                        self._display_index(start),
+                        self._display_index(end),
+                    )
+
+                if self._cursor_visible:
+                    cursor_style = self.get_component_rich_style("input--cursor")
+                    cursor = self._display_index(self.cursor_position)
+                    if not show_suggestion and self.cursor_at_end:
+                        result.pad_right(1)
+                    result.stylize(cursor_style, cursor, cursor + 1)
+
+            segments = list(
+                console.render(result, console_options.update_width(self.content_width))
+            )
+
+            strip = Strip(segments)
+            scroll_x, _ = self.scroll_offset
+            strip = strip.crop(scroll_x, scroll_x + max_content_width + 1)
+            strip = strip.extend_cell_length(max_content_width + 1)
+
+        return strip.apply_style(self.rich_style)
 
 
 class SettingsScreen(BaseAppScreen):
@@ -3145,7 +3273,7 @@ class SettingsScreen(BaseAppScreen):
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Endpoint", classes="settings-input-label")
-                yield Input(
+                yield SettingsURLInput(
                     value=str(values["endpoint"]),
                     id="settings-provider-endpoint-value",
                     classes="settings-compact-input",
