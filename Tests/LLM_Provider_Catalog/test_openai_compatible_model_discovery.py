@@ -230,6 +230,16 @@ def test_endpoint_fingerprint_redacts_credentials_for_unsupported_scheme():
     assert "api_key" not in fingerprint
 
 
+def test_endpoint_fingerprint_redacts_credentials_for_host_only_malformed_port():
+    fingerprint = fingerprint_endpoint(
+        "user:secret@example.test:bad/v1/models?api_key=secret"
+    )
+
+    assert fingerprint == "http://example.test/v1/models"
+    assert "secret" not in fingerprint
+    assert "api_key" not in fingerprint
+
+
 @pytest.mark.asyncio
 async def test_discovers_models_with_authorization_header_when_api_key_present():
     requests: list[httpx.Request] = []

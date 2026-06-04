@@ -134,10 +134,11 @@ def _safe_netloc(parsed: ParseResult) -> str:
 def _parse_endpoint_for_fingerprint(endpoint: str | None) -> ParseResult | None:
     """Parse any URL-like endpoint so safe display can strip credentials."""
     raw_endpoint = str(endpoint or "").strip()
-    if not raw_endpoint or "://" not in raw_endpoint:
+    if not raw_endpoint:
         return None
+    candidate = raw_endpoint if "://" in raw_endpoint else f"http://{raw_endpoint}"
     try:
-        parsed = urlparse(raw_endpoint)
+        parsed = urlparse(candidate)
     except ValueError:
         return None
     return parsed if parsed.scheme and parsed.netloc else None
