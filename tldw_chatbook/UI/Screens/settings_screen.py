@@ -2605,10 +2605,16 @@ class SettingsScreen(BaseAppScreen):
             return provider_key
         return PROVIDER_MANUAL_SELECT_VALUE
 
+    @staticmethod
+    def _select_value_text(value: object) -> str:
+        if value is None or value is Select.BLANK:
+            return ""
+        return str(value).strip()
+
     def _provider_widget_value(self) -> str:
         try:
             provider_select = self.query_one("#settings-provider-value", Select)
-            selected_value = str(provider_select.value or "").strip()
+            selected_value = self._select_value_text(provider_select.value)
             if selected_value == PROVIDER_MANUAL_SELECT_VALUE:
                 try:
                     return self.query_one("#settings-provider-manual-value", Input).value.strip()
@@ -4066,7 +4072,7 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         if self._syncing_provider_selection:
             return
-        selected_value = str(event.value or "").strip()
+        selected_value = self._select_value_text(event.value)
         provider = (
             self._provider_widget_value()
             if selected_value == PROVIDER_MANUAL_SELECT_VALUE
@@ -4241,6 +4247,11 @@ class SettingsScreen(BaseAppScreen):
             endpoint = str(values.get("endpoint") or "").strip()
             credential_env_var = str(values.get("credential_env_var") or "").strip()
             draft = self._settings_drafts.get(category)
+            if not provider_config_key(provider):
+                self._provider_save_result = "Provider is required."
+                self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self.app.notify(self._provider_save_result, severity="error")
+                return
             endpoint_touched = draft is not None and "endpoint" in draft.dirty_keys
             loaded_endpoint = str(loaded_values.get("endpoint") or "").strip()
             if (
@@ -4494,10 +4505,15 @@ class SettingsScreen(BaseAppScreen):
                     self._syncing_provider_selection = False
                 self._sync_provider_manual_widget(provider)
                 self.query_one("#settings-model-value", Input).value = str(values["model"])
-                self.query_one("#settings-provider-endpoint-value", Input).value = str(values["endpoint"])
-                self.query_one("#settings-provider-credential-env-var", Input).value = str(
-                    values["credential_env_var"]
+                endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
+                endpoint_input.value = str(values["endpoint"])
+                endpoint_input.placeholder = self._provider_endpoint_placeholder(provider)
+                credential_input = self.query_one(
+                    "#settings-provider-credential-env-var",
+                    Input,
                 )
+                credential_input.value = str(values["credential_env_var"])
+                credential_input.placeholder = self._provider_credential_placeholder(provider)
                 self.query_one("#settings-model-profile-temperature", Input).value = str(
                     values["model_profile_temperature"]
                 )

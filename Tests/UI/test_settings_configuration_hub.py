@@ -2664,10 +2664,101 @@ async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch
         await pilot.click("#settings-save-category")
         text = _visible_text(screen)
 
-        assert "Provider is required before saving an endpoint." in text
+        assert "Provider is required." in text
 
     assert saved == []
     assert app.app_config["api_settings"] == {}
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_blocks_empty_manual_provider_save(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider = screen.query_one("#settings-provider-value", Select)
+        manual_provider = screen.query_one("#settings-provider-manual-value", Input)
+
+        provider.value = "__manual__"
+        manual_provider.value = ""
+        screen.handle_provider_value_changed(Select.Changed(provider, "__manual__"))
+        screen.handle_provider_manual_value_changed(
+            Input.Changed(manual_provider, ""),
+        )
+
+        await pilot.click("#settings-save-category")
+        text = _visible_text(screen)
+
+        assert "Provider is required." in text
+
+    assert saved == []
+    assert app.app_config["chat_defaults"]["provider"] == "OpenAI"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_blank_select_value_is_not_treated_as_provider():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider = screen.query_one("#settings-provider-value", Select)
+
+        screen.handle_provider_value_changed(Select.Changed(provider, Select.BLANK))
+
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert draft.values["provider"] is None
+        assert "Select.BLANK" not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_revert_restores_provider_dependent_placeholders():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_base_url": "https://api.openai.com/v1",
+            "api_key_env_var": "OPENAI_API_KEY",
+        },
+        "llama_cpp": {},
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider = screen.query_one("#settings-provider-value", Select)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        credential = screen.query_one("#settings-provider-credential-env-var", Input)
+
+        assert endpoint.placeholder == "https://api.openai.com/v1"
+        assert credential.placeholder == "OPENAI_API_KEY"
+
+        provider.value = "llama_cpp"
+        screen.handle_provider_value_changed(Select.Changed(provider, "llama_cpp"))
+        assert endpoint.placeholder == "http://127.0.0.1:9099/v1"
+        assert credential.placeholder == "No credential required"
+
+        await pilot.click("#settings-revert-category")
+
+        assert endpoint.placeholder == "https://api.openai.com/v1"
+        assert credential.placeholder == "OPENAI_API_KEY"
 
 
 @pytest.mark.asyncio
