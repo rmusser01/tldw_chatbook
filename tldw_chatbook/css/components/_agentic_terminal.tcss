@@ -273,6 +273,26 @@ ConsoleSettingsModal Select:focus {
     padding: 0 1;
 }
 
+Button#console-open-provider-settings.console-provider-api-key-action {
+    border: none;
+    outline: none;
+    background: $ds-status-warning;
+    color: $background;
+    text-opacity: 1;
+    text-style: bold;
+}
+
+Button#console-open-provider-settings.console-provider-api-key-action:hover,
+Button#console-open-provider-settings.console-provider-api-key-action:focus,
+Button#console-open-provider-settings.console-provider-api-key-action:hover:focus {
+    border: none;
+    outline: none;
+    background: $ds-status-warning;
+    color: $background;
+    text-opacity: 1;
+    text-style: bold underline;
+}
+
 .home-dashboard-region,
 .console-region,
 .library-region,

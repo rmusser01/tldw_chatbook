@@ -141,6 +141,8 @@ CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
+CONSOLE_PROVIDER_ADD_API_KEY_LABEL = "Add API Key"
+CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -1528,7 +1530,7 @@ class ChatScreen(BaseAppScreen):
         if blocker == "provider setup needed: choose a model":
             return "Choose a model in Console Settings before sending."
         if "missing api key" in blocker:
-            return "Add API key in Settings before sending."
+            return "Add API Key in Settings before sending."
         if "save the endpoint in settings" in blocker:
             return "Save provider endpoint in Settings before sending."
         return "Finish provider setup before sending."
@@ -1558,7 +1560,11 @@ class ChatScreen(BaseAppScreen):
             getattr(self.app_instance, "app_config", {}) or {},
         )
         if provider_readiness.reason == "Missing API key":
-            return ("Add API key", "settings", f"Add an API key for {provider}")
+            return (
+                CONSOLE_PROVIDER_ADD_API_KEY_LABEL,
+                "settings",
+                f"Add an API key for {provider}",
+            )
         if settings_readiness.label == "Endpoint not saved":
             return (
                 "Configure endpoint",
@@ -1573,6 +1579,16 @@ class ChatScreen(BaseAppScreen):
             return False
         action_label, _action_target, _action_tooltip = self._console_provider_recovery_action()
         return action_label not in {"Choose provider", "Choose model"}
+
+    @staticmethod
+    def _console_provider_blocker_display_copy(copy: str, action_label: str) -> str:
+        """Return visible recovery copy with an arrow for API-key setup actions."""
+        copy = copy.strip()
+        if not copy:
+            return ""
+        if action_label == CONSOLE_PROVIDER_ADD_API_KEY_LABEL:
+            return f"{copy}{CONSOLE_PROVIDER_ACTION_ARROW}"
+        return copy
 
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
@@ -1678,17 +1694,18 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         recovery_visible = self._console_provider_recovery_strip_visible(blocker_copy)
+        action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
         self._configure_console_provider_recovery_strip(
             provider_strip,
             provider_blocker,
             blocker_copy,
             visible=recovery_visible,
+            action_label=action_label,
         )
         try:
             settings_button = self.query_one("#console-open-provider-settings", Button)
         except QueryError:
             return
-        action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
         self._configure_console_provider_settings_action(
             settings_button,
             visible=recovery_visible,
@@ -1703,12 +1720,17 @@ class ChatScreen(BaseAppScreen):
         copy: str,
         *,
         visible: bool,
+        action_label: str,
     ) -> None:
         """Show provider recovery as one compact warning/action row."""
         strip.styles.height = "auto" if visible else 0
         strip.styles.min_height = 1 if visible else 0
         strip.styles.display = "block" if visible else "none"
-        blocker.update(copy if visible else "")
+        blocker.update(
+            ChatScreen._console_provider_blocker_display_copy(copy, action_label)
+            if visible
+            else ""
+        )
         blocker.styles.display = "block" if visible else "none"
         blocker.styles.width = "1fr"
         blocker.styles.height = "auto" if visible else 0
@@ -1727,6 +1749,10 @@ class ChatScreen(BaseAppScreen):
         button.label = label or "Open Settings"
         button.tooltip = tooltip
         button.disabled = not visible
+        if visible and label == CONSOLE_PROVIDER_ADD_API_KEY_LABEL:
+            button.add_class("console-provider-api-key-action")
+        else:
+            button.remove_class("console-provider-api-key-action")
         if visible:
             button.styles.display = "block"
             button.styles.height = 1
@@ -2089,6 +2115,7 @@ class ChatScreen(BaseAppScreen):
                                 blocker,
                                 provider_blocker_copy,
                                 visible=recovery_visible,
+                                action_label=provider_action_label,
                             )
                             yield blocker
                             provider_settings_action = Button(
