@@ -13,9 +13,9 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual._context import NoActiveAppError
 from textual.css.query import QueryError
 from textual.events import Key
+from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.strip import Strip
 from textual.widgets import Button, Input, Rule, Select, SelectionList, Static, TextArea
@@ -4278,7 +4278,7 @@ class SettingsScreen(BaseAppScreen):
             return None
         return value
 
-    def _focused_widget(self):
+    def _focused_widget(self) -> object | None:
         try:
             return self.app.focused
         except NoActiveAppError:
@@ -5217,7 +5217,7 @@ class SettingsScreen(BaseAppScreen):
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     def on_key(self, event: Key) -> None:
-        focused = self.app.focused
+        focused = self._focused_widget()
         if (
             event.key in {"/", "slash"}
             or getattr(event, "character", None) == "/"

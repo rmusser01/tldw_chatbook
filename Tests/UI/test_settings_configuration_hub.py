@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.containers import VerticalScroll
+from textual.events import Key
 from textual.widgets import Button, Input, Select, SelectionList, Static, TextArea
 
 from Tests.UI.test_destination_shells import (
@@ -1896,6 +1897,15 @@ def test_settings_console_background_workbench_raw_scope_unrelated_save_includes
     assert console_values["paste_collapse_threshold"] == 120
     assert console_values["background_effects"]["scope"] == "transcript"
     assert workbench_scope_fallback is True
+
+
+def test_settings_on_key_treats_detached_screen_focus_as_absent():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    screen.on_key(Key("slash", "/"))
+
+    assert screen.category_search_query == ""
 
 
 @pytest.mark.asyncio
