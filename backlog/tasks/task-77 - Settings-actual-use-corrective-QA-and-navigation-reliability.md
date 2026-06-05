@@ -41,6 +41,8 @@ Verify the Settings configuration hub through actual rendered app use and correc
 Slice 1 addressed the confirmed endpoint-field blocker found during CDP QA: clicking a URL-valued provider endpoint in textual-web opened the browser URL instead of behaving like an editable Settings input. Added a URL-safe endpoint input renderer that breaks browser autolinking in display text while preserving the raw value for validation and saving. Added focused regressions for the display transform and endpoint widget composition, then verified with Settings tests and CDP screenshot evidence approved by the user.
 
 Slice 2 addressed the confirmed provider dropdown blocker found during CDP QA: the compact Settings Select kept `max-height: 3`, which constrained its rendered dropdown overlay and made provider choices appear clipped/hidden in textual-web. Updated the focus contract regression to forbid the clipping rule, removed the source CSS cap, rebuilt generated CSS, and captured approved CDP screenshots showing the dropdown open and a provider selection applied with visible state/inspector feedback.
+
+Slice 3 addressed the confirmed footer shortcut leakage found during CDP QA: typing `s`, `r`, or `t` into focused Settings text inputs could invoke Save, Revert, or Test actions through global Settings bindings. Added a focused regression that verifies real `s`/`r`/`t` keypresses remain literal input and save/test/revert actions are ignored while a provider text input owns focus, guarded those action handlers for `Input` and `TextArea` focus, reran focused Settings/provider tests, and captured approved CDP screenshot evidence showing visible typed provider inputs without shortcut-triggered toasts.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

@@ -968,6 +968,50 @@ async def test_settings_provider_category_lists_console_supported_catalog():
 
 
 @pytest.mark.asyncio
+async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    saved = []
+
+    class FakeAdapter:
+        def save_values(self, section, values):
+            saved.append((section, values))
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        model_input = screen.query_one("#settings-model-value", Input)
+        model_input.value = "gpt-shortcut-check"
+        screen.handle_model_value_changed(Input.Changed(model_input, model_input.value))
+        screen._provider_test_result = None
+        model_input.focus()
+        await pilot.pause()
+
+        assert screen.app.focused is model_input
+
+        await pilot.press("s", "r", "t")
+        await pilot.pause()
+
+        assert model_input.value == "srt"
+        assert saved == []
+        assert screen._provider_test_result is None
+        assert screen._settings_drafts
+
+        screen.action_settings_save_category()
+        screen.action_settings_test_category()
+        screen.action_settings_revert_category()
+
+        assert saved == []
+        assert model_input.value == "srt"
+        assert screen._provider_test_result is None
+        assert screen._settings_drafts
+
+
+@pytest.mark.asyncio
 async def test_settings_category_selection_updates_detail_and_inspector():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
