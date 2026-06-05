@@ -13,6 +13,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual._context import NoActiveAppError
 from textual.css.query import QueryError
 from textual.events import Key
 from textual.reactive import reactive
@@ -4265,18 +4266,24 @@ class SettingsScreen(BaseAppScreen):
             return None
         return value
 
+    def _focused_widget(self):
+        try:
+            return self.app.focused
+        except NoActiveAppError:
+            return None
+
     def _focused_category_value(self) -> str | None:
-        focused = self.app.focused
+        focused = self._focused_widget()
         if isinstance(focused, Button):
             return self._category_value_from_button(focused)
         return None
 
     def _category_search_has_focus(self) -> bool:
-        focused = self.app.focused
+        focused = self._focused_widget()
         return isinstance(focused, Input) and focused.id == "settings-category-search"
 
     def _settings_text_entry_has_focus(self) -> bool:
-        return isinstance(self.app.focused, (Input, TextArea))
+        return isinstance(self._focused_widget(), (Input, TextArea))
 
     def _focus_category_search(self) -> None:
         try:
