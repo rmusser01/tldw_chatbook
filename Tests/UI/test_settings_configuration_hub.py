@@ -872,6 +872,21 @@ def test_settings_manual_sync_run_worker_uses_main_event_loop_async_worker():
     assert inspect.iscoroutinefunction(wrapped)
 
 
+def test_settings_model_discovery_button_handlers_dispatch_workers():
+    assert not inspect.iscoroutinefunction(SettingsScreen.__dict__["handle_discover_provider_models"])
+    assert not inspect.iscoroutinefunction(SettingsScreen.__dict__["handle_save_discovered_provider_models"])
+    assert not inspect.iscoroutinefunction(SettingsScreen.__dict__["handle_clear_discovered_provider_models"])
+
+    for worker_name in (
+        "_discover_provider_models_worker",
+        "_save_selected_discovered_provider_models_worker",
+        "_clear_discovered_provider_models_worker",
+    ):
+        worker = SettingsScreen.__dict__[worker_name]
+        wrapped = getattr(worker, "__wrapped__", worker)
+        assert inspect.iscoroutinefunction(wrapped)
+
+
 def test_settings_status_language_agrees_with_home_console_and_library_contracts():
     app = SimpleNamespace(
         app_config={},

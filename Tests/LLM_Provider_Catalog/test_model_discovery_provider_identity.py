@@ -45,6 +45,14 @@ def test_missing_provider_key_reports_missing():
     assert result.provider_list_key is None
 
 
+def test_none_provider_reports_missing_without_crashing():
+    result = resolve_provider_list_key(None, {"OpenAI": ["gpt-4.1"]})
+
+    assert result.status == "missing"
+    assert result.requested_provider == ""
+    assert result.provider_list_key is None
+
+
 def test_resolves_custom_openai_execution_alias_to_saved_custom_key():
     providers = {"Custom": ["existing-model"]}
 

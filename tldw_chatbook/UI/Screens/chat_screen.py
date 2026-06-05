@@ -594,7 +594,11 @@ class ChatScreen(BaseAppScreen):
                 current_model=current_model,
             )
         except Exception:
-            logger.exception("Unable to resolve Console runtime-discovered models")
+            logger.exception(
+                "Unable to resolve Console runtime-discovered models for provider=%s model=%s",
+                provider_key,
+                current_model,
+            )
             return providers_models
         if not model_options:
             return providers_models

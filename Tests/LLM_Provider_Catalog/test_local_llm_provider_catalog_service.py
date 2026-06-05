@@ -174,7 +174,7 @@ async def test_local_llm_provider_catalog_service_staged_endpoint_and_key_win_fo
             "providers": _providers(),
             "api_settings": {
                 "openai": {
-                    "api_base_url": "https://saved.example/v1",
+                    "api_base_url": "https://saved.test/v1",
                     "api_key": "saved-key",
                 }
             },
@@ -187,7 +187,7 @@ async def test_local_llm_provider_catalog_service_staged_endpoint_and_key_win_fo
         staged_settings={
             "api_settings": {
                 "OpenAI": {
-                    "api_base_url": "https://staged.example/v1",
+                    "api_base_url": "https://staged.test/v1",
                     "api_key": "staged-key",
                 }
             }
@@ -199,7 +199,7 @@ async def test_local_llm_provider_catalog_service_staged_endpoint_and_key_win_fo
         {
             "provider": "OpenAI",
             "provider_list_key": "OpenAI",
-            "endpoint": "https://staged.example/v1",
+            "endpoint": "https://staged.test/v1",
             "api_key": "staged-key",
         }
     ]
@@ -312,6 +312,28 @@ async def test_local_llm_provider_catalog_service_empty_environ_does_not_fall_ba
 
 
 @pytest.mark.asyncio
+async def test_local_llm_provider_catalog_service_rejects_invalid_endpoint_before_discovery_client():
+    discovery_client = Mock()
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=_providers,
+        settings_loader=lambda: {
+            "providers": _providers(),
+            "api_settings": {
+                "openai": {"api_base_url": "javascript:alert(1)"},
+            },
+        },
+        discovery_client=discovery_client,
+    )
+
+    result = await service.discover_models(provider="OpenAI")
+
+    assert result.status == "unsupported"
+    assert result.error is not None
+    assert result.error.kind == "unsupported_endpoint"
+    discovery_client.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_local_llm_provider_catalog_service_duplicate_api_settings_fail_closed():
     discovery_client = Mock()
     service = LocalLLMProviderCatalogService(
@@ -338,7 +360,7 @@ async def test_local_llm_provider_catalog_service_duplicate_api_settings_fail_cl
 async def test_local_llm_provider_catalog_service_filters_discovered_models_to_current_endpoint():
     settings = {
         "providers": _providers(),
-        "api_settings": {"openai": {"api_base_url": "https://first.example/v1"}},
+        "api_settings": {"openai": {"api_base_url": "https://first.test/v1"}},
     }
 
     async def discover_models(**kwargs):
@@ -369,7 +391,7 @@ async def test_local_llm_provider_catalog_service_filters_discovered_models_to_c
     )
 
     first_result = await service.discover_models(provider="OpenAI")
-    settings["api_settings"]["openai"]["api_base_url"] = "https://second.example/v1"
+    settings["api_settings"]["openai"]["api_base_url"] = "https://second.test/v1"
     second_result = await service.discover_models(provider="OpenAI")
     discovered = service.list_discovered_models(provider="OpenAI")
     merged = service.merge_saved_and_discovered_models(provider="OpenAI")
@@ -378,3 +400,25 @@ async def test_local_llm_provider_catalog_service_filters_discovered_models_to_c
     assert second_result.status == "success"
     assert [model.model_id for model in discovered] == ["second-runtime"]
     assert [entry.model_id for entry in merged] == ["gpt-4o", "gpt-4.1", "second-runtime"]
+
+
+def test_local_discovered_model_cache_operations_enforce_runtime_policy():
+    policy = Mock()
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=_providers,
+        settings_loader=lambda: {
+            "providers": _providers(),
+            "api_settings": {"openai": {"api_base_url": "https://api.openai.com/v1"}},
+        },
+        policy_enforcer=policy,
+    )
+
+    service.list_discovered_models(provider="OpenAI")
+    service.merge_saved_and_discovered_models(provider="OpenAI")
+    service.clear_discovered_models(provider="OpenAI")
+
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "llm.catalog.models.list.local",
+        "llm.catalog.models.list.local",
+        "llm.catalog.models.persist.local",
+    ]

@@ -10,6 +10,7 @@ from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import
     normalize_models_response,
     supports_openai_compatible_model_discovery,
 )
+from tldw_chatbook.LLM_Provider_Catalog import openai_compatible_model_discovery
 
 
 def test_chat_completions_url_maps_to_models_url():
@@ -304,6 +305,54 @@ async def test_discovers_models_with_authorization_header_when_api_key_present()
     assert str(requests[0].url) == "https://api.example.test/v1/models"
     assert requests[0].headers["Authorization"] == "Bearer test-key"
     assert "test-key" not in (result.endpoint_fingerprint or "")
+
+
+@pytest.mark.asyncio
+async def test_discovery_owned_async_client_uses_context_manager(monkeypatch):
+    events: list[str] = []
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            events.append(f"init:{timeout}")
+
+        async def __aenter__(self):
+            events.append("enter")
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            events.append("exit")
+
+        async def get(self, url, headers=None):
+            events.append(f"get:{url}")
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "runtime-a"}]},
+                request=httpx.Request("GET", url),
+            )
+
+        async def aclose(self):
+            events.append("manual-close")
+
+    monkeypatch.setattr(
+        openai_compatible_model_discovery.httpx,
+        "AsyncClient",
+        FakeAsyncClient,
+    )
+
+    result = await discover_openai_compatible_models(
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint="https://api.example.test/v1",
+        api_key=None,
+    )
+
+    assert result.status == "success"
+    assert events == [
+        "init:10.0",
+        "enter",
+        "get:https://api.example.test/v1/models",
+        "exit",
+    ]
 
 
 @pytest.mark.asyncio

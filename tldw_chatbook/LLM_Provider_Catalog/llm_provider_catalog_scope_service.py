@@ -371,7 +371,7 @@ class LLMProviderCatalogScopeService:
     ) -> None:
         """Route runtime-discovered model cache clearing by catalog source."""
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("models", "list", normalized_mode))
+        self._enforce_policy(self._action_id("models", "persist", normalized_mode))
         if normalized_mode == LLMProviderCatalogBackend.SERVER:
             return
         service = self._service_for_mode(normalized_mode)

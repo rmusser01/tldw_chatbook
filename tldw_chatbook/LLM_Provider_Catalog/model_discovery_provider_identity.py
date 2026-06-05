@@ -38,7 +38,7 @@ def resolve_provider_list_key(
     """
     requested_provider = (provider or "").strip()
     normalized_provider = resolve_console_provider_identity(
-        provider,
+        requested_provider,
         handler_keys=_MODEL_DISCOVERY_PROVIDER_HANDLER_KEYS,
     ).readiness_key
     matches = tuple(

@@ -376,7 +376,7 @@ async def test_llm_provider_catalog_scope_service_routes_local_discovered_model_
         "llm.catalog.models.list.local",
         "llm.catalog.models.list.local",
         "llm.catalog.models.persist.local",
-        "llm.catalog.models.list.local",
+        "llm.catalog.models.persist.local",
     ]
 
 
@@ -408,5 +408,21 @@ async def test_llm_provider_catalog_scope_service_reports_server_discovery_cache
         "llm.catalog.models.list.server",
         "llm.catalog.models.list.server",
         "llm.catalog.models.persist.server",
-        "llm.catalog.models.list.server",
+        "llm.catalog.models.persist.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_llm_provider_catalog_scope_service_uses_mutation_policy_for_cache_clear():
+    local = FakeCatalogService("local")
+    policy = FakePolicyEnforcer()
+    scope = LLMProviderCatalogScopeService(
+        local_service=local,
+        server_service=None,
+        policy_enforcer=policy,
+    )
+
+    await scope.clear_discovered_models(mode="local", provider="Custom")
+
+    assert policy.calls == ["llm.catalog.models.persist.local"]
+    assert local.calls == [("clear_discovered_models", {"provider": "Custom"})]

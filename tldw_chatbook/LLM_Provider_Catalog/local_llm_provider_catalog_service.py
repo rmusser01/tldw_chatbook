@@ -27,9 +27,12 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_provider_identity import
     resolve_provider_list_key,
 )
 from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    build_models_url,
     discover_openai_compatible_models,
     fingerprint_endpoint,
+    supports_openai_compatible_model_discovery,
 )
+from tldw_chatbook.Utils.input_validation import validate_url
 
 from ..config import LOCAL_PROVIDERS, get_cli_providers_and_models, load_settings
 
@@ -408,6 +411,22 @@ class LocalLLMProviderCatalogService:
                     recovery_hint="Add api_base_url, base_url, api_url, or endpoint under the provider settings.",
                 ),
             )
+        models_url = build_models_url(endpoint, provider_key)
+        if (
+            not supports_openai_compatible_model_discovery(provider_key, endpoint)
+            or not validate_url(models_url)
+        ):
+            return ModelDiscoveryResult(
+                provider=provider,
+                provider_list_key=provider_resolution.provider_list_key,
+                endpoint_fingerprint=fingerprint_endpoint(endpoint),
+                status="unsupported",
+                error=ModelDiscoveryError(
+                    kind="unsupported_endpoint",
+                    message="This endpoint is not a valid OpenAI-compatible models endpoint.",
+                    recovery_hint="Configure an explicit http:// or https:// /v1 models endpoint before discovering models.",
+                ),
+            )
 
         api_key = self._resolve_api_key(
             provider=provider,
@@ -437,6 +456,7 @@ class LocalLLMProviderCatalogService:
         staged_settings: Mapping[str, Any] | None = None,
     ) -> tuple[DiscoveredModel, ...]:
         """Return runtime-discovered models, optionally scoped to one provider."""
+        self._enforce("llm.catalog.models.list.local")
         if provider is None:
             return self.discovery_cache.list()
         provider_resolution = resolve_provider_list_key(provider, self._catalog())
@@ -450,6 +470,7 @@ class LocalLLMProviderCatalogService:
 
     def clear_discovered_models(self, *, provider: str | None = None) -> None:
         """Clear runtime-discovered models globally or for one provider."""
+        self._enforce("llm.catalog.models.persist.local")
         if provider is None:
             self.discovery_cache.clear()
             return
@@ -464,6 +485,7 @@ class LocalLLMProviderCatalogService:
         staged_settings: Mapping[str, Any] | None = None,
     ) -> tuple[MergedModelEntry, ...]:
         """Return saved models followed by uncached runtime-discovered additions."""
+        self._enforce("llm.catalog.models.list.local")
         catalog = self._catalog()
         provider_resolution = resolve_provider_list_key(provider, catalog)
         if provider_resolution.status != "resolved" or provider_resolution.provider_list_key is None:

@@ -16,6 +16,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     ModelDiscoveryError,
     ModelDiscoveryResult,
 )
+from tldw_chatbook.Utils.input_validation import validate_url
 
 
 _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
@@ -375,15 +376,27 @@ async def discover_openai_compatible_models(
         )
 
     models_url = build_models_url(endpoint, provider)
+    if not validate_url(models_url):
+        return ModelDiscoveryResult(
+            provider=provider,
+            provider_list_key=provider_list_key,
+            endpoint_fingerprint=endpoint_fingerprint,
+            status="unsupported",
+            error=_discovery_error(
+                "unsupported_endpoint",
+                "This endpoint is not a valid OpenAI-compatible models URL.",
+                "Configure an explicit http:// or https:// /v1 models endpoint.",
+            ),
+        )
+
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
-    owns_client = client is None
-    active_client = client or httpx.AsyncClient(timeout=timeout_seconds)
-    try:
+
+    async def _request_payload(active_client: httpx.AsyncClient) -> tuple[Mapping[str, Any] | None, ModelDiscoveryResult | None]:
         try:
             response = await active_client.get(models_url, headers=headers)
             response.raise_for_status()
         except httpx.HTTPError:
-            return ModelDiscoveryResult(
+            return None, ModelDiscoveryResult(
                 provider=provider,
                 provider_list_key=provider_list_key,
                 endpoint_fingerprint=endpoint_fingerprint,
@@ -398,7 +411,7 @@ async def discover_openai_compatible_models(
         try:
             payload = response.json()
         except ValueError:
-            return ModelDiscoveryResult(
+            return None, ModelDiscoveryResult(
                 provider=provider,
                 provider_list_key=provider_list_key,
                 endpoint_fingerprint=endpoint_fingerprint,
@@ -409,9 +422,40 @@ async def discover_openai_compatible_models(
                     "Use an endpoint that returns a JSON object with a data array of model IDs.",
                 ),
             )
-    finally:
-        if owns_client:
-            await active_client.aclose()
+        return payload, None
+
+    try:
+        if client is not None:
+            payload, request_error = await _request_payload(client)
+        else:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as active_client:
+                payload, request_error = await _request_payload(active_client)
+    except httpx.HTTPError:
+        return ModelDiscoveryResult(
+            provider=provider,
+            provider_list_key=provider_list_key,
+            endpoint_fingerprint=endpoint_fingerprint,
+            status="error",
+            error=_discovery_error(
+                "request_failed",
+                "Model discovery request failed.",
+                "Check the endpoint URL, server availability, and credentials.",
+            ),
+        )
+    if request_error is not None:
+        return request_error
+    if payload is None:
+        return ModelDiscoveryResult(
+            provider=provider,
+            provider_list_key=provider_list_key,
+            endpoint_fingerprint=endpoint_fingerprint,
+            status="error",
+            error=_discovery_error(
+                "invalid_response",
+                "The models endpoint did not return valid JSON.",
+                "Use an endpoint that returns a JSON object with a data array of model IDs.",
+            ),
+        )
 
     now_iso = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     try:

@@ -10,6 +10,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text as _screen_visible_text,
 )
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -71,6 +72,11 @@ class FakeConsoleModelDiscoveryScope:
     async def merge_saved_and_discovered_models(self, **kwargs):
         self.merge_calls.append(kwargs)
         return self.entries
+
+
+class FailingConsoleModelDiscoveryScope:
+    async def merge_saved_and_discovered_models(self, **kwargs):
+        raise RuntimeError("merge failed")
 
 
 def _visible_text(app: App[None]) -> str:
@@ -590,6 +596,34 @@ async def test_console_model_resolution_includes_runtime_discovered_models() -> 
             "mode": "local",
             "provider": "openai",
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_console_model_resolution_failure_logs_provider_context(monkeypatch) -> None:
+    app = _build_test_app()
+    app.providers_models = {"openai": ["gpt-4.1"]}
+    app.llm_provider_catalog_scope_service = FailingConsoleModelDiscoveryScope()
+    console = ChatScreen(app)
+    logged = []
+
+    def fake_exception(message, *args, **kwargs):
+        logged.append((message, args, kwargs))
+
+    monkeypatch.setattr(chat_screen_module.logger, "exception", fake_exception)
+
+    models = await console._providers_models_for_console_settings(
+        "OpenAI",
+        current_model="gpt-5",
+    )
+
+    assert models == {"openai": ["gpt-4.1"]}
+    assert logged == [
+        (
+            "Unable to resolve Console runtime-discovered models for provider=%s model=%s",
+            ("openai", "gpt-5"),
+            {},
+        )
     ]
 
 

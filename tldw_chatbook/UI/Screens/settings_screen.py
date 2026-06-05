@@ -3148,6 +3148,10 @@ class SettingsScreen(BaseAppScreen):
                 seen.add(model_id)
         providers_models[provider_list_key] = current
 
+    @work(exclusive=True, group="settings-model-discovery")
+    async def _discover_provider_models_worker(self) -> None:
+        await self._discover_provider_models()
+
     async def _discover_provider_models(self) -> None:
         provider = self._provider_widget_value()
         provider_key = provider_config_key(provider)
@@ -3201,6 +3205,10 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_status = self._discovery_status_from_error(result)
         self._refresh_model_discovery_widgets()
         self.app.notify("Provider model discovery failed.", severity="warning")
+
+    @work(exclusive=True, group="settings-model-discovery")
+    async def _save_selected_discovered_provider_models_worker(self) -> None:
+        await self._save_selected_discovered_provider_models()
 
     async def _save_selected_discovered_provider_models(self) -> None:
         provider = self._provider_widget_value()
@@ -3264,6 +3272,10 @@ class SettingsScreen(BaseAppScreen):
             )
         self._refresh_model_discovery_widgets()
         self.app.notify("Discovered model save failed.", severity="warning")
+
+    @work(exclusive=True, group="settings-model-discovery")
+    async def _clear_discovered_provider_models_worker(self) -> None:
+        await self._clear_discovered_provider_models()
 
     async def _clear_discovered_provider_models(self) -> None:
         provider = self._provider_widget_value()
@@ -4642,19 +4654,19 @@ class SettingsScreen(BaseAppScreen):
         self.action_settings_test_category()
 
     @on(Button.Pressed, "#settings-discover-provider-models")
-    async def handle_discover_provider_models(self, event: Button.Pressed) -> None:
+    def handle_discover_provider_models(self, event: Button.Pressed) -> None:
         event.stop()
-        await self._discover_provider_models()
+        self._discover_provider_models_worker()
 
     @on(Button.Pressed, "#settings-save-discovered-provider-models")
-    async def handle_save_discovered_provider_models(self, event: Button.Pressed) -> None:
+    def handle_save_discovered_provider_models(self, event: Button.Pressed) -> None:
         event.stop()
-        await self._save_selected_discovered_provider_models()
+        self._save_selected_discovered_provider_models_worker()
 
     @on(Button.Pressed, "#settings-clear-discovered-provider-models")
-    async def handle_clear_discovered_provider_models(self, event: Button.Pressed) -> None:
+    def handle_clear_discovered_provider_models(self, event: Button.Pressed) -> None:
         event.stop()
-        await self._clear_discovered_provider_models()
+        self._clear_discovered_provider_models_worker()
 
     @on(Button.Pressed, "#settings-check-storage")
     def handle_check_storage(self, event: Button.Pressed) -> None:
