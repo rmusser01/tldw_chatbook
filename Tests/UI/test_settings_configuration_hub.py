@@ -1377,6 +1377,21 @@ async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_settings_console_behavior_clean_state_does_not_show_staged_feedback():
+    app = _build_test_app()
+    app.app_config["console"] = {"collapse_large_pastes": True}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "No unsaved changes" in text
+        assert "Console behavior settings staged." not in text
+
+
+@pytest.mark.asyncio
 async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}

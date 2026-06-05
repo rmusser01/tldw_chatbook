@@ -1058,9 +1058,15 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _console_behavior_result_text(self) -> str:
+        has_unsaved_changes = self._category_has_unsaved_changes(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        if (
+            not has_unsaved_changes
+            and self._console_behavior_result == "Console behavior settings staged."
+        ):
+            return "Console behavior settings have not been saved this session."
         if (
             self._loaded_console_background_scope_is_unavailable()
-            and not self._category_has_unsaved_changes(SettingsCategoryId.CONSOLE_BEHAVIOR)
+            and not has_unsaved_changes
             and self._console_behavior_result
             in {
                 "Console behavior settings have not been saved this session.",
@@ -4044,7 +4050,7 @@ class SettingsScreen(BaseAppScreen):
             value = event.value
         self._stage_console_default_value("streaming", value)
         self._console_behavior_result = "Console behavior settings staged."
-        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
+        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result_text())
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     @on(Input.Changed, "#settings-console-default-temperature")
