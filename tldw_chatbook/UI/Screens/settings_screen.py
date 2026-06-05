@@ -535,6 +535,7 @@ class SettingsScreen(BaseAppScreen):
             "Run Check Privacy or press t to verify redacted secret status.",
         )
         self._console_behavior_result = "Console behavior settings have not been saved this session."
+        self._console_behavior_saved_this_session = False
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
@@ -1058,16 +1059,30 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _console_behavior_result_text(self) -> str:
+        has_unsaved_changes = self._category_has_unsaved_changes(SettingsCategoryId.CONSOLE_BEHAVIOR)
         if (
             self._loaded_console_background_scope_is_unavailable()
-            and not self._category_has_unsaved_changes(SettingsCategoryId.CONSOLE_BEHAVIOR)
+            and not has_unsaved_changes
             and self._console_behavior_result
             in {
                 "Console behavior settings have not been saved this session.",
                 "Console behavior settings staged.",
+                "Console behavior settings saved.",
             }
         ):
+            if self._console_behavior_saved_this_session:
+                return (
+                    "Console behavior settings saved. "
+                    f"{CONSOLE_BACKGROUND_WORKBENCH_UNAVAILABLE_COPY}"
+                )
             return CONSOLE_BACKGROUND_WORKBENCH_UNAVAILABLE_COPY
+        if (
+            not has_unsaved_changes
+            and self._console_behavior_result == "Console behavior settings staged."
+        ):
+            if self._console_behavior_saved_this_session:
+                return "Console behavior settings saved."
+            return "Console behavior settings have not been saved this session."
         return self._console_behavior_result
 
     def _console_behavior_value(self, key: str) -> object:
@@ -4043,9 +4058,7 @@ class SettingsScreen(BaseAppScreen):
         except ValueError:
             value = event.value
         self._stage_console_default_value("streaming", value)
-        self._console_behavior_result = "Console behavior settings staged."
-        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
-        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        self._mark_console_behavior_settings_staged()
 
     @on(Input.Changed, "#settings-console-default-temperature")
     def handle_console_default_temperature_changed(self, event: Input.Changed) -> None:
@@ -4056,9 +4069,7 @@ class SettingsScreen(BaseAppScreen):
         except ValueError:
             value = event.value
         self._stage_console_default_value("temperature", value)
-        self._console_behavior_result = "Console behavior settings staged."
-        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
-        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        self._mark_console_behavior_settings_staged()
 
     @on(Input.Changed, "#settings-console-default-top-p")
     def handle_console_default_top_p_changed(self, event: Input.Changed) -> None:
@@ -4069,9 +4080,7 @@ class SettingsScreen(BaseAppScreen):
         except ValueError:
             value = event.value
         self._stage_console_default_value("top_p", value)
-        self._console_behavior_result = "Console behavior settings staged."
-        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
-        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        self._mark_console_behavior_settings_staged()
 
     @on(Input.Changed, "#settings-console-default-max-tokens")
     def handle_console_default_max_tokens_changed(self, event: Input.Changed) -> None:
@@ -4082,12 +4091,11 @@ class SettingsScreen(BaseAppScreen):
         except ValueError:
             value = event.value
         self._stage_console_default_value("max_tokens", value)
-        self._console_behavior_result = "Console behavior settings staged."
-        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
-        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        self._mark_console_behavior_settings_staged()
 
     def _mark_console_behavior_settings_staged(self) -> None:
-        self._console_behavior_result = "Console behavior settings staged."
+        if self._category_has_unsaved_changes(SettingsCategoryId.CONSOLE_BEHAVIOR):
+            self._console_behavior_result = "Console behavior settings staged."
         self._set_static_text("#settings-console-behavior-result", self._console_behavior_result_text())
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
@@ -4750,6 +4758,7 @@ class SettingsScreen(BaseAppScreen):
                 )
             else:
                 self._console_behavior_result = "Console behavior settings saved."
+            self._console_behavior_saved_this_session = True
             self._sync_console_behavior_widgets()
             self.app.notify("Console behavior settings saved.", severity="information")
             return
@@ -4835,7 +4844,7 @@ class SettingsScreen(BaseAppScreen):
                 pass
         finally:
             self._syncing_console_background_effects = False
-        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result)
+        self._set_static_text("#settings-console-behavior-result", self._console_behavior_result_text())
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
