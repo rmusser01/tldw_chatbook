@@ -39,6 +39,8 @@ Verify the Settings configuration hub through actual rendered app use and correc
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Slice 1 addressed the confirmed endpoint-field blocker found during CDP QA: clicking a URL-valued provider endpoint in textual-web opened the browser URL instead of behaving like an editable Settings input. Added a URL-safe endpoint input renderer that breaks browser autolinking in display text while preserving the raw value for validation and saving. Added focused regressions for the display transform and endpoint widget composition, then verified with Settings tests and CDP screenshot evidence approved by the user.
+
+Slice 2 addressed the confirmed provider dropdown blocker found during CDP QA: the compact Settings Select kept `max-height: 3`, which constrained its rendered dropdown overlay and made provider choices appear clipped/hidden in textual-web. Updated the focus contract regression to forbid the clipping rule, removed the source CSS cap, rebuilt generated CSS, and captured approved CDP screenshots showing the dropdown open and a provider selection applied with visible state/inspector feedback.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

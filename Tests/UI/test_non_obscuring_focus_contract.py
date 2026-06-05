@@ -733,7 +733,7 @@ def test_settings_compact_select_uses_non_clipping_row_contract():
     assert "min-height: 3;" in row
     assert "height: 3;" in select
     assert "min-height: 3;" in select
-    assert "max-height: 3;" in select
+    assert "max-height:" not in select
     assert "border: none;" in current
     assert "height: 1;" in current
     assert "color: $ds-text-primary;" in current
