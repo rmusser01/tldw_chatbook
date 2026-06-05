@@ -1481,6 +1481,23 @@ class SettingsScreen(BaseAppScreen):
             raise ValueError("Max tokens must be a whole number of at least 1.")
         return int(text_value)
 
+    @staticmethod
+    def _normalise_console_background_fps(value: object) -> int:
+        text_value = "" if value is None else str(value).strip()
+        if (
+            not text_value.isdecimal()
+            or not validate_number_range(
+                text_value,
+                min_val=MIN_CONSOLE_BACKGROUND_FPS,
+                max_val=MAX_CONSOLE_BACKGROUND_FPS,
+            )
+        ):
+            raise ValueError(
+                "Frame rate must be a whole number between "
+                f"{MIN_CONSOLE_BACKGROUND_FPS} and {MAX_CONSOLE_BACKGROUND_FPS}."
+            )
+        return int(text_value)
+
     def _active_sync_scope(
         self,
         active_workspace: object = _WORKSPACE_RECORD_UNSET,
@@ -4567,6 +4584,12 @@ class SettingsScreen(BaseAppScreen):
                 if "max_tokens" in dirty_values:
                     dirty_values["max_tokens"] = self._normalise_console_default_max_tokens(
                         dirty_values["max_tokens"]
+                    )
+                if "background_effects.fps" in dirty_values:
+                    dirty_values["background_effects.fps"] = (
+                        self._normalise_console_background_fps(
+                            dirty_values["background_effects.fps"]
+                        )
                     )
             except ValueError as exc:
                 self._console_behavior_result = str(exc)

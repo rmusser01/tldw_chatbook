@@ -1625,6 +1625,49 @@ async def test_settings_console_background_effects_save_nested_config(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_settings_console_background_fps_rejects_out_of_range_save(monkeypatch):
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "background_effects": {
+            "enabled": True,
+            "effect": "rain",
+            "scope": "transcript",
+            "intensity": "low",
+            "fps": 6,
+        },
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        fps = screen.query_one("#settings-console-background-effect-fps", Input)
+
+        fps.value = "610"
+        screen.handle_console_background_effect_fps_changed(Input.Changed(fps, fps.value))
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Frame rate must be a whole number between 1 and 12.",
+        )
+
+        assert "Unsaved changes" in _visible_text(screen)
+
+    assert saved == []
+    assert app.app_config["console"]["background_effects"]["fps"] == 6
+
+
+@pytest.mark.asyncio
 async def test_settings_console_background_workbench_scope_falls_back_to_transcript(monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {
