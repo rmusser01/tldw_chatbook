@@ -599,10 +599,14 @@ git commit -m "Add model discovery cache merge and persistence"
 - Modify: `tldw_chatbook/LLM_Provider_Catalog/local_llm_provider_catalog_service.py`
 - Modify: `tldw_chatbook/LLM_Provider_Catalog/llm_provider_catalog_scope_service.py`
 - Modify: `tldw_chatbook/LLM_Provider_Catalog/__init__.py`
+- Modify: `tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py`
+- Modify: `tldw_chatbook/runtime_policy/registry.py`
 - Test: `Tests/LLM_Provider_Catalog/test_local_llm_provider_catalog_service.py`
 - Test: `Tests/LLM_Provider_Catalog/test_llm_provider_catalog_scope_service.py`
+- Test: `Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py`
+- Test: `Tests/RuntimePolicy/test_runtime_policy_core.py`
 
-- [ ] **Step 1: Write failing local catalog tests**
+- [x] **Step 1: Write failing local catalog tests**
 
 Add tests for:
 
@@ -621,7 +625,7 @@ def test_local_catalog_lists_merged_saved_and_runtime_discovered_models():
     assert "new-model" in [entry.model_id for entry in merged]
 ```
 
-- [ ] **Step 2: Write failing scope policy tests**
+- [x] **Step 2: Write failing scope policy tests**
 
 Add tests for:
 
@@ -637,7 +641,7 @@ async def test_scope_service_does_not_call_server_discovery_in_v1():
     assert result.status == "unsupported"
 ```
 
-- [ ] **Step 3: Run focused tests and verify failure**
+- [x] **Step 3: Run focused tests and verify failure**
 
 Run:
 
@@ -647,7 +651,9 @@ python -m pytest -q Tests/LLM_Provider_Catalog/test_local_llm_provider_catalog_s
 
 Expected: FAIL for missing service methods.
 
-- [ ] **Step 4: Implement local service methods**
+Evidence: Initial focused run failed with missing `settings_loader` constructor support and missing `LLMProviderCatalogScopeService.discover_models`, confirming the tests covered absent behavior before implementation.
+
+- [x] **Step 4: Implement local service methods**
 
 Add public methods matching the PRD:
 
@@ -672,15 +678,18 @@ Requirements:
   3. existing environment-variable/config `api_key` readiness resolution
 - Local v1 keyring-backed server credentials remain unsupported.
 
-- [ ] **Step 5: Implement scope service method**
+- [x] **Step 5: Implement scope service method**
 
 Requirements:
 
 - Use policy action `llm.catalog.models.discover.local`.
 - `mode="local"` calls the local service.
 - `mode="server"` returns unsupported in v1 with safe copy, not a silent no-op.
+- Also route `list_discovered_models`, `clear_discovered_models`, `merge_saved_and_discovered_models`, and `persist_discovered_models_to_settings` through the scope service so Settings/Console do not need to bypass the source-aware seam.
+- Register `llm.catalog.models.discover.*` and `llm.catalog.models.persist.*` with runtime policy.
+- Reject placeholder API keys, preserve injected empty environments, fail closed on duplicate normalized `api_settings` blocks, and filter discovered model cache reads to the current endpoint fingerprint.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -689,6 +698,18 @@ python -m pytest -q Tests/LLM_Provider_Catalog/test_local_llm_provider_catalog_s
 ```
 
 Expected: PASS.
+
+Evidence:
+
+```bash
+python -m pytest -q Tests/LLM_Provider_Catalog Tests/RuntimePolicy/test_runtime_policy_core.py::test_policy_engine_knows_local_model_discovery_actions Tests/RuntimePolicy/test_runtime_policy_core.py::test_policy_engine_knows_server_model_discovery_actions_but_blocks_in_local_mode --tb=short
+# 92 passed in 7.19s
+
+git diff --check
+# clean
+```
+
+Note: Full `Tests/RuntimePolicy/test_runtime_policy_core.py::test_runtime_policy_registry_contains_full_audited_rows` still reports a pre-existing `kanban_boards_tasks` registry/fixture mismatch that is present on `origin/dev`; it is not introduced by Task 5.
 
 - [ ] **Step 7: Commit**
 

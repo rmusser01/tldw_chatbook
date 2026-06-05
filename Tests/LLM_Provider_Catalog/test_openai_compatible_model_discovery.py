@@ -53,6 +53,10 @@ def test_common_base_and_prefixed_openai_paths_map_to_models(endpoint, expected)
     assert build_models_url(endpoint, "custom") == expected
 
 
+def test_space_separated_provider_label_can_infer_openai_compatible_base_url():
+    assert supports_openai_compatible_model_discovery("Local LLM", "http://127.0.0.1:8000") is True
+
+
 @pytest.mark.parametrize("provider", ["anthropic", "google", "cohere", "huggingface", "ollama"])
 def test_native_provider_base_urls_do_not_infer_openai_compatibility(provider):
     assert (

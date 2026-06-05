@@ -6,6 +6,14 @@ import inspect
 from enum import Enum
 from typing import Any
 
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    DiscoveredModel,
+    MergedModelEntry,
+    ModelDiscoveryError,
+    ModelDiscoveryResult,
+    PersistenceResult,
+)
+
 
 class LLMProviderCatalogBackend(str, Enum):
     LOCAL = "local"
@@ -303,6 +311,118 @@ class LLMProviderCatalogScopeService:
                 )
             )
         )
+
+    async def discover_models(
+        self,
+        *,
+        mode: LLMProviderCatalogBackend | str | None = None,
+        provider: str,
+        staged_settings: dict[str, Any] | None = None,
+    ) -> ModelDiscoveryResult:
+        """Route manual model discovery by catalog source."""
+        normalized_mode = self._normalize_mode(mode)
+        action_id = self._action_id("models", "discover", normalized_mode)
+        self._enforce_policy(action_id)
+        if normalized_mode == LLMProviderCatalogBackend.SERVER:
+            return ModelDiscoveryResult(
+                provider=provider,
+                provider_list_key=None,
+                endpoint_fingerprint=None,
+                status="unsupported",
+                error=ModelDiscoveryError(
+                    kind="unsupported_endpoint",
+                    message="Server model discovery is not supported in Chatbook v1.",
+                    recovery_hint="Use local model discovery for now; server-backed discovery remains a later sync/backend feature.",
+                ),
+                policy_action=action_id,
+            )
+
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            service.discover_models(provider=provider, staged_settings=staged_settings)
+        )
+        if isinstance(result, ModelDiscoveryResult):
+            return result
+        raise TypeError("Local model discovery service returned an unsupported result type.")
+
+    async def list_discovered_models(
+        self,
+        *,
+        mode: LLMProviderCatalogBackend | str | None = None,
+        provider: str | None = None,
+        staged_settings: dict[str, Any] | None = None,
+    ) -> tuple[DiscoveredModel, ...]:
+        """Route runtime-discovered model cache listing by catalog source."""
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("models", "list", normalized_mode))
+        if normalized_mode == LLMProviderCatalogBackend.SERVER:
+            return ()
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            service.list_discovered_models(provider=provider, staged_settings=staged_settings)
+        )
+        return tuple(result)
+
+    async def clear_discovered_models(
+        self,
+        *,
+        mode: LLMProviderCatalogBackend | str | None = None,
+        provider: str | None = None,
+    ) -> None:
+        """Route runtime-discovered model cache clearing by catalog source."""
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("models", "list", normalized_mode))
+        if normalized_mode == LLMProviderCatalogBackend.SERVER:
+            return
+        service = self._service_for_mode(normalized_mode)
+        await self._maybe_await(service.clear_discovered_models(provider=provider))
+
+    async def merge_saved_and_discovered_models(
+        self,
+        *,
+        mode: LLMProviderCatalogBackend | str | None = None,
+        provider: str,
+        staged_settings: dict[str, Any] | None = None,
+    ) -> tuple[MergedModelEntry, ...]:
+        """Route saved/runtime-discovered model merge by catalog source."""
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id("models", "list", normalized_mode))
+        if normalized_mode == LLMProviderCatalogBackend.SERVER:
+            return ()
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            service.merge_saved_and_discovered_models(
+                provider=provider,
+                staged_settings=staged_settings,
+            )
+        )
+        return tuple(result)
+
+    async def persist_discovered_models_to_settings(
+        self,
+        *,
+        mode: LLMProviderCatalogBackend | str | None = None,
+        provider: str,
+        model_ids: list[str],
+    ) -> PersistenceResult:
+        """Route explicit discovered-model persistence by catalog source."""
+        normalized_mode = self._normalize_mode(mode)
+        action_id = self._action_id("models", "persist", normalized_mode)
+        self._enforce_policy(action_id)
+        if normalized_mode == LLMProviderCatalogBackend.SERVER:
+            return PersistenceResult(
+                provider=provider,
+                provider_list_key=None,
+                status="error",
+                message="Server model persistence is not supported in Chatbook v1.",
+            )
+        service = self._service_for_mode(normalized_mode)
+        result = await self._maybe_await(
+            service.persist_discovered_models_to_settings(provider=provider, model_ids=model_ids)
+        )
+        if isinstance(result, PersistenceResult):
+            return result
+        raise TypeError("Local model persistence service returned an unsupported result type.")
 
     async def get_model_metadata(
         self,

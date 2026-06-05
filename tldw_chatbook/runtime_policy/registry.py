@@ -142,6 +142,8 @@ LAUNCH = _action("launch", "launch")
 OBSERVE = _action("observe", "observe")
 OBSERVE_LIST = _action("list", "observe")
 CONFIGURE = _action("configure", "update")
+DISCOVER = _action("discover", "launch")
+PERSIST = _action("persist", "update")
 TRIGGER = _action("trigger", "launch")
 PROCESS = _action("process", "launch")
 IMPORT = _action("import", "launch")
@@ -687,7 +689,7 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource("llm.catalog.health", actions=(OBSERVE,)),
             _resource("llm.catalog.providers", actions=(LIST, DETAIL, CONFIGURE)),
-            _resource("llm.catalog.models", actions=(LIST, DETAIL)),
+            _resource("llm.catalog.models", actions=(LIST, DETAIL, DISCOVER, PERSIST)),
         ),
     ),
     _capability(

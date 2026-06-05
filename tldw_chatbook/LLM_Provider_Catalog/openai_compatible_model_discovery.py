@@ -100,7 +100,7 @@ _COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES = frozenset({"token"})
 
 def _normalized_provider_identity(provider_identity: str | None) -> str:
     """Return a stable provider identity string for endpoint policy checks."""
-    return (provider_identity or "").strip().lower().replace("-", "_")
+    return (provider_identity or "").strip().lower().replace(" ", "_").replace("-", "_")
 
 
 def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
