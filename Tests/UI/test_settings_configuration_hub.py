@@ -993,12 +993,20 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(mon
 
         assert screen.app.focused is model_input
 
+        await pilot.press("s", "r", "t")
+        await pilot.pause()
+
+        assert model_input.value == "srt"
+        assert saved == []
+        assert screen._provider_test_result is None
+        assert screen._settings_drafts
+
         screen.action_settings_save_category()
         screen.action_settings_test_category()
         screen.action_settings_revert_category()
 
         assert saved == []
-        assert model_input.value == "gpt-shortcut-check"
+        assert model_input.value == "srt"
         assert screen._provider_test_result is None
         assert screen._settings_drafts
 
