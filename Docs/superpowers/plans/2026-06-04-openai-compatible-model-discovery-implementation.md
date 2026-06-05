@@ -927,7 +927,7 @@ git commit -m "Use discovered models in Console selection"
 - Modify: `Docs/superpowers/specs/2026-06-04-openai-compatible-model-discovery-prd-design.md` only if implementation reveals a necessary contract clarification
 - Modify: `Docs/superpowers/plans/2026-06-04-openai-compatible-model-discovery-implementation.md` only if implementation deviates
 
-- [ ] **Step 1: Run focused provider discovery tests**
+- [x] **Step 1: Run focused provider discovery tests**
 
 Run:
 
@@ -943,7 +943,9 @@ python -m pytest -q \
 
 Expected: PASS.
 
-- [ ] **Step 2: Run focused UI tests**
+Actual: `python -m pytest -q Tests/LLM_Provider_Catalog/test_model_discovery_provider_identity.py Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py Tests/LLM_Provider_Catalog/test_model_discovery_cache_merge_persistence.py Tests/LLM_Provider_Catalog/test_local_llm_provider_catalog_service.py Tests/LLM_Provider_Catalog/test_llm_provider_catalog_scope_service.py --tb=short` passed with `80 passed`.
+
+- [x] **Step 2: Run focused UI tests**
 
 Run:
 
@@ -956,7 +958,9 @@ python -m pytest -q \
 
 Expected: PASS or known unrelated failures documented with issue references.
 
-- [ ] **Step 3: Run config and diff hygiene checks**
+Actual: `python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_session_settings.py --tb=short` passed with `220 passed, 1 warning`.
+
+- [x] **Step 3: Run config and diff hygiene checks**
 
 Run:
 
@@ -967,7 +971,9 @@ python -m pytest -q Tests/LLM_Provider_Catalog Tests/UI/test_settings_configurat
 
 Expected: PASS.
 
-- [ ] **Step 4: Manual QA with a local OpenAI-compatible endpoint**
+Actual: `git diff --check` returned no output. `python -m pytest -q Tests/LLM_Provider_Catalog Tests/UI/test_settings_configuration_hub.py Tests/UI/test_console_session_settings.py --tb=short` passed with `308 passed, 8 warnings`.
+
+- [x] **Step 4: Manual QA with a local OpenAI-compatible endpoint**
 
 If a local llama.cpp-compatible endpoint is running on `127.0.0.1:9099`, configure a compatible endpoint such as `http://127.0.0.1:9099/v1` or `http://127.0.0.1:9099/v1/chat/completions` and manually verify:
 
@@ -980,7 +986,9 @@ If a local llama.cpp-compatible endpoint is running on `127.0.0.1:9099`, configu
 
 Do not block the PR on local endpoint availability; document if unavailable.
 
-- [ ] **Step 5: Update Backlog implementation notes**
+Actual: `curl -sf --max-time 3 http://127.0.0.1:9099/v1/models` exited `7`; no local OpenAI-compatible endpoint was reachable, so manual endpoint QA is documented as unavailable and non-blocking.
+
+- [x] **Step 5: Update Backlog implementation notes**
 
 Run:
 
@@ -990,14 +998,14 @@ backlog task edit 78 -s Done --notes "Implemented OpenAI-compatible model discov
 
 Before marking Done, ensure all task acceptance criteria are checked in the task file.
 
-- [ ] **Step 6: Final commit**
+- [x] **Step 6: Final commit**
 
 ```bash
 git add "backlog/tasks/task-78 - OpenAI-Compatible-Model-Discovery.md" Docs/superpowers/specs/2026-06-04-openai-compatible-model-discovery-prd-design.md Docs/superpowers/plans/2026-06-04-openai-compatible-model-discovery-implementation.md
 git commit -m "Close out model discovery implementation plan"
 ```
 
-- [ ] **Step 7: Prepare PR**
+- [x] **Step 7: Prepare PR**
 
 Run:
 

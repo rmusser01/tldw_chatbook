@@ -1,10 +1,10 @@
 ---
 id: TASK-78
 title: OpenAI-Compatible Model Discovery
-status: In Progress
+status: Done
 assignee: []
 created_date: ''
-updated_date: '2026-06-04 16:58'
+updated_date: '2026-06-05 14:01'
 labels:
   - providers
   - settings
@@ -22,11 +22,11 @@ Allow users to manually discover models from configured OpenAI-compatible provid
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Users can discover models from an eligible configured OpenAI-compatible provider.
-- [ ] #2 Discovered models are available in Settings and Console for the current app session.
-- [ ] #3 Users can explicitly save selected discovered model IDs to the existing top-level providers list.
-- [ ] #4 Unsupported endpoints and ambiguous provider config keys show safe recovery messages.
-- [ ] #5 Focused automated tests cover discovery parsing, cache, merge, persistence, and UI states.
+- [x] #1 Users can discover models from an eligible configured OpenAI-compatible provider.
+- [x] #2 Discovered models are available in Settings and Console for the current app session.
+- [x] #3 Users can explicitly save selected discovered model IDs to the existing top-level providers list.
+- [x] #4 Unsupported endpoints and ambiguous provider config keys show safe recovery messages.
+- [x] #5 Focused automated tests cover discovery parsing, cache, merge, persistence, and UI states.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,12 +56,15 @@ Reason: Defines provider/config/catalog boundaries and persistence policy.
 - Added unknown-capability warning metadata for runtime-discovered Console selections without blocking send when provider readiness is otherwise valid.
 - Added focused Console regressions for saved-first ordering, runtime-discovered model selection, and visible `Capabilities unknown` summary copy.
 - Captured actual textual-web/CDP Console evidence for `gpt-5` as a runtime-discovered model with `Credential: ready`; user approval is pending.
+- Completed focused closeout verification: provider catalog discovery tests passed, Settings + Console UI tests passed, combined provider/UI sweep passed, and `git diff --check` was clean.
+- Checked optional local endpoint QA at `127.0.0.1:9099`; no local OpenAI-compatible endpoint was reachable, so that manual send/discovery check remains documented as unavailable rather than blocking.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented OpenAI-compatible model discovery as a local manual workflow. Added provider list key resolution, endpoint discovery, runtime cache, saved/discovered merge, explicit Settings persistence, Console consumption, focused tests, ADR 002, and CDP screenshot evidence. Deferred native provider-specific discovery, server keyring credentials, and tldw_server catalog sync per the PRD.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
