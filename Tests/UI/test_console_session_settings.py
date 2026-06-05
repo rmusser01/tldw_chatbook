@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
@@ -8,6 +10,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text as _screen_visible_text,
 )
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -18,9 +21,11 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_summary_state,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens import provider_model_resolution
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
 from tldw_chatbook.Widgets.Console import console_settings_summary as settings_summary_module
 from tldw_chatbook.Widgets.Console.console_settings_summary import ConsoleSettingsSummary
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
 
 
 class SummaryHarness(App[None]):
@@ -57,6 +62,21 @@ class ModalHarness(App[None]):
 
     def capture_saved_settings(self, settings: ConsoleSessionSettings | None) -> None:
         self.saved_settings = settings
+
+
+class FakeConsoleModelDiscoveryScope:
+    def __init__(self, entries: tuple[MergedModelEntry, ...]) -> None:
+        self.entries = entries
+        self.merge_calls = []
+
+    async def merge_saved_and_discovered_models(self, **kwargs):
+        self.merge_calls.append(kwargs)
+        return self.entries
+
+
+class FailingConsoleModelDiscoveryScope:
+    async def merge_saved_and_discovered_models(self, **kwargs):
+        raise RuntimeError("merge failed")
 
 
 def _visible_text(app: App[None]) -> str:
@@ -140,6 +160,24 @@ def _select_values(select: Select) -> set[str]:
         if value is not None:
             values.add(str(value))
     return values
+
+
+def _merged_model(
+    model_id: str,
+    *,
+    source: str = "saved",
+    capability_status: str = "known",
+    persisted: bool = True,
+) -> MergedModelEntry:
+    return MergedModelEntry(
+        provider="openai",
+        provider_list_key="openai",
+        model_id=model_id,
+        display_name=model_id,
+        source=source,
+        capability_status=capability_status,
+        persisted=persisted,
+    )
 
 
 @pytest.mark.asyncio
@@ -526,6 +564,67 @@ def test_choose_model_action_label_normalization() -> None:
     assert ChatScreen._is_console_choose_model_action("choose model")
     assert ChatScreen._is_console_choose_model_action("CHOOSE MODEL")
     assert not ChatScreen._is_console_choose_model_action("Configure")
+
+
+@pytest.mark.asyncio
+async def test_console_model_resolution_includes_runtime_discovered_models() -> None:
+    scope = FakeConsoleModelDiscoveryScope(
+        (
+            _merged_model(
+                "gpt-5",
+                source="runtime_discovered",
+                capability_status="unknown",
+                persisted=False,
+            ),
+            _merged_model("gpt-4.1"),
+        )
+    )
+    app = SimpleNamespace(
+        providers_models={"openai": ["gpt-4.1"]},
+        llm_provider_catalog_scope_service=scope,
+    )
+
+    options = await provider_model_resolution.resolve_provider_model_options(
+        app,
+        provider="OpenAI",
+    )
+
+    assert [option.model_id for option in options] == ["gpt-4.1", "gpt-5"]
+    assert options[1].warning == "Capabilities unknown until saved or verified; text chat is assumed."
+    assert scope.merge_calls == [
+        {
+            "mode": "local",
+            "provider": "openai",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_console_model_resolution_failure_logs_provider_context(monkeypatch) -> None:
+    app = _build_test_app()
+    app.providers_models = {"openai": ["gpt-4.1"]}
+    app.llm_provider_catalog_scope_service = FailingConsoleModelDiscoveryScope()
+    console = ChatScreen(app)
+    logged = []
+
+    def fake_exception(message, *args, **kwargs):
+        logged.append((message, args, kwargs))
+
+    monkeypatch.setattr(chat_screen_module.logger, "exception", fake_exception)
+
+    models = await console._providers_models_for_console_settings(
+        "OpenAI",
+        current_model="gpt-5",
+    )
+
+    assert models == {"openai": ["gpt-4.1"]}
+    assert logged == [
+        (
+            "Unable to resolve Console runtime-discovered models for provider=%s model=%s",
+            ("openai", "gpt-5"),
+            {},
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -977,6 +1076,50 @@ async def test_console_settings_modal_preserves_missing_registry_model_for_curre
     assert app.saved_settings is not None
     assert app.saved_settings.provider == "openai"
     assert app.saved_settings.model == "custom-openai-model"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_can_select_runtime_discovered_model_with_warning() -> None:
+    app = _build_test_app()
+    app.providers_models = {"openai": ["gpt-4.1"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"api_key": "test-key"}}
+    app.llm_provider_catalog_scope_service = FakeConsoleModelDiscoveryScope(
+        (
+            _merged_model("gpt-4.1"),
+            _merged_model(
+                "gpt-5",
+                source="runtime_discovered",
+                capability_status="unknown",
+                persisted=False,
+            ),
+        )
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 60)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-open")
+        await pilot.click("#console-settings-open")
+        modal_screen = await _wait_for_console_settings_modal(host, pilot)
+
+        model_select = modal_screen.query_one("#console-settings-model-select", Select)
+        assert {"gpt-4.1", "gpt-5"}.issubset(_select_values(model_select))
+
+        model_select.value = "gpt-5"
+        await pilot.pause()
+        await pilot.click("#console-settings-save")
+        await _wait_for_console_top_screen(host, console, pilot)
+        for _ in range(40):
+            summary_text = _summary_text(console)
+            if "Model: gpt-5 (Capabilities unknown)" in summary_text:
+                break
+            await pilot.pause(0.05)
+        else:
+            raise AssertionError(f"Console summary did not show discovered-model warning: {summary_text}")
+
+        _settings, readiness = console._active_console_settings_readiness()
+        assert readiness.native_send_supported is True
 
 
 @pytest.mark.asyncio

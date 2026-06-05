@@ -197,8 +197,8 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "llm_provider_model_catalog": {
         "expected_domain_ids": {"llm_catalog"},
         "expected_action_kinds_by_source": {
-            "local": _action_kinds("browse", "detail", "update", "observe"),
-            "server": _action_kinds("browse", "detail", "update", "observe"),
+            "local": _action_kinds("browse", "detail", "update", "launch", "observe"),
+            "server": _action_kinds("browse", "detail", "update", "launch", "observe"),
         },
     },
     "audio_speech_services": {
@@ -1229,8 +1229,12 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         llm.catalog.health.observe.server
         llm.catalog.models.detail.local
         llm.catalog.models.detail.server
+        llm.catalog.models.discover.local
+        llm.catalog.models.discover.server
         llm.catalog.models.list.local
         llm.catalog.models.list.server
+        llm.catalog.models.persist.local
+        llm.catalog.models.persist.server
         llm.catalog.providers.configure.local
         llm.catalog.providers.configure.server
         llm.catalog.providers.detail.local
@@ -1743,6 +1747,57 @@ def test_policy_engine_denies_unknown_action_ids_without_raising():
     ],
 )
 def test_policy_engine_knows_sync_v2_server_actions_and_denies_local_mode(action_id):
+    engine = PolicyEngine(CAPABILITY_REGISTRY)
+
+    local_decision = engine.evaluate(
+        action_id=action_id,
+        state=RuntimeSourceState(active_source="local"),
+    )
+    server_decision = engine.evaluate(
+        action_id=action_id,
+        state=RuntimeSourceState(
+            active_source="server",
+            server_configured=True,
+            server_reachability="reachable",
+            server_reachability_checked_at=datetime.now(timezone.utc),
+            server_auth_state="authenticated",
+            server_auth_checked_at=datetime.now(timezone.utc),
+        ),
+    )
+
+    assert local_decision.allowed is False
+    assert local_decision.reason_code == "wrong_source"
+    assert server_decision.allowed is True
+    assert server_decision.authority_owner == "server"
+
+
+@pytest.mark.parametrize(
+    "action_id",
+    [
+        "llm.catalog.models.discover.local",
+        "llm.catalog.models.persist.local",
+    ],
+)
+def test_policy_engine_knows_local_model_discovery_actions(action_id):
+    engine = PolicyEngine(CAPABILITY_REGISTRY)
+
+    decision = engine.evaluate(
+        action_id=action_id,
+        state=RuntimeSourceState(active_source="local"),
+    )
+
+    assert decision.allowed is True
+    assert decision.authority_owner == "local"
+
+
+@pytest.mark.parametrize(
+    "action_id",
+    [
+        "llm.catalog.models.discover.server",
+        "llm.catalog.models.persist.server",
+    ],
+)
+def test_policy_engine_knows_server_model_discovery_actions_but_blocks_in_local_mode(action_id):
     engine = PolicyEngine(CAPABILITY_REGISTRY)
 
     local_decision = engine.evaluate(

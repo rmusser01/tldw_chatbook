@@ -13,11 +13,12 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual._context import NoActiveAppError
 from textual.css.query import QueryError
 from textual.events import Key
 from textual.reactive import reactive
 from textual.strip import Strip
-from textual.widgets import Button, Input, Rule, Select, Static, TextArea
+from textual.widgets import Button, Input, Rule, Select, SelectionList, Static, TextArea
 
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_provider_support import (
@@ -83,6 +84,18 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
 }
 PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
+MODEL_DISCOVERY_IDLE_COPY = "Discover models from configured endpoint"
+MODEL_DISCOVERY_CAPABILITY_WARNING = (
+    "Capabilities unknown until saved or verified; text chat is assumed."
+)
+MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY = (
+    "Multiple provider entries match this provider. Rename or remove duplicates before "
+    "saving discovered models."
+)
+MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY = (
+    "This endpoint is not OpenAI-compatible for v1 discovery. Configure a /v1 endpoint "
+    "to discover models."
+)
 CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
     {
         "collapse_large_pastes",
@@ -516,6 +529,9 @@ class SettingsScreen(BaseAppScreen):
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
         self._provider_test_result = "Provider test has not run."
         self._provider_save_result = "Provider settings have not been saved this session."
+        self._model_discovery_status = MODEL_DISCOVERY_IDLE_COPY
+        self._model_discovery_models: tuple[object, ...] = ()
+        self._model_discovery_selected_model_ids: set[str] = set()
         self._syncing_provider_endpoint = False
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
@@ -3009,6 +3025,272 @@ class SettingsScreen(BaseAppScreen):
             return f"{readiness.env_var}=missing"
         return "API key: missing"
 
+    def _model_discovery_available(self, provider: str) -> bool:
+        return bool(provider_config_key(provider)) and getattr(
+            self.app_instance,
+            "llm_provider_catalog_scope_service",
+            None,
+        ) is not None
+
+    def _provider_discovery_staged_settings(self, provider: str) -> dict[str, object]:
+        provider_key = provider_config_key(provider)
+        if not provider_key:
+            return {"api_settings": {}}
+        provider_section_key, _provider_config = self._provider_config_entry(provider)
+        provider_save_key = provider_section_key or provider_key
+        endpoint = ""
+        credential_env_var = ""
+        try:
+            endpoint = self.query_one("#settings-provider-endpoint-value", Input).value.strip()
+            credential_env_var = self.query_one(
+                "#settings-provider-credential-env-var",
+                Input,
+            ).value.strip()
+        except QueryError:
+            values = self._provider_setting_values()
+            endpoint = str(values.get("endpoint") or "").strip()
+            credential_env_var = str(values.get("credential_env_var") or "").strip()
+        provider_settings: dict[str, object] = {}
+        if endpoint:
+            provider_settings[self._provider_endpoint_setting_key(provider)] = endpoint
+        if credential_env_var:
+            provider_settings["api_key_env_var"] = credential_env_var
+        return {"api_settings": {provider_save_key: provider_settings}}
+
+    def _model_discovery_selection_options(self) -> list[tuple[str, str, bool]]:
+        options: list[tuple[str, str, bool]] = []
+        for model in self._model_discovery_models:
+            model_id = str(getattr(model, "model_id", "") or "").strip()
+            if not model_id:
+                continue
+            source = str(getattr(model, "source", "runtime_discovered"))
+            capability = str(getattr(model, "capability_status", "unknown"))
+            persisted = "saved" if bool(getattr(model, "persisted", False)) else "runtime"
+            label = f"{model_id} | {persisted} | {source} | capability={capability}"
+            options.append(
+                (
+                    label,
+                    model_id,
+                    model_id in self._model_discovery_selected_model_ids,
+                )
+            )
+        return options
+
+    def _reset_provider_model_discovery_state(
+        self,
+        status: str = MODEL_DISCOVERY_IDLE_COPY,
+    ) -> None:
+        self._model_discovery_status = status
+        self._model_discovery_models = ()
+        self._model_discovery_selected_model_ids = set()
+        self._refresh_model_discovery_widgets()
+
+    def _discovery_status_from_error(self, result: object) -> str:
+        error = getattr(result, "error", None)
+        kind = str(getattr(error, "kind", "") or "")
+        if kind == "ambiguous_provider_key":
+            return MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY
+        if kind == "unsupported_endpoint":
+            return MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY
+        message = str(getattr(error, "message", "") or "").strip()
+        recovery = str(getattr(error, "recovery_hint", "") or "").strip()
+        if recovery:
+            return redact_secret_text(f"{message} {recovery}".strip())
+        if message:
+            return redact_secret_text(message)
+        return "Model discovery failed. Check provider endpoint settings and try again."
+
+    def _refresh_model_discovery_widgets(self) -> None:
+        self._set_static_text("#settings-model-discovery-status", self._model_discovery_status)
+        try:
+            discover_button = self.query_one("#settings-discover-provider-models", Button)
+            discover_button.disabled = not self._model_discovery_available(
+                self._provider_widget_value()
+            )
+        except QueryError:
+            pass
+        try:
+            save_button = self.query_one("#settings-save-discovered-provider-models", Button)
+            save_button.disabled = not self._model_discovery_models
+        except QueryError:
+            pass
+        try:
+            clear_button = self.query_one("#settings-clear-discovered-provider-models", Button)
+            clear_button.disabled = not self._model_discovery_models
+        except QueryError:
+            pass
+        try:
+            discovered_list = self.query_one("#settings-discovered-models-list", SelectionList)
+            discovered_list.clear_options()
+            discovered_list.add_options(self._model_discovery_selection_options())
+            discovered_list.disabled = not self._model_discovery_models
+        except QueryError:
+            pass
+
+    def _append_saved_discovered_models(
+        self,
+        provider_list_key: str | None,
+        model_ids: tuple[str, ...],
+    ) -> None:
+        if not provider_list_key or not model_ids:
+            return
+        providers_models = getattr(self.app_instance, "providers_models", None)
+        if not isinstance(providers_models, dict):
+            providers_models = {}
+            self.app_instance.providers_models = providers_models
+        current = providers_models.get(provider_list_key, [])
+        if not isinstance(current, list):
+            current = list(current) if isinstance(current, tuple) else []
+        seen = {model for model in current if isinstance(model, str)}
+        for model_id in model_ids:
+            if model_id not in seen:
+                current.append(model_id)
+                seen.add(model_id)
+        providers_models[provider_list_key] = current
+
+    @work(exclusive=True, group="settings-model-discovery")
+    async def _discover_provider_models_worker(self) -> None:
+        await self._discover_provider_models()
+
+    async def _discover_provider_models(self) -> None:
+        provider = self._provider_widget_value()
+        provider_key = provider_config_key(provider)
+        scope_service = getattr(self.app_instance, "llm_provider_catalog_scope_service", None)
+        if not provider_key or scope_service is None:
+            self._model_discovery_status = (
+                "Provider is required before discovering models."
+            )
+            self._model_discovery_models = ()
+            self._model_discovery_selected_model_ids = set()
+            self._refresh_model_discovery_widgets()
+            return
+
+        staged_settings = self._provider_discovery_staged_settings(provider)
+        self._model_discovery_status = "Model discovery: running"
+        self._model_discovery_models = ()
+        self._model_discovery_selected_model_ids = set()
+        self._refresh_model_discovery_widgets()
+        try:
+            result = await scope_service.discover_models(
+                mode="local",
+                provider=provider_key,
+                staged_settings=staged_settings,
+            )
+        except Exception as exc:
+            logger.exception("Provider model discovery failed")
+            self._model_discovery_status = redact_secret_text(
+                f"Model discovery failed: {exc}"
+            )
+            self._model_discovery_models = ()
+            self._model_discovery_selected_model_ids = set()
+            self._refresh_model_discovery_widgets()
+            return
+
+        if str(getattr(result, "status", "")) == "success":
+            models = tuple(getattr(result, "models", ()) or ())
+            provider_list_key = str(
+                getattr(result, "provider_list_key", None) or provider_key
+            )
+            self._model_discovery_models = models
+            self._model_discovery_selected_model_ids = set()
+            self._model_discovery_status = (
+                f"Discovered {len(models)} model(s) from {provider_list_key}."
+            )
+            self._refresh_model_discovery_widgets()
+            self.app.notify("Provider model discovery finished.", severity="information")
+            return
+
+        self._model_discovery_models = ()
+        self._model_discovery_selected_model_ids = set()
+        self._model_discovery_status = self._discovery_status_from_error(result)
+        self._refresh_model_discovery_widgets()
+        self.app.notify("Provider model discovery failed.", severity="warning")
+
+    @work(exclusive=True, group="settings-model-discovery")
+    async def _save_selected_discovered_provider_models_worker(self) -> None:
+        await self._save_selected_discovered_provider_models()
+
+    async def _save_selected_discovered_provider_models(self) -> None:
+        provider = self._provider_widget_value()
+        provider_key = provider_config_key(provider)
+        scope_service = getattr(self.app_instance, "llm_provider_catalog_scope_service", None)
+        if not provider_key or scope_service is None:
+            self._model_discovery_status = "Provider is required before saving discovered models."
+            self._refresh_model_discovery_widgets()
+            return
+        try:
+            discovered_list = self.query_one("#settings-discovered-models-list", SelectionList)
+            selected_model_ids = [str(model_id) for model_id in discovered_list.selected]
+        except QueryError:
+            selected_model_ids = sorted(self._model_discovery_selected_model_ids)
+        if not selected_model_ids:
+            self._model_discovery_status = "Select discovered models to save."
+            self._refresh_model_discovery_widgets()
+            self.app.notify("Select discovered models before saving.", severity="warning")
+            return
+
+        self._model_discovery_selected_model_ids = set(selected_model_ids)
+        self._model_discovery_status = "Saving selected discovered models..."
+        self._refresh_model_discovery_widgets()
+        try:
+            result = await scope_service.persist_discovered_models_to_settings(
+                mode="local",
+                provider=provider_key,
+                model_ids=selected_model_ids,
+            )
+        except Exception as exc:
+            logger.exception("Provider model discovery persistence failed")
+            self._model_discovery_status = redact_secret_text(
+                f"Could not save discovered models: {exc}"
+            )
+            self._refresh_model_discovery_widgets()
+            return
+
+        message = str(getattr(result, "message", "") or "").strip()
+        status = str(getattr(result, "status", "") or "")
+        saved_model_ids = tuple(
+            str(model_id)
+            for model_id in tuple(getattr(result, "saved_model_ids", ()) or ())
+            if str(model_id).strip()
+        )
+        if status == "saved":
+            provider_list_key = getattr(result, "provider_list_key", None)
+            self._append_saved_discovered_models(provider_list_key, saved_model_ids)
+            self._model_discovery_status = (
+                message
+                or f"Saved {len(saved_model_ids)} discovered model(s)."
+            )
+            self._refresh_model_discovery_widgets()
+            self.app.notify("Discovered models saved.", severity="information")
+            return
+
+        if status == "ambiguous_provider_key":
+            self._model_discovery_status = MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY
+        else:
+            self._model_discovery_status = redact_secret_text(
+                message or "Could not save discovered models."
+            )
+        self._refresh_model_discovery_widgets()
+        self.app.notify("Discovered model save failed.", severity="warning")
+
+    @work(exclusive=True, group="settings-model-discovery")
+    async def _clear_discovered_provider_models_worker(self) -> None:
+        await self._clear_discovered_provider_models()
+
+    async def _clear_discovered_provider_models(self) -> None:
+        provider = self._provider_widget_value()
+        provider_key = provider_config_key(provider)
+        scope_service = getattr(self.app_instance, "llm_provider_catalog_scope_service", None)
+        if provider_key and scope_service is not None:
+            try:
+                await scope_service.clear_discovered_models(
+                    mode="local",
+                    provider=provider_key,
+                )
+            except Exception:
+                logger.exception("Provider discovered model cache clear failed")
+        self._reset_provider_model_discovery_state("Discovered model cache cleared.")
+
     def _run_provider_readiness_test(self) -> str:
         try:
             provider = self._provider_widget_value()
@@ -3391,6 +3673,45 @@ class SettingsScreen(BaseAppScreen):
             yield Static(
                 self._provider_key_status(str(values["provider"])),
                 id="settings-provider-key-status",
+            )
+            yield Static("Model discovery", classes="destination-section")
+            yield Static(
+                self._model_discovery_status,
+                id="settings-model-discovery-status",
+                classes="settings-status-row",
+            )
+            yield Static(
+                MODEL_DISCOVERY_CAPABILITY_WARNING,
+                id="settings-model-discovery-capability-warning",
+                classes="settings-status-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Button(
+                    "Discover models",
+                    id="settings-discover-provider-models",
+                    disabled=not self._model_discovery_available(str(values["provider"])),
+                    tooltip=(
+                        "Query the configured OpenAI-compatible provider endpoint "
+                        "for available models."
+                    ),
+                )
+                yield Button(
+                    "Save selected",
+                    id="settings-save-discovered-provider-models",
+                    disabled=not self._model_discovery_models,
+                    tooltip="Append selected discovered model IDs to the local provider list.",
+                )
+                yield Button(
+                    "Clear",
+                    id="settings-clear-discovered-provider-models",
+                    disabled=not self._model_discovery_models,
+                    tooltip="Clear runtime-discovered models for this provider.",
+                )
+            yield SelectionList(
+                *self._model_discovery_selection_options(),
+                id="settings-discovered-models-list",
+                classes="settings-discovered-models-list",
+                disabled=not self._model_discovery_models,
             )
             yield Button(
                 "Test Provider",
@@ -3957,18 +4278,24 @@ class SettingsScreen(BaseAppScreen):
             return None
         return value
 
+    def _focused_widget(self):
+        try:
+            return self.app.focused
+        except NoActiveAppError:
+            return None
+
     def _focused_category_value(self) -> str | None:
-        focused = self.app.focused
+        focused = self._focused_widget()
         if isinstance(focused, Button):
             return self._category_value_from_button(focused)
         return None
 
     def _category_search_has_focus(self) -> bool:
-        focused = self.app.focused
+        focused = self._focused_widget()
         return isinstance(focused, Input) and focused.id == "settings-category-search"
 
     def _settings_text_entry_has_focus(self) -> bool:
-        return isinstance(self.app.focused, (Input, TextArea))
+        return isinstance(self._focused_widget(), (Input, TextArea))
 
     def _focus_category_search(self) -> None:
         try:
@@ -4220,6 +4547,7 @@ class SettingsScreen(BaseAppScreen):
         model = str(self._provider_setting_values().get("model") or "")
         self._sync_provider_model_profile_widgets(staged_provider, model)
         self._clear_provider_auxiliary_draft_keys()
+        self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -4257,6 +4585,7 @@ class SettingsScreen(BaseAppScreen):
             self._update_provider_dynamic_widgets()
             return
         self._stage_provider_value("endpoint", event.value.strip())
+        self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -4266,6 +4595,7 @@ class SettingsScreen(BaseAppScreen):
             self._update_provider_dynamic_widgets()
             return
         self._stage_provider_value("credential_env_var", event.value.strip())
+        self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -4322,6 +4652,21 @@ class SettingsScreen(BaseAppScreen):
     def handle_test_provider(self, event: Button.Pressed) -> None:
         event.stop()
         self.action_settings_test_category()
+
+    @on(Button.Pressed, "#settings-discover-provider-models")
+    def handle_discover_provider_models(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._discover_provider_models_worker()
+
+    @on(Button.Pressed, "#settings-save-discovered-provider-models")
+    def handle_save_discovered_provider_models(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._save_selected_discovered_provider_models_worker()
+
+    @on(Button.Pressed, "#settings-clear-discovered-provider-models")
+    def handle_clear_discovered_provider_models(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._clear_discovered_provider_models_worker()
 
     @on(Button.Pressed, "#settings-check-storage")
     def handle_check_storage(self, event: Button.Pressed) -> None:

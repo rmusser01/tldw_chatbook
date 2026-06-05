@@ -39,11 +39,27 @@ Fallback reason: Codex in-app Browser lost its active pane after tab refresh, so
 - User approval: approved by user in Codex thread on 2026-05-28 after reviewing actual textual-web/CDP screenshots.
 - Covered scenarios: generic provider success, missing-key blocked send with draft preservation, and unsaved base URL override blocked with draft preservation.
 
+## Runtime Model Discovery Screenshot
+
+Date: 2026-06-04
+Branch: `codex/openai-compatible-model-discovery-prd`
+Backlog task: TASK-78
+Screen: Console
+Viewport: 2048x1280
+Launch method: textual-web served a temporary QA harness mounting the real `ChatScreen` with a runtime-discovered `gpt-5` entry in the local provider catalog scope.
+Screenshot method: Actual textual-web rendering captured through Chromium / Playwright CDP after the terminal canvas settled.
+
+- Path: `Docs/superpowers/qa/product-maturity/screen-qa/console/model-discovery-runtime-console-cdp-2026-06-04.png`
+- Verified visual state: Console shows `Model: gpt-5 (Capabilities unknown)`, `Credential: ready`, and an enabled ready composer instead of treating catalog unknownness as provider setup failure.
+- User approval: pending in Codex thread.
+
 ## Verification
 
 - Commands:
   - From the repository root with the repo virtualenv active: `python -m pytest -q Tests/UI/test_console_internals_decomposition.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_product_maturity_gate1_core_loop_screen_adaptation.py::test_console_core_loop_exposes_agentic_shell_regions --tb=short`
+  - From the repository root with the repo virtualenv active: `python -m pytest -q Tests/UI/test_console_session_settings.py --tb=short`
 - Results: `105 passed, 1 warning in 45.63s`
+- Runtime discovery Console result: `59 passed, 1 warning`
 
 ## Residual Risks
 

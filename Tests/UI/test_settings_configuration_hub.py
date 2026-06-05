@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Button, Input, Select, SelectionList, Static, TextArea
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -46,10 +46,60 @@ from tldw_chatbook.Workspaces.models import (
     WorkspaceSyncStatus,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    DiscoveredModel,
+    ModelDiscoveryError,
+    ModelDiscoveryResult,
+    PersistenceResult,
+)
 
 DUMMY_REDACTION_ENV_VALUE = "redaction-fixture-env-value"
 DUMMY_REDACTION_CONFIG_VALUE = "redaction-fixture-config-value"
 DUMMY_REDACTION_SERVER_VALUE = "redaction-fixture-server-value"
+
+
+class FakeSettingsModelDiscoveryScope:
+    def __init__(
+        self,
+        *,
+        result: ModelDiscoveryResult,
+        persistence_result: PersistenceResult | None = None,
+    ) -> None:
+        self.result = result
+        self.persistence_result = persistence_result or PersistenceResult(
+            provider=result.provider,
+            provider_list_key=result.provider_list_key,
+            status="saved",
+            saved_model_ids=(),
+            message="No new discovered models to save.",
+        )
+        self.discover_calls = []
+        self.persist_calls = []
+        self.clear_calls = []
+
+    async def discover_models(self, **kwargs):
+        self.discover_calls.append(kwargs)
+        return self.result
+
+    async def persist_discovered_models_to_settings(self, **kwargs):
+        self.persist_calls.append(kwargs)
+        return self.persistence_result
+
+    async def clear_discovered_models(self, **kwargs):
+        self.clear_calls.append(kwargs)
+
+
+def _discovered_model(model_id: str, *, provider: str = "openai") -> DiscoveredModel:
+    return DiscoveredModel(
+        provider=provider,
+        provider_list_key=provider,
+        model_id=model_id,
+        display_name=model_id,
+        source="runtime_discovered",
+        endpoint_fingerprint="fp-test",
+        discovered_at="2026-06-04T00:00:00Z",
+        metadata_raw_safe={"owned_by": "test-provider"},
+    )
 
 
 def _app(
@@ -820,6 +870,21 @@ def test_settings_manual_sync_run_worker_uses_main_event_loop_async_worker():
     wrapped = getattr(worker, "__wrapped__", worker)
 
     assert inspect.iscoroutinefunction(wrapped)
+
+
+def test_settings_model_discovery_button_handlers_dispatch_workers():
+    assert not inspect.iscoroutinefunction(SettingsScreen.__dict__["handle_discover_provider_models"])
+    assert not inspect.iscoroutinefunction(SettingsScreen.__dict__["handle_save_discovered_provider_models"])
+    assert not inspect.iscoroutinefunction(SettingsScreen.__dict__["handle_clear_discovered_provider_models"])
+
+    for worker_name in (
+        "_discover_provider_models_worker",
+        "_save_selected_discovered_provider_models_worker",
+        "_clear_discovered_provider_models_worker",
+    ):
+        worker = SettingsScreen.__dict__[worker_name]
+        wrapped = getattr(worker, "__wrapped__", worker)
+        assert inspect.iscoroutinefunction(wrapped)
 
 
 def test_settings_status_language_agrees_with_home_console_and_library_contracts():
@@ -3091,6 +3156,169 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
         assert "env:GROQ_API_KEY" in text
         assert "GROQ_API_KEY=<redacted>" in text
         assert "gsk-secret-token" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_model_discovery_controls_render_for_eligible_provider():
+    app = _build_test_app()
+    app.providers_models = {"openai": ["gpt-4.1"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_base_url": "https://api.openai.com/v1",
+            "api_key_env_var": "OPENAI_API_KEY",
+        },
+    }
+    app.llm_provider_catalog_scope_service = FakeSettingsModelDiscoveryScope(
+        result=ModelDiscoveryResult(
+            provider="openai",
+            provider_list_key="openai",
+            endpoint_fingerprint="fp-test",
+            status="success",
+            models=(_discovered_model("gpt-4o-mini"),),
+        ),
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        discover = screen.query_one("#settings-discover-provider-models", Button)
+
+        assert discover.disabled is False
+        assert "Discover models from configured endpoint" in _visible_text(screen)
+        assert (
+            "Capabilities unknown until saved or verified; text chat is assumed."
+            in _visible_text(screen)
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_model_discovery_saves_selected_runtime_models():
+    app = _build_test_app()
+    app.providers_models = {"openai": ["gpt-4.1"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {
+            "api_base_url": "https://api.openai.com/v1",
+            "api_key_env_var": "OPENAI_API_KEY",
+        },
+    }
+    scope = FakeSettingsModelDiscoveryScope(
+        result=ModelDiscoveryResult(
+            provider="openai",
+            provider_list_key="openai",
+            endpoint_fingerprint="fp-test",
+            status="success",
+            models=(
+                _discovered_model("gpt-4o-mini"),
+                _discovered_model("gpt-4.1-nano"),
+            ),
+        ),
+        persistence_result=PersistenceResult(
+            provider="openai",
+            provider_list_key="openai",
+            status="saved",
+            saved_model_ids=("gpt-4o-mini",),
+            message="Saved 1 discovered model(s) to openai.",
+        ),
+    )
+    app.llm_provider_catalog_scope_service = scope
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        await pilot.click("#settings-discover-provider-models")
+        screen = _active_destination_screen(host)
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Discovered 2 model(s) from openai.",
+        )
+
+        discovered_models = screen.query_one(
+            "#settings-discovered-models-list",
+            SelectionList,
+        )
+        discovered_models.select("gpt-4o-mini")
+
+        await pilot.click("#settings-save-discovered-provider-models")
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Saved 1 discovered model(s) to openai.",
+        )
+
+    assert scope.discover_calls == [
+        {
+            "mode": "local",
+            "provider": "openai",
+            "staged_settings": {
+                "api_settings": {
+                    "openai": {
+                        "api_base_url": "https://api.openai.com/v1",
+                        "api_key_env_var": "OPENAI_API_KEY",
+                    },
+                },
+            },
+        },
+    ]
+    assert scope.persist_calls == [
+        {
+            "mode": "local",
+            "provider": "openai",
+            "model_ids": ["gpt-4o-mini"],
+        },
+    ]
+    assert app.providers_models["openai"] == ["gpt-4.1", "gpt-4o-mini"]
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_model_discovery_shows_ambiguous_provider_recovery():
+    app = _build_test_app()
+    app.providers_models = {"OpenAI": ["gpt-4.1"], "openai": ["gpt-4.1-mini"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "OpenAI": {"api_base_url": "https://api.openai.com/v1"},
+        "openai": {"api_base_url": "https://proxy.example.com/v1"},
+    }
+    app.llm_provider_catalog_scope_service = FakeSettingsModelDiscoveryScope(
+        result=ModelDiscoveryResult(
+            provider="openai",
+            provider_list_key=None,
+            endpoint_fingerprint=None,
+            status="error",
+            error=ModelDiscoveryError(
+                kind="ambiguous_provider_key",
+                message="Multiple provider setting blocks match this provider.",
+                recovery_hint=(
+                    "Keep only one normalized api_settings block for this provider before "
+                    "discovering models."
+                ),
+            ),
+        ),
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        await pilot.click("#settings-discover-provider-models")
+        screen = _active_destination_screen(host)
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            (
+                "Multiple provider entries match this provider. Rename or remove "
+                "duplicates before saving discovered models."
+            ),
+        )
+        status_text = str(
+            screen.query_one("#settings-model-discovery-status", Static).renderable
+        )
+
+    assert "https://api.openai.com/v1" not in status_text
+    assert "https://proxy.example.com/v1" not in status_text
 
 
 @pytest.mark.asyncio
