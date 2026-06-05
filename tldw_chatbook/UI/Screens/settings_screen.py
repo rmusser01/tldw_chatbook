@@ -3935,6 +3935,9 @@ class SettingsScreen(BaseAppScreen):
         focused = self.app.focused
         return isinstance(focused, Input) and focused.id == "settings-category-search"
 
+    def _settings_text_entry_has_focus(self) -> bool:
+        return isinstance(self.app.focused, (Input, TextArea))
+
     def _focus_category_search(self) -> None:
         try:
             self.query_one("#settings-category-search", Input).focus()
@@ -4356,6 +4359,8 @@ class SettingsScreen(BaseAppScreen):
         self._update_advanced_validation_status()
 
     def action_settings_save_category(self) -> None:
+        if self._settings_text_entry_has_focus():
+            return
         category = self._active_category_id()
         if category not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             self.app.notify(self._guided_action_message(category), severity="information")
@@ -4612,6 +4617,8 @@ class SettingsScreen(BaseAppScreen):
         self.app.notify("This Settings category has no save action yet.", severity="warning")
 
     def action_settings_revert_category(self) -> None:
+        if self._settings_text_entry_has_focus():
+            return
         category = self._active_category_id()
         if not self._category_has_unsaved_changes(category):
             self.app.notify("No Settings changes to revert.", severity="information")
@@ -4665,6 +4672,8 @@ class SettingsScreen(BaseAppScreen):
         self.app.notify("Settings category changes reverted.", severity="information")
 
     def action_settings_test_category(self) -> None:
+        if self._settings_text_entry_has_focus():
+            return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             self._provider_test_result = self._run_provider_readiness_test()
             self._update_provider_test_result()
