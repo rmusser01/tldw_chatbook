@@ -84,3 +84,33 @@ Fallback reason: none
 - Confirmed the screen names the local/server authority as read-only in Settings.
 - Confirmed sync dry-run/recovery copy, Library workspace visibility copy, and ACP handoff readiness appear in the same destination-native Settings shell.
 - User approval: approved in Codex thread after actual textual-web screenshot review.
+
+## OpenAI-Compatible Model Discovery QA
+
+Date: 2026-06-04
+Branch: `codex/openai-compatible-model-discovery-prd`
+Backlog task: TASK-78
+Screen: Settings Providers & Models
+Viewport: 2050x1240 textual-web browser capture
+Launch method: `tldw-serve --host 127.0.0.1 --port 8894` with isolated HOME/XDG config and `default_tab = "settings"`
+Screenshot method: Python Playwright Chromium screenshot of textual-web through CDP
+Fallback reason: npm Playwright CLI wrapper could not be used because restricted network prevented fetching `@playwright/cli`; project venv already had Python Playwright installed.
+
+### Screenshots
+
+- Idle discovery controls: `Docs/superpowers/qa/product-maturity/screen-qa/settings/model-discovery-providers-models-cdp-2026-06-04.png`
+- Safe recovery state: `Docs/superpowers/qa/product-maturity/screen-qa/settings/model-discovery-providers-models-recovery-cdp-2026-06-04.png`
+
+### Verification Scope
+
+- Confirmed Providers & Models renders the discover, save selected, clear, status, warning, and discovered-model list controls inside the destination-native Settings shell.
+- Confirmed discovery recovery copy remains visible after a safe failed endpoint request and does not expose authorization headers or secret values.
+- Confirmed Save selected and Clear remain disabled until discovered runtime models exist.
+- User approval: passed by follow-up instruction to continue after actual screenshot review.
+
+### Verification
+
+- `python -m pytest -q Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_discovery_controls_render_for_eligible_provider Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_discovery_saves_selected_runtime_models Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_discovery_shows_ambiguous_provider_recovery --tb=short`
+- Result: `3 passed, 1 warning`.
+- `python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short`
+- Result: `161 passed, 1 warning`.

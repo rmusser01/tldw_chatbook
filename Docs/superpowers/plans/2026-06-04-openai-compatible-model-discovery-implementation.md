@@ -726,7 +726,7 @@ git commit -m "Wire local provider catalog model discovery"
 - Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
 - Test: `Tests/UI/test_settings_configuration_hub.py`
 
-- [ ] **Step 1: Write failing mounted Settings tests**
+- [x] **Step 1: Write failing mounted Settings tests**
 
 Add mounted tests covering:
 
@@ -754,7 +754,7 @@ async def test_settings_discovery_ambiguous_provider_key_shows_recovery_copy():
 
 Reuse existing mounted Settings helpers where available. If no helper exists for a selector in this file, add a small local helper in the test module rather than embedding fixed `pilot.pause(...)` delays.
 
-- [ ] **Step 2: Run Settings tests and verify failure**
+- [x] **Step 2: Run Settings tests and verify failure**
 
 Run:
 
@@ -764,7 +764,7 @@ python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short
 
 Expected: FAIL for missing controls/states.
 
-- [ ] **Step 3: Add Settings UI state**
+- [x] **Step 3: Add Settings UI state**
 
 In `settings_screen.py`, add state fields for:
 
@@ -776,7 +776,7 @@ In `settings_screen.py`, add state fields for:
 
 Use existing Settings hub panel styling. Do not create a new top-level route.
 
-- [ ] **Step 4: Add Settings controls and copy**
+- [x] **Step 4: Add Settings controls and copy**
 
 Add controls with stable IDs:
 
@@ -793,7 +793,7 @@ Copy requirements:
 - Ambiguous provider key: `Multiple provider entries match this provider. Rename or remove duplicates before saving discovered models.`
 - Unsupported native endpoint: `This endpoint is not OpenAI-compatible for v1 discovery. Configure a /v1 endpoint to discover models.`
 
-- [ ] **Step 5: Wire discover and save actions**
+- [x] **Step 5: Wire discover and save actions**
 
 Requirements:
 
@@ -803,7 +803,7 @@ Requirements:
 - Discovery results remain visible even before save.
 - Errors never show secrets or full authorization headers.
 
-- [ ] **Step 6: Run focused Settings tests**
+- [x] **Step 6: Run focused Settings tests**
 
 Run:
 
@@ -813,11 +813,19 @@ python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short
 
 Expected: PASS or only unrelated pre-existing failures documented with exact failing tests.
 
-- [ ] **Step 7: Capture actual UI screenshot for approval**
+- [x] **Step 7: Capture actual UI screenshot for approval**
 
 Run the app through the established textual-web/CDP path used by this project, navigate to Settings > Providers & Models, trigger a stubbed or safe discovery state, and capture an actual browser screenshot.
 
 Expected: The user can see the discover status, discovered model list, warning copy, and save control in the real rendered UI before the PR proceeds.
+
+Evidence:
+
+- Focused discovery regressions passed: `3 passed, 1 warning`.
+- Full Settings mounted suite passed: `161 passed, 1 warning`.
+- CDP idle screenshot: `Docs/superpowers/qa/product-maturity/screen-qa/settings/model-discovery-providers-models-cdp-2026-06-04.png`
+- CDP recovery screenshot: `Docs/superpowers/qa/product-maturity/screen-qa/settings/model-discovery-providers-models-recovery-cdp-2026-06-04.png`
+- User approval: passed by follow-up instruction to continue after actual screenshot review.
 
 - [ ] **Step 8: Commit**
 

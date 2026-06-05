@@ -49,7 +49,9 @@ Reason: Defines provider/config/catalog boundaries and persistence policy.
 
 <!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+- Added Settings Providers & Models discovery workflow: discover, save selected, clear runtime cache, safe status/recovery copy, and discovered-model selection list.
+- Added mounted Settings regressions for eligible controls, explicit selected-model persistence, and ambiguous provider-key recovery without endpoint leakage.
+- Captured actual textual-web/CDP Settings evidence for idle controls and safe discovery recovery; user approval is pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 <!-- SECTION:NOTES:END -->
 
