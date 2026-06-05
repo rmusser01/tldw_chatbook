@@ -1392,6 +1392,58 @@ async def test_settings_console_behavior_clean_state_does_not_show_staged_feedba
 
 
 @pytest.mark.asyncio
+async def test_settings_console_behavior_default_undo_does_not_show_staged_feedback():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"temperature": 0.7}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        temperature = screen.query_one("#settings-console-default-temperature", Input)
+
+        temperature.value = "0.8"
+        screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
+        assert "Unsaved" in _visible_text(screen)
+
+        temperature.value = "0.7"
+        screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
+        text = _visible_text(screen)
+
+        assert "No unsaved changes" in text
+        assert "Console behavior settings staged." not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_console_behavior_clean_staged_feedback_shows_workbench_warning():
+    app = _build_test_app()
+    app.app_config["console"] = {
+        "background_effects": {
+            "enabled": True,
+            "effect": "matrix",
+            "scope": "workbench",
+            "intensity": "low",
+            "fps": 6,
+        }
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        screen._console_behavior_result = "Console behavior settings staged."
+        screen._set_static_text(
+            "#settings-console-behavior-result",
+            screen._console_behavior_result_text(),
+        )
+        text = _visible_text(screen)
+
+        assert "No unsaved changes" in text
+        assert "Workbench scope is not available in this build; using Transcript scope." in text
+        assert "Console behavior settings staged." not in text
+
+
+@pytest.mark.asyncio
 async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
