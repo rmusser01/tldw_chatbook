@@ -23,7 +23,11 @@ from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
-from .provider_model_resolution import resolve_effective_provider_model
+from .provider_model_resolution import (
+    ResolvedProviderModelOption,
+    resolve_effective_provider_model,
+    resolve_provider_model_options,
+)
 from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.console_chat_controller import ConsoleChatController
@@ -331,7 +335,10 @@ class ChatScreen(BaseAppScreen):
         modal = ConsoleSettingsModal(
             settings=settings,
             app_config=getattr(self.app_instance, "app_config", {}) or {},
-            providers_models=self._providers_models(),
+            providers_models=await self._providers_models_for_console_settings(
+                settings.provider,
+                current_model=settings.model,
+            ),
             context_estimate=self._active_console_settings_context_estimate(),
             can_save=controller.run_state.is_send_allowed,
             focus_model=(
@@ -454,6 +461,7 @@ class ChatScreen(BaseAppScreen):
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_message_action_service = ConsoleMessageActionService()
+        self._console_model_option_warnings: dict[tuple[str, str], str] = {}
         self._last_console_action: ConsoleActionResult | None = None
         self._console_transcript_sync_timer: Any | None = None
         self._console_sync_in_progress = False
@@ -567,6 +575,67 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             logger.debug("Unable to load CLI provider/model registry for Console settings")
             return {}
+
+    async def _providers_models_for_console_settings(
+        self,
+        provider: str,
+        *,
+        current_model: str | None = None,
+    ) -> dict[str, list[str]]:
+        """Return provider/model options including runtime-discovered models."""
+        providers_models = self._providers_models()
+        provider_key = provider_config_key(provider)
+        if not provider_key:
+            return providers_models
+        try:
+            model_options = await resolve_provider_model_options(
+                self.app_instance,
+                provider=provider_key,
+                current_model=current_model,
+            )
+        except Exception:
+            logger.exception("Unable to resolve Console runtime-discovered models")
+            return providers_models
+        if not model_options:
+            return providers_models
+
+        merged = {
+            provider_name: list(model_ids)
+            for provider_name, model_ids in providers_models.items()
+        }
+        merged[provider_key] = [option.model_id for option in model_options]
+        self._remember_console_model_options(provider_key, model_options)
+        return merged
+
+    def _remember_console_model_options(
+        self,
+        provider: str,
+        options: list[ResolvedProviderModelOption],
+    ) -> None:
+        provider_key = provider_config_key(provider)
+        self._console_model_option_warnings = {
+            key: value
+            for key, value in self._console_model_option_warnings.items()
+            if key[0] != provider_key
+        }
+        for option in options:
+            model_id = str(option.model_id or "").strip()
+            if not model_id or not option.warning:
+                continue
+            self._console_model_option_warnings[(provider_key, model_id)] = option.warning
+
+    def _console_model_capability_warning(
+        self,
+        provider: str,
+        model: str | None,
+    ) -> str:
+        model_id = str(model or "").strip()
+        if not model_id:
+            return ""
+        return self._console_model_option_warnings.get(
+            (provider_config_key(provider), model_id),
+            "",
+        )
 
     def _default_console_session_settings(self) -> ConsoleSessionSettings:
         """Build the default settings snapshot for a new native Console session."""
@@ -788,6 +857,17 @@ class ChatScreen(BaseAppScreen):
             effective_settings,
             app_config=getattr(self.app_instance, "app_config", {}) or {},
         )
+        model_warning = self._console_model_capability_warning(
+            effective_settings.provider,
+            selected_model,
+        )
+        if model_warning and readiness.native_send_supported:
+            return effective_settings, replace(
+                readiness,
+                label="Capabilities unknown",
+                detail=f"{readiness.detail}\n{model_warning}",
+                native_send_supported=True,
+            )
         return effective_settings, readiness
 
     def _ensure_console_chat_store(self) -> ConsoleChatStore:

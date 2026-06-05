@@ -52,6 +52,10 @@ Reason: Defines provider/config/catalog boundaries and persistence policy.
 - Added Settings Providers & Models discovery workflow: discover, save selected, clear runtime cache, safe status/recovery copy, and discovered-model selection list.
 - Added mounted Settings regressions for eligible controls, explicit selected-model persistence, and ambiguous provider-key recovery without endpoint leakage.
 - Captured actual textual-web/CDP Settings evidence for idle controls and safe discovery recovery; user approval is pending.
+- Added Console merged-model consumption so runtime-discovered models appear in Console settings alongside saved models while saved model order remains first.
+- Added unknown-capability warning metadata for runtime-discovered Console selections without blocking send when provider readiness is otherwise valid.
+- Added focused Console regressions for saved-first ordering, runtime-discovered model selection, and visible `Capabilities unknown` summary copy.
+- Captured actual textual-web/CDP Console evidence for `gpt-5` as a runtime-discovered model with `Credential: ready`; user approval is pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 <!-- SECTION:NOTES:END -->
 

@@ -464,7 +464,7 @@ python -m pytest -q Tests/LLM_Provider_Catalog/test_openai_compatible_model_disc
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py
@@ -843,7 +843,7 @@ git commit -m "Add Settings model discovery workflow"
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Test: `Tests/UI/test_console_session_settings.py`
 
-- [ ] **Step 1: Write failing Console model list tests**
+- [x] **Step 1: Write failing Console model list tests**
 
 Add tests for:
 
@@ -860,7 +860,7 @@ def test_console_unknown_discovered_model_has_warning_copy():
     assert "Capabilities unknown" in state.warning
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run:
 
@@ -870,7 +870,9 @@ python -m pytest -q Tests/UI/test_console_session_settings.py --tb=short
 
 Expected: FAIL for missing discovered model integration.
 
-- [ ] **Step 3: Add merged model resolver**
+Actual: Added `test_console_model_resolution_includes_runtime_discovered_models` and `test_console_settings_modal_can_select_runtime_discovered_model_with_warning`. The saved-order regression failed before the resolver fix with `['gpt-5', 'gpt-4.1'] != ['gpt-4.1', 'gpt-5']`.
+
+- [x] **Step 3: Add merged model resolver**
 
 In `provider_model_resolution.py`, add or extend a resolver that:
 
@@ -880,7 +882,7 @@ In `provider_model_resolution.py`, add or extend a resolver that:
 - marks runtime-only entries with warning metadata
 - returns raw endpoint model IDs for selection
 
-- [ ] **Step 4: Wire Console session/settings state**
+- [x] **Step 4: Wire Console session/settings state**
 
 In `chat_screen.py`, ensure:
 
@@ -889,7 +891,7 @@ In `chat_screen.py`, ensure:
 - unknown capability warning appears in the Console settings/inspector area without blocking send
 - blocked send feedback still reflects provider readiness, not catalog knownness
 
-- [ ] **Step 5: Run focused Console tests**
+- [x] **Step 5: Run focused Console tests**
 
 Run:
 
@@ -899,11 +901,15 @@ python -m pytest -q Tests/UI/test_console_session_settings.py --tb=short
 
 Expected: PASS or only unrelated pre-existing failures documented with exact failing tests.
 
-- [ ] **Step 6: Capture actual Console screenshot for approval**
+Actual: `python -m pytest -q Tests/UI/test_console_session_settings.py --tb=short` passed with `59 passed, 1 warning`.
+
+- [x] **Step 6: Capture actual Console screenshot for approval**
 
 Run the app through textual-web/CDP and capture Console with a runtime discovered model selected.
 
 Expected: The rendered Console shows the selected discovered model, unknown capability warning, and no contradictory provider readiness state.
+
+Actual: Captured actual textual-web/CDP screenshot at `Docs/superpowers/qa/product-maturity/screen-qa/console/model-discovery-runtime-console-cdp-2026-06-04.png`. The rendered Console shows `Model: gpt-5 (Capabilities unknown)` and `Credential: ready`.
 
 - [ ] **Step 7: Commit**
 
