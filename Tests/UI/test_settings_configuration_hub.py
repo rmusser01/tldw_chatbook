@@ -2236,7 +2236,8 @@ async def test_settings_provider_category_uses_effective_console_source():
 
         assert "llama_cpp" in text
         assert "qwen" in text
-        assert "Source: chat_defaults" in text
+        assert "Provider source: Saved chat defaults" in text
+        assert "Model source: Saved chat defaults" in text
         assert screen.query_one("#settings-provider-value", Select).value == "llama_cpp"
         assert screen.query_one("#settings-model-value", Input).value == "qwen"
 
@@ -3088,6 +3089,87 @@ async def test_settings_provider_switch_updates_inspector_readiness():
         text = _visible_text(screen)
         assert "Provider readiness: Ollama / gpt-4o" in text
         assert "Provider readiness: OpenAI / gpt-4o" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_switch_selects_provider_default_model():
+    app = _build_test_app()
+    app.providers_models = {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_base_url": "https://api.openai.com/v1", "model": "gpt-4o"},
+        "ollama": {
+            "api_url": "http://localhost:11434/v1/chat/completions",
+            "model": "llama3",
+        },
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider = screen.query_one("#settings-provider-value", Select)
+
+        provider.value = "ollama"
+        screen.handle_provider_value_changed(Select.Changed(provider, "ollama"))
+        await pilot.pause()
+
+        assert screen.query_one("#settings-model-value", Input).value == "llama3"
+        text = _visible_text(screen)
+        assert "Provider readiness: Ollama / llama3" in text
+        assert "Provider source: Unsaved Settings draft" in text
+        assert "Model source: Unsaved Settings draft" in text
+        assert "Provider readiness: Ollama / gpt-4o" not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_state():
+    app = _build_test_app()
+    app.providers_models = {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_base_url": "https://api.openai.com/v1", "model": "gpt-4o"},
+        "ollama": {
+            "api_url": "http://localhost:11434/v1/chat/completions",
+            "model": "llama3",
+        },
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        provider = screen.query_one("#settings-provider-value", Select)
+
+        provider.value = "ollama"
+        screen.handle_provider_value_changed(Select.Changed(provider, "ollama"))
+        await pilot.pause()
+
+        text = _visible_text(screen)
+        assert (
+            str(screen.query_one("#settings-category-providers-models", Button).label)
+            == "> Providers & Models *"
+        )
+        assert "Provider source: Unsaved Settings draft" in text
+        assert "Model source: Unsaved Settings draft" in text
+        assert "Source: settings_draft" not in text
+        assert "Model source: settings_draft" not in text
+        assert "Endpoint key: api_settings.ollama.api_url" in text
+        assert "Endpoint: http://localhost:11434/v1/chat/completions" in text
+        assert "Endpoint: api_settings.ollama.api_url=http://localhost:11434" not in text
+        assert (
+            "No discovered models yet. Use Discover models after endpoint is configured."
+            in text
+        )
+
+        screen.query_one("#settings-provider-endpoint-value", Input).focus()
+        await pilot.pause()
+
+        text = _visible_text(screen)
+        assert "Focused setting: Endpoint" in text
+        assert "Controls the provider endpoint used by Console generation." in text
+        assert "Saved as: api_settings.ollama.api_url" in text
+        assert "Validation: must start with http:// or https:// when set" in text
 
 
 @pytest.mark.asyncio
