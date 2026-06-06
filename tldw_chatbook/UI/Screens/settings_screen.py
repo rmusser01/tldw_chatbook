@@ -1,7 +1,7 @@
 """Settings destination shell for global app preferences."""
 
 import copy
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import logging
 import os
 from pathlib import Path
@@ -14,7 +14,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
-from textual.events import Key
+from textual.events import DescendantFocus, Key
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.strip import Strip
@@ -61,7 +61,7 @@ from ...Utils.console_background_effects import (
 )
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
-from .provider_model_resolution import resolve_effective_provider_model
+from .provider_model_resolution import EffectiveProviderModel, resolve_effective_provider_model
 from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
 from .settings_config_models import (
     SettingsCategoryId,
@@ -85,6 +85,9 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
 PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
 MODEL_DISCOVERY_IDLE_COPY = "Discover models from configured endpoint"
+MODEL_DISCOVERY_EMPTY_COPY = (
+    "No discovered models yet. Use Discover models after endpoint is configured."
+)
 MODEL_DISCOVERY_CAPABILITY_WARNING = (
     "Capabilities unknown until saved or verified; text chat is assumed."
 )
@@ -167,6 +170,13 @@ API_URL_PROVIDER_KEYS = {
     "oobabooga",
     "tabbyapi",
     "vllm",
+}
+SETTINGS_SOURCE_LABELS = {
+    "settings_draft": "Unsaved Settings draft",
+    "console_control": "Console runtime override",
+    "app_reactive": "Current app selection",
+    "chat_defaults": "Saved chat defaults",
+    "default": "Default fallback",
 }
 PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "anthropic": "https://api.anthropic.com",
@@ -540,6 +550,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_threshold = False
         self._syncing_console_defaults = False
         self._syncing_console_background_effects = False
+        self._active_settings_field_id: str | None = None
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
         self._storage_check_rows: tuple[str, ...] = (
@@ -1199,6 +1210,24 @@ class SettingsScreen(BaseAppScreen):
             return "Unsaved"
         return summary.status
 
+    def _category_button_label(
+        self,
+        summary: SettingsCategorySummary,
+        *,
+        is_active: bool | None = None,
+    ) -> str:
+        active = summary.category.value == self.active_category if is_active is None else is_active
+        dirty_marker = " *" if self._category_has_unsaved_changes(summary.category) else ""
+        return f"{'> ' if active else '  '}{summary.title}{dirty_marker}"
+
+    def _refresh_category_button_label(self, category: SettingsCategoryId) -> None:
+        try:
+            summary = self._category_summary_by_id(category)
+            button = self.query_one(f"#settings-category-{category.value}", Button)
+        except QueryError:
+            return
+        button.label = self._category_button_label(summary)
+
     def _active_category_id(self) -> SettingsCategoryId:
         return SettingsCategoryId(self.active_category)
 
@@ -1222,6 +1251,7 @@ class SettingsScreen(BaseAppScreen):
                 category_status_widget.remove_class("settings-dirty-category")
         except QueryError:
             pass
+        self._refresh_category_button_label(category)
         if category is self._active_category_id():
             self._update_guided_action_widgets()
 
@@ -2583,11 +2613,30 @@ class SettingsScreen(BaseAppScreen):
         return draft.values.get(key) if draft is not None and key in draft.values else None
 
     def _resolve_provider_model_for_settings(self):
-        return resolve_effective_provider_model(
-            self.app_instance,
-            settings_provider=self._provider_draft_value("provider"),
-            settings_model=self._provider_draft_value("model"),
+        draft = self._provider_draft()
+        settings_provider = (
+            draft.values["provider"] if draft is not None and "provider" in draft.values else None
         )
+        settings_model = (
+            draft.values["model"] if draft is not None and "model" in draft.values else None
+        )
+        resolved = resolve_effective_provider_model(
+            self.app_instance,
+            settings_provider=settings_provider,
+            settings_model=settings_model,
+        )
+        if (
+            draft is not None
+            and "model" in draft.values
+            and not str(draft.values.get("model") or "").strip()
+        ):
+            return EffectiveProviderModel(
+                provider=resolved.provider,
+                model="",
+                provider_source=resolved.provider_source,
+                model_source="settings_draft",
+            )
+        return resolved
 
     def _provider_loaded_setting_values(self) -> dict[str, object]:
         resolved = resolve_effective_provider_model(self.app_instance)
@@ -2606,10 +2655,9 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_setting_values(self) -> dict[str, object]:
         loaded = self._provider_loaded_setting_values()
+        draft = self._provider_draft()
         return {
-            key: self._provider_draft_value(key)
-            if self._provider_draft_value(key) is not None
-            else value
+            key: draft.values[key] if draft is not None and key in draft.values else value
             for key, value in loaded.items()
         }
 
@@ -2780,6 +2828,31 @@ class SettingsScreen(BaseAppScreen):
         if provider_key in self._provider_catalog_keys():
             return provider_key
         return PROVIDER_MANUAL_SELECT_VALUE
+
+    def _provider_catalog_model_default(self, provider: str) -> str:
+        providers_models = getattr(self.app_instance, "providers_models", None)
+        if not isinstance(providers_models, Mapping):
+            return ""
+        provider_key = provider_config_key(provider)
+        for configured_provider, configured_models in providers_models.items():
+            if provider_config_key(str(configured_provider)) != provider_key:
+                continue
+            if isinstance(configured_models, (str, bytes)) or not isinstance(
+                configured_models,
+                Sequence,
+            ):
+                continue
+            for configured_model in configured_models:
+                model = str(configured_model or "").strip()
+                if model and model != "None":
+                    return model
+        return ""
+
+    def _provider_model_default(self, provider: str) -> str:
+        configured_model = str(self._provider_config(provider).get("model") or "").strip()
+        if configured_model and configured_model != "None":
+            return configured_model
+        return self._provider_catalog_model_default(provider)
 
     @staticmethod
     def _select_value_text(value: object) -> str:
@@ -2979,12 +3052,32 @@ class SettingsScreen(BaseAppScreen):
             return f"Endpoint: api_settings.{provider_key}.{endpoint_key} not configured"
         return f"Endpoint: api_settings.{provider_key}.{endpoint_key} or provider default"
 
+    def _provider_endpoint_display_value(self, provider: str, endpoint: object | None = None) -> str:
+        provider_key = provider_config_key(provider)
+        endpoint_value = str(
+            endpoint if endpoint is not None else self._provider_endpoint_value(provider)
+        ).strip()
+        if not provider_key:
+            return "provider required before saving"
+        if endpoint_value:
+            return endpoint_value
+        if provider_key in API_URL_PROVIDER_KEYS:
+            return "not configured"
+        return "provider default"
+
     def _provider_endpoint_row(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
         if not provider_key:
             return "Endpoint key: provider required"
         endpoint_key = self._provider_endpoint_setting_key(provider)
         return f"Endpoint key: api_settings.{provider_key}.{endpoint_key}"
+
+    @staticmethod
+    def _settings_source_label(source: object) -> str:
+        source_key = str(source or "").strip()
+        if not source_key:
+            return "Unknown"
+        return SETTINGS_SOURCE_LABELS.get(source_key, source_key.replace("_", " "))
 
     @staticmethod
     def _validate_provider_endpoint(endpoint: object) -> str | None:
@@ -3102,6 +3195,12 @@ class SettingsScreen(BaseAppScreen):
 
     def _refresh_model_discovery_widgets(self) -> None:
         self._set_static_text("#settings-model-discovery-status", self._model_discovery_status)
+        try:
+            self.query_one("#settings-model-discovery-empty", Static).display = (
+                not self._model_discovery_models
+            )
+        except QueryError:
+            pass
         try:
             discover_button = self.query_one("#settings-discover-provider-models", Button)
             discover_button.disabled = not self._model_discovery_available(
@@ -3341,6 +3440,15 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             endpoint = self._provider_endpoint_value(provider)
         readiness_label = self._provider_readiness_label()
+        resolved = self._resolve_provider_model_for_settings()
+        self._set_static_text(
+            "#settings-provider-source",
+            f"Provider source: {self._settings_source_label(resolved.provider_source)}",
+        )
+        self._set_static_text(
+            "#settings-model-source",
+            f"Model source: {self._settings_source_label(resolved.model_source)}",
+        )
         try:
             self.query_one("#settings-provider-readiness", Static).update(
                 f"Readiness: {readiness_label.removeprefix('Provider readiness: ')}"
@@ -3350,13 +3458,14 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_endpoint_row(provider)
             )
             self.query_one("#settings-provider-endpoint", Static).update(
-                self._provider_endpoint_summary(provider, endpoint)
+                f"Endpoint: {self._provider_endpoint_display_value(provider, endpoint)}"
             )
             self.query_one("#settings-provider-key-status", Static).update(
                 self._provider_key_status(provider)
             )
         except QueryError:
             pass
+        self._refresh_provider_field_guidance()
 
     def _detail_row(self, label: str, value: object, *, identifier: str | None = None) -> Static:
         return Static(
@@ -3364,6 +3473,87 @@ class SettingsScreen(BaseAppScreen):
             id=identifier,
             classes="settings-detail-row",
         )
+
+    def _provider_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        provider = str(self._provider_setting_values().get("provider") or "").strip()
+        endpoint_key = self._provider_endpoint_row(provider).removeprefix("Endpoint key: ")
+        provider_config_prefix = (
+            f"api_settings.{provider_config_key(provider)}"
+            if provider_config_key(provider)
+            else "api_settings.<provider>"
+        )
+        field_id = self._active_settings_field_id
+        if field_id == "settings-provider-value":
+            return (
+                ("Focused setting", "Provider"),
+                ("Purpose", "Selects the provider used for Console generation defaults."),
+                ("Saved as", "chat_defaults.provider"),
+                ("Validation", "choose a catalog provider or use Manual for custom aliases"),
+            )
+        if field_id == "settings-provider-manual-value":
+            return (
+                ("Focused setting", "Manual provider"),
+                ("Purpose", "Stores a custom provider key when the catalog has no match."),
+                ("Saved as", "chat_defaults.provider"),
+                ("Validation", "letters, numbers, hyphens, underscores, and provider aliases only"),
+            )
+        if field_id == "settings-model-value":
+            return (
+                ("Focused setting", "Model"),
+                ("Purpose", "Selects the model used when Console has no narrower override."),
+                ("Saved as", "chat_defaults.model"),
+                ("Validation", "model name is required before provider-backed generation can run"),
+            )
+        if field_id == "settings-provider-endpoint-value":
+            return (
+                ("Focused setting", "Endpoint"),
+                ("Purpose", "Controls the provider endpoint used by Console generation."),
+                ("Saved as", endpoint_key),
+                ("Validation", "must start with http:// or https:// when set"),
+            )
+        if field_id == "settings-provider-credential-env-var":
+            return (
+                ("Focused setting", "Credential env"),
+                ("Purpose", "Points Settings at the environment variable containing the API key."),
+                ("Saved as", f"{provider_config_prefix}.api_key_env_var"),
+                ("Validation", "environment variable names must start with a letter or underscore"),
+            )
+        if field_id == "settings-model-profile-temperature":
+            return (
+                ("Focused setting", "Temperature"),
+                ("Purpose", "Optional creativity default for this provider and model profile."),
+                ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.temperature"),
+                ("Validation", "number from 0.0 to 2.0, or blank for inherited default"),
+            )
+        if field_id == "settings-model-profile-top-p":
+            return (
+                ("Focused setting", "Top P"),
+                ("Purpose", "Optional token-probability cutoff for this provider and model profile."),
+                ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.top_p"),
+                ("Validation", "number from 0.0 to 1.0, or blank for inherited default"),
+            )
+        if field_id == "settings-model-profile-streaming":
+            return (
+                ("Focused setting", "Streaming"),
+                ("Purpose", "Optional streaming preference for this provider and model profile."),
+                ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.streaming"),
+                ("Validation", "true, false, or blank for inherited default"),
+            )
+        return (
+            ("Focused setting", "Provider setup"),
+            ("Purpose", "Configure the default provider, model, endpoint, and credential source."),
+            ("Saved as", "chat_defaults plus provider-specific api_settings"),
+            ("Validation", "test provider readiness before saving Console defaults"),
+        )
+
+    def _refresh_provider_field_guidance(self) -> None:
+        if self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS:
+            return
+        for index, (label, value) in enumerate(self._provider_field_guidance_rows()):
+            self._set_static_text(
+                f"#settings-provider-field-guide-{index}",
+                f"{label}: {value}",
+            )
 
     def _split_detail_row(self, text: str) -> Static:
         label, separator, value = text.partition(":")
@@ -3463,7 +3653,7 @@ class SettingsScreen(BaseAppScreen):
                 visible_count += int(is_visible)
                 is_active = summary.category.value == self.active_category
                 button = Button(
-                    f"{'> ' if is_active else '  '}{summary.title}",
+                    self._category_button_label(summary, is_active=is_active),
                     id=f"settings-category-{summary.category.value}",
                     classes="settings-category-button",
                     tooltip=summary.description,
@@ -3664,11 +3854,20 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_readiness_label().removeprefix("Provider readiness: "),
                 identifier="settings-provider-readiness",
             )
-            yield self._detail_row("Source", resolved.provider_source, identifier="settings-provider-source")
-            yield self._detail_row("Model source", resolved.model_source, identifier="settings-model-source")
-            yield Static(
-                self._provider_endpoint_summary(str(values["provider"])),
-                id="settings-provider-endpoint",
+            yield self._detail_row(
+                "Provider source",
+                self._settings_source_label(resolved.provider_source),
+                identifier="settings-provider-source",
+            )
+            yield self._detail_row(
+                "Model source",
+                self._settings_source_label(resolved.model_source),
+                identifier="settings-model-source",
+            )
+            yield self._detail_row(
+                "Endpoint",
+                self._provider_endpoint_display_value(str(values["provider"]), values["endpoint"]),
+                identifier="settings-provider-endpoint",
             )
             yield Static(
                 self._provider_key_status(str(values["provider"])),
@@ -3680,6 +3879,13 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-model-discovery-status",
                 classes="settings-status-row",
             )
+            empty_state = Static(
+                MODEL_DISCOVERY_EMPTY_COPY,
+                id="settings-model-discovery-empty",
+                classes="settings-status-row",
+            )
+            empty_state.display = not self._model_discovery_models
+            yield empty_state
             yield Static(
                 MODEL_DISCOVERY_CAPABILITY_WARNING,
                 id="settings-model-discovery-capability-warning",
@@ -4181,6 +4387,13 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-provider-inspector-readiness",
                 classes="settings-detail-row",
             )
+            yield Static("Focused field guide", classes="destination-section")
+            for index, (label, value) in enumerate(self._provider_field_guidance_rows()):
+                yield self._detail_row(
+                    label,
+                    value,
+                    identifier=f"settings-provider-field-guide-{index}",
+                )
         elif summary.category is SettingsCategoryId.APPEARANCE:
             yield Static("Affects visual presentation only.", classes="destination-section")
             yield Button(
@@ -4322,12 +4535,34 @@ class SettingsScreen(BaseAppScreen):
         self._focus_category(category_values[next_index])
 
     def _select_category(self, category_value: str, *, restore_focus: bool = False) -> None:
+        if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
+            self._active_settings_field_id = None
         self.active_category = category_value
         if category_value == SettingsCategoryId.OVERVIEW.value:
             self._queue_server_sync_workspace_handoff_refresh()
             self._queue_manual_sync_refresh()
         if restore_focus:
             self.call_after_refresh(self._focus_category, category_value)
+
+    @on(DescendantFocus)
+    def handle_descendant_focus(self, event: DescendantFocus) -> None:
+        if self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS:
+            return
+        widget_id = str(getattr(event.widget, "id", "") or "")
+        provider_field_ids = {
+            "settings-provider-value",
+            "settings-provider-manual-value",
+            "settings-model-value",
+            "settings-provider-endpoint-value",
+            "settings-provider-credential-env-var",
+            "settings-model-profile-temperature",
+            "settings-model-profile-top-p",
+            "settings-model-profile-streaming",
+        }
+        self._active_settings_field_id = (
+            widget_id if widget_id in provider_field_ids else None
+        )
+        self._refresh_provider_field_guidance()
 
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
@@ -4522,6 +4757,11 @@ class SettingsScreen(BaseAppScreen):
 
     def _apply_provider_value_change(self, provider: str) -> None:
         loaded_provider = str(self._provider_loaded_setting_values().get("provider") or "")
+        previous_provider = str(self._provider_setting_values().get("provider") or "")
+        provider_changed = (
+            bool(provider)
+            and provider_config_key(provider) != provider_config_key(previous_provider)
+        )
         staged_provider = (
             loaded_provider
             if (
@@ -4544,6 +4784,15 @@ class SettingsScreen(BaseAppScreen):
             finally:
                 self._syncing_provider_endpoint = False
         self._sync_provider_credential_widget(staged_provider)
+        provider_default_model = (
+            self._provider_model_default(staged_provider) if provider_changed else ""
+        )
+        if provider_changed:
+            self._stage_provider_value("model", provider_default_model or None)
+            try:
+                self.query_one("#settings-model-value", Input).value = provider_default_model
+            except QueryError:
+                pass
         model = str(self._provider_setting_values().get("model") or "")
         self._sync_provider_model_profile_widgets(staged_provider, model)
         self._clear_provider_auxiliary_draft_keys()
